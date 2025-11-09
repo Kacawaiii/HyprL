@@ -1,0 +1,14 @@
+# Environnement
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Données / caches
+data/
+*.log
+
+# Divers IDE
+.vscode/
+.idea/
