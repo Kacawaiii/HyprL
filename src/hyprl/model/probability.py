@@ -15,14 +15,14 @@ class ProbabilityModel:
     classifier: LogisticRegression
 
     @classmethod
-    def create(cls) -> "ProbabilityModel":
+    def create(cls, random_state: int | None = 42) -> "ProbabilityModel":
         scaler = StandardScaler()
         classifier = LogisticRegression(
             penalty="l2",
             C=0.8,
             max_iter=300,
             solver="lbfgs",
-            random_state=42,
+            random_state=random_state,
         )
         return cls(scaler=scaler, classifier=classifier)
 
