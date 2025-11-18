@@ -3,6 +3,7 @@ use pyo3::types::PyDict;
 
 mod indicators;
 mod metrics;
+mod backtest;
 
 /// Candle data structure for OHLCV data
 #[derive(Debug, Clone)]
@@ -257,6 +258,90 @@ fn compute_metrics_py(
     })
 }
 
+/// Python wrapper for trade simulation
+#[pyfunction]
+fn simulate_trade_py(
+    highs: Vec<f64>,
+    lows: Vec<f64>,
+    closes: Vec<f64>,
+    direction: &str,
+    entry_price: f64,
+    stop_price: f64,
+    take_profit_price: f64,
+    position_size: i64,
+) -> PyResult<(f64, usize, f64)> {
+    let dir = backtest::Direction::from_str(direction)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid direction"))?;
+    
+    let risk = backtest::RiskOutcome {
+        direction: dir,
+        entry_price,
+        position_size,
+        stop_price,
+        take_profit_price,
+        risk_amount: 0.0,
+        rr_multiple: 0.0,
+    };
+    
+    let (exit_price, exit_idx) = backtest::simulate_trade(&highs, &lows, &closes, &risk);
+    let pnl = backtest::compute_trade_pnl(&risk, entry_price, exit_price);
+    
+    Ok((exit_price, exit_idx, pnl))
+}
+
+/// Python wrapper for position sizing
+#[pyfunction]
+fn compute_position_size_py(
+    balance: f64,
+    risk_pct: f64,
+    entry_price: f64,
+    stop_price: f64,
+    min_position_size: i64,
+) -> PyResult<i64> {
+    Ok(backtest::compute_position_size(
+        balance,
+        risk_pct,
+        entry_price,
+        stop_price,
+        min_position_size,
+    ))
+}
+
+/// Python wrapper for stop price calculation
+#[pyfunction]
+fn compute_stop_price_py(
+    entry_price: f64,
+    atr: f64,
+    direction: &str,
+    atr_multiplier: f64,
+) -> PyResult<f64> {
+    let dir = backtest::Direction::from_str(direction)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid direction"))?;
+    
+    Ok(backtest::compute_stop_price(entry_price, atr, dir, atr_multiplier))
+}
+
+/// Python wrapper for take profit calculation
+#[pyfunction]
+fn compute_take_profit_price_py(
+    entry_price: f64,
+    atr: f64,
+    direction: &str,
+    atr_multiplier: f64,
+    reward_multiple: f64,
+) -> PyResult<f64> {
+    let dir = backtest::Direction::from_str(direction)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid direction"))?;
+    
+    Ok(backtest::compute_take_profit_price(
+        entry_price,
+        atr,
+        dir,
+        atr_multiplier,
+        reward_multiple,
+    ))
+}
+
 /// Python module definition
 #[pymodule]
 fn hyprl_supercalc(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -274,6 +359,12 @@ fn hyprl_supercalc(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(robustness_score_py, m)?)?;
     m.add_function(wrap_pyfunction!(compute_metrics_py, m)?)?;
     m.add_class::<PerformanceMetrics>()?;
+    
+    // Backtest
+    m.add_function(wrap_pyfunction!(simulate_trade_py, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_position_size_py, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_stop_price_py, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_take_profit_price_py, m)?)?;
     
     Ok(())
 }
