@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 mod indicators;
+mod metrics;
 
 /// Candle data structure for OHLCV data
 #[derive(Debug, Clone)]
@@ -143,10 +144,136 @@ fn extract_column(df: &Bound<'_, PyAny>, col_name: &str) -> PyResult<Vec<f64>> {
     Ok(vec)
 }
 
+/// Python wrapper for Sharpe ratio calculation
+#[pyfunction]
+fn sharpe_ratio_py(returns: Vec<f64>) -> PyResult<Option<f64>> {
+    Ok(metrics::sharpe_ratio(&returns))
+}
+
+/// Python wrapper for Sortino ratio calculation
+#[pyfunction]
+fn sortino_ratio_py(returns: Vec<f64>, target_return: f64) -> PyResult<Option<f64>> {
+    Ok(metrics::sortino_ratio(&returns, target_return))
+}
+
+/// Python wrapper for max drawdown calculation
+#[pyfunction]
+fn max_drawdown_py(equity_curve: Vec<f64>) -> PyResult<f64> {
+    Ok(metrics::max_drawdown(&equity_curve))
+}
+
+/// Python wrapper for win rate calculation
+#[pyfunction]
+fn win_rate_py(trade_pnls: Vec<f64>) -> PyResult<f64> {
+    Ok(metrics::win_rate(&trade_pnls))
+}
+
+/// Python wrapper for profit factor calculation
+#[pyfunction]
+fn profit_factor_py(trade_pnls: Vec<f64>) -> PyResult<Option<f64>> {
+    Ok(metrics::profit_factor(&trade_pnls))
+}
+
+/// Python wrapper for risk of ruin calculation
+#[pyfunction]
+fn risk_of_ruin_py(trade_returns: Vec<f64>, risk_pct: f64) -> PyResult<f64> {
+    Ok(metrics::risk_of_ruin(&trade_returns, risk_pct))
+}
+
+/// Python wrapper for robustness score calculation
+#[pyfunction]
+#[pyo3(signature = (sharpe=None, profit_factor=None, win_rate=0.0, max_dd=0.0))]
+fn robustness_score_py(
+    sharpe: Option<f64>,
+    profit_factor: Option<f64>,
+    win_rate: f64,
+    max_dd: f64,
+) -> PyResult<f64> {
+    Ok(metrics::robustness_score(sharpe, profit_factor, win_rate, max_dd))
+}
+
+/// Performance metrics container
+#[pyclass]
+#[derive(Clone)]
+struct PerformanceMetrics {
+    #[pyo3(get)]
+    sharpe_ratio: Option<f64>,
+    #[pyo3(get)]
+    sortino_ratio: Option<f64>,
+    #[pyo3(get)]
+    profit_factor: Option<f64>,
+    #[pyo3(get)]
+    win_rate: f64,
+    #[pyo3(get)]
+    max_drawdown: f64,
+    #[pyo3(get)]
+    risk_of_ruin: f64,
+    #[pyo3(get)]
+    robustness_score: f64,
+    #[pyo3(get)]
+    expectancy: f64,
+}
+
+#[pymethods]
+impl PerformanceMetrics {
+    fn __repr__(&self) -> String {
+        format!(
+            "PerformanceMetrics(sharpe={:.2}, sortino={:.2}, pf={:.2}, wr={:.2}, mdd={:.2})",
+            self.sharpe_ratio.unwrap_or(0.0),
+            self.sortino_ratio.unwrap_or(0.0),
+            self.profit_factor.unwrap_or(0.0),
+            self.win_rate,
+            self.max_drawdown
+        )
+    }
+}
+
+/// Compute all performance metrics
+#[pyfunction]
+fn compute_metrics_py(
+    equity_curve: Vec<f64>,
+    trade_returns: Vec<f64>,
+    trade_pnls: Vec<f64>,
+    risk_pct: f64,
+) -> PyResult<PerformanceMetrics> {
+    let sharpe = metrics::sharpe_ratio(&trade_returns);
+    let sortino = metrics::sortino_ratio(&trade_returns, 0.0);
+    let pf = metrics::profit_factor(&trade_pnls);
+    let wr = metrics::win_rate(&trade_pnls);
+    let mdd = metrics::max_drawdown(&equity_curve);
+    let ror = metrics::risk_of_ruin(&trade_returns, risk_pct);
+    let exp = metrics::expectancy(&trade_pnls);
+    let robustness = metrics::robustness_score(sharpe, pf, wr, mdd);
+    
+    Ok(PerformanceMetrics {
+        sharpe_ratio: sharpe,
+        sortino_ratio: sortino,
+        profit_factor: pf,
+        win_rate: wr,
+        max_drawdown: mdd,
+        risk_of_ruin: ror,
+        robustness_score: robustness,
+        expectancy: exp,
+    })
+}
+
 /// Python module definition
 #[pymodule]
 fn hyprl_supercalc(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Indicators
     m.add_function(wrap_pyfunction!(compute_indicators_py, m)?)?;
     m.add_class::<IndicatorSet>()?;
+    
+    // Metrics
+    m.add_function(wrap_pyfunction!(sharpe_ratio_py, m)?)?;
+    m.add_function(wrap_pyfunction!(sortino_ratio_py, m)?)?;
+    m.add_function(wrap_pyfunction!(max_drawdown_py, m)?)?;
+    m.add_function(wrap_pyfunction!(win_rate_py, m)?)?;
+    m.add_function(wrap_pyfunction!(profit_factor_py, m)?)?;
+    m.add_function(wrap_pyfunction!(risk_of_ruin_py, m)?)?;
+    m.add_function(wrap_pyfunction!(robustness_score_py, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_metrics_py, m)?)?;
+    m.add_class::<PerformanceMetrics>()?;
+    
     Ok(())
 }
