@@ -27,6 +27,23 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed for the backtest model (default: 42).",
     )
+    parser.add_argument(
+        "--min-ev",
+        type=float,
+        default=None,
+        help="Minimum expected value filter (skip trades below this threshold).",
+    )
+    parser.add_argument(
+        "--trend-filter",
+        action="store_true",
+        help="Require trades to align with SMA trend direction.",
+    )
+    parser.add_argument(
+        "--sentiment-threshold",
+        type=float,
+        default=None,
+        help="Sentiment threshold filter (require positive sentiment for longs).",
+    )
     args = parser.parse_args()
     if not args.period and not (args.start and args.end):
         parser.error("Provide --period or both --start and --end.")
@@ -46,6 +63,9 @@ def main() -> None:
         threshold=args.threshold,
         risk=risk_cfg,
         random_state=args.seed,
+        min_expected_value=args.min_ev,
+        require_trend_alignment=args.trend_filter,
+        sentiment_threshold=args.sentiment_threshold,
     )
     result = run_backtest(config)
     total_return_pct = (

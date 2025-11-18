@@ -28,6 +28,23 @@ def parse_args() -> argparse.Namespace:
         help='Comma-separated thresholds (e.g. "0.4,0.45,0.5"); defaults to 0.4:0.6 step 0.05. '
         "0.40 is the recommended baseline for AAPL 1y.",
     )
+    parser.add_argument(
+        "--min-ev",
+        type=float,
+        default=None,
+        help="Minimum expected value filter (skip trades below this threshold).",
+    )
+    parser.add_argument(
+        "--trend-filter",
+        action="store_true",
+        help="Require trades to align with SMA trend direction.",
+    )
+    parser.add_argument(
+        "--sentiment-threshold",
+        type=float,
+        default=None,
+        help="Sentiment threshold filter (require positive sentiment for longs).",
+    )
     args = parser.parse_args()
     if not args.period and not (args.start and args.end):
         parser.error("Provide --period or both --start and --end.")
@@ -62,6 +79,9 @@ def main() -> None:
         threshold=thresholds[0],
         risk=risk_cfg,
         random_state=args.seed,
+        min_expected_value=args.min_ev,
+        require_trend_alignment=args.trend_filter,
+        sentiment_threshold=args.sentiment_threshold,
     )
     summaries = sweep_thresholds(config, thresholds)
     header = "Threshold | Return % | Sharpe | Max DD % | Trades | Win %"
