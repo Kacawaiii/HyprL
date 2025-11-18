@@ -1,0 +1,1 @@
+/home/runner/work/HyprL/HyprL/native/hyprl_supercalc/target/release/libhyprl_supercalc.so: /home/runner/work/HyprL/HyprL/native/hyprl_supercalc/src/indicators.rs /home/runner/work/HyprL/HyprL/native/hyprl_supercalc/src/lib.rs
