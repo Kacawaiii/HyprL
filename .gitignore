@@ -9,6 +9,11 @@ __pycache__/
 data/
 *.log
 
+# Rust build artifacts
+target/
+Cargo.lock
+*.so
+
 # Divers IDE
 .vscode/
 .idea/
