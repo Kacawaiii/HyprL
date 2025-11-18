@@ -33,6 +33,9 @@ class BacktestConfig:
     atr_window: int = 14
     risk: RiskConfig = field(default_factory=RiskConfig)
     random_state: int = 42
+    min_expected_value: Optional[float] = None
+    require_trend_alignment: bool = False
+    sentiment_threshold: Optional[float] = None
 
 
 @dataclass(slots=True)
@@ -158,6 +161,47 @@ def _sharpe_ratio(returns: list[float]) -> Optional[float]:
     return float((arr.mean() / std) * math.sqrt(len(arr)))
 
 
+def _compute_expected_value(
+    probability_up: float,
+    direction: str,
+    risk_plan: RiskOutcome,
+) -> float:
+    """Compute expected value of a trade based on probability and risk/reward."""
+    if risk_plan.position_size <= 0:
+        return 0.0
+    
+    per_unit_risk = abs(risk_plan.entry_price - risk_plan.stop_price)
+    per_unit_reward = abs(risk_plan.take_profit_price - risk_plan.entry_price)
+    
+    if direction == "long":
+        win_prob = probability_up
+    else:
+        win_prob = 1.0 - probability_up
+    
+    lose_prob = 1.0 - win_prob
+    expected_value = (win_prob * per_unit_reward) - (lose_prob * per_unit_risk)
+    return expected_value
+
+
+def _check_trend_alignment(
+    current_row: pd.Series,
+    direction: str,
+    sma_short_col: str = "sma_short",
+    sma_long_col: str = "sma_long",
+) -> bool:
+    """Check if trade direction aligns with SMA trend."""
+    sma_short = float(current_row.get(sma_short_col, 0.0))
+    sma_long = float(current_row.get(sma_long_col, 0.0))
+    
+    if sma_short <= 0 or sma_long <= 0:
+        return False
+    
+    if direction == "long":
+        return sma_short > sma_long
+    else:
+        return sma_short < sma_long
+
+
 def run_backtest(config: BacktestConfig) -> BacktestResult:
     fetcher = MarketDataFetcher(config.ticker)
     period = config.period if not (config.start or config.end) else None
@@ -230,6 +274,30 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
         if risk_plan.position_size <= 0:
             current_idx += 1
             continue
+
+        # Apply minimum expected value filter
+        if config.min_expected_value is not None:
+            ev = _compute_expected_value(probability_up, direction, risk_plan)
+            if ev < config.min_expected_value:
+                current_idx += 1
+                continue
+
+        # Apply trend alignment filter
+        if config.require_trend_alignment:
+            current_row = features.iloc[current_idx]
+            if not _check_trend_alignment(current_row, direction):
+                current_idx += 1
+                continue
+
+        # Apply sentiment threshold filter
+        if config.sentiment_threshold is not None:
+            sentiment_score = float(features.iloc[current_idx].get("sentiment_score", 0.0))
+            if direction == "long" and sentiment_score < config.sentiment_threshold:
+                current_idx += 1
+                continue
+            if direction == "short" and sentiment_score > -config.sentiment_threshold:
+                current_idx += 1
+                continue
 
         exit_price, exit_pos = _simulate_trade(prices, price_pos, risk_plan)
         balance_before = equity
