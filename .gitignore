@@ -12,3 +12,10 @@ data/
 # Divers IDE
 .vscode/
 .idea/
+
+# Rust
+*.so
+*.dylib
+*.dll
+Cargo.lock
+target/

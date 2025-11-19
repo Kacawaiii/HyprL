@@ -1,1 +1,1 @@
-/home/kyo/HyprL/accelerators/rust/hyprl_accel/target/release/libhyprl_accel.so: /home/kyo/HyprL/accelerators/rust/hyprl_accel/src/lib.rs
+/home/runner/work/HyprL/HyprL/accelerators/rust/hyprl_accel/target/release/libhyprl_accel.so: /home/runner/work/HyprL/HyprL/accelerators/rust/hyprl_accel/src/indicators.rs /home/runner/work/HyprL/HyprL/accelerators/rust/hyprl_accel/src/lib.rs
