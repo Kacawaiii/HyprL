@@ -9,9 +9,17 @@ import pandas as pd
 from hyprl.data.market import MarketDataFetcher
 from hyprl.data.news import NewsFetcher
 from hyprl.indicators.technical import compute_feature_frame
+from hyprl.labels.amplitude import (
+    LabelConfig,
+    TRAINABLE_LABELS,
+    attach_amplitude_labels,
+    encode_amplitude_target,
+    validate_label_support,
+)
 from hyprl.model.probability import ProbabilityModel
 from hyprl.sentiment.analyzer import SentimentScorer
 from hyprl.risk.manager import RiskConfig, RiskOutcome, plan_trade
+from hyprl.features.sentiment import enrich_sentiment_features
 
 
 @dataclass(slots=True)
@@ -23,8 +31,11 @@ class AnalysisConfig:
     sma_long_window: int = 36  # 36 * 5m = 3 hours
     rsi_window: int = 14
     atr_window: int = 14
-    threshold: float = 0.5
+    threshold: float = 0.4
+    model_type: str = "logistic"
+    calibration: str = "none"
     risk: RiskConfig = field(default_factory=RiskConfig)
+    label: LabelConfig = field(default_factory=LabelConfig)
 
 
 @dataclass(slots=True)
@@ -44,25 +55,41 @@ class AnalysisPipeline:
         self.market_fetcher = MarketDataFetcher(config.ticker)
         self.news_fetcher = NewsFetcher(config.ticker)
         self.sentiment_scorer = SentimentScorer.default()
-        self.model = ProbabilityModel.create()
+        self.model = ProbabilityModel.create(
+            model_type=config.model_type,
+            calibration=config.calibration,
+        )
 
     def _augment_with_sentiment(
         self, feature_df: pd.DataFrame, sentiment_score: float
     ) -> pd.DataFrame:
         feature_df = feature_df.copy()
         feature_df["sentiment_score"] = sentiment_score
-        feature_df = feature_df.dropna()
-        return feature_df
+        feature_df = enrich_sentiment_features(feature_df)
+        return feature_df.dropna()
 
     def _build_training_matrices(
         self, feature_df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, pd.Series]:
-        returns_forward = feature_df["returns_next"]
-        target = (returns_forward > 0).astype(int)
         design = feature_df[["trend_ratio", "rsi_normalized", "volatility", "sentiment_score"]]
         finite_mask = np.isfinite(design).all(axis=1)
         design = design[finite_mask]
-        target = target.loc[design.index]
+        label_cfg = self.config.label
+        if label_cfg.mode == "amplitude":
+            if "label_amplitude" not in feature_df.columns:
+                raise RuntimeError("Amplitude labels missing from feature set.")
+            target = feature_df.loc[design.index, "label_amplitude"].copy()
+            if label_cfg.neutral_strategy == "ignore":
+                mask = target.isin(TRAINABLE_LABELS)
+                design = design.loc[mask]
+                target = target.loc[mask]
+            target = encode_amplitude_target(target)
+        else:
+            returns_forward = feature_df.loc[design.index, "returns_next"]
+            target = (returns_forward > 0).astype(int)
+        valid_mask = target.notna()
+        design = design.loc[valid_mask]
+        target = target.loc[valid_mask].astype(int)
         return design, target
 
     def run(self) -> AnalysisResult:
@@ -85,6 +112,8 @@ class AnalysisPipeline:
         sentiment_scores = [article.sentiment or 0.0 for article in annotated]
         sentiment = float(np.mean(sentiment_scores)) if sentiment_scores else 0.0
 
+        features = attach_amplitude_labels(features, prices, self.config.label)
+        validate_label_support(features, self.config.label)
         feature_with_sentiment = self._augment_with_sentiment(features, sentiment)
         design, target = self._build_training_matrices(feature_with_sentiment)
         if design.empty or target.nunique() < 2:
@@ -100,8 +129,11 @@ class AnalysisPipeline:
             expected_loss = float(shortfall.mean())
         else:
             expected_loss = 0.0
-        latest_prob_up, latest_prob_down, signal = self.model.latest_prediction(design)
-        predicted_direction = "UP" if signal == 1 else "DOWN"
+        latest_prob_up, latest_prob_down, signal = self.model.latest_prediction(design, threshold=self.config.threshold)
+        if latest_prob_up is None:
+            predicted_direction = "DOWN"
+        else:
+            predicted_direction = "UP" if latest_prob_up >= self.config.threshold else "DOWN"
         latest_row = feature_with_sentiment.loc[design.index[-1]]
 
         metrics = {

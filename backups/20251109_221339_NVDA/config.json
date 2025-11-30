@@ -1,0 +1,75 @@
+{
+  "ticker": "NVDA",
+  "period": "1y",
+  "start": null,
+  "end": null,
+  "interval": "1h",
+  "initial_balance": 10000.0,
+  "long_threshold": 0.55,
+  "short_threshold": 0.4,
+  "sma_short_window": 5,
+  "sma_long_window": 36,
+  "rsi_window": 14,
+  "atr_window": 14,
+  "risk": {
+    "balance": 10000.0,
+    "risk_pct": 0.015,
+    "atr_multiplier": 1.3,
+    "reward_multiple": 1.5,
+    "min_position_size": 5
+  },
+  "random_state": 42,
+  "commission_pct": 0.0005,
+  "slippage_pct": 0.0005,
+  "model_type": "logistic",
+  "calibration": "platt",
+  "risk_profile": "normal",
+  "risk_profiles": {
+    "safe": {
+      "risk_pct": 0.008,
+      "atr_multiplier": 1.1,
+      "reward_multiple": 1.3,
+      "min_position_size": 3.0
+    },
+    "normal": {
+      "risk_pct": 0.015,
+      "atr_multiplier": 1.3,
+      "reward_multiple": 1.5,
+      "min_position_size": 5.0
+    }
+  },
+  "adaptive": {
+    "enable": false,
+    "lookback_trades": 20,
+    "default_regime": "normal",
+    "regimes": {
+      "safe": {
+        "name": "safe",
+        "min_equity_drawdown": 0.12,
+        "max_equity_drawdown": 1.0,
+        "min_profit_factor": 0.0,
+        "min_sharpe": -Infinity,
+        "min_expectancy": -Infinity,
+        "risk_overrides": {
+          "risk_pct": 0.008
+        },
+        "threshold_overrides": {
+          "long_shift": 0.03,
+          "short_shift": -0.02
+        },
+        "model_overrides": {}
+      },
+      "normal": {
+        "name": "normal",
+        "min_equity_drawdown": -0.01,
+        "max_equity_drawdown": 0.12,
+        "min_profit_factor": 0.0,
+        "min_sharpe": -Infinity,
+        "min_expectancy": -Infinity,
+        "risk_overrides": {},
+        "threshold_overrides": {},
+        "model_overrides": {}
+      }
+    }
+  }
+}

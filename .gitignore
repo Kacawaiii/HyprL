@@ -12,3 +12,19 @@ data/
 # Divers IDE
 .vscode/
 .idea/
+# .gitignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.o
+*.out
+*.log
+*.csv
+*.json
+data/
+docs/experiments/
+native/target/
+.maturin_build/

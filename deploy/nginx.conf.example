@@ -1,0 +1,45 @@
+# Replace hyprl.example.com with your production domain and provide real TLS cert paths.
+worker_processes auto;
+
+http {
+    upstream hyprl_api {
+        server api:8000;
+    }
+
+    upstream hyprl_portal {
+        server portal:8501;
+    }
+
+    server {
+        listen 80;
+        server_name hyprl.example.com;
+
+        # Redirect HTTP to HTTPS if you terminate TLS elsewhere
+        # return 301 https://$host$request_uri;
+
+        location /api/ {
+            proxy_pass http://hyprl_api$request_uri;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /v2/ {
+            proxy_pass http://hyprl_api$request_uri;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /health {
+            proxy_pass http://hyprl_api/health;
+        }
+
+        location / {
+            proxy_pass http://hyprl_portal;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}

@@ -1,0 +1,23 @@
+# Replace hyprl.example.com with your production domain
+# Caddy automatically provisions TLS certificates via Let's Encrypt when DNS is configured.
+hyprl.example.com {
+    encode gzip zstd
+
+    @api path /api* /v2/* /health
+    reverse_proxy @api api:8000 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote}
+    }
+
+    # Streamlit portal served from root
+    reverse_proxy portal:8501 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote}
+    }
+
+    log {
+        output file /var/log/caddy/hyprl_access.log
+    }
+}

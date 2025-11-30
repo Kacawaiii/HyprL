@@ -38,7 +38,8 @@ def test_run_backtest_generates_trades(monkeypatch):
         ticker="TEST",
         period="6mo",
         initial_balance=50_000.0,
-        threshold=0.55,
+        long_threshold=0.6,
+        short_threshold=0.4,
         risk=RiskConfig(balance=50_000.0, risk_pct=0.05, atr_multiplier=1.0, reward_multiple=1.5, min_position_size=10),
     )
 
@@ -63,7 +64,8 @@ def test_run_backtest_supports_explicit_dates(monkeypatch):
         start="2024-01-01",
         end="2024-05-01",
         initial_balance=25_000.0,
-        threshold=0.5,
+        long_threshold=0.6,
+        short_threshold=0.4,
         risk=RiskConfig(balance=25_000.0, risk_pct=0.02, atr_multiplier=1.0, reward_multiple=2.0, min_position_size=5),
     )
 
@@ -86,7 +88,8 @@ def test_backtest_is_deterministic_with_seed(monkeypatch):
         ticker="TEST",
         period="3mo",
         initial_balance=15_000.0,
-        threshold=0.6,
+        long_threshold=0.65,
+        short_threshold=0.35,
         random_state=123,
         risk=RiskConfig(balance=15_000.0, risk_pct=0.03, atr_multiplier=1.0, reward_multiple=1.2, min_position_size=5),
     )

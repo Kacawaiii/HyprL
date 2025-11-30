@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: hyprl_redis
+    restart: unless-stopped
+
+  api:
+    image: "${HYPRL_REGISTRY_PREFIX:-your-registry/hyprl}-api:${HYPRL_TAG:-v2-dev}"
+    container_name: hyprl_api
+    restart: unless-stopped
+    env_file:
+      - .env.api
+    environment:
+      HYPRL_DB_URL: "${HYPRL_DB_URL:-sqlite:///./hyprl_v2.db}"
+      HYPRL_ADMIN_TOKEN: "${HYPRL_ADMIN_TOKEN:-change_me_in_env}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      HYPRL_PREDICT_IMPL: "${HYPRL_PREDICT_IMPL:-stub}"
+    depends_on:
+      - redis
+    expose:
+      - "8000"
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+
+  portal:
+    image: "${HYPRL_REGISTRY_PREFIX:-your-registry/hyprl}-portal:${HYPRL_TAG:-v2-dev}"
+    container_name: hyprl_portal
+    restart: unless-stopped
+    env_file:
+      - .env.portal
+    environment:
+      HYPRL_API_BASE: "${HYPRL_API_BASE:-http://api:8000}"
+      HYPRL_PORTAL_TITLE: "${HYPRL_PORTAL_TITLE:-HyprL Control Panel}"
+    depends_on:
+      - api
+    expose:
+      - "8501"
+
+  bot:
+    image: "${HYPRL_REGISTRY_PREFIX:-your-registry/hyprl}-bot:${HYPRL_TAG:-v2-dev}"
+    container_name: hyprl_bot
+    restart: unless-stopped
+    env_file:
+      - .env.bot
+    environment:
+      HYPRL_API_BASE: "${HYPRL_API_BASE:-http://api:8000}"
+    depends_on:
+      - api

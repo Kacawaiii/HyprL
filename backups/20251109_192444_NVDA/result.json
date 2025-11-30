@@ -1,0 +1,29 @@
+{
+  "final_balance": 11989.44002182585,
+  "n_trades": 71,
+  "win_rate": 0.4507042253521127,
+  "max_drawdown": 0.06390222073591012,
+  "sharpe_ratio": 1.5268911194408772,
+  "benchmark_final_balance": 12796.92085533871,
+  "benchmark_return": 27.969208553387116,
+  "annualized_return": 0.19939200172450788,
+  "annualized_benchmark_return": 0.2803420728094743,
+  "annualized_volatility": 0.12404508842302948,
+  "sortino_ratio": 72.19043773287714,
+  "profit_factor": 1.4415565153939187,
+  "expectancy": 28.020281997547205,
+  "avg_r_multiple": 0.2709388102558346,
+  "avg_expected_pnl": 81.63999699938014,
+  "long_trades": 66,
+  "short_trades": 5,
+  "long_win_rate": 0.4393939393939394,
+  "short_win_rate": 0.6,
+  "long_total_pnl": 1636.6815494416846,
+  "short_total_pnl": 352.75847238416736,
+  "trades_summary": {
+    "count": 71,
+    "total_pnl": 1989.4400218258515,
+    "long_trades": 66,
+    "short_trades": 5
+  }
+}

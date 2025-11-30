@@ -1,0 +1,1 @@
+strat_id,source_csv,config_index,tickers,interval,period,pf_backtest,sharpe_backtest,maxdd_backtest,expectancy_backtest,trades_backtest,portfolio_risk_of_ruin,correlation_max

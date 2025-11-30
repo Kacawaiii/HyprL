@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: hyprl_redis
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: hyprl_api
+    restart: unless-stopped
+    env_file:
+      - .env.api
+    environment:
+      HYPRL_DB_URL: "${HYPRL_DB_URL:-sqlite:///./hyprl_v2.db}"
+      HYPRL_ADMIN_TOKEN: "${HYPRL_ADMIN_TOKEN:-hyprl_admin_prod_placeholder}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      HYPRL_PREDICT_IMPL: "${HYPRL_PREDICT_IMPL:-stub}"
+    depends_on:
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+
+  portal:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.portal
+    container_name: hyprl_portal
+    restart: unless-stopped
+    env_file:
+      - .env.portal
+    environment:
+      HYPRL_API_BASE: "${HYPRL_API_BASE:-http://api:8000}"
+      HYPRL_PORTAL_TITLE: "${HYPRL_PORTAL_TITLE:-HyprL Control Panel}"
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+
+  bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.bot
+    container_name: hyprl_bot
+    restart: unless-stopped
+    env_file:
+      - .env.bot
+    environment:
+      HYPRL_API_BASE: "${HYPRL_API_BASE:-http://api:8000}"
+    depends_on:
+      - api

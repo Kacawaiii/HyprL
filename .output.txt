@@ -1,0 +1,595 @@
+....................FF...F.s............................................ [ 45%]
+..................................................FF...FF.F.....F....... [ 90%]
+................                                                         [100%]
+=================================== FAILURES ===================================
+_________________________ test_append_predict_history __________________________
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74855074ce90>
+    def test_append_predict_history(monkeypatch: pytest.MonkeyPatch) -> None:
+        settings = PortalSettings(api_base="http://hyprl.local", api_token="tok_test", title="Portal")
+        client = PortalHyprlClient(settings)
+
+        def fake_predict(
+            self: PortalHyprlClient, symbols: list[str], threshold: float | None = None, risk_pct: float | None = None
+        ) -> dict[str, Any]:
+            assert symbols == ["AAPL", "MSFT"]
+            assert threshold == 0.55
+            assert risk_pct is None
+            return {
+                "results": [
+                    {
+                        "prediction_id": "pred_1",
+                        "symbol": "aapl",
+                        "prob_up": 0.51,
+                        "direction": "up",
+                        "threshold": 0.55,
+                        "tp": 123.4,
+                        "sl": 120.0,
+                        "created_at": "2025-01-01T00:00:00+00:00",
+                        "closed": True,
+                        "outcome": "WIN",
+                        "pnl": 1.0,
+                    },
+                    {
+                        "prediction_id": "pred_2",
+                        "symbol": "msft",
+                        "prob_up": 0.44,
+                        "direction": "down",
+                        "threshold": 0.55,
+                        "tp": None,
+                        "sl": None,
+                        "closed": False,
+                        "outcome": None,
+                        "pnl": None,
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(PortalHyprlClient, "predict", fake_predict, raising=False)
+        response = client.predict(["AAPL", "MSFT"], threshold=0.55)
+        history: list[dict] = []
+        updated = append_predict_history(history, response, timestamp=1234.0)
+
+        assert len(updated) == 2
+        assert updated[0]["symbol"] == "AAPL"
+        assert updated[0]["prob_up"] == pytest.approx(0.51)
+        assert updated[0]["direction"] == "UP"
+        assert updated[0]["threshold"] == 0.55
+        assert updated[0]["prediction_id"] == "pred_1"
+        assert updated[0]["pnl"] == pytest.approx(1.0)
+        assert updated[0]["ts"] == pytest.approx(1735689600.0)
+        assert updated[1]["symbol"] == "MSFT"
+>       assert updated[1]["ts"] > updated[0]["ts"]
+E       assert 1234.001 > 1735689600.0
+api/tests_offline/test_portal_predict_monitor_stub.py:66: AssertionError
+_______________________ test_predict_bridge_stub_default _______________________
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74855074c4d0>
+    def test_predict_bridge_stub_default(monkeypatch):
+        monkeypatch.delenv("HYPRL_PREDICT_IMPL", raising=False)
+        results = service.predict_batch(
+            symbols=["AAPL", "MSFT"],
+            interval="1m",
+            features=["sma"],
+            threshold=0.6,
+            risk_pct=0.1,
+        )
+>       assert results == [
+            {
+                "symbol": "AAPL",
+                "prob_up": 0.512,
+                "direction": "UP",
+                "threshold": 0.6,
+                "tp": 123.45,
+                "sl": 120.12,
+            },
+            {
+                "symbol": "MSFT",
+                "prob_up": 0.431,
+                "direction": "DOWN",
+                "threshold": 0.6,
+                "tp": 234.56,
+                "sl": 230.01,
+            },
+        ]
+E       AssertionError: assert [{'direction'... 230.01, ...}] == [{'direction'... 'MSFT', ...}]
+E
+E         At index 0 diff: {'symbol': 'AAPL', 'prob_up': 0.512, 'direction': 'UP', 'threshold': 0.6, 'tp': 123.45, 'sl': 120.12, ...
+E
+E         ...Full output truncated (2 lines hidden), use '-vv' to show
+api/tests_offline/test_predict_bridge_switch.py:18: AssertionError
+__________________________ test_predict_stub_contract __________________________
+sqlite_session = sessionmaker(class_='Session', autocommit=False, future=True, bind=Engine(sqlite:////tmp/pytest-of-kyo/pytest-2/test_predict_stub_contract0/hyprl_test.db), autoflush=False, expire_on_commit=False)
+    def test_predict_stub_contract(sqlite_session):
+        SessionLocal = sqlite_session
+        with SessionLocal() as session:
+            token, _ = repo.create_token(
+                session,
+                account_id="acc_test",
+                scopes=["read:predict", "read:usage"],
+                label="test",
+                credits_total=10,
+            )
+            session.commit()
+
+        payload = PredictRequest(
+            symbols=["AAPL", "MSFT"],
+            interval="1m",
+            features=["sma", "rsi"],
+            threshold=0.6,
+            risk_pct=0.1,
+        )
+        response = Response()
+        auth_ctx = AuthContext(
+            account_id="acc_test",
+            token_id=token.id,
+            scopes={"read:predict", "read:usage"},
+        )
+
+        async def _run():
+            request = build_request(include_auth=False)
+            request.state.token_id = auth_ctx.token_id
+            with SessionLocal() as session:
+                result = await predict(
+                    payload=payload,
+                    request=request,
+                    response=response,
+                    auth_ctx=auth_ctx,
+                    db=session,
+                )
+                session.commit()
+                return result
+
+        result = asyncio.run(_run())
+
+        assert result.meta == {"model": "prob_bridge_v2", "version": 2}
+        payloads = [item.model_dump() for item in result.results]
+        assert payloads[0]["symbol"] == "AAPL"
+        assert payloads[0]["prediction_id"].startswith("pred_")
+        assert payloads[0]["closed"] is True
+>       assert payloads[0]["outcome"] == "WIN"
+E       AssertionError: assert 'LOSS' == 'WIN'
+E
+E         - WIN
+E         + LOSS
+api/tests_offline/test_predict_stub.py:60: AssertionError
+________________________ test_analyzer_extended_metrics ________________________
+tmp_path = PosixPath('/tmp/pytest-of-kyo/pytest-2/test_analyzer_extended_metrics0')
+    def test_analyzer_extended_metrics(tmp_path: Path) -> None:
+        session_dir = tmp_path / "an-session"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(session_dir / "equity.jsonl", [{"ts": 0, "equity": 10000.0}, {"ts": 1, "equity": 10100.0}, {"ts": 2, "equity": 9800.0}])
+        _write_jsonl(
+            session_dir / "predictions.jsonl",
+            [
+                {"ts": 0, "prob_up": 0.6, "threshold": 0.5, "reason": "signal", "direction": "UP"},
+                {"ts": 1, "event": "tuner", "delta": {"threshold": 0.02}, "after": {"threshold": 0.52, "risk_pct": 0.19}},
+                {"ts": 2, "event": "kill_switch", "dd": 0.2},
+                {"ts": 3, "event": "oco_close", "reason": "tp"},
+            ],
+        )
+        _write_jsonl(session_dir / "orders.jsonl", [{"symbol": "AAA", "price_ref": 100.0}])
+        _write_jsonl(session_dir / "fills.jsonl", [{"symbol": "AAA", "price": 100.5}])
+        _write_jsonl(session_dir / "bars.jsonl", [{"ts": 0, "symbol": "AAA", "close": 100.0}])
+        _write_jsonl(session_dir / "events.jsonl", [{"event": "resume"}])
+        manifest = {
+            "session_id": "an-session",
+            "created_at": 0.0,
+            "resumed_from": None,
+            "last_bar_ts": 2.0,
+            "equity_peak": 10100.0,
+            "killswitch": {
+                "enabled": True,
+                "dd_limit": 0.3,
+                "triggered": True,
+                "triggered_at_ts": 2.0,
+                "dd_at_trigger": 0.2,
+            },
+        }
+        (session_dir / "session_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        output_csv = tmp_path / "live_report.csv"
+>       subprocess.run(
+            ["python", "scripts/analyze_live_session.py", "--session", str(session_dir), "--output", str(output_csv)],
+            check=True,
+        )
+tests/rt/test_analyzer_extended.py:48:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+input = None, capture_output = False, timeout = None, check = True
+popenargs = (['python', 'scripts/analyze_live_session.py', '--session', '/tmp/pytest-of-kyo/pytest-2/test_analyzer_extended_metrics0/an-session', '--output', '/tmp/pytest-of-kyo/pytest-2/test_analyzer_extended_metrics0/live_report.csv'],)
+kwargs = {}
+process = <Popen: returncode: 1 args: ['python', 'scripts/analyze_live_session.py', '-...>
+stdout = None, stderr = None, retcode = 1
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+
+        If timeout is given, and the process takes too long, a TimeoutExpired
+        exception will be raised.
+
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['python', 'scripts/analyze_live_session.py', '--session', '/tmp/pytest-of-kyo/pytest-2/test_analyzer_extended_metrics0/an-session', '--output', '/tmp/pytest-of-kyo/pytest-2/test_analyzer_extended_metrics0/live_report.csv']' returned non-zero exit status 1.
+/usr/lib/python3.12/subprocess.py:571: CalledProcessError
+----------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "/home/kyo/HyprL/scripts/analyze_live_session.py", line 8, in <module>
+    import numpy as np
+ModuleNotFoundError: No module named 'numpy'
+_________________________ test_rate_cap_and_qty_clamp __________________________
+tmp_path = PosixPath('/tmp/pytest-of-kyo/pytest-2/test_rate_cap_and_qty_clamp0')
+    @pytest.mark.asyncio
+    async def test_rate_cap_and_qty_clamp(tmp_path: Path) -> None:
+        source = QueueSource()
+        broker = DummyBroker()
+        logger = LiveLogger(root=tmp_path, session_id="clamp-session", config={})
+        cfg = LiveConfig(
+            symbols=["AAA"],
+            max_orders_per_min=1,
+            per_symbol_cap=1,
+            min_qty=5,
+            risk_pct=0.01,
+            warmup_bars=10,
+        )
+
+        async def producer():
+            for i in range(40):
+                price = 100 + i * 0.1
+                event: MarketEvent = {
+                    "ts": float(i * 30),
+                    "symbol": "AAA",
+                    "price": price,
+                    "volume": 10,
+                }
+                await source.push(event)
+            await source.stop()
+
+        prod_task = asyncio.create_task(producer())
+        await run_realtime_paper(source, broker, cfg, logger)
+        await prod_task
+        logger.close()
+
+        pred_path = tmp_path / "clamp-session" / "predictions.jsonl"
+        lines = [line for line in pred_path.read_text().splitlines() if line.strip()]
+        assert lines
+        reasons = {__import__('json').loads(line).get("reason") for line in lines}
+>       assert "rate_cap" in reasons or "qty_clamp" in reasons
+E       AssertionError: assert ('rate_cap' in {'warmup'} or 'qty_clamp' in {'warmup'})
+tests/rt/test_clamps.py:85: AssertionError
+_______________________ test_kill_switch_triggers_cancel _______________________
+tmp_path = PosixPath('/tmp/pytest-of-kyo/pytest-2/test_kill_switch_triggers_canc0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74854c488530>
+    @pytest.mark.asyncio
+    async def test_kill_switch_triggers_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        source = QueueSource()
+        broker = DummyBroker()
+        logger = LiveLogger(root=tmp_path, session_id="kill-session", config={})
+        cfg = LiveConfig(
+            symbols=["AAA"],
+            warmup_bars=1,
+            interval="1m",
+            threshold=0.5,
+            risk_pct=0.25,
+            kill_switch_dd=0.1,
+            min_qty=1,
+            max_qty=None,
+        )
+
+        def fake_compute_features(bar_df):
+            close = float(bar_df["close"].iloc[-1])
+            return {
+                "atr": 1.0,
+                "sma_short": 1.0,
+                "sma_long": 1.0,
+                "rsi_raw": 50.0,
+                "bb_width": 0.1,
+                "close": close,
+                "open": close,
+                "volume": 1000.0,
+            }
+
+        def fake_size_position(**kwargs):
+            return 1000, None, None
+
+        monkeypatch.setattr(rt_engine, "compute_features", fake_compute_features)
+        monkeypatch.setattr(rt_engine, "ProbabilityModel", StubProbabilityModel)
+        monkeypatch.setattr(rt_engine, "size_position", fake_size_position)
+
+        async def produce_prices():
+            prices = [100.0, 150.0, 50.0]
+            for idx, price in enumerate(prices):
+                event = MarketEvent(ts=float(idx * 60), symbol="AAA", price=price, volume=1.0)
+                await source.push(event)
+            await source.stop()
+
+        producer_task = asyncio.create_task(produce_prices())
+        await run_realtime_paper(source, broker, cfg, logger)
+        await producer_task
+        logger.close()
+
+>       assert broker.cancel_called, "Kill-switch should trigger broker.cancel_all()"
+E       AssertionError: Kill-switch should trigger broker.cancel_all()
+E       assert False
+E        +  where False = <test_kill_switch.DummyBroker object at 0x74854c488200>.cancel_called
+tests/rt/test_kill_switch.py:110: AssertionError
+______________________ test_analyze_live_session_metrics _______________________
+tmp_path = PosixPath('/tmp/pytest-of-kyo/pytest-2/test_analyze_live_session_metr0')
+    def test_analyze_live_session_metrics(tmp_path: Path) -> None:
+        equity_path = tmp_path / "equity.jsonl"
+        records = [
+            {"ts": idx, "equity": 10000 + idx * 10}
+            for idx in range(1, 6)
+        ]
+        equity_path.write_text("\n".join(json.dumps(rec) for rec in records), encoding="utf-8")
+        import pandas as pd
+
+        df = pd.DataFrame(records)
+        metrics = compute_metrics(df)
+>       assert metrics["pf"] == metrics["pf"]  # not NaN
+E       assert nan == nan
+tests/rt/test_live_analysis.py:20: AssertionError
+____________________________ test_queue_source_loop ____________________________
+tmp_path = PosixPath('/tmp/pytest-of-kyo/pytest-2/test_queue_source_loop0')
+    @pytest.mark.asyncio
+    async def test_queue_source_loop(tmp_path: Path) -> None:
+        source = QueueSource()
+        broker = DummyBroker()
+        logger = LiveLogger(root=tmp_path, session_id="test-session", config={})
+        cfg = LiveConfig(symbols=["AAA"], warmup_bars=60, interval="1m", threshold=0.5, risk_pct=0.1)
+
+        async def producer():
+            base_ts = 0.0
+            for i in range(120):
+                event = MarketEvent(ts=base_ts + i * 30, symbol="AAA", price=100 + i * 0.1, bid=None, ask=None, volume=1.0)
+                await source.push(event)
+            await source.stop()
+
+        producer_task = asyncio.create_task(producer())
+        await run_realtime_paper(source, broker, cfg, logger)
+        await producer_task
+        logger.close()
+
+        predictions = tmp_path / "test-session" / "predictions.jsonl"
+        assert predictions.exists()
+        orders = tmp_path / "test-session" / "orders.jsonl"
+>       assert orders.exists()
+E       AssertionError: assert False
+E        +  where False = exists()
+E        +    where exists = PosixPath('/tmp/pytest-of-kyo/pytest-2/test_queue_source_loop0/test-session/orders.jsonl').exists
+tests/rt/test_queue_loop.py:73: AssertionError
+________________ test_autorank_constraints_filtering_and_panel _________________
+    def test_autorank_constraints_filtering_and_panel() -> None:
+        diag = pd.DataFrame(
+            [
+                {
+                    "tickers": "AAA",
+                    "config_index": 0,
+                    "portfolio_pf": 1.6,
+                    "portfolio_sharpe": 1.2,
+                    "portfolio_dd": 12.0,
+                    "trades_backtest": 80,
+                    "corr_max": 0.4,
+                    "portfolio_weights": json.dumps({"AAA": 0.55, "BBB": 0.45}),
+                    "final_score": 0.92,
+                    "base_score_normalized": 0.8,
+                },
+                {
+                    "tickers": "BBB",
+                    "config_index": 1,
+                    "portfolio_pf": 1.0,
+                    "portfolio_sharpe": 0.3,
+                    "portfolio_dd": 45.0,
+                    "trades_backtest": 20,
+                    "corr_max": 0.95,
+                    "portfolio_weights": json.dumps({"BBB": 0.85, "CCC": 0.15}),
+                    "final_score": 0.40,
+                    "base_score_normalized": 0.35,
+                },
+            ]
+        )
+        constraints = AutorankConstraints(
+            min_pf=1.2,
+            min_sharpe=0.5,
+            max_dd=0.2,
+            max_corr=0.8,
+            min_trades=50,
+            min_weight=0.2,
+            max_weight=0.7,
+        )
+        filtered, stats = apply_autorank_filters(diag, constraints)
+        assert len(filtered) == 1
+        assert stats["filtered_by_pf"] == 1 or stats["filtered_by_sharpe"] == 1
+>       assert stats["filtered_by_weight_max"] == 1
+E       assert 0 == 1
+tests/search/test_autorank_constraints.py:51: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/nextcord/player.py:5
+  /home/kyo/HyprL/.venv/lib/python3.12/site-packages/nextcord/player.py:5: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+.venv/lib/python3.12/site-packages/nextcord/health_check.py:5
+  /home/kyo/HyprL/.venv/lib/python3.12/site-packages/nextcord/health_check.py:5: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+    from pkg_resources import DistributionNotFound, get_distribution
+api/app.py:74
+  /home/kyo/HyprL/api/app.py:74: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+.venv/lib/python3.12/site-packages/fastapi/applications.py:4495
+.venv/lib/python3.12/site-packages/fastapi/applications.py:4495
+  /home/kyo/HyprL/.venv/lib/python3.12/site-packages/fastapi/applications.py:4495: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)
+api/app.py:81
+  /home/kyo/HyprL/api/app.py:81: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+tests/rt/test_clamps.py:50
+  /home/kyo/HyprL/tests/rt/test_clamps.py:50: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_file_tail.py:47
+  /home/kyo/HyprL/tests/rt/test_file_tail.py:47: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_kill_switch.py:62
+  /home/kyo/HyprL/tests/rt/test_kill_switch.py:62: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_oco_sim.py:74
+  /home/kyo/HyprL/tests/rt/test_oco_sim.py:74: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_queue_loop.py:51
+  /home/kyo/HyprL/tests/rt/test_queue_loop.py:51: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_resume.py:58
+  /home/kyo/HyprL/tests/rt/test_resume.py:58: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_resume_kill_manifest.py:62
+  /home/kyo/HyprL/tests/rt/test_resume_kill_manifest.py:62: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_resume_lite.py:46
+  /home/kyo/HyprL/tests/rt/test_resume_lite.py:46: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+tests/rt/test_tuner_minimal.py:60
+  /home/kyo/HyprL/tests/rt/test_tuner_minimal.py:60: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+api/tests_offline/test_predict_bridge_switch.py: 1 warning
+tests/analysis/test_phase1_orchestrator.py: 144 warnings
+tests/backtest/test_runner.py: 21 warnings
+tests/backtest/test_runner_costs.py: 15 warnings
+tests/backtest/test_supercalc_native.py: 733 warnings
+tests/backtest/test_trades_export.py: 14 warnings
+tests/model/test_probability.py: 2 warnings
+tests/pipeline/test_direction_threshold.py: 1 warning
+tests/rt/test_features_prediction.py: 1 warning
+tests/search/test_optimizer.py: 486 warnings
+tests/test_ensemble_calibrated.py: 1 warning
+  /home/kyo/HyprL/.venv/lib/python3.12/site-packages/sklearn/linear_model/_logistic.py:455: DeprecationWarning: scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.
+    opt_res = optimize.minimize(
+tests/backtest/test_metrics.py::test_backtest_reports_extended_metrics
+tests/backtest/test_runner.py::test_run_backtest_supports_explicit_dates
+  /home/kyo/HyprL/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:222: RuntimeWarning: Degrees of freedom <= 0 for slice
+    ret = _var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+tests/backtest/test_metrics.py::test_backtest_reports_extended_metrics
+tests/backtest/test_runner.py::test_run_backtest_supports_explicit_dates
+  /home/kyo/HyprL/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:214: RuntimeWarning: invalid value encountered in scalar divide
+    ret = ret.dtype.type(ret / rcount)
+tests/rt/test_clamps.py::test_rate_cap_and_qty_clamp
+tests/rt/test_file_tail.py::test_file_tail_source
+tests/rt/test_kill_switch.py::test_kill_switch_triggers_cancel
+tests/rt/test_oco_sim.py::test_simulated_oco_bracket
+tests/rt/test_queue_loop.py::test_queue_source_loop
+tests/rt/test_resume.py::test_resume_session
+tests/rt/test_resume_kill_manifest.py::test_manifest_persists_kill_switch_state
+tests/rt/test_resume_kill_manifest.py::test_manifest_persists_kill_switch_state
+tests/rt/test_tuner_minimal.py::test_tuner_updates_threshold_and_risk
+  /home/kyo/HyprL/src/hyprl/rt/engine.py:248: FutureWarning: The behavior of array concatenation with empty entries is deprecated. In a future version, this will no longer exclude empty items when determining the result dtype. To retain the old behavior, exclude the empty entries before the concat operation.
+    bar_df = pd.concat([bar_df, row])
+tests/rt/test_clamps.py::test_rate_cap_and_qty_clamp
+tests/rt/test_file_tail.py::test_file_tail_source
+tests/rt/test_kill_switch.py::test_kill_switch_triggers_cancel
+tests/rt/test_oco_sim.py::test_simulated_oco_bracket
+tests/rt/test_queue_loop.py::test_queue_source_loop
+tests/rt/test_resume.py::test_resume_session
+tests/rt/test_resume_kill_manifest.py::test_manifest_persists_kill_switch_state
+tests/rt/test_resume_kill_manifest.py::test_manifest_persists_kill_switch_state
+tests/rt/test_tuner_minimal.py::test_tuner_updates_threshold_and_risk
+  /home/kyo/HyprL/src/hyprl/rt/engine.py:248: FutureWarning: The behavior of DataFrame concatenation with empty or all-NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes. To retain the old behavior, exclude the relevant entries before the concat operation.
+    bar_df = pd.concat([bar_df, row])
+tests/rt/test_features_prediction.py::test_compute_features_and_prediction_threshold
+  /home/kyo/HyprL/tests/rt/test_features_prediction.py:10: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+    index = pd.date_range("2024-01-01", periods=80, freq="T")
+tests/test_backtest_metrics_edgecases.py::test_metrics_pf_clip_and_no_trades_handling
+  /home/kyo/HyprL/tests/test_backtest_metrics_edgecases.py:18: FutureWarning: 'H' is deprecated and will be removed in a future version, please use 'h' instead.
+    idx = pd.date_range("2024-01-01", periods=50, freq="H")
+tests/test_backtest_metrics_edgecases.py::test_metrics_domains_and_types
+  /home/kyo/HyprL/tests/test_backtest_metrics_edgecases.py:30: FutureWarning: 'H' is deprecated and will be removed in a future version, please use 'h' instead.
+    idx = pd.date_range("2024-01-01", periods=200, freq="H")
+tests/test_features_smoke.py::test_crossasset_enrichment_shapes
+  /home/kyo/HyprL/tests/test_features_smoke.py:11: FutureWarning: 'H' is deprecated and will be removed in a future version, please use 'h' instead.
+    idx = pd.date_range("2024-01-01", periods=10, freq="H")
+tests/test_features_smoke.py::test_trend_vol_helpers
+  /home/kyo/HyprL/tests/test_features_smoke.py:22: FutureWarning: 'H' is deprecated and will be removed in a future version, please use 'h' instead.
+    idx = pd.date_range("2024-01-01", periods=300, freq="H")
+tests/test_runner_metrics_contract.py::test_summarize_oos_metrics_contract
+  /home/kyo/HyprL/tests/test_runner_metrics_contract.py:34: FutureWarning: 'H' is deprecated and will be removed in a future version, please use 'h' instead.
+    idx = pd.date_range("2024-01-01", periods=5, freq="H")
+tests/test_wfo_splits.py::test_wfo_splits_time_based_non_overlap
+  /home/kyo/HyprL/tests/test_wfo_splits.py:9: FutureWarning: 'H' is deprecated and will be removed in a future version, please use 'h' instead.
+    idx = pd.date_range("2024-01-01", periods=24 * 200, freq="H")
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED api/tests_offline/test_portal_predict_monitor_stub.py::test_append_predict_history - assert 1234.001 > 1735689600.0
+FAILED api/tests_offline/test_predict_bridge_switch.py::test_predict_bridge_stub_default - AssertionError: assert [{'direction'... 230.01, ...}] == [{'direction'... '...
+FAILED api/tests_offline/test_predict_stub.py::test_predict_stub_contract - AssertionError: assert 'LOSS' == 'WIN'
+FAILED tests/rt/test_analyzer_extended.py::test_analyzer_extended_metrics - subprocess.CalledProcessError: Command '['python', 'scripts/analyze_live_se...
+FAILED tests/rt/test_clamps.py::test_rate_cap_and_qty_clamp - AssertionError: assert ('rate_cap' in {'warmup'} or 'qty_clamp' in {'warmup'})
+FAILED tests/rt/test_kill_switch.py::test_kill_switch_triggers_cancel - AssertionError: Kill-switch should trigger broker.cancel_all()
+FAILED tests/rt/test_live_analysis.py::test_analyze_live_session_metrics - assert nan == nan
+FAILED tests/rt/test_queue_loop.py::test_queue_source_loop - AssertionError: assert False
+FAILED tests/search/test_autorank_constraints.py::test_autorank_constraints_filtering_and_panel - assert 0 == 1
+9 failed, 150 passed, 1 skipped, 1463 warnings in 24.79s

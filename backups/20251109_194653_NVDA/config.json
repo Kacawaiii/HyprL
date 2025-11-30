@@ -1,0 +1,26 @@
+{
+  "ticker": "NVDA",
+  "period": "1y",
+  "start": null,
+  "end": null,
+  "interval": "1h",
+  "initial_balance": 10000.0,
+  "long_threshold": 0.55,
+  "short_threshold": 0.4,
+  "sma_short_window": 5,
+  "sma_long_window": 36,
+  "rsi_window": 14,
+  "atr_window": 14,
+  "risk": {
+    "balance": 100000.0,
+    "risk_pct": 0.01,
+    "atr_multiplier": 1.0,
+    "reward_multiple": 1.0,
+    "min_position_size": 1
+  },
+  "random_state": 42,
+  "commission_pct": 0.0005,
+  "slippage_pct": 0.0005,
+  "model_type": "logistic",
+  "calibration": "none"
+}

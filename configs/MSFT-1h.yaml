@@ -1,0 +1,52 @@
+ticker: MSFT
+short_threshold: 0.40
+long_threshold: 0.55
+model_type: logistic
+calibration: platt
+risk_profile: normal
+tradable: false
+note: "MSFT 1y@1h logistic/platt (non-adaptive seed 42): strat ≈-5.8%, bench ≈17.2%, alpha ≈-22.9 pts, PF≈0.95, Sharpe≈-0.94, max DD≈9.1%, 21 trades; research-only baseline."
+risk:
+  risk_pct: 0.015
+  atr_multiplier: 1.4
+  reward_multiple: 1.6
+  min_position_size: 5
+risk_profiles:
+  safe:
+    risk_pct: 0.008
+    atr_multiplier: 1.2
+    reward_multiple: 1.4
+    min_position_size: 3
+  normal:
+    risk_pct: 0.015
+    atr_multiplier: 1.4
+    reward_multiple: 1.6
+    min_position_size: 5
+default_risk_profile: normal
+adaptive:
+  enabled: false
+  lookback_trades: 20
+  default_regime: normal
+  regimes:
+    safe:
+      min_equity_drawdown: 0.10
+      max_equity_drawdown: 1.0
+      risk_overrides:
+        risk_pct: 0.008
+        reward_multiple: 1.4
+      threshold_overrides:
+        long_shift: 0.03
+        short_shift: -0.02
+    normal:
+      min_equity_drawdown: -0.01
+      max_equity_drawdown: 0.10
+      risk_overrides: {}
+      threshold_overrides: {}
+    aggressive:
+      min_equity_drawdown: -0.05
+      max_equity_drawdown: -0.01
+      risk_overrides:
+        risk_pct: 0.02
+      threshold_overrides:
+        long_shift: -0.02
+        short_shift: 0.02

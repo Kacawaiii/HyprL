@@ -1,0 +1,22 @@
+fastapi==0.115.0
+starlette==0.37.2
+uvicorn==0.30.1
+setuptools>=68.0.0
+pydantic==2.8.2
+argon2-cffi==23.1.0
+pytest==8.3.2
+httpx==0.26.0
+nextcord==2.6.0
+anyio==4.4.0
+SQLAlchemy==2.0.36
+redis==5.2.1
+streamlit==1.40.1
+
+# --- HyprL core deps pour la pipeline ---
+
+numpy
+pandas
+yfinance
+vaderSentiment
+ta
+scikit-learn==1.5.2
