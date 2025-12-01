@@ -17,13 +17,15 @@ from hyprl.configs import (
     load_long_threshold,
     load_short_threshold,
     load_ticker_settings,
+    load_cli_config,
 )
 from hyprl.snapshots import save_snapshot, make_backup_zip
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a single-ticker HyprL backtest.")
-    parser.add_argument("--ticker", required=True, help="Ticker symbol, e.g. AAPL.")
+    parser.add_argument("--config", type=str, help="Path to YAML config file (e.g. configs/NVDA-1h.yaml).")
+    parser.add_argument("--ticker", help="Ticker symbol, e.g. AAPL.")
     parser.add_argument("--period", help="yfinance period string, e.g. 1y.")
     parser.add_argument("--start", help="Explicit start date (YYYY-MM-DD).")
     parser.add_argument("--end", help="Explicit end date (YYYY-MM-DD).")
@@ -122,10 +124,79 @@ def parse_args() -> argparse.Namespace:
         default=40,
         help="Minimum BIG_UP/BIG_DOWN samples required when label-mode=amplitude.",
     )
+    parser.add_argument(
+        "--trailing-stop-activation",
+        type=float,
+        help="Activation threshold for trailing stop (in R).",
+    )
+    parser.add_argument(
+        "--trailing-stop-distance",
+        type=float,
+        help="Trailing distance (in R).",
+    )
+    parser.add_argument(
+        "--signal-log",
+        type=Path,
+        help="Optional CSV path to log per-bar signal diagnostics.",
+    )
+    parser.add_argument(
+        "--model-artifact",
+        type=Path,
+        help="Optional ProbabilityModel artifact used for inference (shared between BT/live).",
+    )
+    defaults = {action.dest: action.default for action in parser._actions}
     args = parser.parse_args()
-    if not args.period and not (args.start and args.end):
-        parser.error("Provide --period or both --start and --end.")
+    args._defaults = defaults
     return args
+
+
+def _assign_if_default(args: argparse.Namespace, defaults: dict, attr: str, value) -> None:
+    if value is None:
+        return
+    if not hasattr(args, attr):
+        return
+    if getattr(args, attr) == defaults.get(attr):
+        setattr(args, attr, value)
+
+
+def _apply_backtest_cli_config(args: argparse.Namespace) -> None:
+    config_path = getattr(args, "config", None)
+    if not config_path:
+        return
+    cfg = load_cli_config(config_path)
+    defaults = getattr(args, "_defaults", {})
+
+    _assign_if_default(args, defaults, "ticker", cfg.get("ticker"))
+    _assign_if_default(args, defaults, "period", cfg.get("period"))
+    _assign_if_default(args, defaults, "start", cfg.get("start"))
+    _assign_if_default(args, defaults, "end", cfg.get("end"))
+    _assign_if_default(args, defaults, "interval", cfg.get("interval"))
+    _assign_if_default(args, defaults, "initial_balance", cfg.get("initial_balance"))
+
+    model_cfg = cfg.get("model", {}) or {}
+    _assign_if_default(args, defaults, "model_type", model_cfg.get("type"))
+    _assign_if_default(args, defaults, "model_artifact", model_cfg.get("artifact"))
+    _assign_if_default(args, defaults, "calibration", model_cfg.get("calibration"))
+    _assign_if_default(args, defaults, "seed", model_cfg.get("seed"))
+
+    thresholds_cfg = cfg.get("thresholds", {}) or {}
+    _assign_if_default(args, defaults, "long_threshold", thresholds_cfg.get("long"))
+    _assign_if_default(args, defaults, "short_threshold", thresholds_cfg.get("short"))
+
+    risk_cfg = cfg.get("risk", {}) or {}
+    _assign_if_default(args, defaults, "risk_pct", risk_cfg.get("risk_pct"))
+    _assign_if_default(args, defaults, "atr_multiplier", risk_cfg.get("atr_multiplier"))
+    _assign_if_default(args, defaults, "reward_multiple", risk_cfg.get("reward_multiple"))
+    _assign_if_default(args, defaults, "min_position_size", risk_cfg.get("min_position_size"))
+
+    trailing_cfg = cfg.get("trailing", {}) or {}
+    if trailing_cfg.get("enabled"):
+        _assign_if_default(args, defaults, "trailing_stop_activation", trailing_cfg.get("stop_activation"))
+        _assign_if_default(args, defaults, "trailing_stop_distance", trailing_cfg.get("stop_distance"))
+
+    _assign_if_default(args, defaults, "signal_log", cfg.get("signal_log"))
+    replay_cfg = cfg.get("replay", {}) or {}
+    _assign_if_default(args, defaults, "signal_log", replay_cfg.get("signal_log"))
 
 
 def _resolve_thresholds(args: argparse.Namespace, settings: dict) -> tuple[float, float]:
@@ -148,6 +219,11 @@ def _resolve_thresholds(args: argparse.Namespace, settings: dict) -> tuple[float
 
 def main() -> None:
     args = parse_args()
+    _apply_backtest_cli_config(args)
+    if not args.ticker:
+        raise SystemExit("Provide --ticker or specify 'ticker' in the config file.")
+    if not args.period and not (args.start and args.end):
+        raise SystemExit("Provide --period or both --start and --end (via CLI or config).")
     settings = load_ticker_settings(args.ticker, args.interval)
     if settings.get("tradable") is False:
         note = settings.get("note", "no edge on reference window.")
@@ -169,6 +245,10 @@ def main() -> None:
         risk_params["reward_multiple"] = args.reward_multiple
     if args.min_position_size is not None:
         risk_params["min_position_size"] = args.min_position_size
+    if args.trailing_stop_activation is not None:
+        risk_params["trailing_stop_activation"] = args.trailing_stop_activation
+    if args.trailing_stop_distance is not None:
+        risk_params["trailing_stop_distance"] = args.trailing_stop_distance
     risk_cfg = RiskConfig(balance=args.initial_balance, **risk_params)
     adaptive_overrides: dict[str, object] = {}
     if args.adaptive:
@@ -227,6 +307,8 @@ def main() -> None:
         trend_long_min=trend_long_min,
         trend_short_min=trend_short_min,
         label=label_cfg,
+        signal_log_path=str(args.signal_log) if args.signal_log else None,
+        model_artifact_path=str(args.model_artifact) if args.model_artifact else None,
     )
     result = run_backtest(config)
     strategy_return_pct = (
@@ -276,6 +358,12 @@ def main() -> None:
     if result.regime_transitions:
         transitions = ", ".join(f"{t['regime']}@{t['trade']}" for t in result.regime_transitions)
         print(f"Regime transitions: {transitions}")
+    if result.exit_reason_counts:
+        total_exits = sum(result.exit_reason_counts.values())
+        print("Exit reasons:")
+        for reason, count in sorted(result.exit_reason_counts.items(), key=lambda item: (-item[1], item[0])):
+            pct = (count / total_exits * 100.0) if total_exits else 0.0
+            print(f"  - {reason}: {count} ({pct:.1f}%)")
     snapshot_zip = None
     if args.export_trades:
         trade_path = args.export_trades

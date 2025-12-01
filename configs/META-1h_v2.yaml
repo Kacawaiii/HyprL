@@ -1,0 +1,41 @@
+ticker: META
+group: big_tech
+interval: 1h
+period: 1y
+
+model:
+  type: xgboost
+  artifact: artifacts/xgb_prob_meta_1h_v2.pkl
+  calibration: none
+  seed: 42
+
+features:
+  preset: meta_v2
+
+thresholds:
+  long: 0.60
+  short: 0.40
+
+risk:
+  risk_pct: 0.01
+  atr_multiplier: 2.0
+  reward_multiple: 2.0
+  min_position_size: 0
+
+trailing:
+  enabled: true
+  stop_activation: 0.75
+  stop_distance: 0.03
+
+replay:
+  parity_mode: true
+  signal_log: data/signals/meta_replay_v2.csv
+
+meta:
+  note: "META v2: feature preset equity_v2/meta_v2, XGB depth6/800/eta0.03, subsample/colsample 0.8, seed 42."
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.03
+  max_group_risk_pct: 0.04
+  max_positions: 5

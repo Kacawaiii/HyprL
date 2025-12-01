@@ -14,10 +14,12 @@ def test_plan_trade_long_direction():
         min_position_size=1,
     )
     result = plan_trade(entry_price=100.0, atr=2.0, direction="long", config=config)
-    assert result.position_size == 33
+    # Old int logic: 33 units. New float logic: 33.333333 units.
+    assert result.position_size == pytest.approx(33.333333, rel=1e-4)
     assert pytest.approx(result.stop_price, rel=1e-3) == 97.0
     assert pytest.approx(result.take_profit_price, rel=1e-3) == 107.5
-    assert pytest.approx(result.risk_amount, rel=1e-3) == 99.0
+    # Risk amount is now closer to target (100.0)
+    assert pytest.approx(result.risk_amount, rel=1e-3) == 100.0
     assert result.rr_multiple == pytest.approx(config.reward_multiple)
 
 

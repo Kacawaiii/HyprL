@@ -1,0 +1,33 @@
+ticker: AMD
+group: semiconductors
+interval: 1h
+period: 1y
+
+model:
+  type: logistic
+  calibration: none
+  seed: 42
+
+thresholds:
+  long: 0.55
+  short: 0.45
+
+risk:
+  risk_pct: 0.01
+  atr_multiplier: 1.5
+  reward_multiple: 1.8
+  min_position_size: 0
+
+trailing:
+  enabled: true
+  stop_activation: 0.75
+  stop_distance: 0.03
+
+meta:
+  note: "Research baseline (1h, logistic, no artifact). Trains on-the-fly; keep under portfolio risk caps."
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.03
+  max_group_risk_pct: 0.04
+  max_positions: 5

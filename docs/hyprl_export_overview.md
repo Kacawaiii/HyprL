@@ -47,7 +47,7 @@ maturin develop --release
 | Mode adaptatif | ajouter `--adaptive --adaptive-lookback 30` + presets YAML (`adaptive:`). | Bascule safe/normal/aggressive selon drawdown. |
 | Sweep de seuils | `python scripts/run_threshold_sweep.py --ticker AAPL --period 1y --initial-balance 10000 --seed 42` | Long grid, short depuis config. |
 | Sweep multi-tickers | `python scripts/run_universe_sweep.py --tickers AAPL,MSFT,NVDA --period 1y --initial-balance 10000 --seed 42 --output data/universe_1y.csv` | Produit CSV comparatif. |
-| Supersearch (recherche) | `python scripts/run_supersearch.py --ticker AAPL --tickers AAPL,MSFT,GOOGL --period 1y --interval 1h --initial-balance 10000 --seed 42 --long-thresholds "0.5,0.55,0.6" --short-thresholds "0.35,0.4" --risk-pcts "0.01,0.015,0.02" --sentiment-min-values "-0.4,-0.2" --sentiment-max-values "0.2,0.5" --sentiment-regimes "off,neutral_only" --min-trades 50 --min-pf 1.2 --min-sharpe 0.8 --max-dd 0.35 --max-ror 0.1 --min-portfolio-pf 1.2 --min-portfolio-sharpe 0.8 --max-portfolio-dd 0.35 --max-portfolio-ror 0.1 --max-correlation 0.8 --engine auto --output data/supersearch_AAPL_1y.csv` | Balaye (seuils × risque + régimes sentiment) avec filtres PF/Sharpe/DD/RoR, puis agrège un portefeuille multi-tickers; engine `auto` ⇒ natif si dispo, sinon fallback Python. |
+| Supersearch (recherche) | `python scripts/run_supersearch.py --ticker AAPL --tickers AAPL,MSFT,GOOGL --period 1y --interval 1h --initial-balance 10000 --seed 42 --constraint-preset research_minimal --long-thresholds "0.5,0.55,0.6" --short-thresholds "0.35,0.4" --risk-pcts "0.01,0.015,0.02" --sentiment-min-values "-0.4,-0.2" --sentiment-max-values "0.2,0.5" --sentiment-regimes "off,neutral_only" --engine auto --output data/supersearch_AAPL_1y.csv` | Balaye (seuils × risque + régimes sentiment) avec filtres PF/Sharpe/DD/RoR/Robustness issus des presets `configs/supersearch_presets.yaml`; engine `auto` ⇒ natif si dispo, sinon fallback Python. |
 | Paper trading (replay) | `python scripts/run_paper_trading.py --tickers "AAPL,MSFT" --period 1y --interval 1h --initial-balance 10000 --config-csv data/supersearch_portfolio_AAPL_MSFT_1y.csv --config-index 0 --engine auto` | Rejoue une stratégie (CSV Supersearch) dans un broker mémoire, écrit `data/live/sessions/<session>/`. |
 | Dashboard live | `streamlit run scripts/hyprl_dashboard.py` | Visualise equity/trades d'une session paper trading. |
 | Panel Phase 1 | `python scripts/build_phase1_panel.py --csv-paths "data/supersearch_portfolio_AAPL_MSFT_GOOGL_1y.csv,data/supersearch_portfolio_BTC_ETH_1y.csv" --max-strategies 5` | Filtre les stratégies (PF/Sharpe/DD/RoR/corr) et produit `docs/experiments/PHASE1_PANEL.csv`. |
@@ -117,6 +117,27 @@ maturin develop --release
 4. `streamlit run scripts/hyprl_gui.py` lance sans erreur.  
 5. Mettre à jour `docs/hyprl_export_overview.md` si nouveaux modules/CLIs.  
 6. Copier archive + CSV critiques (trades, universe, supersearch) + configs sur la clé.
+
+## 11. Seuils de rentabilité & rapport "Perf par 10 k€"
+- **Presets de contraintes** (`configs/supersearch_presets.yaml`) :
+  - `research_minimal` : PF ≥ 1.2, Sharpe ≥ 1.0, MaxDD ≤ 30 %, RoR ≤ 10 %, min_robustness ≥ 0.50, filtres portefeuille assouplis (PF ≥ 1.2, DD ≤ 20 %).
+  - `api_candidate` : PF ≥ 1.4, Sharpe ≥ 1.3, MaxDD ≤ 25 %, RoR ≤ 5 %, min_robustness ≥ 0.65, portefeuille Sharpe ≥ 1.5 et DD ≤ 15 %.
+  - Usage rapide :
+    ```bash
+    python scripts/run_supersearch.py --ticker AAPL --period 1y --interval 1h \
+      --constraint-preset research_minimal --output docs/experiments/SUPERCALC_AAPL_1y_research.csv
+    python scripts/run_supersearch.py --tickers AAPL,MSFT,NVDA,SPY,QQQ --period 3y --interval 1h \
+      --constraint-preset api_candidate --output docs/experiments/SUPERCALC_PORTFOLIO_3y_api.csv
+    ```
+- **Table "Performance par 10 k€"** : générer un backtest 1y pour chaque ticker via `scripts/run_backtest.py --export-trades data/trades_<ticker>_1y_10k.csv`, puis `python scripts/analyze_trades.py --trades <csv>` et consolider :
+  
+  | Ticker | Strat label    | Sharpe | PF  | MaxDD % | RoR % | Robustness | P&L 10k (1y) |
+  |--------|----------------|--------|-----|---------|-------|-----------:|-------------:|
+  | AAPL   | aapl_long_0.55 | 1.40   | 1.50| 19.0    | 4.0   | 0.62       | +27.3 %      |
+  | NVDA   | nvda_long_0.60 | 1.30   | 1.40| 22.0    | 6.0   | 0.58       | +19.9 %      |
+  | SPY    | spy_mixed_0.52 | 1.20   | 1.30| 15.0    | 5.0   | 0.60       | +12.5 %      |
+
+  Ce tableau répond à "on est rentable à combien ?" pour un capital de référence 10 k€ et sert de base aux updates produit/API.
 
 ---
 Contact : Kyo (HyprL). Toute modification majeure doit être notée dans `PROJECT_BRAIN.md`.

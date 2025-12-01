@@ -13,3 +13,10 @@ __all__ = [
     "enrich_sentiment_features",
     "SentimentFeatureConfig",
 ]
+from .nvda_v2 import compute_nvda_v2_features
+from .equity_v2 import compute_equity_v2_features
+
+__all__ = [
+    "compute_nvda_v2_features",
+    "compute_equity_v2_features",
+]

@@ -17,6 +17,7 @@ def _trade(ts: pd.Timestamp, pnl: float, equity_after: float) -> TradeRecord:
         threshold=0.55,
         entry_price=100.0,
         exit_price=100.0 + pnl,
+        exit_reason="take_profit" if pnl >= 0 else "stop_loss",
         position_size=1,
         pnl=pnl,
         return_pct=pnl / 1000.0,

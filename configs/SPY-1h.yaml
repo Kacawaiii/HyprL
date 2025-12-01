@@ -1,1 +1,33 @@
-threshold: 0.40
+ticker: SPY
+group: etf
+interval: 1h
+period: 1y
+
+model:
+  type: logistic
+  calibration: none
+  seed: 42
+
+thresholds:
+  long: 0.55
+  short: 0.45
+
+risk:
+  risk_pct: 0.008
+  atr_multiplier: 1.4
+  reward_multiple: 1.6
+  min_position_size: 0
+
+trailing:
+  enabled: true
+  stop_activation: 0.75
+  stop_distance: 0.03
+
+meta:
+  note: "ETF baseline (1h, logistic) using on-the-fly training; conservative risk_pct for index exposure."
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.02
+  max_group_risk_pct: 0.03
+  max_positions: 5

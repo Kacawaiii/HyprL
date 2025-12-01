@@ -1,18 +1,4 @@
-# Environnement
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-*.egg-info/
-
-# Données / caches
-data/
-*.log
-
-# Divers IDE
-.vscode/
-.idea/
-# .gitignore
+# Environment / build
 .venv/
 __pycache__/
 *.pyc
@@ -21,10 +7,19 @@ __pycache__/
 *.so
 *.o
 *.out
-*.log
-*.csv
-*.json
+.pytest_cache/
+*.egg-info/
+.maturin_build/
+
+# Data / artifacts
 data/
 docs/experiments/
 native/target/
-.maturin_build/
+native/**/target/
+*.log
+*.csv
+*.json
+
+# IDE
+.vscode/
+.idea/

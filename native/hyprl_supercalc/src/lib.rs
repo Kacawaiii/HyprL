@@ -15,3 +15,4 @@ pub mod metrics;
 
 // Re-export some key types for convenience
 pub use crate::core::{BacktestConfig, BacktestReport, Candle};
+pub use crate::indicators::{compute_indicators, IndicatorSet};

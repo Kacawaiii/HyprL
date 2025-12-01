@@ -13,9 +13,7 @@ from sqlalchemy.orm import Session
 from api.db import get_db, session_scope
 from api import repo
 from api.utils.crypto import verify_token
-
-HYPRL_ADMIN_TOKEN_ENV = "HYPRL_ADMIN_TOKEN"
-FALLBACK_ADMIN_SECRET = "hyprl_admin_dev_123"
+from api.settings import settings
 
 
 @dataclass
@@ -23,6 +21,10 @@ class AuthContext:
     account_id: str
     token_id: str
     scopes: Set[str]
+    tier: str = "standard"
+    presets: list[str] | None = None
+    credits_total: int = 0
+    credits_used: int = 0
 
 
 def _http_error(status_code: int, code: str) -> HTTPException:
@@ -48,6 +50,18 @@ async def _authenticate_request(request: Request, db: Session) -> AuthContext:
     token_plain = _extract_bearer(header_value)
     if not token_plain:
         raise _http_error(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+
+    # DEV BYPASS: Allow DEMO-KEY for free access as requested
+    if settings.allow_free_token and token_plain == settings.demo_key:
+        return AuthContext(
+            account_id="demo-account",
+            token_id="demo-token",
+            scopes={"*"},
+            tier="free",
+            presets=["research_minimal", "api_candidate"],
+            credits_total=10_000,
+            credits_used=0,
+        )
 
     token_id, secret = repo.split_token(token_plain)
     token = repo.find_token_by_id(db, token_id)

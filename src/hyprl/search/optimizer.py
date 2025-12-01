@@ -12,11 +12,12 @@ import numpy as np
 import pandas as pd
 
 from hyprl.adaptive.engine import AdaptiveConfig
-from hyprl.backtest.runner import BacktestConfig, run_backtest, prepare_supercalc_dataset
-from hyprl.configs import get_risk_settings, load_ticker_settings
+from hyprl.backtest.runner import BacktestConfig, StrategyStats, SupercalcDataset, prepare_supercalc_dataset
+from hyprl.configs import get_risk_settings, get_supersearch_preset, load_ticker_settings
 from hyprl.labels.amplitude import LabelConfig
 from hyprl.risk.manager import RiskConfig
-from hyprl.supercalc import evaluate_candidates
+from hyprl.native.supercalc import native_available as native_engine_available, run_native_search_batch
+from hyprl.supercalc import evaluate_candidates, _build_signal_series
 from hyprl.risk.metrics import (
     compute_basic_stats,
     compute_risk_of_ruin,
@@ -44,6 +45,7 @@ class SearchConfig:
     initial_balance: float = 10_000.0
     seed: int = 42
     use_presets: bool = True
+    constraint_preset: Optional[str] = None
     long_thresholds: list[float] = field(default_factory=list)
     short_thresholds: list[float] = field(default_factory=list)
     risk_pcts: list[float] = field(default_factory=list)
@@ -65,6 +67,7 @@ class SearchConfig:
     max_portfolio_drawdown_pct: float = 1.0
     max_portfolio_risk_of_ruin: float = 1.0
     max_correlation: float = 1.0
+    min_robustness_score: float = 0.0
     weighting_scheme: Literal["equal", "inv_vol"] = "equal"
     meta_robustness_model_path: Optional[str] = None
     meta_weight: float = 0.4
@@ -108,6 +111,7 @@ class SearchResult:
     risk_of_ruin: float = 1.0
     maxdd_p95: float = 0.0
     pnl_p05: float = 0.0
+    pnl_p95: float = 0.0
     portfolio_return_pct: float = 0.0
     portfolio_profit_factor: float = 0.0
     portfolio_sharpe: float = 0.0
@@ -119,6 +123,7 @@ class SearchResult:
     correlation_max: float = 0.0
     per_ticker_details: dict[str, dict[str, float]] = field(default_factory=dict)
     portfolio_equity_vol: float = 0.0
+    robustness_score: float = 0.0
     base_score: float = 0.0
     meta_prediction: Optional[float] = None
     final_score: float = 0.0
@@ -334,6 +339,10 @@ def _passes_hard_constraints(
         return reject("portfolio_risk_of_ruin")
     if cfg.max_correlation < 1.0 and result.correlation_max > cfg.max_correlation:
         return reject("correlation")
+    if cfg.min_robustness_score > 0.0:
+        score = result.robustness_score
+        if not math.isfinite(score) or score < cfg.min_robustness_score:
+            return reject("robustness_score")
     return True
 
 
@@ -460,8 +469,53 @@ def _apply_meta_scores(
         res.final_score = (1.0 - weight) * res.base_score + weight * float(pred)
 
 
+_CONSTRAINT_FIELD_MAP: dict[str, tuple[str, type]] = {
+    "min_trades": ("min_trades", int),
+    "min_pf": ("min_profit_factor", float),
+    "min_profit_factor": ("min_profit_factor", float),
+    "min_sharpe": ("min_sharpe", float),
+    "max_dd": ("max_drawdown_pct", float),
+    "max_drawdown_pct": ("max_drawdown_pct", float),
+    "max_ror": ("max_risk_of_ruin", float),
+    "max_risk_of_ruin": ("max_risk_of_ruin", float),
+    "min_expectancy": ("min_expectancy", float),
+    "min_portfolio_pf": ("min_portfolio_profit_factor", float),
+    "min_portfolio_profit_factor": ("min_portfolio_profit_factor", float),
+    "min_portfolio_sharpe": ("min_portfolio_sharpe", float),
+    "max_portfolio_dd": ("max_portfolio_drawdown_pct", float),
+    "max_portfolio_drawdown_pct": ("max_portfolio_drawdown_pct", float),
+    "max_portfolio_ror": ("max_portfolio_risk_of_ruin", float),
+    "max_portfolio_risk_of_ruin": ("max_portfolio_risk_of_ruin", float),
+    "max_correlation": ("max_correlation", float),
+    "min_robustness_score": ("min_robustness_score", float),
+}
+
+
+def _apply_constraint_preset(cfg: SearchConfig) -> SearchConfig:
+    if not cfg.constraint_preset:
+        return cfg
+    try:
+        preset = get_supersearch_preset(cfg.constraint_preset)
+    except KeyError as exc:  # pragma: no cover - invalid preset name should surface to CLI/tests
+        raise ValueError(f"Preset '{cfg.constraint_preset}' introuvable") from exc
+    overrides: dict[str, Any] = {}
+    for key, (attr, caster) in _CONSTRAINT_FIELD_MAP.items():
+        if key not in preset or preset[key] is None:
+            continue
+        try:
+            overrides[attr] = caster(preset[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Valeur invalide pour '{key}' dans le preset '{cfg.constraint_preset}': {preset[key]!r}"
+            ) from exc
+    if not overrides:
+        return cfg
+    return replace(cfg, **overrides)
+
+
 def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
     search_cfg.validate()
+    search_cfg = _apply_constraint_preset(search_cfg)
     tracker = SearchDebugTracker(enabled=search_cfg.debug)
     weighting_scheme = (search_cfg.weighting_scheme or "equal").lower()
     if weighting_scheme not in {"equal", "inv_vol"}:
@@ -669,9 +723,26 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
             tracker.record_dataset_failure()
             tracker.log(f"Dataset global build failed: {exc}")
 
+    precomputed_stats: dict[tuple[int, str], StrategyStats] = {}
+    precomputed_metrics: dict[tuple[int, str], dict[str, Any]] = {}
+    if datasets_by_ticker and engine_mode in {"auto", "native"}:
+        try:
+            precomputed_stats, precomputed_metrics = _precompute_native_stats(
+                active_tickers,
+                datasets_by_ticker,
+                candidate_entries,
+                per_ticker_capital,
+            )
+        except Exception as exc:  # pragma: no cover - logged, fallback handled below
+            if engine_mode == "native":
+                raise
+            tracker.log(f"Native search precompute failed, falling back to Python engine: {exc}")
+            precomputed_stats = {}
+            precomputed_metrics = {}
+
     results: list[SearchResult] = []
 
-    for candidate, bt_config in candidate_entries:
+    for candidate_idx, (candidate, bt_config) in enumerate(candidate_entries):
         per_ticker_equities: dict[str, pd.Series] = {}
         per_ticker_returns: dict[str, pd.Series] = {}
         per_ticker_details: dict[str, dict[str, float]] = {}
@@ -692,18 +763,20 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
                     tracker.log(f"Dataset build failed for {ticker}: {exc}")
                     break
             benchmark_values.append(dataset.benchmark_return_pct)
-            try:
-                stats = evaluate_candidates(
-                    dataset,
-                    [cfg_for_ticker],
-                    engine=engine_mode,
-                    require_trade_returns=True,
-                )[0]
-            except Exception as exc:
-                valid = False
-                tracker.record_eval_failure()
-                tracker.log(f"Evaluation failed for {ticker}: {exc}")
-                break
+            stats = precomputed_stats.get((candidate_idx, ticker))
+            if stats is None:
+                try:
+                    stats = evaluate_candidates(
+                        dataset,
+                        [cfg_for_ticker],
+                        engine=engine_mode,
+                        require_trade_returns=True,
+                    )[0]
+                except Exception as exc:
+                    valid = False
+                    tracker.record_eval_failure()
+                    tracker.log(f"Evaluation failed for {ticker}: {exc}")
+                    break
             series = _series_from_history(stats.equity_history)
             if series.empty:
                 idx = dataset.prices.index
@@ -721,17 +794,31 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
             stats_collection[ticker] = stats
             per_ticker_equities[ticker] = series
             per_ticker_returns[ticker] = series.pct_change().dropna()
+            metrics_entry = precomputed_metrics.get((candidate_idx, ticker), {})
+            native_ror = stats.risk_of_ruin
+            if native_ror is None:
+                native_ror = _as_opt_float(metrics_entry.get("risk_of_ruin"))
+            if native_ror is None and stats.trade_returns:
+                native_ror = compute_risk_of_ruin(
+                    stats.trade_returns,
+                    initial_capital=per_ticker_capital,
+                    risk_per_trade=max(per_ticker_capital * candidate.risk_pct, 1e-6),
+                )
+            if native_ror is None:
+                native_ror = 1.0
             per_ticker_details[ticker] = {
                 "final_balance": stats.final_balance,
                 "profit_factor": float(stats.profit_factor or 0.0),
                 "sharpe": float(stats.sharpe_ratio or 0.0) if stats.sharpe_ratio is not None else 0.0,
                 "max_drawdown_pct": float(stats.max_drawdown_pct),
                 "n_trades": int(stats.n_trades),
-                "risk_of_ruin": compute_risk_of_ruin(
-                    stats.trade_returns,
-                    initial_capital=per_ticker_capital,
-                    risk_per_trade=max(per_ticker_capital * candidate.risk_pct, 1e-6),
-                ),
+                "risk_of_ruin": float(native_ror),
+                "sortino": float(stats.sortino_ratio) if stats.sortino_ratio is not None else 0.0,
+                "maxdd_p95": float(stats.maxdd_p95) if stats.maxdd_p95 is not None else 0.0,
+                "pnl_p05": float(stats.pnl_p05) if stats.pnl_p05 is not None else 0.0,
+                "pnl_p50": float(stats.pnl_p50) if stats.pnl_p50 is not None else 0.0,
+                "pnl_p95": float(stats.pnl_p95) if stats.pnl_p95 is not None else 0.0,
+                "robustness_score": float(stats.robustness_score) if stats.robustness_score is not None else 0.0,
             }
 
         if not valid or not per_ticker_equities:
@@ -775,6 +862,14 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
         )
         benchmark_return_pct = float(np.mean(benchmark_values)) if benchmark_values else 0.0
         alpha_pct = portfolio_stats["return_pct"] - benchmark_return_pct
+        robustness_values: list[float] = []
+        for detail in per_ticker_details.values():
+            value = detail.get("robustness_score")
+            if value is None:
+                continue
+            if math.isfinite(value) and value > 0.0:
+                robustness_values.append(value)
+        aggregate_robustness = float(np.mean(robustness_values)) if robustness_values else 0.0
 
         result_row = SearchResult(
             config=candidate,
@@ -792,6 +887,7 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
             risk_of_ruin=float(portfolio_stats["risk_of_ruin"]),
             maxdd_p95=float(portfolio_stats["maxdd_p95"]),
             pnl_p05=float(portfolio_stats["pnl_p05"]),
+            pnl_p95=float(portfolio_stats.get("pnl_p95", 0.0)),
             portfolio_return_pct=portfolio_stats["return_pct"],
             portfolio_profit_factor=float(portfolio_stats["profit_factor"]),
             portfolio_sharpe=float(portfolio_stats["sharpe"]),
@@ -804,6 +900,7 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
             per_ticker_details=per_ticker_details,
             portfolio_weights=portfolio_weights,
             portfolio_equity_vol=portfolio_equity_vol,
+            robustness_score=aggregate_robustness,
         )
         if not _passes_hard_constraints(search_cfg, result_row, tracker=tracker):
             continue
@@ -826,6 +923,150 @@ def run_search(search_cfg: SearchConfig) -> list[SearchResult]:
     tracker.set_survivors(len(results))
     tracker.log_summary()
     return results
+
+
+_RELAXED_NATIVE_CONSTRAINTS: dict[str, float] = {
+    "min_trades": 0,
+    "min_profit_factor": -1e6,
+    "min_sharpe": -1e6,
+    "max_drawdown": 1e6,
+    "max_risk_of_ruin": 1.0,
+    "min_expectancy": -1e6,
+    "min_robustness": -1e6,
+    "max_maxdd_p95": 1e6,
+    "min_pnl_p05": -1e6,
+    "min_pnl_p50": -1e6,
+    "min_pnl_p95": -1e6,
+}
+
+
+def _group_candidates_by_signal(
+    candidate_entries: list[tuple[CandidateConfig, BacktestConfig]]
+) -> dict[tuple, list[int]]:
+    groups: dict[tuple, list[int]] = {}
+    for idx, (candidate, _) in enumerate(candidate_entries):
+        key = (
+            float(candidate.long_threshold),
+            float(candidate.short_threshold),
+            bool(candidate.trend_filter),
+            float(candidate.sentiment_min),
+            float(candidate.sentiment_max),
+            str(candidate.sentiment_regime),
+        )
+        groups.setdefault(key, []).append(idx)
+    return groups
+
+
+def _as_opt_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(result):
+        return None
+    return result
+
+
+def _report_to_strategy_stats(
+    report: Mapping[str, Any],
+    *,
+    initial_balance: float,
+    trades_in_fear: int,
+    trades_in_greed: int,
+) -> StrategyStats:
+    equity_points = report.get("equity_curve", []) or []
+    equity_history: list[tuple[pd.Timestamp, float]] = []
+    for point in equity_points:
+        ts_raw = point.get("ts", 0)
+        ts = pd.to_datetime(int(ts_raw), unit="ms", utc=False)
+        equity_value = float(point.get("equity", 1.0)) * initial_balance
+        equity_history.append((ts, equity_value))
+    if not equity_history:
+        now = pd.Timestamp.utcnow()
+        equity_history = [(now, float(initial_balance))]
+    final_balance = float(equity_history[-1][1])
+    metrics = report.get("metrics", {})
+    profit_factor = _as_opt_float(metrics.get("profit_factor"))
+    sharpe = _as_opt_float(metrics.get("sharpe"))
+    sortino = _as_opt_float(metrics.get("sortino"))
+    risk_of_ruin = _as_opt_float(metrics.get("risk_of_ruin"))
+    max_dd_ratio = float(metrics.get("max_drawdown", 0.0))
+    expectancy = float(metrics.get("expectancy", 0.0))
+    win_rate = float(metrics.get("win_rate", 0.0))
+    n_trades = int(report.get("n_trades", 0))
+    return StrategyStats(
+        final_balance=final_balance,
+        profit_factor=profit_factor,
+        sharpe_ratio=sharpe,
+        max_drawdown_pct=abs(max_dd_ratio) * 100.0,
+        expectancy=expectancy,
+        n_trades=n_trades,
+        win_rate=win_rate,
+        trades_in_fear=trades_in_fear,
+        trades_in_greed=trades_in_greed,
+        trade_returns=[],
+        equity_history=equity_history,
+        sortino_ratio=sortino,
+        risk_of_ruin=risk_of_ruin,
+        maxdd_p05=_as_opt_float(metrics.get("maxdd_p05")),
+        maxdd_p95=_as_opt_float(metrics.get("maxdd_p95")),
+        pnl_p05=_as_opt_float(metrics.get("pnl_p05")),
+        pnl_p50=_as_opt_float(metrics.get("pnl_p50")),
+        pnl_p95=_as_opt_float(metrics.get("pnl_p95")),
+        robustness_score=_as_opt_float(metrics.get("robustness_score")),
+    )
+
+
+def _precompute_native_stats(
+    tickers: list[str],
+    datasets_by_ticker: Mapping[str, SupercalcDataset],
+    candidate_entries: list[tuple[CandidateConfig, BacktestConfig]],
+    per_ticker_capital: float,
+) -> tuple[dict[tuple[int, str], StrategyStats], dict[tuple[int, str], dict[str, Any]]]:
+    if not candidate_entries or not native_engine_available():
+        return {}, {}
+    stats_map: dict[tuple[int, str], StrategyStats] = {}
+    metrics_map: dict[tuple[int, str], dict[str, Any]] = {}
+    groups = _group_candidates_by_signal(candidate_entries)
+    for ticker in tickers:
+        dataset = datasets_by_ticker.get(ticker)
+        if dataset is None:
+            continue
+        for idx_list in groups.values():
+            template_cfg = replace(candidate_entries[idx_list[0]][1], ticker=ticker)
+            signal, trades_in_fear, trades_in_greed = _build_signal_series(dataset, template_cfg)
+            if not signal:
+                signal = [0.0] * len(dataset.prices)
+            cfg_batch = [replace(candidate_entries[idx][1], ticker=ticker) for idx in idx_list]
+            labels = [str(idx) for idx in idx_list]
+            reports = run_native_search_batch(
+                dataset.prices,
+                signal,
+                cfg_batch,
+                constraints=_RELAXED_NATIVE_CONSTRAINTS,
+                top_k=len(cfg_batch),
+                labels=labels,
+            )
+            for report in reports:
+                label = report.get("config", {}).get("label")
+                if label is None:
+                    continue
+                try:
+                    candidate_idx = int(label)
+                except (TypeError, ValueError):
+                    continue
+                stats_map[(candidate_idx, ticker)] = _report_to_strategy_stats(
+                    report,
+                    initial_balance=per_ticker_capital,
+                    trades_in_fear=trades_in_fear,
+                    trades_in_greed=trades_in_greed,
+                )
+                metrics = report.get("metrics", {})
+                if isinstance(metrics, dict):
+                    metrics_map[(candidate_idx, ticker)] = metrics
+    return stats_map, metrics_map
 
 
 def save_results_csv(
@@ -857,6 +1098,7 @@ def save_results_csv(
         "risk_of_ruin",
         "maxdd_p95",
         "pnl_p05",
+        "pnl_p95",
         "portfolio_return_pct",
         "portfolio_profit_factor",
         "portfolio_sharpe",
@@ -869,6 +1111,7 @@ def save_results_csv(
         "tickers",
         "portfolio_weights",
         "portfolio_equity_vol",
+        "robustness_score",
         "base_score",
         "meta_prediction",
         "final_score",
@@ -900,6 +1143,7 @@ def save_results_csv(
             "risk_of_ruin": res.risk_of_ruin,
             "maxdd_p95": res.maxdd_p95,
             "pnl_p05": res.pnl_p05,
+            "pnl_p95": res.pnl_p95,
             "portfolio_return_pct": res.portfolio_return_pct,
             "portfolio_profit_factor": res.portfolio_profit_factor,
             "portfolio_sharpe": res.portfolio_sharpe,
@@ -912,6 +1156,7 @@ def save_results_csv(
             "tickers": ",".join(tickers),
             "portfolio_weights": json.dumps(res.portfolio_weights, sort_keys=True),
             "portfolio_equity_vol": res.portfolio_equity_vol,
+            "robustness_score": res.robustness_score,
             "base_score": res.base_score,
             "meta_prediction": res.meta_prediction if res.meta_prediction is not None else "",
             "final_score": res.final_score,

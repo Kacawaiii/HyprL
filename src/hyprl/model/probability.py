@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import joblib
 from sklearn.base import ClassifierMixin
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -70,7 +72,20 @@ class ProbabilityModel:
         model_type: ModelType = "logistic",
         calibration: CalibrationMethod = "none",
         random_state: int | None = 42,
+        *,
+        xgb_max_depth: int = 4,
+        xgb_estimators: int = 400,
+        xgb_eta: float = 0.05,
+        xgb_subsample: float = 0.8,
+        xgb_colsample: float = 0.8,
     ) -> "ProbabilityModel":
+        if random_state is None:
+            seed = 42
+        else:
+            try:
+                seed = int(random_state)
+            except (TypeError, ValueError):
+                seed = 42
         if model_type == "logistic":
             scaler: Optional[StandardScaler] = StandardScaler()
             classifier: ClassifierMixin = LogisticRegression(
@@ -78,7 +93,7 @@ class ProbabilityModel:
                 C=0.8,
                 max_iter=300,
                 solver="lbfgs",
-                random_state=random_state,
+                random_state=seed,
             )
         elif model_type == "random_forest":
             scaler = None
@@ -86,7 +101,7 @@ class ProbabilityModel:
                 n_estimators=300,
                 max_depth=6,
                 min_samples_leaf=10,
-                random_state=random_state,
+                random_state=seed,
                 n_jobs=-1,
             )
         elif model_type == "xgboost":
@@ -96,19 +111,20 @@ class ProbabilityModel:
                 )
             scaler = StandardScaler()
             classifier = XGBClassifier(
-                max_depth=4,
-                n_estimators=400,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
+                max_depth=xgb_max_depth,
+                n_estimators=xgb_estimators,
+                learning_rate=xgb_eta,
+                subsample=xgb_subsample,
+                colsample_bytree=xgb_colsample,
                 objective="binary:logistic",
                 eval_metric="logloss",
-                random_state=random_state,
+                random_state=seed,
+                seed=seed,
                 n_jobs=-1,
             )
         else:
             raise ValueError(f"Unsupported model_type: {model_type}")
-        calibrator = ProbabilityCalibrator(method=calibration, random_state=random_state)
+        calibrator = ProbabilityCalibrator(method=calibration, random_state=seed)
         return cls(scaler=scaler, classifier=classifier, calibrator=calibrator, model_type=model_type)
 
     def fit(self, feature_df: pd.DataFrame, target: pd.Series) -> Tuple[np.ndarray, np.ndarray]:
@@ -141,3 +157,15 @@ class ProbabilityModel:
         probability_down = 1.0 - probability_up
         signal = int(probability_up >= threshold)
         return probability_up, probability_down, signal
+
+    def dump(self, path: str | Path) -> None:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, target)
+
+    @classmethod
+    def load_artifact(cls, path: str | Path) -> "ProbabilityModel":
+        obj = joblib.load(Path(path))
+        if not isinstance(obj, ProbabilityModel):  # pragma: no cover - defensive
+            raise TypeError(f"Artifact at {path} is not a ProbabilityModel")
+        return obj

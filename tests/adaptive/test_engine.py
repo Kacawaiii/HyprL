@@ -20,6 +20,7 @@ def _make_trade(pnl: float, equity_after: float, return_pct: float) -> TradeReco
         threshold=0.6,
         entry_price=100.0,
         exit_price=100.0 + pnl,
+        exit_reason="take_profit" if pnl >= 0 else "stop_loss",
         position_size=1,
         pnl=pnl,
         return_pct=return_pct,

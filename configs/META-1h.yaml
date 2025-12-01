@@ -1,0 +1,46 @@
+ticker: META
+group: big_tech
+interval: 1h
+period: 1y
+
+model:
+  type: xgboost
+  artifact: artifacts/xgb_prob_meta_1h_v1.pkl
+  calibration: none
+  seed: 42
+
+thresholds:
+  long: 0.60
+  short: 0.40
+
+risk:
+  risk_pct: 0.01
+  atr_multiplier: 2.0
+  reward_multiple: 2.0
+  min_position_size: 0
+
+trailing:
+  enabled: true
+  stop_activation: 0.75
+  stop_distance: 0.03
+
+replay:
+  parity_mode: true
+  signal_log: data/signals/meta_replay_signal_log_xgb_trailing.csv
+
+meta:
+  note: "Logistic/XGB trailing-OFF retained for calibration and diagnostics only; production uses XGB artifact with trailing ON (0.75 / 0.03)."
+
+multi_timeframes_enabled: true
+multi_timeframes_frames: "15m,1h,4h"
+fusion_method: weighted
+fusion_weights:
+  15m: 0.2
+  1h: 0.6
+  4h: 0.2
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.03
+  max_group_risk_pct: 0.04
+  max_positions: 5

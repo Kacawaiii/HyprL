@@ -40,12 +40,16 @@ def append_predict_history(history: list[dict], response: dict, *, timestamp: fl
     ts_base = timestamp or time.time()
     results: Iterable[dict] = response.get("results", []) or []
     new_entries: list[dict] = []
+    prev_ts = _parse_timestamp(history[-1].get("ts")) if history else None
     for idx, result in enumerate(results):
         entry_ts = ts_base + idx * 1e-3
         created_at = result.get("created_at")
         parsed_ts = _parse_timestamp(created_at)
         if parsed_ts is not None:
             entry_ts = parsed_ts + idx * 1e-6
+        if prev_ts is not None and entry_ts <= prev_ts:
+            entry_ts = prev_ts + 1e-6
+        prev_ts = entry_ts
         new_entries.append(
             {
                 "prediction_id": result.get("prediction_id"),

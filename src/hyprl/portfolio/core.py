@@ -198,6 +198,7 @@ def compute_portfolio_stats(
         "risk_of_ruin": risk_of_ruin,
         "maxdd_p95": float(bootstrap_summary.maxdd_p95 * 100.0),
         "pnl_p05": float(bootstrap_summary.pnl_p05),
+        "pnl_p95": float(bootstrap_summary.pnl_p95),
     }
 
 

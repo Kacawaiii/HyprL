@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.",
+)
 def pytest_pyfunc_call(pyfuncitem):  # type: ignore[override]
     marker = pyfuncitem.get_closest_marker("asyncio")
     if marker is None:

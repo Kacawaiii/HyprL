@@ -28,6 +28,8 @@ def load_trades(path: Path) -> pd.DataFrame:
     missing = required.difference(df.columns)
     if missing:
         raise ValueError(f"Missing columns in trades CSV: {sorted(missing)}")
+    if "exit_reason" not in df.columns:
+        df["exit_reason"] = "unknown"
     return df
 
 
@@ -132,15 +134,48 @@ def compute_calibration(
     return calibration
 
 
+def compute_exit_reason_stats(df: pd.DataFrame) -> dict[str, object]:
+    if "exit_reason" not in df or df.empty:
+        return {}
+    reasons = df["exit_reason"].fillna("unknown")
+    counts = reasons.value_counts(dropna=False)
+    total = int(counts.sum())
+    if total == 0:
+        return {}
+    distribution = [
+        {
+            "exit_reason": str(reason),
+            "count": int(count),
+            "pct": float(count) / total,
+        }
+        for reason, count in counts.items()
+    ]
+    def _pct(name: str) -> float:
+        value = counts.get(name, 0)
+        if value is None:
+            return 0.0
+        return float(value) / total
+    return {
+        "total": total,
+        "distribution": distribution,
+        "trailing_pct": _pct("trailing_stop"),
+        "stop_pct": _pct("stop_loss"),
+        "take_pct": _pct("take_profit"),
+        "end_of_data_pct": _pct("end_of_data"),
+    }
+
+
 def analyze_trades(df: pd.DataFrame, bins: Iterable[float] | None = None) -> dict[str, object]:
     stats = compute_basic_stats(df)
     returns = describe_returns(df)
     calibration_bins = list(bins) if bins is not None else PROBABILITY_BINS
     calibration = compute_calibration(df, calibration_bins)
+    exit_reason_stats = compute_exit_reason_stats(df)
     return {
         "basic_stats": stats,
         "return_distribution": returns,
         "calibration": calibration,
+        "exit_reasons": exit_reason_stats,
     }
 
 
@@ -179,6 +214,26 @@ def _print_calibration(calibration: list[dict[str, float | int | str]]) -> None:
         )
 
 
+def _print_exit_reason_stats(stats: dict[str, object]) -> None:
+    print("\n=== Exit reasons ===")
+    if not stats:
+        print("exit_reason column absent; re-export trades with latest runner to inspect exits.")
+        return
+    distribution = stats.get("distribution", [])
+    for entry in distribution:
+        pct = float(entry.get("pct", 0.0)) * 100.0
+        reason = entry.get("exit_reason", "unknown")
+        count = entry.get("count", 0)
+        print(f"{reason}: {count} ({pct:.1f}%)")
+    print(
+        "Trailing stop usage: "
+        f"{float(stats.get('trailing_pct', 0.0)) * 100.0:.1f}% | "
+        f"Stop-loss: {float(stats.get('stop_pct', 0.0)) * 100.0:.1f}% | "
+        f"Take-profit: {float(stats.get('take_pct', 0.0)) * 100.0:.1f}%"
+    )
+    print(f"End-of-data exits: {float(stats.get('end_of_data_pct', 0.0)) * 100.0:.1f}%")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze HyprL backtest trade logs.")
     parser.add_argument("--trades", required=True, type=Path, help="Path to CSV exported by run_backtest.")
@@ -201,6 +256,7 @@ def main() -> None:
     _print_basic_stats(results["basic_stats"])  # type: ignore[arg-type]
     _print_return_distribution(results["return_distribution"])  # type: ignore[arg-type]
     _print_calibration(results["calibration"])  # type: ignore[arg-type]
+    _print_exit_reason_stats(results["exit_reasons"])  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

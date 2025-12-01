@@ -63,4 +63,23 @@ def compute_feature_frame(
     features["rolling_return"] = close.pct_change(periods=rsi_window)
 
     features = features.replace([np.inf, -np.inf], np.nan)
-    return features.dropna()
+    required_cols = [
+        "sma_short",
+        "sma_long",
+        "sma_ratio",
+        "trend_ratio",
+        "ema_short",
+        "ema_long",
+        "ema_ratio",
+        "rsi_raw",
+        "rsi_normalized",
+        "volatility",
+        atr_column,
+        "atr_normalized",
+        "range_pct",
+        "rolling_return",
+    ]
+    existing = [col for col in required_cols if col in features.columns]
+    if existing:
+        features = features.dropna(subset=existing)
+    return features

@@ -15,6 +15,8 @@ except ImportError:  # pragma: no cover - optional dependency
 CONFIG_ROOT = (Path(__file__).resolve().parents[2] / "configs").resolve()
 SAFE_TOKEN_PATTERN = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._~-]+$")
 DEFAULT_THRESHOLD = 0.4
+SUPERSEARCH_PRESETS_FILE = "supersearch_presets.yaml"
+_SUPERSEARCH_PRESETS_CACHE: dict[str, dict[str, Any]] | None = None
 
 
 def _normalize_tokens(ticker: str, interval: str) -> tuple[str, str]:
@@ -111,6 +113,20 @@ def load_ticker_settings(ticker: str, interval: str) -> dict[str, Any]:
     if not config_path.exists():
         return {}
     return _read_yaml(config_path)
+
+
+def load_cli_config(path: str | Path) -> dict[str, Any]:
+    """Load a YAML config file for CLI runners."""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = (CONFIG_ROOT / candidate).resolve()
+        if candidate.exists():
+            _ensure_under(CONFIG_ROOT, candidate)
+            return _read_yaml(candidate)
+    candidate = Path(path).expanduser().resolve()
+    if candidate.exists():
+        return _read_yaml(candidate)
+    raise FileNotFoundError(f"Config file not found: {path}")
 
 
 def _resolve_threshold(
@@ -263,3 +279,38 @@ def get_adaptive_config(settings: dict[str, Any], overrides: Optional[dict[str, 
         default_regime=default_regime,
         regimes=regimes,
     )
+
+
+def _supersearch_presets_path() -> Path:
+    path = (CONFIG_ROOT / SUPERSEARCH_PRESETS_FILE).resolve()
+    _ensure_under(CONFIG_ROOT, path)
+    return path
+
+
+def load_supersearch_presets(force_refresh: bool = False) -> dict[str, dict[str, Any]]:
+    global _SUPERSEARCH_PRESETS_CACHE
+    if _SUPERSEARCH_PRESETS_CACHE is not None and not force_refresh:
+        return _SUPERSEARCH_PRESETS_CACHE
+    path = _supersearch_presets_path()
+    if not path.exists():
+        _SUPERSEARCH_PRESETS_CACHE = {}
+        return _SUPERSEARCH_PRESETS_CACHE
+    data = _read_yaml(path)
+    raw_presets = data.get("presets", data) if isinstance(data, dict) else {}
+    presets: dict[str, dict[str, Any]] = {}
+    for name, payload in raw_presets.items():
+        if not isinstance(name, str) or not isinstance(payload, dict):
+            continue
+        presets[name.strip()] = {str(k): v for k, v in payload.items()}
+    _SUPERSEARCH_PRESETS_CACHE = presets
+    return presets
+
+
+def get_supersearch_preset(name: str, *, force_refresh: bool = False) -> dict[str, Any]:
+    target = (name or "").strip()
+    if not target:
+        raise ValueError("Preset name must be a non-empty string")
+    presets = load_supersearch_presets(force_refresh=force_refresh)
+    if target not in presets:
+        raise KeyError(f"Preset '{target}' introuvable dans {SUPERSEARCH_PRESETS_FILE}")
+    return dict(presets[target])

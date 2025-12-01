@@ -1,0 +1,27 @@
+presets:
+  research_minimal:
+    description: "Filtres minimaux pour HyprL Research (niveau labo)"
+    min_trades: 50
+    min_pf: 1.2
+    min_sharpe: 1.0
+    max_dd: 0.30
+    max_ror: 0.10
+    min_expectancy: 0.0
+    min_portfolio_pf: 1.2
+    min_portfolio_sharpe: 1.0
+    max_portfolio_dd: 0.20
+    max_portfolio_ror: 0.10
+    min_robustness_score: 0.50
+  api_candidate:
+    description: "Strats candidates pour exposition API/B2C avancée"
+    min_trades: 80
+    min_pf: 1.4
+    min_sharpe: 1.3
+    max_dd: 0.25
+    max_ror: 0.05
+    min_expectancy: 0.20
+    min_portfolio_pf: 1.4
+    min_portfolio_sharpe: 1.5
+    max_portfolio_dd: 0.15
+    max_portfolio_ror: 0.05
+    min_robustness_score: 0.65

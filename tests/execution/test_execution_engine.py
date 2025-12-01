@@ -19,6 +19,7 @@ def _make_trade(direction: str, entry_price: float, exit_price: float, qty: int)
         threshold=0.55,
         entry_price=entry_price,
         exit_price=exit_price,
+        exit_reason="take_profit" if exit_price >= entry_price else "stop_loss",
         position_size=qty,
         pnl=(exit_price - entry_price) * qty if direction == "long" else (entry_price - exit_price) * qty,
         return_pct=0.0,

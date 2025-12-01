@@ -19,6 +19,7 @@ def _dummy_result() -> BacktestResult:
         threshold=0.55,
         entry_price=100.0,
         exit_price=102.0,
+        exit_reason="take_profit",
         position_size=10,
         pnl=20.0,
         return_pct=0.002,

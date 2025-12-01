@@ -1,0 +1,22 @@
+# Ascendant v1 (legacy) — remplacé par ascendant_v2 (W1 ~ flat PF≈1.02 avec drag SPY)
+portfolio:
+  profile: ascendant_v1
+  weights:
+    NVDA: 0.2313
+    META: 0.0968
+    MSFT: 0.2361
+    AMD: 0.3470
+    QQQ: 0.0004
+    SPY: 0.0883
+
+  risk:
+    max_total_risk_pct: 0.05
+    max_ticker_risk_pct: 0.03
+    max_group_risk_pct: 0.04
+    max_positions: 5
+
+  guards:
+    enabled: true
+    max_drawdown_pct: 0.20
+    max_consecutive_losses: 15
+    min_pf: 1.2

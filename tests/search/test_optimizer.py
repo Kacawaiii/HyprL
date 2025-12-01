@@ -180,6 +180,65 @@ def test_hard_constraints_sharpe_disabled_when_min_zero() -> None:
     assert search_optimizer._passes_hard_constraints(cfg, sharpe_nan)
 
 
+def test_hard_constraints_robustness_threshold() -> None:
+    cfg = SearchConfig(
+        ticker="TEST",
+        period="6mo",
+        min_trades=1,
+        min_sharpe=0.0,
+        min_profit_factor=0.0,
+        max_drawdown_pct=10.0,
+        min_robustness_score=0.6,
+    )
+    candidate = search_optimizer.CandidateConfig(
+        long_threshold=0.55,
+        short_threshold=0.45,
+        risk_pct=0.01,
+        min_ev_multiple=0.0,
+        trend_filter=False,
+        sentiment_min=-0.5,
+        sentiment_max=0.5,
+        sentiment_regime="off",
+    )
+    poor = search_optimizer.SearchResult(
+        config=candidate,
+        strategy_return_pct=5.0,
+        benchmark_return_pct=3.0,
+        alpha_pct=2.0,
+        profit_factor=1.5,
+        sharpe=1.1,
+        max_drawdown_pct=5.0,
+        expectancy=0.1,
+        n_trades=50,
+        win_rate_pct=55.0,
+        expectancy_per_trade=0.01,
+        risk_of_ruin=0.05,
+        maxdd_p95=6.0,
+        pnl_p05=-0.01,
+        robustness_score=0.4,
+    )
+    assert not search_optimizer._passes_hard_constraints(cfg, poor)
+
+    solid = search_optimizer.SearchResult(
+        config=candidate,
+        strategy_return_pct=7.0,
+        benchmark_return_pct=4.0,
+        alpha_pct=3.0,
+        profit_factor=1.6,
+        sharpe=1.2,
+        max_drawdown_pct=5.0,
+        expectancy=0.2,
+        n_trades=50,
+        win_rate_pct=55.0,
+        expectancy_per_trade=0.02,
+        risk_of_ruin=0.04,
+        maxdd_p95=5.0,
+        pnl_p05=-0.01,
+        robustness_score=0.75,
+    )
+    assert search_optimizer._passes_hard_constraints(cfg, solid)
+
+
 def test_hard_constraints_portfolio_sharpe_disabled_when_min_zero() -> None:
     cfg = SearchConfig(
         ticker="TEST",

@@ -50,7 +50,6 @@ def _predict_stub(
                 "threshold": threshold,
                 "tp": lookup["tp"],
                 "sl": lookup["sl"],
-                "risk_pct": risk_pct,
             }
         )
     return results
@@ -101,7 +100,6 @@ def _predict_real(
                 "threshold": threshold,
                 "tp": tp,
                 "sl": sl,
-                "risk_pct": risk_pct,
             }
         )
     return results

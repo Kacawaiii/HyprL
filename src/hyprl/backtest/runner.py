@@ -10,19 +10,22 @@ import pandas as pd
 
 from hyprl.adaptive.engine import AdaptiveConfig, AdaptiveState, evaluate_window, update_state
 from hyprl.data.market import MarketDataFetcher
-from hyprl.indicators.technical import compute_feature_frame
-from hyprl.labels.amplitude import (
-    LabelConfig,
-    TRAINABLE_LABELS,
-    attach_amplitude_labels,
-    encode_amplitude_target,
-    validate_label_support,
-)
+from hyprl.labels.amplitude import LabelConfig
 from hyprl.model.probability import ProbabilityModel
+from hyprl.logging.signals import SignalTraceWriter
+from hyprl.parity.signal_trace import attach_parity_trace
 from hyprl.metrics.calibration import trade_calibration_metrics
 from hyprl.risk.gates import cvar_from_pnl
 from hyprl.risk.manager import RiskConfig, RiskOutcome, plan_trade
-from hyprl.features.sentiment import enrich_sentiment_features
+from hyprl.risk.kelly import KellyParams, compute_kelly_risk_pct
+from hyprl.strategy import (
+    decide_signals_on_bar,
+    effective_thresholds,
+    expected_trade_pnl,
+    initial_regime_name,
+    prepare_design_and_target,
+    prepare_feature_frame,
+)
 
 try:
     from hyprl_accel import simulate_trade_path as _simulate_trade_path_accel
@@ -85,6 +88,25 @@ class BacktestConfig:
     sentiment_max: float = 1.0
     sentiment_regime: str = "off"
     label: LabelConfig = field(default_factory=LabelConfig)
+    signal_log_path: Optional[str] = None
+    model_artifact_path: Optional[str] = None
+    multi_timeframes: list[str] = field(default_factory=list)
+    fusion_method: str = "mean"
+    fusion_weights: dict[str, float] = field(default_factory=dict)
+    group: str | None = None
+    feature_preset: str | None = None
+    dynamic_sizing_mode: str | None = None
+    dynamic_sizing_base_pct: float | None = None
+    dynamic_sizing_lookback: int = 50
+    dynamic_sizing_min_trades: int = 10
+    dynamic_sizing_max_multiplier: float = 2.0
+    dynamic_sizing_min_multiplier: float = 0.25
+    execution_algo: str | None = None
+    execution_slices: int = 4
+    execution_horizon_sec: int = 300
+    max_notional_per_trade: float | None = None
+    max_position_notional_pct: float | None = None
+    guards_config: dict | None = None
 
 
 @dataclass(slots=True)
@@ -96,6 +118,7 @@ class TradeRecord:
     threshold: float
     entry_price: float
     exit_price: float
+    exit_reason: str
     position_size: int
     pnl: float
     return_pct: float
@@ -141,8 +164,17 @@ class BacktestResult:
     adaptive_profile_changes: int
     regime_usage: dict[str, int]
     regime_transitions: list[dict[str, int | str]]
+    exit_reason_counts: dict[str, int] = field(default_factory=dict)
     sentiment_stats: dict[str, int] = field(default_factory=dict)
     trade_returns: list[float] = field(default_factory=list)
+    risk_of_ruin: Optional[float] = None
+    maxdd_p95: Optional[float] = None
+    maxdd_p05: Optional[float] = None
+    pnl_p05: Optional[float] = None
+    pnl_p50: Optional[float] = None
+    pnl_p95: Optional[float] = None
+    robustness_score: Optional[float] = None
+    native_metrics: dict[str, float] | None = None
 
 
 @dataclass(slots=True)
@@ -178,6 +210,14 @@ class StrategyStats:
     trades_in_greed: int
     trade_returns: list[float] = field(default_factory=list)
     equity_history: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
+    sortino_ratio: Optional[float] = None
+    risk_of_ruin: Optional[float] = None
+    maxdd_p05: Optional[float] = None
+    maxdd_p95: Optional[float] = None
+    pnl_p05: Optional[float] = None
+    pnl_p50: Optional[float] = None
+    pnl_p95: Optional[float] = None
+    robustness_score: Optional[float] = None
 
 
 @dataclass(slots=True)
@@ -199,182 +239,95 @@ class ThresholdSummary:
     regime_usage: dict[str, int] = field(default_factory=dict)
 
 
-def _prepare_design_and_target(
-    feature_slice: pd.DataFrame,
-    label_cfg: LabelConfig,
-) -> tuple[pd.DataFrame, pd.Series]:
-    feature_cols = [
-        "sma_ratio",
-        "ema_ratio",
-        "rsi_normalized",
-        "volatility",
-        "atr_normalized",
-        "range_pct",
-        "rolling_return",
-        "sentiment_score",
-    ]
-    design = feature_slice[feature_cols]
-    finite_mask = np.isfinite(design).all(axis=1)
-    design = design.loc[finite_mask]
-    if label_cfg.mode == "amplitude":
-        if "label_amplitude" not in feature_slice.columns:
-            raise RuntimeError("Amplitude labels missing from feature slice.")
-        target = feature_slice.loc[design.index, "label_amplitude"].copy()
-        if label_cfg.neutral_strategy == "ignore":
-            mask = target.isin(TRAINABLE_LABELS)
-            design = design.loc[mask]
-            target = target.loc[mask]
-        target = encode_amplitude_target(target)
-    else:
-        returns_forward = feature_slice.loc[design.index, "returns_next"]
-        target = (returns_forward > 0).astype(int)
-    valid_mask = target.notna()
-    design = design.loc[valid_mask]
-    target = target.loc[valid_mask].astype(int)
-    return design, target
-
-
-def _clamp_probability(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
-
-
-def _effective_thresholds(
-    base_long: float,
-    base_short: float,
-    regime,
-) -> tuple[float, float]:
-    if regime is None:
-        long_value = base_long
-        short_value = base_short
-    else:
-        overrides = regime.threshold_overrides or {}
-        if "long" in overrides:
-            long_value = float(overrides["long"])
-        else:
-            long_value = base_long + float(overrides.get("long_shift", 0.0))
-        if "short" in overrides:
-            short_value = float(overrides["short"])
-        else:
-            short_value = base_short + float(overrides.get("short_shift", 0.0))
-    long_value = _clamp_probability(long_value)
-    short_value = _clamp_probability(short_value)
-    if short_value > long_value:
-        short_value = long_value
-    return long_value, short_value
-
-
-def _effective_model(config: BacktestConfig, regime) -> tuple[str, str]:
-    model_type = config.model_type
-    calibration = config.calibration
-    if regime is not None and regime.model_overrides:
-        overrides = regime.model_overrides
-        model_type = overrides.get("model_type", model_type)
-        calibration = overrides.get("calibration", calibration)
-    return model_type, calibration
-
-
-def _initial_regime_name(adaptive_cfg: AdaptiveConfig, fallback: str | None) -> str:
-    regime = adaptive_cfg.get_regime(adaptive_cfg.default_regime if adaptive_cfg.default_regime else None)
-    if regime is not None:
-        return regime.name
-    return fallback or "normal"
-
-
-def _trend_permits_trade(
-    feature_row: pd.Series,
-    direction: str,
-    config: BacktestConfig,
-) -> bool:
-    if not config.enable_trend_filter:
-        return True
-    rolling_return = float(feature_row.get("rolling_return", 0.0))
-    if direction == "long":
-        return rolling_return >= config.trend_long_min
-    threshold = config.trend_short_min
-    if threshold <= 0.0:
-        return rolling_return <= 0.0
-    return rolling_return <= -threshold
-
-
-def _sentiment_permits_trade(feature_row: pd.Series, config: BacktestConfig) -> bool:
-    score = float(feature_row.get("sentiment_score", 0.0))
-    if score < config.sentiment_min or score > config.sentiment_max:
-        return False
-    regime = (config.sentiment_regime or "off").lower()
-    fear_active = bool(int(feature_row.get("extreme_fear_flag", 0)))
-    greed_active = bool(int(feature_row.get("extreme_greed_flag", 0)))
-    if regime == "off":
-        return True
-    if regime == "fear_only":
-        return fear_active
-    if regime == "greed_only":
-        return greed_active
-    if regime == "neutral_only":
-        return not fear_active and not greed_active
-    return True
-
-
-def _build_risk_config(
-    base: RiskConfig,
-    profiles: dict[str, dict[str, float]],
-    profile_name: str,
-    balance: float,
-    overrides: Optional[dict[str, float]] = None,
-) -> RiskConfig:
-    params = {
-        "risk_pct": base.risk_pct,
-        "atr_multiplier": base.atr_multiplier,
-        "reward_multiple": base.reward_multiple,
-        "min_position_size": base.min_position_size,
-    }
-    if profile_name in profiles:
-        for key, value in profiles[profile_name].items():
-            params[key] = value
-    if overrides:
-        for key, value in overrides.items():
-            params[key] = value
-    return RiskConfig(
-        balance=balance,
-        risk_pct=float(params["risk_pct"]),
-        atr_multiplier=float(params["atr_multiplier"]),
-        reward_multiple=float(params["reward_multiple"]),
-        min_position_size=int(params["min_position_size"]),
-    )
-
-
 def _compute_trade_pnl(risk: RiskOutcome, entry_price: float, exit_price: float) -> float:
     delta = exit_price - entry_price if risk.direction == "long" else entry_price - exit_price
     return delta * risk.position_size
 
 
-def _expected_trade_pnl(risk: RiskOutcome, probability_up: float) -> float:
-    prob = float(probability_up)
-    if not math.isfinite(prob):
-        return 0.0
-    prob = min(max(prob, 0.0), 1.0)
-    p_win = prob if risk.direction == "long" else 1.0 - prob
-    p_win = min(max(p_win, 0.0), 1.0)
-    loss_amount = -risk.risk_amount
-    win_amount = risk.risk_amount * risk.rr_multiple
-    return p_win * win_amount + (1.0 - p_win) * loss_amount
-
-
-def _simulate_trade_python(prices: pd.DataFrame, start_pos: int, risk: RiskOutcome) -> tuple[float, int]:
+def _simulate_trade_python(
+    prices: pd.DataFrame,
+    start_pos: int,
+    risk: RiskOutcome,
+) -> tuple[float, int, str]:
     price_values = prices[["high", "low", "close"]]
+    
+    # Trailing stop state
+    current_stop_price = risk.stop_price
+    highest_price = risk.entry_price
+    lowest_price = risk.entry_price
+    trailing_stop_engaged = False
+    
+    # Calculate initial risk per unit for R-based trailing
+    initial_risk_per_unit = abs(risk.entry_price - risk.stop_price)
+    if initial_risk_per_unit <= 0:
+        initial_risk_per_unit = 1e-9  # Prevent division by zero
+
+    trailing_active = (
+        risk.trailing_stop_activation_price is not None
+        and risk.trailing_stop_distance_price is not None
+    )
+    # else:
+    #     # print(f"DEBUG: Trailing Inactive. Act: {risk.trailing_stop_activation_price}, Dist: {risk.trailing_stop_distance_price}")
+    #     pass
+
+    activation_price = risk.trailing_stop_activation_price
+    distance_delta = risk.trailing_stop_distance_price
+
     for idx in range(start_pos + 1, len(price_values)):
         high = float(price_values.iloc[idx]["high"])
         low = float(price_values.iloc[idx]["low"])
+
+        # 1. Check Trailing Stop Updates (before checking exits for this bar)
+        if trailing_active and activation_price is not None and distance_delta is not None:
+            if risk.direction == "long":
+                highest_price = max(highest_price, high)
+                # Check if we hit activation level
+                if highest_price >= activation_price:
+                    new_stop = highest_price - distance_delta
+                    if new_stop > current_stop_price:
+                        current_stop_price = new_stop
+                        trailing_stop_engaged = True
+            else:
+                lowest_price = min(lowest_price, low)
+                # Check if we hit activation level
+                if lowest_price <= activation_price:
+                    new_stop = lowest_price + distance_delta
+                    if new_stop < current_stop_price:
+                        current_stop_price = new_stop
+                        trailing_stop_engaged = True
+
+        # 2. Check Exits
         if risk.direction == "long":
-            hit_stop = low <= risk.stop_price
-            hit_take = high >= risk.take_profit_price
-        else:
-            hit_stop = high >= risk.stop_price
-            hit_take = low <= risk.take_profit_price
-        if hit_stop or hit_take:
-            exit_price = risk.stop_price if hit_stop else risk.take_profit_price
-            return exit_price, idx
+            # Stop Loss (using dynamic current_stop_price)
+            if low <= current_stop_price:
+                base_stop = risk.stop_price
+                tolerance = max(1e-9, abs(base_stop) * 1e-9)
+                reason = "stop_loss"
+                if trailing_active and trailing_stop_engaged and current_stop_price > base_stop + tolerance:
+                    reason = "trailing_stop"
+                return current_stop_price, idx, reason
+            
+            # Take Profit
+            if high >= risk.take_profit_price:
+                return risk.take_profit_price, idx, "take_profit"
+                
+        else:  # short
+            # Stop Loss
+            if high >= current_stop_price:
+                base_stop = risk.stop_price
+                tolerance = max(1e-9, abs(base_stop) * 1e-9)
+                reason = "stop_loss"
+                if trailing_active and trailing_stop_engaged and current_stop_price < base_stop - tolerance:
+                    reason = "trailing_stop"
+                return current_stop_price, idx, reason
+            
+            # Take Profit
+            if low <= risk.take_profit_price:
+                return risk.take_profit_price, idx, "take_profit"
+
+    # End of data
     last_close = float(price_values.iloc[-1]["close"])
-    return last_close, len(price_values) - 1
+    return last_close, len(price_values) - 1, "end_of_data"
 
 
 def _locate_exit_index(price_values: pd.DataFrame, start_pos: int, risk: RiskOutcome, exit_price: float) -> int:
@@ -400,12 +353,31 @@ def _locate_exit_index(price_values: pd.DataFrame, start_pos: int, risk: RiskOut
     return len(price_values) - 1
 
 
-def _simulate_trade(prices: pd.DataFrame, start_pos: int, risk: RiskOutcome) -> tuple[float, int]:
+def _infer_exit_reason_from_price(risk: RiskOutcome, exit_price: float, exit_idx: int, last_index: int) -> str:
+    tolerance = max(1e-9, abs(risk.stop_price) * 1e-9)
+    if math.isclose(exit_price, risk.take_profit_price, rel_tol=1e-9, abs_tol=tolerance):
+        return "take_profit"
+    if math.isclose(exit_price, risk.stop_price, rel_tol=1e-9, abs_tol=tolerance):
+        return "stop_loss"
+    if exit_idx >= last_index:
+        return "end_of_data"
+    return "unknown"
+
+
+def _simulate_trade(
+    prices: pd.DataFrame,
+    start_pos: int,
+    risk: RiskOutcome,
+) -> tuple[float, int, str]:
     price_values = prices[["high", "low", "close"]]
     if start_pos >= len(price_values) - 1:
         last_close = float(price_values.iloc[-1]["close"])
-        return last_close, len(price_values) - 1
-    if _simulate_trade_path_accel is None:
+        return last_close, len(price_values) - 1, "end_of_data"
+    trailing_active = (
+        risk.trailing_stop_activation_price is not None
+        and risk.trailing_stop_distance_price is not None
+    )
+    if _simulate_trade_path_accel is None or trailing_active:
         return _simulate_trade_python(prices, start_pos, risk)
     future_slice = price_values.iloc[start_pos + 1 :]
     exit_price = float(
@@ -420,7 +392,8 @@ def _simulate_trade(prices: pd.DataFrame, start_pos: int, risk: RiskOutcome) -> 
         )
     )
     exit_idx = _locate_exit_index(price_values, start_pos, risk, exit_price)
-    return exit_price, exit_idx
+    reason = _infer_exit_reason_from_price(risk, exit_price, exit_idx, len(price_values) - 1)
+    return exit_price, exit_idx, reason
 
 
 def _max_drawdown(equity_curve: list[float]) -> float:
@@ -460,33 +433,18 @@ def prepare_supercalc_dataset(config: BacktestConfig) -> SupercalcDataset:
     else:
         benchmark_return = 0.0
 
-    features = compute_feature_frame(
-        prices,
-        sma_short_window=config.sma_short_window,
-        sma_long_window=config.sma_long_window,
-        rsi_window=config.rsi_window,
-        atr_window=config.atr_window,
-    )
+    features = prepare_feature_frame(prices, config)
     if features.empty:
         raise RuntimeError("Feature frame is empty; cannot prepare dataset.")
-    if "sentiment_score" not in features.columns:
-        features["sentiment_score"] = 0.0
-    features = enrich_sentiment_features(features)
-    features = features.replace([np.inf, -np.inf], np.nan).dropna()
-    features = attach_amplitude_labels(features, prices, config.label)
-    validate_label_support(features, config.label)
-    if features.empty:
-        raise RuntimeError("Feature frame dropped to zero rows after cleaning.")
 
     price_pos_lookup = {ts: idx for idx, ts in enumerate(prices.index)}
     feature_index = features.index
-    atr_column = f"atr_{config.atr_window}"
     min_history = max(config.sma_long_window, config.rsi_window, config.atr_window) + 5
     rows: list[SupercalcRow] = []
 
     for current_idx in range(min_history, len(features)):
         train_slice = features.iloc[:current_idx]
-        design, target = _prepare_design_and_target(train_slice, config.label)
+        design, target = prepare_design_and_target(train_slice, config.label)
         if design.empty or target.nunique() < 2:
             continue
         model = ProbabilityModel.create(
@@ -602,18 +560,18 @@ def simulate_from_dataset(dataset: SupercalcDataset, config: BacktestConfig) -> 
             risk_pct=float(config.risk.risk_pct),
             atr_multiplier=float(config.risk.atr_multiplier),
             reward_multiple=float(config.risk.reward_multiple),
-            min_position_size=int(config.risk.min_position_size),
+            min_position_size=float(config.risk.min_position_size),
         )
         risk_plan = plan_trade(entry_price=entry_price, atr=atr_value, direction=direction, config=risk_cfg)
         if risk_plan.position_size <= 0:
             continue
 
-        expected_pnl = _expected_trade_pnl(risk_plan, probability_up)
+        expected_pnl = expected_trade_pnl(risk_plan, probability_up)
         min_ev = float(risk_plan.risk_amount) * max(config.min_ev_multiple, 0.0)
         if expected_pnl <= max(0.0, min_ev):
             continue
 
-        exit_price, exit_pos = _simulate_trade(prices, price_index, risk_plan)
+        exit_price, exit_pos, _ = _simulate_trade(prices, price_index, risk_plan)
         last_exit_index = exit_pos
         balance_before = equity
         pnl = _compute_trade_pnl(risk_plan, entry_price, exit_price)
@@ -798,23 +756,17 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
         benchmark_final_balance = float(initial_balance)
         benchmark_return = 0.0
 
-    features = compute_feature_frame(
-        prices,
-        sma_short_window=config.sma_short_window,
-        sma_long_window=config.sma_long_window,
-        rsi_window=config.rsi_window,
-        atr_window=config.atr_window,
-    )
+    features = prepare_feature_frame(prices, config)
     if features.empty:
         raise RuntimeError("Feature frame is empty; cannot run backtest.")
-    if "sentiment_score" not in features.columns:
-        features["sentiment_score"] = 0.0
-    features = enrich_sentiment_features(features)
-    features = features.replace([np.inf, -np.inf], np.nan).dropna()
-    features = attach_amplitude_labels(features, prices, config.label)
-    validate_label_support(features, config.label)
-    if features.empty:
-        raise RuntimeError("Feature frame dropped to zero rows after cleaning.")
+
+    trace_writer: SignalTraceWriter | None = None
+    parity_handle = None
+    trace_callback = None
+    if config.signal_log_path:
+        trace_writer = SignalTraceWriter(config.signal_log_path, source="backtest", symbol=config.ticker)
+        trace_callback = trace_writer.log
+    trace_callback, parity_handle = attach_parity_trace(config.ticker, "backtest", trace_callback)
 
     price_pos_lookup = {ts: idx for idx, ts in enumerate(prices.index)}
     equity = config.initial_balance
@@ -822,6 +774,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     trade_returns: list[float] = []
     r_multiples: list[float] = []
     expected_values: list[float] = []
+    closed_pnls: list[float] = []
     wins = 0
     n_trades = 0
     long_trades = 0
@@ -832,6 +785,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     short_pnl = 0.0
     sentiment_fear_trades = 0
     sentiment_greed_trades = 0
+    exit_reason_counts: dict[str, int] = {}
     feature_index = features.index
     atr_column = f"atr_{config.atr_window}"
     min_history = max(config.sma_long_window, config.rsi_window, config.atr_window) + 5
@@ -841,8 +795,18 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     adaptive_cfg = config.adaptive
     window_len = adaptive_cfg.window()
     recent_trades: deque[TradeRecord] = deque(maxlen=window_len)
-    initial_regime = _initial_regime_name(adaptive_cfg, config.risk_profile)
+    initial_regime = initial_regime_name(adaptive_cfg, config.risk_profile)
     adaptive_state = AdaptiveState(regime_name=initial_regime)
+    kelly_params: KellyParams | None = None
+    if (config.dynamic_sizing_mode or "").lower() == "kelly":
+        base_pct = config.dynamic_sizing_base_pct or config.risk.risk_pct
+        kelly_params = KellyParams(
+            lookback_trades=config.dynamic_sizing_lookback,
+            base_risk_pct=base_pct,
+            min_trades=max(1, int(config.dynamic_sizing_min_trades)),
+            max_multiplier=float(config.dynamic_sizing_max_multiplier),
+            min_multiplier=float(config.dynamic_sizing_min_multiplier),
+        )
 
     while current_idx < feature_count:
         if current_idx < min_history:
@@ -855,71 +819,33 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
             current_idx += 1
             continue
 
-        train_slice = features.iloc[:current_idx]
-        design, target = _prepare_design_and_target(train_slice, config.label)
-        if design.empty or target.nunique() < 2:
+        decision = decide_signals_on_bar(
+            config=config,
+            features=features,
+            prices=prices,
+            current_idx=current_idx,
+            equity=equity,
+            adaptive_cfg=adaptive_cfg,
+            adaptive_state=adaptive_state,
+            trace_log=trace_callback,
+            risk_pct_override=compute_kelly_risk_pct(closed_pnls, kelly_params) if kelly_params else None,
+        )
+        if decision is None:
             current_idx += 1
             continue
 
-        active_regime = adaptive_cfg.get_regime(adaptive_state.regime_name) if adaptive_cfg.enable else None
-        model_type, calibration = _effective_model(config, active_regime)
-        model = ProbabilityModel.create(
-            model_type=model_type,
-            calibration=calibration,
-            random_state=config.random_state,
-        )
-        model.fit(design, target)
-        inference_design = features.iloc[[current_idx]][design.columns]
-        probability_up = float(model.predict_proba(inference_design)[0])
-        regime_for_thresholds = active_regime if adaptive_cfg.enable else None
-        long_threshold, short_threshold = _effective_thresholds(
-            config.long_threshold,
-            config.short_threshold,
-            regime_for_thresholds,
-        )
-
-        if probability_up >= long_threshold:
-            direction = "long"
-            decision_threshold = long_threshold
-        elif probability_up <= short_threshold:
-            direction = "short"
-            decision_threshold = short_threshold
-        else:
-            current_idx += 1
-            continue
+        direction = decision.direction
+        probability_up = decision.probability_up
+        decision_threshold = decision.threshold
+        risk_plan = decision.risk_plan
+        entry_price = decision.entry_price
+        expected_pnl = decision.expected_pnl
+        long_threshold = decision.long_threshold
+        short_threshold = decision.short_threshold
+        profile_candidate = decision.profile_name or config.risk_profile
         feature_row = features.iloc[current_idx]
-        if not _trend_permits_trade(feature_row, direction, config):
-            current_idx += 1
-            continue
-        if not _sentiment_permits_trade(feature_row, config):
-            current_idx += 1
-            continue
-        atr_value = float(feature_row[atr_column])
-        if atr_value <= 0 or not math.isfinite(atr_value):
-            current_idx += 1
-            continue
 
-        entry_price = float(prices.loc[timestamp, "close"])
-        profile_candidate = adaptive_state.regime_name if adaptive_state.regime_name in config.risk_profiles else config.risk_profile
-        risk_cfg = _build_risk_config(
-            config.risk,
-            config.risk_profiles,
-            profile_candidate or config.risk_profile or "",
-            equity,
-            overrides=active_regime.risk_overrides if active_regime and active_regime.risk_overrides else None,
-        )
-        risk_plan = plan_trade(entry_price=entry_price, atr=atr_value, direction=direction, config=risk_cfg)
-        if risk_plan.position_size <= 0:
-            current_idx += 1
-            continue
-
-        expected_pnl = _expected_trade_pnl(risk_plan, probability_up)
-        min_ev = float(risk_plan.risk_amount) * max(config.min_ev_multiple, 0.0)
-        if expected_pnl <= max(0.0, min_ev):
-            current_idx += 1
-            continue
-
-        exit_price, exit_pos = _simulate_trade(prices, price_pos, risk_plan)
+        exit_price, exit_pos, exit_reason = _simulate_trade(prices, price_pos, risk_plan)
         balance_before = equity
         pnl = _compute_trade_pnl(risk_plan, entry_price, exit_price)
         notional = abs(risk_plan.position_size) * entry_price
@@ -928,6 +854,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
         net_pnl = pnl - cost
         equity += net_pnl
         n_trades += 1
+        closed_pnls.append(net_pnl)
         if net_pnl > 0:
             wins += 1
             if direction == "long":
@@ -952,6 +879,8 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
             sentiment_fear_trades += 1
         if int(feature_row.get("extreme_greed_flag", 0)) == 1:
             sentiment_greed_trades += 1
+        exit_reason_counts[exit_reason] = exit_reason_counts.get(exit_reason, 0) + 1
+
         record = TradeRecord(
             entry_timestamp=timestamp,
             exit_timestamp=exit_timestamp,
@@ -960,6 +889,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
             threshold=decision_threshold,
             entry_price=entry_price,
             exit_price=float(exit_price),
+            exit_reason=exit_reason,
             position_size=risk_plan.position_size,
             pnl=float(net_pnl),
             return_pct=float(return_pct),
@@ -1019,7 +949,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     calibration_metrics = trade_calibration_metrics(trades)
 
     final_regime = adaptive_cfg.get_regime(adaptive_state.regime_name) if adaptive_cfg.enable else None
-    final_long_threshold, final_short_threshold = _effective_thresholds(
+    final_long_threshold, final_short_threshold = effective_thresholds(
         config.long_threshold,
         config.short_threshold,
         final_regime,
@@ -1095,7 +1025,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
 
             return fill_price, total_cost
 
-    return BacktestResult(
+    result_obj = BacktestResult(
         final_balance=float(final_balance),
         equity_curve=[float(x) for x in equity_curve],
         n_trades=n_trades,
@@ -1127,12 +1057,20 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
         adaptive_profile_changes=adaptive_state.regime_changes,
         regime_usage=dict(adaptive_state.regime_counts),
         regime_transitions=list(adaptive_state.transitions),
+        exit_reason_counts=dict(exit_reason_counts),
         sentiment_stats={
             "trades_in_fear": sentiment_fear_trades,
             "trades_in_greed": sentiment_greed_trades,
         },
         trade_returns=[float(x) for x in trade_returns],
     )
+
+    if trace_writer:
+        trace_writer.close()
+    if parity_handle:
+        parity_handle.close()
+
+    return result_obj
 
 
 def sweep_thresholds(base_config: BacktestConfig, thresholds: list[float]) -> list[ThresholdSummary]:

@@ -1,0 +1,38 @@
+ticker: META
+group: big_tech
+interval: 1h
+period: 1y
+
+model:
+  type: xgboost
+  artifact: artifacts/xgb_prob_meta_1h_v1.pkl
+  calibration: none
+  seed: 42
+
+thresholds:
+  long: 0.60
+  short: 0.40
+
+risk:
+  risk_pct: 0.01
+  atr_multiplier: 2.0
+  reward_multiple: 2.0
+  min_position_size: 0
+
+trailing:
+  enabled: true
+  stop_activation: 0.75
+  stop_distance: 0.03
+
+replay:
+  parity_mode: true
+  signal_log: data/signals/meta_replay_signal_log_xgb_trailing.csv
+
+meta:
+  note: "Baseline 1h-only config without MTF fusion; mirrors production thresholds/trailing."
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.03
+  max_group_risk_pct: 0.04
+  max_positions: 5

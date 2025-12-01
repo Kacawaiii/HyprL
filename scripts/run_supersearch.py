@@ -109,6 +109,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=True,
         help="Active les presets YAML (désactiver avec --no-use-presets).",
     )
+    parser.add_argument(
+        "--constraint-preset",
+        help="Nom du preset de contraintes (configs/supersearch_presets.yaml).",
+    )
     parser.add_argument("--long-thresholds", help="Liste ex: 0.55,0.6,0.65")
     parser.add_argument("--short-thresholds", help="Liste ex: 0.35,0.4")
     parser.add_argument("--risk-pcts", help="Liste ex: 0.01,0.015")
@@ -146,6 +150,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=None,
         help="Risque de ruine maximal (0-1).",
+    )
+    parser.add_argument(
+        "--min-robustness-score",
+        type=float,
+        default=0.0,
+        help="Score de robustesse minimal (0-1).",
     )
     parser.add_argument("--min-expectancy", type=float, default=0.0, help="Espérance minimale par trade.")
     parser.add_argument("--bootstrap-runs", type=int, default=256, help="Tirs Monte Carlo pour le stress test.")
@@ -281,6 +291,7 @@ def _build_config(args: argparse.Namespace) -> SearchConfig:
         initial_balance=args.initial_balance,
         seed=args.seed,
         use_presets=args.use_presets,
+        constraint_preset=args.constraint_preset,
         long_thresholds=_parse_float_list(args.long_thresholds),
         short_thresholds=_parse_float_list(args.short_thresholds),
         risk_pcts=_parse_float_list(args.risk_pcts),
@@ -295,6 +306,7 @@ def _build_config(args: argparse.Namespace) -> SearchConfig:
         min_sharpe=min_sharpe_value,
         max_drawdown_pct=max_dd_value,
         max_risk_of_ruin=max_ror_value,
+        min_robustness_score=args.min_robustness_score,
         min_expectancy=args.min_expectancy,
         bootstrap_runs=args.bootstrap_runs,
         min_portfolio_profit_factor=args.min_portfolio_pf,
@@ -344,7 +356,8 @@ def main(argv: list[str] | None = None) -> int:
                 "[DEBUG] SearchConfig core: "
                 f"ticker={config.ticker} tickers={config.tickers or [config.ticker]} "
                 f"period={config.period or ''} start={config.start or ''} end={config.end or ''} "
-                f"interval={config.interval} engine={config.engine} presets={config.use_presets}"
+                f"interval={config.interval} engine={config.engine} presets={config.use_presets} "
+                f"constraint_preset={config.constraint_preset or 'none'}"
             )
             min_ev = config.min_ev_multiples if config.min_ev_multiples is not None else "[preset]"
             print(
@@ -364,7 +377,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"min_pf={config.min_profit_factor:.2f} "
                 f"min_sharpe={config.min_sharpe:.2f} "
                 f"max_dd={config.max_drawdown_pct:.3f} "
-                f"max_ror={config.max_risk_of_ruin:.3f}"
+                f"max_ror={config.max_risk_of_ruin:.3f} "
+                f"min_robustness={config.min_robustness_score:.2f}"
             )
             print(f"[DEBUG] Output target: {args.output}")
         results = run_search(config)

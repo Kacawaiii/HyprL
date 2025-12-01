@@ -235,7 +235,8 @@ def apply_stub_outcomes(predictions: Sequence[Prediction]) -> None:
     for record in predictions:
         if record.closed:
             continue
-        outcome = "WIN" if record.prob_up >= 0.55 else "LOSS"
+        # Keep stub deterministic yet aligned with contract expectations.
+        outcome = "WIN" if record.prob_up >= 0.5 else "LOSS"
         record.closed = True
         record.closed_at = _utcnow()
         record.outcome = outcome

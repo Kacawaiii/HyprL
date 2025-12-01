@@ -19,3 +19,5 @@ statrs = "0.16"
 polars = { version = "0.42", features = ["lazy", "parquet", "ndarray"] }
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
 pyo3-polars = "0.16"
+rand = { version = "0.8", features = ["std"] }
+rand_pcg = "0.3"
