@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from hyprl.backtest.runner import BacktestConfig, sweep_thresholds
 from hyprl.risk.manager import RiskConfig
+from hyprl.supercalc import prepare_supercalc_dataset, _build_signal_series  # type: ignore
+from hyprl.native.supercalc import run_backtest_native, native_available  # type: ignore
 from hyprl.configs import (
     get_adaptive_config,
     get_risk_settings,
@@ -51,6 +55,32 @@ def parse_args() -> argparse.Namespace:
         help='Comma-separated long thresholds (e.g. "0.6,0.65,0.7"); defaults to 0.55:0.75 step 0.05 with ticker short baseline.'
         " AAPL 1h short baseline remains 0.40.",
     )
+    parser.add_argument(
+        "--short-threshold",
+        type=float,
+        help="Override short threshold (default pulled from ticker settings).",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["python", "native"],
+        default="python",
+        help="Engine to use for sweep (python refit or native fast).",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Enable fast path (native dataset reuse) when engine=native.",
+    )
+    parser.add_argument(
+        "--artifact",
+        type=str,
+        help="Optional model artifact path override (used for native fast path).",
+    )
+    parser.add_argument(
+        "--feature-columns",
+        type=str,
+        help="Optional feature column JSON override (used for native fast path).",
+    )
     args = parser.parse_args()
     if not args.period and not (args.start and args.end):
         parser.error("Provide --period or both --start and --end.")
@@ -60,12 +90,36 @@ def parse_args() -> argparse.Namespace:
 def parse_thresholds(threshold_arg: str | None) -> list[float]:
     if not threshold_arg:
         return DEFAULT_LONG_THRESHOLDS
-    values = []
-    for chunk in threshold_arg.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        values.append(float(chunk))
+    path = Path(threshold_arg)
+    values: list[float] = []
+    if path.suffix.lower() in {".yaml", ".yml", ".json"} and not path.exists():
+        raise ValueError(f"Threshold file not found: {path}")
+    if path.exists():
+        try:
+            content = path.read_text()
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                values = [float(x) for x in parsed]
+            else:
+                for line in content.splitlines():
+                    line = line.strip().strip(",")
+                    if not line:
+                        continue
+                    try:
+                        values.append(float(line))
+                    except ValueError:
+                        continue
+        except Exception:
+            values = []
+    else:
+        for chunk in threshold_arg.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            values.append(float(chunk))
     if not values:
         raise ValueError("No valid thresholds parsed from --thresholds argument.")
     return values
@@ -94,6 +148,14 @@ def main() -> None:
     enable_trend_filter = bool(settings.get("enable_trend_filter", False))
     trend_long_min = float(settings.get("trend_long_min", 0.0))
     trend_short_min = float(settings.get("trend_short_min", 0.0))
+    model_settings = settings.get("model", {}) or {}
+    model_artifact = args.artifact or model_settings.get("artifact")
+    model_feature_columns = None
+    if args.feature_columns:
+        model_feature_columns = json.loads(Path(args.feature_columns).read_text())
+    else:
+        model_feature_columns = model_settings.get("feature_columns") or []
+    feature_preset = model_settings.get("preset")
     config = BacktestConfig(
         ticker=args.ticker,
         period=args.period,
@@ -114,8 +176,22 @@ def main() -> None:
         enable_trend_filter=enable_trend_filter,
         trend_long_min=trend_long_min,
         trend_short_min=trend_short_min,
+        model_artifact_path=model_artifact,
+        model_feature_columns=model_feature_columns,
+        feature_preset=feature_preset,
     )
-    summaries = sweep_thresholds(config, thresholds)
+    dataset = None
+    use_native = args.engine == "native"
+    if use_native and args.fast:
+        if not native_available():
+            raise SystemExit("Native engine not available; build hyprl_supercalc or use --engine python.")
+        dataset = prepare_supercalc_dataset(
+            config,
+            fast=True,
+            use_cache_features=True,
+            use_cache_prices=True,
+        )
+    summaries = sweep_thresholds(config, thresholds, engine=args.engine, dataset=dataset)
     header = "Threshold | Strat % | Ann % | Bench % | Alpha % | PF | Sharpe | Max DD % | Trades | Win % | Exp"
     print(header)
     print("-" * len(header))

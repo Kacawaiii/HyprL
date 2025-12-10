@@ -1214,12 +1214,29 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     return result_obj
 
 
-def sweep_thresholds(base_config: BacktestConfig, thresholds: list[float]) -> list[ThresholdSummary]:
+def sweep_thresholds(
+    base_config: BacktestConfig,
+    thresholds: list[float],
+    *,
+    engine: str = "python",
+    dataset: "SupercalcDataset | None" = None,
+) -> list[ThresholdSummary]:
     summaries: list[ThresholdSummary] = []
     initial_balance = base_config.initial_balance
     for threshold in thresholds:
         cfg = replace(base_config, long_threshold=threshold)
-        result = run_backtest(cfg)
+        if engine == "native" and dataset is not None:
+            from hyprl.supercalc import _build_signal_series  # type: ignore
+            from hyprl.native.supercalc import run_backtest_native  # type: ignore
+            signal, trades_in_fear, trades_in_greed = _build_signal_series(dataset, cfg)
+            result = run_backtest_native(
+                dataset.prices,
+                signal,
+                cfg,
+                require_native=False,
+            )
+        else:
+            result = run_backtest(cfg)
         if initial_balance > 0:
             total_return = (result.final_balance / initial_balance - 1.0) * 100.0
         else:
