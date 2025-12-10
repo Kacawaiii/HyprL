@@ -1,0 +1,40 @@
+name: CI Lite
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-lite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+      - name: Run targeted tests
+        run: |
+          pytest \
+            tests/scripts/test_concat_trades_live_generic.py \
+            tests/scripts/test_export_report.py \
+            tests/scripts/test_compute_portfolio_metrics.py \
+            tests/features/test_equity_v2_presets.py \
+            tests/risk/test_kelly.py \
+            tests/risk/test_live_risk_caps.py \
+            tests/risk/test_risk_guards.py \
+            tests/execution/test_twap.py -q

@@ -8,45 +8,62 @@ model:
   artifact: artifacts/xgb_prob_nvda_1h_v1.pkl
   calibration: none
   seed: 42
+  feature_columns:
+    - sma_ratio
+    - ema_ratio
+    - rsi_normalized
+    - volatility
+    - atr_normalized
+    - range_pct
+    - rolling_return
+    - atr_14
 
 thresholds:
-  long: 0.55
-  short: 0.40
+  long: 0.49
+  short: 0.18
 
 risk:
-  risk_pct: 0.015
-  atr_multiplier: 1.3
-  reward_multiple: 1.5
+  risk_pct: 0.01
+  atr_multiplier: 1.5
+  reward_multiple: 1.9
   min_position_size: 5
 
 risk_profiles:
   safe:
-    risk_pct: 0.008
-    atr_multiplier: 1.1
-    reward_multiple: 1.3
+    risk_pct: 0.006
+    atr_multiplier: 1.3
+    reward_multiple: 1.6
     min_position_size: 3
   normal:
-    risk_pct: 0.015
-    atr_multiplier: 1.3
-    reward_multiple: 1.5
+    risk_pct: 0.01
+    atr_multiplier: 1.5
+    reward_multiple: 1.9
     min_position_size: 5
 default_risk_profile: normal
 
 trailing:
   enabled: true
-  stop_activation: 0.75
-  stop_distance: 0.03
+  stop_activation: 1.0
+  stop_distance: 0.04
 
 replay:
   parity_mode: true
   signal_log: data/signals/nvda_replay_signal_log_xgb.csv
 
 meta:
-  note: "Logistic/platt config retained for calibration-only. Production uses XGB artifact with trailing." 
+  note: "XGB artifact with trailing; tightened thresholds and lower risk for higher Sharpe/robustness."
+
+# Trend / filters to cut noise trades
+enable_trend_filter: true
+trend_long_min: 0.0006
+trend_short_min: -0.0005
+
+# Minimum EV to enter a trade (approx EV multiple of risk)
+min_ev_multiple: 0.05
 
 multi_timeframes_enabled: true
 multi_timeframes_frames: "15m,1h,4h"
-fusion_method: weighted
+fusion_method: min
 fusion_weights:
   15m: 0.2
   1h: 0.6

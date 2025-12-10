@@ -479,28 +479,55 @@ def decide_signals_on_bar(
     feature_row = features.iloc[current_idx]
     trace_state["feature_signature"] = _feature_signature(feature_row)
     probability_up = fused_probability
-    if probability_up >= long_threshold:
-        direction = "long"
-        decision_threshold = long_threshold
-    elif probability_up <= short_threshold:
+    probability_down = 1.0 - probability_up
+    # Mechanical short rule to bypass model long-bias
+    rr = float(feature_row.get("rolling_return", 0.0))
+    rsi_value = float(feature_row.get("rsi_normalized", 0.0))
+    short_signal = (probability_up < 0.45) or (rr < 0.0) or (rsi_value > 0.6)
+
+    long_candidate = probability_up >= long_threshold
+    short_candidate = short_signal or (probability_down >= short_threshold) or (not long_candidate)
+
+    # Longs respect trend/sentiment; shorts are allowed even if the model is long-biased.
+    direction = None
+    decision_threshold = None
+    if probability_up < 0.6:
         direction = "short"
         decision_threshold = short_threshold
     else:
+        if long_candidate:
+            if _trend_permits_trade(feature_row, "long", config) and _sentiment_permits_trade(
+                feature_row, config
+            ):
+                direction = "long"
+                decision_threshold = long_threshold
+            else:
+                emit("trend_filter_fail", trend_ok=False)
+
+        if direction is None and short_candidate:
+            direction = "short"
+            decision_threshold = short_threshold
+
+    if direction is None:
         trace_state["direction"] = None
         emit("threshold_not_met")
         return None
 
     trace_state["direction"] = direction
-    if not _trend_permits_trade(feature_row, direction, config):
-        trace_state["trend_ok"] = False
-        emit("trend_filter_fail", trend_ok=False)
-        return None
-    trace_state["trend_ok"] = True
-    if not _sentiment_permits_trade(feature_row, config):
-        trace_state["sentiment_ok"] = False
-        emit("sentiment_filter_fail", sentiment_ok=False)
-        return None
-    trace_state["sentiment_ok"] = True
+    if direction == "short":
+        trace_state["trend_ok"] = True
+        trace_state["sentiment_ok"] = True
+    else:
+        if not _trend_permits_trade(feature_row, direction, config):
+            trace_state["trend_ok"] = False
+            emit("trend_filter_fail", trend_ok=False)
+            return None
+        trace_state["trend_ok"] = True
+        if not _sentiment_permits_trade(feature_row, config):
+            trace_state["sentiment_ok"] = False
+            emit("sentiment_filter_fail", sentiment_ok=False)
+            return None
+        trace_state["sentiment_ok"] = True
 
     atr_column = f"atr_{config.atr_window}"
     atr_value = float(feature_row[atr_column])

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Mapping, Sequence
 
 import math
+from pathlib import Path
 
 try:  # pragma: no cover - optional dependency imported lazily at runtime
     import polars as pl
@@ -86,6 +87,73 @@ def _collect_label(cfg: BacktestConfig) -> str:
     if isinstance(label, str):
         return label
     return cfg.ticker
+
+
+def _build_trade_rows(
+    report_trades: list[dict[str, object]],
+    df: pl.DataFrame,
+    cfg: BacktestConfig,
+    *,
+    strategy_id: str | None,
+    strategy_label: str | None,
+    session_id: str | None,
+    source_type: str = "backtest",
+) -> list[dict[str, object]]:
+    if not report_trades:
+        return []
+    def _normalize_exit_reason(reason: str) -> str:
+        mapping = {
+            "stop_or_take": "stop_loss",
+            "stop_loss": "stop_loss",
+            "take_profit": "take_profit",
+            "trailing_stop": "trailing_stop",
+            "end_of_data": "time_exit",
+        }
+        return mapping.get(reason, reason or "unknown")
+    ts_series = df["ts"].to_list()
+    initial_balance = float(cfg.initial_balance or 1.0)
+    equity = initial_balance
+    symbol = cfg.ticker.upper()
+    rows: list[dict[str, object]] = []
+    for trade in report_trades:
+        reason_raw = str(trade.get("exit_reason", "unknown"))
+        if reason_raw == "entry":
+            continue
+        entry_idx = int(trade.get("entry_idx", 0))
+        exit_idx = int(trade.get("exit_idx", entry_idx))
+        entry_ts_raw = ts_series[entry_idx] if entry_idx < len(ts_series) else ts_series[0]
+        exit_ts_raw = ts_series[exit_idx] if exit_idx < len(ts_series) else ts_series[-1]
+        entry_ts = pd.to_datetime(entry_ts_raw, unit="ms", utc=True)
+        exit_ts = pd.to_datetime(exit_ts_raw, unit="ms", utc=True)
+        direction = str(trade.get("direction", "flat")).upper()
+        side = "LONG" if direction == "LONG" else "SHORT" if direction == "SHORT" else "FLAT"
+        entry_price = float(trade.get("entry_price", 0.0))
+        exit_price = float(trade.get("exit_price", 0.0))
+        pnl_pct = float(trade.get("return_pct", 0.0))
+        if not np.isfinite(pnl_pct):
+            pnl_pct = 0.0
+        pnl = equity * pnl_pct
+        equity += pnl
+        exit_reason = _normalize_exit_reason(reason_raw)
+        rows.append(
+            {
+                "entry_ts": entry_ts,
+                "exit_ts": exit_ts,
+                "symbol": symbol,
+                "side": side,
+                "qty": 1.0,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "exit_reason": exit_reason,
+                "strategy_id": strategy_id or "",
+                "strategy_label": strategy_label or "",
+                "source_type": source_type,
+                "session_id": session_id or "",
+            }
+        )
+    return rows
 
 
 def _config_to_native_dict(
@@ -178,7 +246,12 @@ def _benchmark_stats(df: pl.DataFrame, initial_balance: float) -> tuple[float, f
     ts_start = float(ts_series[0])
     ts_end = float(ts_series[len(ts_series) - 1])
     years = max((ts_end - ts_start) / _MS_IN_YEAR, 1e-9)
-    cagr = (final_balance / initial_balance) ** (1.0 / years) - 1.0 if final_balance > 0 else None
+    cagr = None
+    if final_balance > 0:
+        try:
+            cagr = (final_balance / initial_balance) ** (1.0 / years) - 1.0
+        except OverflowError:
+            cagr = None
     return final_balance, percent_return, cagr
 
 
@@ -211,6 +284,12 @@ def _build_backtest_result(
     report: dict[str, object],
     cfg: BacktestConfig,
     df: pl.DataFrame,
+    *,
+    strategy_id: str | None = None,
+    strategy_label: str | None = None,
+    session_id: str | None = None,
+    source_type: str = "backtest",
+    export_trades_path: str | Path | None = None,
 ) -> BacktestResult:
     metrics = report.get("metrics", {})
     equity_points: list[dict[str, float]] = list(report.get("equity_curve", []))
@@ -238,6 +317,42 @@ def _build_backtest_result(
     pnl_p95_metric = _optional_float(metrics.get("pnl_p95"))
     robustness_metric = _optional_float(metrics.get("robustness_score"))
 
+    trade_rows = _build_trade_rows(
+        list(report.get("trades", [])),
+        df,
+        cfg,
+        strategy_id=strategy_id,
+        strategy_label=strategy_label,
+        session_id=session_id,
+        source_type=source_type,
+    )
+    long_trades = 0
+    short_trades = 0
+    long_wins = 0
+    short_wins = 0
+    long_pnl = 0.0
+    short_pnl = 0.0
+    for trade in trade_rows:
+        side = str(trade.get("side", "")).upper()
+        pnl_val = float(trade.get("pnl", 0.0))
+        if side == "LONG":
+            long_trades += 1
+            long_pnl += pnl_val
+            if pnl_val > 0:
+                long_wins += 1
+        elif side == "SHORT":
+            short_trades += 1
+            short_pnl += pnl_val
+            if pnl_val > 0:
+                short_wins += 1
+    long_win_rate = float(long_wins) / long_trades if long_trades > 0 else 0.0
+    short_win_rate = float(short_wins) / short_trades if short_trades > 0 else 0.0
+
+    if export_trades_path and trade_rows:
+        out_path = Path(export_trades_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(trade_rows).to_csv(out_path, index=False)
+
     return BacktestResult(
         final_balance=float(equity_curve[-1]),
         equity_curve=[float(value) for value in equity_curve],
@@ -245,7 +360,7 @@ def _build_backtest_result(
         win_rate=float(metrics.get("win_rate", 0.0)),
         max_drawdown=max_dd,
         sharpe_ratio=sharpe,
-        trades=[],
+        trades=trade_rows,
         benchmark_final_balance=float(benchmark_final),
         benchmark_return=float(benchmark_return_pct),
         annualized_return=annualized_return,
@@ -256,12 +371,12 @@ def _build_backtest_result(
         expectancy=expectancy,
         avg_r_multiple=0.0,
         avg_expected_pnl=0.0,
-        long_trades=0,
-        short_trades=0,
-        long_win_rate=0.0,
-        short_win_rate=0.0,
-        long_total_pnl=0.0,
-        short_total_pnl=0.0,
+        long_trades=long_trades,
+        short_trades=short_trades,
+        long_win_rate=long_win_rate,
+        short_win_rate=short_win_rate,
+        long_total_pnl=long_pnl,
+        short_total_pnl=short_pnl,
         brier_score=None,
         log_loss=None,
         final_risk_profile=getattr(cfg, "risk_profile", "native"),
@@ -290,20 +405,35 @@ def run_backtest_native(
     cfg: BacktestConfig,
     *,
     use_atr_position_sizing: bool | None = None,
+    require_native: bool = True,
+    export_trades_path: str | Path | None = None,
+    strategy_id: str | None = None,
+    strategy_label: str | None = None,
+    session_id: str | None = None,
+    source_type: str = "backtest",
 ) -> BacktestResult:
     """Run the Rust native engine for a single configuration and return a BacktestResult."""
 
-    if not native_available():
+    if require_native and not native_available():
         raise NativeEngineUnavailable(
             "hyprl_supercalc is not installed. Build it via scripts/build_supercalc.sh before using the native engine."
         )
+    if not native_available():
+        raise NativeEngineUnavailable("hyprl_supercalc is not installed.")
     polars_df = _ensure_polars_dataframe(df)
     signal_vec = _normalize_signal(signal, polars_df.height)
     config_dict = _config_to_native_dict(cfg, use_atr_position_sizing=use_atr_position_sizing)
-    reports = _native.run_batch_backtest_py(polars_df, signal_vec, [config_dict])  # type: ignore[attr-defined]
-    if not reports:
-        raise RuntimeError("Native engine returned no reports")
-    return _build_backtest_result(reports[0], cfg, polars_df)
+    report = _native.run_backtest_py(polars_df, signal_vec, config_dict)  # type: ignore[attr-defined]
+    return _build_backtest_result(
+        report,
+        cfg,
+        polars_df,
+        strategy_id=strategy_id,
+        strategy_label=strategy_label,
+        session_id=session_id,
+        source_type=source_type,
+        export_trades_path=export_trades_path,
+    )
 
 
 def run_native_search_batch(
@@ -378,3 +508,12 @@ def run_backtest_native_batch(
         _build_backtest_result(rep, cfg, polars_df)
         for rep, cfg in zip(reports, cfgs)
     ]
+    def _normalize_exit_reason(reason: str) -> str:
+        mapping = {
+            "stop_or_take": "stop_loss",
+            "stop_loss": "stop_loss",
+            "take_profit": "take_profit",
+            "trailing_stop": "trailing_stop",
+            "end_of_data": "time_exit",
+        }
+        return mapping.get(reason, reason or "unknown")

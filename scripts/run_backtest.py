@@ -19,7 +19,10 @@ from hyprl.configs import (
     load_ticker_settings,
     load_cli_config,
 )
+from hyprl.utils.strategy_id import StrategyIdentity, compute_strategy_id
 from hyprl.snapshots import save_snapshot, make_backup_zip
+from hyprl.supercalc import prepare_supercalc_dataset, _build_signal_series  # type: ignore
+from hyprl.native.supercalc import run_backtest_native, native_available  # type: ignore
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,6 +147,32 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional ProbabilityModel artifact used for inference (shared between BT/live).",
     )
+    parser.add_argument(
+        "--engine",
+        choices=["auto", "python", "native"],
+        default="auto",
+        help="Backtest engine to use (default: auto prefers native when available).",
+    )
+    parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="Print coarse timing breakdown (dataset/signals/native/export) for perf tuning.",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: skip signal logging and snapshot/backup to speed up iterations.",
+    )
+    parser.add_argument(
+        "--cache-prices",
+        action="store_true",
+        help="Cache OHLCV fetch to data/cache/ohlcv_<ticker>_<interval>_<period>.parquet when period is used.",
+    )
+    parser.add_argument(
+        "--cache-features",
+        action="store_true",
+        help="Cache feature frame to data/cache/features_<hash>.parquet for faster reruns.",
+    )
     defaults = {action.dest: action.default for action in parser._actions}
     args = parser.parse_args()
     args._defaults = defaults
@@ -178,6 +207,11 @@ def _apply_backtest_cli_config(args: argparse.Namespace) -> None:
     _assign_if_default(args, defaults, "model_artifact", model_cfg.get("artifact"))
     _assign_if_default(args, defaults, "calibration", model_cfg.get("calibration"))
     _assign_if_default(args, defaults, "seed", model_cfg.get("seed"))
+    if not getattr(args, "model_feature_columns", None):
+        try:
+            setattr(args, "model_feature_columns", list(model_cfg.get("feature_columns") or []))
+        except Exception:
+            setattr(args, "model_feature_columns", [])
 
     thresholds_cfg = cfg.get("thresholds", {}) or {}
     _assign_if_default(args, defaults, "long_threshold", thresholds_cfg.get("long"))
@@ -218,6 +252,9 @@ def _resolve_thresholds(args: argparse.Namespace, settings: dict) -> tuple[float
 
 
 def main() -> None:
+    import time
+
+    t0 = time.time()
     args = parse_args()
     _apply_backtest_cli_config(args)
     if not args.ticker:
@@ -233,8 +270,10 @@ def main() -> None:
         raise ValueError("Thresholds must be between 0 and 1.")
     if long_threshold < short_threshold:
         raise ValueError("long-threshold must be greater than or equal to short-threshold.")
-    model_type = args.model_type or settings.get("model_type", "logistic")
-    calibration = args.calibration or settings.get("calibration", "none")
+    model_cfg = settings.get("model", {}) or {}
+    model_type = args.model_type or model_cfg.get("type") or settings.get("model_type", "logistic")
+    calibration = args.calibration or model_cfg.get("calibration") or settings.get("calibration", "none")
+    model_feature_columns = getattr(args, "model_feature_columns", None) or model_cfg.get("feature_columns") or []
     risk_profile = args.risk_profile or settings.get("default_risk_profile") or "normal"
     risk_params = get_risk_settings(settings, risk_profile)
     if args.risk_pct is not None:
@@ -307,10 +346,68 @@ def main() -> None:
         trend_long_min=trend_long_min,
         trend_short_min=trend_short_min,
         label=label_cfg,
-        signal_log_path=str(args.signal_log) if args.signal_log else None,
+        signal_log_path=None if args.fast else (str(args.signal_log) if args.signal_log else None),
         model_artifact_path=str(args.model_artifact) if args.model_artifact else None,
+        model_feature_columns=list(model_feature_columns),
     )
-    result = run_backtest(config)
+    model_id = str(args.model_artifact) if args.model_artifact else model_type
+    trailing_enabled = bool(risk_cfg.trailing_stop_activation or risk_cfg.trailing_stop_distance)
+    identity = StrategyIdentity(
+        tickers=(args.ticker,),
+        interval=args.interval,
+        model_id=model_id,
+        label_mode=args.label_mode,
+        label_horizon=int(args.label_horizon) if args.label_horizon is not None else None,
+        feature_set_id=getattr(config, "feature_preset", None),
+        risk_profile=risk_profile,
+        risk_pct=risk_cfg.risk_pct,
+        tp_multiple=risk_cfg.reward_multiple,
+        sl_multiple=risk_cfg.atr_multiplier,
+        trailing=trailing_enabled,
+        execution_mode="backtest",
+    )
+    strategy_id = compute_strategy_id(identity)
+    strategy_label = f"{args.ticker}_{args.interval}_{model_id}"
+    engine = (args.engine or "auto").lower()
+    use_native = engine in ("auto", "native") and native_available()
+    result = None
+    used_native = False
+    if use_native:
+        try:
+            t_dataset_start = time.time()
+            ds_timings: dict[str, float] = {}
+            dataset = prepare_supercalc_dataset(
+                config,
+                timings=ds_timings,
+                use_cache_prices=args.cache_prices,
+                use_cache_features=args.cache_features,
+                fast=args.fast,
+            )
+            t_dataset_end = time.time()
+            signal, _, _ = _build_signal_series(dataset, config)
+            t_signal_end = time.time()
+            result = run_backtest_native(
+                dataset.prices,
+                signal,
+                config,
+                export_trades_path=args.export_trades,
+                strategy_id=strategy_id,
+                strategy_label=strategy_label,
+                session_id=config.group or "backtest",
+                source_type="backtest",
+            )
+            t_engine_end = time.time()
+            used_native = True
+        except Exception as exc:
+            if engine == "native":
+                raise
+            print(f"[WARN] Native engine failed ({type(exc).__name__}: {exc}); falling back to python backtest.")
+    if result is None:
+        t_dataset_start = time.time()
+        result = run_backtest(config)
+        t_dataset_end = t_dataset_start
+        t_signal_end = t_dataset_end
+        t_engine_end = time.time()
     strategy_return_pct = (
         (result.final_balance / args.initial_balance - 1.0) * 100.0 if args.initial_balance > 0 else 0.0
     )
@@ -367,17 +464,67 @@ def main() -> None:
     snapshot_zip = None
     if args.export_trades:
         trade_path = args.export_trades
-        records = [asdict(trade) for trade in result.trades]
-        df = pd.DataFrame.from_records(records)
-        parent = trade_path.parent
-        if parent and not parent.exists():
-            parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(trade_path, index=False)
-        print(f"Exported {len(records)} trades to {trade_path}")
-        snapshot_dir = save_snapshot(config, result, trades_path=trade_path)
-        snapshot_zip = make_backup_zip(snapshot_dir)
-        print(f"Snapshot saved to {snapshot_dir}")
-        print(f"Backup zip: {snapshot_zip}")
+        if not used_native:
+            rows = []
+            def _normalize_exit_reason(reason: str) -> str:
+                mapping = {
+                    "stop_or_take": "stop_loss",
+                    "stop_loss": "stop_loss",
+                    "take_profit": "take_profit",
+                    "trailing_stop": "trailing_stop",
+                    "end_of_data": "time_exit",
+                }
+                return mapping.get(reason, reason or "unknown")
+            for trade in result.trades:
+                rows.append(
+                    {
+                        "entry_ts": trade.entry_timestamp,
+                        "exit_ts": trade.exit_timestamp,
+                        "symbol": args.ticker.upper(),
+                        "side": trade.direction.upper(),
+                        "qty": trade.position_size,
+                        "entry_price": trade.entry_price,
+                        "exit_price": trade.exit_price,
+                        "pnl": trade.pnl,
+                        "pnl_pct": trade.return_pct,
+                        "exit_reason": _normalize_exit_reason(trade.exit_reason),
+                        "strategy_id": strategy_id,
+                        "strategy_label": strategy_label,
+                        "source_type": "backtest",
+                        "session_id": config.group or "backtest",
+                    }
+                )
+            df = pd.DataFrame.from_records(rows)
+            parent = trade_path.parent
+            if parent and not parent.exists():
+                parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(trade_path, index=False)
+            print(f"Exported {len(rows)} trades to {trade_path}")
+        else:
+            if not trade_path.exists():
+                print(f"[WARN] Native backtest indicated export_trades_path but file missing: {trade_path}")
+        if trade_path.exists() and not args.fast:
+            snapshot_dir = save_snapshot(config, result, trades_path=trade_path)
+            snapshot_zip = make_backup_zip(snapshot_dir)
+            print(f"Snapshot saved to {snapshot_dir}")
+            print(f"Backup zip: {snapshot_zip}")
+    t_end = time.time()
+    if getattr(args, "timing", False):
+        td = t_dataset_end - t_dataset_start if "t_dataset_end" in locals() else 0.0
+        ts = t_signal_end - t_dataset_end if "t_signal_end" in locals() else 0.0
+        te = t_engine_end - t_signal_end if "t_engine_end" in locals() else 0.0
+        texport = t_end - t_engine_end if "t_engine_end" in locals() else 0.0
+        print(
+            f"[TIMING] dataset: {td:.2f}s | signals: {ts:.2f}s | engine: {te:.2f}s | export+snapshot: {texport:.2f}s | total: {t_end - t0:.2f}s"
+        )
+        if "ds_timings" in locals():
+            print(
+                "[TIMING-dataset] "
+                f"ohlcv={ds_timings.get('ohlcv',0.0):.2f}s | "
+                f"features={ds_timings.get('features',0.0):.2f}s | "
+                f"model={ds_timings.get('model',0.0):.2f}s | "
+                f"total={ds_timings.get('total_dataset',0.0):.2f}s"
+            )
 
 
 if __name__ == "__main__":

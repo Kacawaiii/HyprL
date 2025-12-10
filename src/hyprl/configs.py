@@ -62,9 +62,30 @@ def _parse_minimal_yaml(text: str) -> dict[str, Any]:
                 mapping[key] = _coerce_scalar(value.strip("'\""))
                 index += 1
             else:
-                child, next_index = _parse_block(index + 1, current_indent + 2)
-                mapping[key] = child
-                index = next_index
+                # detect list items (lines starting with "-") at the next indent level
+                next_idx = index + 1
+                collected_list: list[Any] = []
+                while next_idx < len(lines):
+                    nxt = lines[next_idx]
+                    if not nxt.strip() or nxt.lstrip().startswith("#"):
+                        next_idx += 1
+                        continue
+                    nxt_indent = len(nxt) - len(nxt.lstrip(" "))
+                    if nxt_indent < current_indent + 2:
+                        break
+                    stripped = nxt.strip()
+                    if stripped.startswith("-"):
+                        collected_list.append(_coerce_scalar(stripped[1:].strip("'\" ")))
+                        next_idx += 1
+                        continue
+                    break
+                if collected_list:
+                    mapping[key] = collected_list
+                    index = next_idx
+                else:
+                    child, next_index = _parse_block(index + 1, current_indent + 2)
+                    mapping[key] = child
+                    index = next_index
         return mapping, index
 
     result, _ = _parse_block(0, 0)

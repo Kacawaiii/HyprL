@@ -21,6 +21,7 @@ from api.routers.v2_predict import router as predict_router
 from api.routers.v2_sessions import router as sessions_router
 from api.routers.v2_tokens import router as tokens_router
 from api.routers.v2_usage import router as usage_router
+from api.routers.v2_portfolio import router as portfolio_router
 from api.session_manager import session_manager
 
 APP_VERSION_HEADER = "X-HYPRL-Version"
@@ -69,6 +70,7 @@ app.include_router(predict_router)
 app.include_router(usage_router)
 app.include_router(sessions_router)
 app.include_router(autorank_router)
+app.include_router(portfolio_router)
 
 
 @app.on_event("startup")

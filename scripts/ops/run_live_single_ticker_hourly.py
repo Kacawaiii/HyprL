@@ -16,6 +16,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -59,6 +60,7 @@ def main() -> None:
     day_dir.mkdir(parents=True, exist_ok=True)
     trade_log = day_dir / f"trades_{symbol_upper}_live.csv"
     summary_file = day_dir / f"summary_{symbol_upper}_live.json"
+    heartbeat_file = day_dir / "heartbeat.json"
 
     cmd = [
         sys.executable,
@@ -81,6 +83,12 @@ def main() -> None:
     print(f"[OPS] [{symbol_upper}] mode={mode} log_root={args.log_root} trade_log={trade_log} summary={summary_file}")
     try:
         subprocess.run(cmd, check=True)
+        heartbeat_payload = {
+            "ticker": symbol_upper,
+            "ts_iso": datetime.now(timezone.utc).isoformat(),
+        }
+        heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+        heartbeat_file.write_text(json.dumps(heartbeat_payload), encoding="utf-8")
     except subprocess.CalledProcessError as exc:  # pragma: no cover - passthrough
         print(f"[ERR] run_live_hour failed with exit code {exc.returncode}")
         raise

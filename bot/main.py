@@ -14,7 +14,8 @@ from bot.commands import autorank, basic, predict, sessions, usage
 
 async def create_bot() -> commands.Bot:
     intents = nextcord.Intents.default()
-    bot = commands.Bot(intents=intents)
+    intents.message_content = True  # required for prefix commands
+    bot = commands.Bot(command_prefix="!", intents=intents)
     settings = BotSettings.from_env()
     bot.settings = settings  # type: ignore[attr-defined]
     bot.hyprl_client = HyprlClient(settings)  # type: ignore[attr-defined]
@@ -22,6 +23,12 @@ async def create_bot() -> commands.Bot:
     @bot.event
     async def on_ready():
         print(f"HyprL Discord bot connected as {bot.user}")
+
+    @bot.event
+    async def on_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.CommandNotFound):
+            return
+        await commands.Bot.on_command_error(bot, ctx, error)
 
     # Register cogs
     basic.setup(bot)

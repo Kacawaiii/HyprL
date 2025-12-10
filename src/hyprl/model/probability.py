@@ -139,12 +139,19 @@ class ProbabilityModel:
             self.calibrator.fit(raw_probs, target_vector)
         return feature_scaled, target_vector
 
-    def predict_proba(self, feature_df: pd.DataFrame) -> np.ndarray:
-        feature_matrix = feature_df.to_numpy(dtype=float)
+    def predict_proba(self, feature_df: pd.DataFrame | np.ndarray) -> np.ndarray:
+        if hasattr(feature_df, "to_numpy"):
+            feature_matrix = feature_df.to_numpy(dtype=float)
+        else:
+            feature_matrix = np.asarray(feature_df, dtype=float)
         feature_scaled = (
             self.scaler.transform(feature_matrix) if self.scaler is not None else feature_matrix
         )
-        raw_probs = self.classifier.predict_proba(feature_scaled)[:, 1]
+        raw_probs = self.classifier.predict_proba(feature_scaled)
+        if raw_probs.ndim == 2 and raw_probs.shape[1] >= 2:
+            raw_probs = raw_probs[:, 1]
+        else:
+            raw_probs = raw_probs.ravel()
         return self.calibrator.transform(raw_probs)
 
     def latest_prediction(

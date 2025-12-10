@@ -33,7 +33,10 @@ class HyprlClient:
         await self._client.aclose()
 
     async def _request(self, method: str, path: str, *, json: Any | None = None, params: dict | None = None) -> Any:
-        response = await self._client.request(method, path, json=json, params=params)
+        try:
+            response = await self._client.request(method, path, json=json, params=params)
+        except httpx.HTTPError as exc:
+            raise HyprlAPIError(-1, f"HTTP client error: {exc}") from exc
         if response.status_code >= 400:
             payload: Any
             try:

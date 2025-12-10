@@ -166,12 +166,26 @@ def _build_signal_series(
             cursor += 1
 
         desired = 0.0
-        if row.probability_up >= cfg.long_threshold:
-            if _row_trend_permits(row, "long", cfg) and _row_sentiment_permits(row, cfg):
-                desired = 1.0
-        elif allow_short and row.probability_up <= cfg.short_threshold:
-            if _row_trend_permits(row, "short", cfg) and _row_sentiment_permits(row, cfg):
-                desired = -1.0
+        probability_down = 1.0 - row.probability_up
+        force_short = (row.probability_up < 0.45) or (row.rolling_return < 0.0)
+
+        long_candidate = row.probability_up >= cfg.long_threshold
+        short_candidate = allow_short and (
+            force_short or probability_down >= cfg.short_threshold or not long_candidate
+        )
+
+        long_ok = False
+        if long_candidate and _row_trend_permits(row, "long", cfg) and _row_sentiment_permits(row, cfg):
+            long_ok = True
+
+        # Force short when the probability up is weak to counter long-bias models.
+        if row.probability_up < 0.6:
+            desired = -1.0
+        elif long_ok:
+            desired = 1.0
+        elif short_candidate:
+            # Force-rule short: bypass trend/sentiment
+            desired = -1.0
 
         current = desired
         signal[idx] = current

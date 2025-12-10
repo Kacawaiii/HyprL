@@ -18,8 +18,8 @@ class AutorankCog(commands.Cog):
     async def autorank_start(
         self,
         interaction: nextcord.Interaction,
-        top_k: int = nextcord.SlashOption(int, "Nombre de stratégies", default=3),
-        dry_run: bool = nextcord.SlashOption(bool, "Simulation uniquement", default=False),
+        top_k: int = nextcord.SlashOption(description="Nombre de stratégies", default=3),
+        dry_run: bool = nextcord.SlashOption(description="Simulation uniquement", default=False),
     ) -> None:
         client = self.bot.hyprl_client
         payload = {

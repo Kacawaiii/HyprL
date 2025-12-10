@@ -12,6 +12,10 @@ class BasicCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    @commands.command(name="testing")
+    async def testing(self, ctx: commands.Context) -> None:
+        await ctx.send("Bot en ligne. Utilise /predict, /usage, /ping pour les actions HyprL.")
+
     @nextcord.slash_command(description="Test connectivity with the HyprL API")
     async def ping(self, interaction: nextcord.Interaction) -> None:
         client = self.bot.hyprl_client

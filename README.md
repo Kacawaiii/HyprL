@@ -67,5 +67,9 @@ pip install -e .
 - Hourly multi-ticker (NVDA/MSFT/AMD par défaut) : `python scripts/ops/run_live_multi_ticker_hourly.py --log-root live/logs` (ou `--configs configs/NVDA-1h_v2.yaml configs/MSFT-1h_v2.yaml ...`)
 - Concat par ticker : `python scripts/tools/concat_trades_live_generic.py --symbol NVDA --input-dir live/logs/live_nvda --output live/logs/live_nvda/trades_NVDA_live_all.csv`
 - Monitor portefeuille Asc v2 : `python scripts/ops/run_portfolio_monitor_live.py --log-root live/logs --summary-out live/logs/portfolio_live/health_asc_v2.json`
+- Alerting Palier 2 : `python scripts/ops/alert_portfolio_health.py --health live/logs/portfolio_live/health_asc_v2.json --pf-alert 1.3 --dd-alert 20 --sharpe-alert 1.5 --webhook $WEBHOOK`; heartbeat `python scripts/ops/check_heartbeat.py --root live/logs --max-age-min 90 --symbols NVDA,MSFT,AMD,META,QQQ --webhook $WEBHOOK`
 - Rapport : `python scripts/reporting/export_report.py --trade-logs live/logs/live_nvda/trades_NVDA_live_all.csv --weights NVDA=1.0 --initial-equity 10000 --annualization 1638 --output reports/nvda_live_report.md --format md`
 - Rapport portefeuille : `python scripts/reporting/export_report.py --trade-logs live/logs/portfolio/orch_cli_W0_repro/trades_NVDA_orch.csv ... --weights NVDA=0.30,MSFT=0.27,AMD=0.27,META=0.09,QQQ=0.07,SPY=0.00 --initial-equity 10000 --annualization 1638 --output reports/asc_v2_W0_report.md --format md`
+- Track-record mensuel (NVDA + Asc v2) : `python scripts/ops/run_monthly_track_record.py --live-root live/logs --output-root reports --month 2025-01`
+- Dashboard local (read-only) : `streamlit run scripts/dashboard/palier2_dashboard.py` (affiche health_asc_v2 + heartbeats)
+- Docker runtime : `docker build -f Dockerfile.runtime -t hyprl-runtime .` puis `docker run -it -v $(pwd):/app hyprl-runtime /bin/bash`

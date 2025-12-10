@@ -14,11 +14,14 @@
 - Monitor portefeuille: `monitor_portfolio_health.py --trade-logs <live_all csvs> --weights NVDA=0.30,MSFT=0.27,AMD=0.27,META=0.09,QQQ=0.07,SPY=0.00 --annualization 1638`.
 - Fenêtres roulantes: 300–400 trades multi-tickers. Gates: PF_portfolio ≥1.5, MaxDD ≤15–20%, Sharpe ≥1.5.
 - TODO: insérer premiers résultats live-lite dès qu’ils existent.
+- Track-record mensuel (NVDA + Asc v2): `python scripts/ops/run_monthly_track_record.py --live-root live/logs --output-root reports --month YYYY-MM` (génère md/html + JSON).
 
 ## Scripts de référence (ops)
 - `scripts/ops/run_live_single_ticker_hourly.py`: lance run_live_hour avec chemins datés.
 - `scripts/tools/concat_trades_live_generic.py`: concat/dedup/sort trades live par ticker.
 - `scripts/ops/run_portfolio_monitor_live.py`: lance le monitor portefeuille Asc v2 (weights fixes) sur logs live_all.
+- `scripts/ops/run_monthly_track_record.py`: génère rapports NVDA et Asc v2 (md/html) + summary JSON par mois.
+- `scripts/ops/alert_portfolio_health.py` / `scripts/ops/check_heartbeat.py`: alertes PF/DD/Sharpe/status et heartbeats via webhook.
 
 ## Checklist lecteur externe
 - Vérifier PF/MaxDD/Sharpe sur fenêtres roulantes (ticker + portefeuille).

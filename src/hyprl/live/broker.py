@@ -32,6 +32,9 @@ TRADE_CSV_COLUMNS = [
     "effective_long_threshold",
     "effective_short_threshold",
     "regime_name",
+    "strategy_id",
+    "strategy_label",
+    "source_type",
 ]
 
 
@@ -54,6 +57,9 @@ class TradeRecordLive:
     effective_long_threshold: float
     effective_short_threshold: float
     regime_name: str | None
+    strategy_id: str | None = None
+    strategy_label: str | None = None
+    source_type: str = "live"
     exit_timestamp: datetime | None = None
     exit_price: float | None = None
     exit_reason: ExitReason | None = None
@@ -90,6 +96,12 @@ class TradeRecordLive:
             or self.equity_after is None
         ):
             raise ValueError("Trade not finalized; cannot serialize")
+        def _normalize_exit_reason(reason: ExitReason | None) -> str:
+            if reason is None:
+                return "unknown"
+            if reason in ("end_of_data", "end_of_window"):
+                return "time_exit"
+            return str(reason)
         return {
             "entry_timestamp": self.entry_timestamp.isoformat(),
             "exit_timestamp": self.exit_timestamp.isoformat(),
@@ -102,7 +114,7 @@ class TradeRecordLive:
             "trailing_stop_activation_price": self.trailing_stop_activation_price,
             "trailing_stop_distance_price": self.trailing_stop_distance_price,
             "exit_price": float(self.exit_price),
-            "exit_reason": str(self.exit_reason),
+            "exit_reason": _normalize_exit_reason(self.exit_reason),
             "position_size": float(self.position_size),
             "pnl": float(self.pnl),
             "return_pct": float(self.return_pct),
@@ -113,6 +125,9 @@ class TradeRecordLive:
             "effective_long_threshold": float(self.effective_long_threshold),
             "effective_short_threshold": float(self.effective_short_threshold),
             "regime_name": self.regime_name,
+            "strategy_id": self.strategy_id,
+            "strategy_label": self.strategy_label,
+            "source_type": self.source_type,
         }
 
 
@@ -219,6 +234,9 @@ class PaperBrokerImpl:
     slippage_pct: float = 0.0005
     trade_log_path: Path | str | None = None
     debug_exits: bool = False
+    strategy_id: str | None = None
+    strategy_label: str | None = None
+    source_type: str = "live"
     positions: dict[str, Position] = field(default_factory=dict)
     trades: list[TradeRecordLive] = field(default_factory=list)
     _log_writer: TradeLogWriter | None = field(init=False, default=None, repr=False)
@@ -296,6 +314,9 @@ class PaperBrokerImpl:
             effective_long_threshold=signal.long_threshold,
             effective_short_threshold=signal.short_threshold,
             regime_name=signal.regime_name,
+            strategy_id=self.strategy_id,
+            strategy_label=self.strategy_label,
+            source_type=self.source_type,
         )
         self.trades.append(record)
 

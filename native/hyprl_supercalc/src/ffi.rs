@@ -9,6 +9,19 @@ use pyo3_polars::PyDataFrame;
 
 use crate::batch::{evaluate_batch, run_native_search, SearchConstraint};
 use crate::core::{BacktestConfig, BacktestReport, Candle, EquityPoint, PerformanceMetrics};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeOutcome {
+    pub entry_idx: usize,
+    pub exit_idx: usize,
+    pub direction: String,
+    pub entry_price: f64,
+    pub exit_price: f64,
+    pub pnl: f64,
+    pub return_pct: f64,
+    pub exit_reason: String,
+}
 use crate::indicators::compute_indicators;
 
 /// Convert a Polars DataFrame to Vec<Candle> following the HyprL schema.
@@ -242,6 +255,23 @@ impl IntoPy<PyObject> for BacktestReport {
         dict.set_item("equity_curve", equity_curve_list).unwrap();
         dict.set_item("n_trades", self.n_trades).unwrap();
         dict.set_item("debug_info", self.debug_info).unwrap();
+        let trades_list = {
+            let list = PyList::empty_bound(py);
+            for trade in self.trades {
+                let tdict = PyDict::new_bound(py);
+                tdict.set_item("entry_idx", trade.entry_idx).unwrap();
+                tdict.set_item("exit_idx", trade.exit_idx).unwrap();
+                tdict.set_item("direction", trade.direction).unwrap();
+                tdict.set_item("entry_price", trade.entry_price).unwrap();
+                tdict.set_item("exit_price", trade.exit_price).unwrap();
+                tdict.set_item("pnl", trade.pnl).unwrap();
+                tdict.set_item("return_pct", trade.return_pct).unwrap();
+                tdict.set_item("exit_reason", trade.exit_reason).unwrap();
+                list.append(tdict).unwrap();
+            }
+            list
+        };
+        dict.set_item("trades", trades_list).unwrap();
         dict.into_py(py)
     }
 }
@@ -261,6 +291,21 @@ pub fn run_batch_backtest_py(
 
     let reports = evaluate_batch(&candles, &signal, &configs);
     Ok(reports)
+}
+
+#[pyfunction]
+pub fn run_backtest_py(
+    df: PyDataFrame,
+    signal: Vec<f64>,
+    config: BacktestConfig,
+) -> PyResult<BacktestReport> {
+    let df = df.0;
+    let candles = df_to_candles(&df).map_err(to_py_value_error)?;
+    if candles.len() != signal.len() {
+        return Err(PyValueError::new_err("signal and candles length mismatch"));
+    }
+    let report = crate::backtest::run_backtest(&candles, &signal, &config);
+    Ok(report)
 }
 
 #[pyfunction]
@@ -307,6 +352,7 @@ pub fn compute_indicators_py(py: Python<'_>, df: PyDataFrame) -> PyResult<PyObje
 #[pymodule]
 pub fn hyprl_supercalc(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_batch_backtest_py, m)?)?;
+    m.add_function(wrap_pyfunction!(run_backtest_py, m)?)?;
     m.add_function(wrap_pyfunction!(run_native_search_py, m)?)?;
     m.add_function(wrap_pyfunction!(compute_indicators_py, m)?)?;
     Ok(())

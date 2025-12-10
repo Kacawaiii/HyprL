@@ -15,6 +15,10 @@ from api import repo
 from api.utils.crypto import verify_token
 from api.settings import settings
 
+# Admin bootstrap constants
+HYPRL_ADMIN_TOKEN_ENV = "HYPRL_ADMIN_TOKEN"
+FALLBACK_ADMIN_SECRET = "hyprl_admin_dev_123"
+
 
 @dataclass
 class AuthContext:

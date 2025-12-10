@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
@@ -90,6 +91,7 @@ class BacktestConfig:
     label: LabelConfig = field(default_factory=LabelConfig)
     signal_log_path: Optional[str] = None
     model_artifact_path: Optional[str] = None
+    model_feature_columns: list[str] = field(default_factory=list)
     multi_timeframes: list[str] = field(default_factory=list)
     fusion_method: str = "mean"
     fusion_weights: dict[str, float] = field(default_factory=dict)
@@ -410,18 +412,48 @@ def _max_drawdown(equity_curve: list[float]) -> float:
     return max_dd
 
 
-def prepare_supercalc_dataset(config: BacktestConfig) -> SupercalcDataset:
-    fetcher = MarketDataFetcher(config.ticker)
+def prepare_supercalc_dataset(
+    config: BacktestConfig,
+    *,
+    timings: dict[str, float] | None = None,
+    use_cache_prices: bool = False,
+    use_cache_features: bool = False,
+    cache_dir: str | None = None,
+    fast: bool = False,
+) -> SupercalcDataset:
+    import hashlib
+    import json
+    import time
+
+    t0 = time.time()
+    cache_base = Path(cache_dir) if cache_dir else Path("data/cache")
+    cache_base.mkdir(parents=True, exist_ok=True)
+
     period = config.period if not (config.start or config.end) else None
-    prices = fetcher.get_prices(
-        interval=config.interval,
-        period=period,
-        start=config.start,
-        end=config.end,
-    )
+    price_cache_path = None
+    if use_cache_prices and period is not None:
+        price_cache_path = cache_base / f"ohlcv_{config.ticker}_{config.interval}_{period}.parquet"
+    if use_cache_prices and price_cache_path and price_cache_path.exists():
+        prices = pd.read_parquet(price_cache_path)
+    else:
+        fetcher = MarketDataFetcher(config.ticker)
+        prices = fetcher.get_prices(
+            interval=config.interval,
+            period=period,
+            start=config.start,
+            end=config.end,
+        )
+        if use_cache_prices and price_cache_path:
+            try:
+                price_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                prices.to_parquet(price_cache_path)
+            except Exception:
+                pass
+
     prices = prices.sort_index()
     if prices.empty:
         raise ValueError("No price data available for backtest.")
+    t_prices = time.time() - t0
 
     first_close = float(prices["close"].iloc[0])
     last_close = float(prices["close"].iloc[-1])
@@ -433,28 +465,127 @@ def prepare_supercalc_dataset(config: BacktestConfig) -> SupercalcDataset:
     else:
         benchmark_return = 0.0
 
-    features = prepare_feature_frame(prices, config)
+    feat_cache_path = None
+    if use_cache_features:
+        key_payload = {
+            "ticker": config.ticker,
+            "interval": config.interval,
+            "period": period,
+            "start": config.start,
+            "end": config.end,
+            "feature_preset": getattr(config, "feature_preset", None),
+            "sma_short": getattr(config, "sma_short_window", None),
+            "sma_long": getattr(config, "sma_long_window", None),
+            "rsi_window": getattr(config, "rsi_window", None),
+            "atr_window": getattr(config, "atr_window", None),
+            "label_mode": getattr(config.label, "mode", None),
+            "label_horizon": getattr(config.label, "horizon", None),
+            "label_threshold_pct": getattr(config.label, "threshold_pct", None),
+        }
+        key_str = json.dumps(key_payload, sort_keys=True)
+        key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:16]
+        feat_cache_path = cache_base / f"features_{key_hash}.parquet"
+
+    if use_cache_features and feat_cache_path and feat_cache_path.exists():
+        features = pd.read_parquet(feat_cache_path)
+    else:
+        features = prepare_feature_frame(prices, config)
+        if use_cache_features and feat_cache_path:
+            try:
+                feat_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                features.to_parquet(feat_cache_path)
+            except Exception:
+                pass
+
     if features.empty:
         raise RuntimeError("Feature frame is empty; cannot prepare dataset.")
+    t_features = time.time() - t0 - t_prices
 
     price_pos_lookup = {ts: idx for idx, ts in enumerate(prices.index)}
     feature_index = features.index
     min_history = max(config.sma_long_window, config.rsi_window, config.atr_window) + 5
+    atr_column = f"atr_{config.atr_window}"
     rows: list[SupercalcRow] = []
 
+    # Fast path: if an artifact exists, load once and predict in bulk without per-bar refits.
+    prob_map: dict[pd.Timestamp, float] = {}
+    model_load_time = 0.0
+    model_predict_time = 0.0
+    model_prepare_time = 0.0
+    artifact_path = config.model_artifact_path
+    # Define feature columns for the model; prefer config.model.feature_columns if present
+    feature_cols = getattr(config, "model_feature_columns", None) or []
+    if fast and artifact_path:
+        t_ml0 = time.time()
+        try:
+            print("[MODEL] loading artifact...", flush=True)
+            model_artifact = ProbabilityModel.load_artifact(str(artifact_path))
+            model_load_time = time.time() - t_ml0
+            # Build design matrix without rebuilding targets when fast.
+            design_all = features.copy()
+            if feature_cols:
+                missing = [col for col in feature_cols if col not in design_all.columns]
+                if missing:
+                    raise ValueError(f"Missing expected feature columns for artifact: {missing}")
+                design_all = design_all[feature_cols]
+            else:
+                numeric_cols = design_all.select_dtypes(include=[np.number]).columns
+                design_all = design_all[numeric_cols]
+            model_prepare_time = time.time() - t_ml0 - model_load_time
+            valid_idx = design_all.index.isin(feature_index[min_history:])
+            design_slice = design_all.loc[valid_idx]
+            if not design_slice.empty:
+                t_ml1 = time.time()
+                print(f"[MODEL] predicting in bulk... rows={len(design_slice)}, cols={design_slice.shape[1]}", flush=True)
+                X = design_slice.to_numpy(dtype=float)
+                # Use raw classifier/scaler to avoid wrapper quirks in fast path
+                clf = getattr(model_artifact, "classifier", None)
+                scaler = getattr(model_artifact, "scaler", None)
+                if clf is not None and hasattr(clf, "predict_proba"):
+                    try:
+                        if hasattr(clf, "n_jobs"):
+                            clf.n_jobs = 1
+                        X_scaled = scaler.transform(X) if scaler is not None else X
+                        proba_raw = clf.predict_proba(X_scaled)
+                        if proba_raw.ndim == 2 and proba_raw.shape[1] >= 2:
+                            proba_all = proba_raw[:, 1]
+                        else:
+                            proba_all = proba_raw.ravel()
+                    except Exception as clf_exc:
+                        print(f"[MODEL] raw classifier predict failed: {type(clf_exc).__name__}: {clf_exc}", flush=True)
+                        raise
+                else:
+                    proba_all = model_artifact.predict_proba(X)
+                model_predict_time = time.time() - t_ml1
+                prob_map = {idx: float(p) for idx, p in zip(design_slice.index, proba_all)}
+                print(
+                    f"[MODEL] artifact load={model_load_time:.2f}s prepare={model_prepare_time:.2f}s "
+                    f"predict={model_predict_time:.2f}s rows={len(design_slice)}",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f"[MODEL] fast-path failed: {type(exc).__name__}: {exc}", flush=True)
+            prob_map = {}
+
     for current_idx in range(min_history, len(features)):
-        train_slice = features.iloc[:current_idx]
-        design, target = prepare_design_and_target(train_slice, config.label)
-        if design.empty or target.nunique() < 2:
-            continue
-        model = ProbabilityModel.create(
-            model_type=config.model_type,
-            calibration=config.calibration,
-            random_state=config.random_state,
-        )
-        model.fit(design, target)
-        inference_design = features.iloc[[current_idx]][design.columns]
-        probability_up = float(model.predict_proba(inference_design)[0])
+        timestamp = feature_index[current_idx]
+        if prob_map:
+            probability_up = prob_map.get(timestamp)
+            if probability_up is None:
+                continue
+        else:
+            train_slice = features.iloc[:current_idx]
+            design, target = prepare_design_and_target(train_slice, config.label)
+            if design.empty or target.nunique() < 2:
+                continue
+            model = ProbabilityModel.create(
+                model_type=config.model_type,
+                calibration=config.calibration,
+                random_state=config.random_state,
+            )
+            model.fit(design, target)
+            inference_design = features.iloc[[current_idx]][design.columns]
+            probability_up = float(model.predict_proba(inference_design)[0])
         timestamp = feature_index[current_idx]
         price_pos = price_pos_lookup.get(timestamp)
         if price_pos is None or price_pos >= len(prices) - 1:
@@ -474,9 +605,19 @@ def prepare_supercalc_dataset(config: BacktestConfig) -> SupercalcDataset:
                 extreme_greed_flag=int(features.iloc[current_idx].get("extreme_greed_flag", 0)),
             )
         )
+    t_model = time.time() - t0 - t_prices - t_features
 
     if not rows:
         raise RuntimeError("Supercalc dataset is empty; insufficient history for modeling.")
+
+    if timings is not None:
+        timings["ohlcv"] = t_prices
+        timings["features"] = t_features
+        timings["model"] = t_model + model_load_time + model_predict_time + model_prepare_time
+        timings["model_load"] = model_load_time
+        timings["model_prepare"] = model_prepare_time
+        timings["model_predict"] = model_predict_time
+        timings["total_dataset"] = time.time() - t0
 
     return SupercalcDataset(
         rows=rows,

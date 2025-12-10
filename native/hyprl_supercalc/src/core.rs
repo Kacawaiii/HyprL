@@ -91,4 +91,19 @@ pub struct BacktestReport {
     pub n_trades: usize,
     /// Additional debug / diagnostic info if needed.
     pub debug_info: Option<String>,
+    /// Optional per-trade outcomes for downstream logging.
+    pub trades: Vec<TradeOutcome>,
+}
+
+/// Per-trade outcome (minimal contract for Python logging/gates).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeOutcome {
+    pub entry_idx: usize,
+    pub exit_idx: usize,
+    pub direction: String,
+    pub entry_price: f64,
+    pub exit_price: f64,
+    pub pnl: f64,
+    pub return_pct: f64,
+    pub exit_reason: String,
 }

@@ -1,0 +1,2 @@
+{"timestamp": "2025-11-27T22:59:07.698067+00:00", "symbol": "META", "decision": "short", "probability_up": 0.17267952859401703, "threshold": 0.4, "size": 11.032503, "reason": "short", "equity": 10000.0}
+{"timestamp": "2025-11-30T17:59:08.056460+00:00", "symbol": "META", "decision": "flat", "probability_up": null, "threshold": null, "size": 0.0, "reason": "no_signal", "equity": 9886.020715411869}

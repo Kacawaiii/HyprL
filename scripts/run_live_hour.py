@@ -23,6 +23,7 @@ from hyprl.risk.sizing import clamp_position_size
 from hyprl.execution.algos import ExecutionSlice, TWAPExecutor
 from hyprl.strategy.core import AdaptiveState, decide_signals_on_bar, initial_regime_name, build_multiframe_feature_set
 from hyprl.strategy import prepare_feature_frame, expected_trade_pnl
+from hyprl.utils.strategy_id import StrategyIdentity, compute_strategy_id
 
 DEFAULT_SIGNAL_LOG = Path("live/logs/live_signals.jsonl")
 DEFAULT_TRADES_JSON = Path("live/logs/live_trades.jsonl")
@@ -264,6 +265,9 @@ def _serialize_open_position(symbol: str, pos: Position, record: TradeRecordLive
             "effective_long_threshold": record.effective_long_threshold,
             "effective_short_threshold": record.effective_short_threshold,
             "regime_name": record.regime_name,
+            "strategy_id": record.strategy_id,
+            "strategy_label": record.strategy_label,
+            "source_type": record.source_type,
         },
         "open_state": None,
     }
@@ -307,6 +311,9 @@ def broker_from_state(
     commission_pct: float,
     slippage_pct: float,
     trade_log_path: Optional[Path],
+    strategy_id: str | None = None,
+    strategy_label: str | None = None,
+    source_type: str = "live",
 ) -> PaperBrokerImpl:
     cash = float(state.get("cash", initial_cash))
     broker = PaperBrokerImpl(
@@ -314,6 +321,9 @@ def broker_from_state(
         commission_pct=commission_pct,
         slippage_pct=slippage_pct,
         trade_log_path=trade_log_path,
+        strategy_id=strategy_id,
+        strategy_label=strategy_label,
+        source_type=source_type,
     )
     for entry in state.get("positions", []):
         symbol = entry.get("symbol")
@@ -347,6 +357,9 @@ def broker_from_state(
             effective_long_threshold=float(trade_info.get("effective_long_threshold", 0.0)),
             effective_short_threshold=float(trade_info.get("effective_short_threshold", 0.0)),
             regime_name=trade_info.get("regime_name"),
+            strategy_id=trade_info.get("strategy_id"),
+            strategy_label=trade_info.get("strategy_label"),
+            source_type=trade_info.get("source_type", "live"),
         )
         broker.trades.append(record)
         open_state_info = entry.get("open_state")
@@ -808,12 +821,35 @@ def run_portfolio(args: argparse.Namespace, config_paths: List[str]) -> None:
     portfolio_summary = Path(args.summary_file) if args.summary_file else Path(
         live_cfg0.get("summary_file", "live/dashboard/live_summary_portfolio.json")
     )
+    model_id = loaded_configs[0][1].model_artifact_path or loaded_configs[0][1].model_type
+    trailing_enabled = bool(
+        loaded_configs[0][1].risk.trailing_stop_activation or loaded_configs[0][1].risk.trailing_stop_distance
+    )
+    identity = StrategyIdentity(
+        tickers=tuple(bt.ticker for _, bt in loaded_configs),
+        interval=loaded_configs[0][1].interval,
+        model_id=model_id,
+        label_mode=getattr(loaded_configs[0][1].label, "mode", None),
+        label_horizon=getattr(loaded_configs[0][1].label, "horizon", None),
+        feature_set_id=loaded_configs[0][1].feature_preset,
+        risk_profile=loaded_configs[0][1].risk_profile,
+        risk_pct=loaded_configs[0][1].risk.risk_pct,
+        tp_multiple=loaded_configs[0][1].risk.reward_multiple,
+        sl_multiple=loaded_configs[0][1].risk.atr_multiplier,
+        trailing=trailing_enabled,
+        execution_mode="live",
+    )
+    strategy_id = compute_strategy_id(identity)
+    strategy_label = f"{'-'.join(bt.ticker for _, bt in loaded_configs)}_{loaded_configs[0][1].interval}_{model_id}"
     broker = broker_from_state(
         state,
         initial_cash=initial_balance,
         commission_pct=commission_pct,
         slippage_pct=slippage_pct,
         trade_log_path=None if args.dry_run else portfolio_trade_log,
+        strategy_id=strategy_id,
+        strategy_label=strategy_label,
+        source_type="live",
     )
     portfolio_limits = build_portfolio_limits(loaded_configs[0][0])
     group_map = {
@@ -1085,12 +1121,35 @@ def main() -> None:
     bars_map = build_bars_map(backtest_config.ticker, prices)
 
     state = load_state(args.state_file, backtest_config.initial_balance)
+    model_id = backtest_config.model_artifact_path or backtest_config.model_type
+    trailing_enabled = bool(
+        backtest_config.risk.trailing_stop_activation or backtest_config.risk.trailing_stop_distance
+    )
+    identity = StrategyIdentity(
+        tickers=(backtest_config.ticker,),
+        interval=backtest_config.interval,
+        model_id=model_id,
+        label_mode=getattr(backtest_config.label, "mode", None),
+        label_horizon=getattr(backtest_config.label, "horizon", None),
+        feature_set_id=backtest_config.feature_preset,
+        risk_profile=backtest_config.risk_profile,
+        risk_pct=backtest_config.risk.risk_pct,
+        tp_multiple=backtest_config.risk.reward_multiple,
+        sl_multiple=backtest_config.risk.atr_multiplier,
+        trailing=trailing_enabled,
+        execution_mode="live",
+    )
+    strategy_id = compute_strategy_id(identity)
+    strategy_label = f"{backtest_config.ticker}_{backtest_config.interval}_{model_id}"
     broker = broker_from_state(
         state,
         initial_cash=backtest_config.initial_balance,
         commission_pct=commission_pct,
         slippage_pct=slippage_pct,
         trade_log_path=None if args.dry_run else trade_log_path,
+        strategy_id=strategy_id,
+        strategy_label=strategy_label,
+        source_type="live",
     )
 
     if args.backfill:
