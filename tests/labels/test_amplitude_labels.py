@@ -9,6 +9,7 @@ from hyprl.labels.amplitude import (
     LabelConfig,
     attach_amplitude_labels,
     compute_amplitude_labels,
+    compute_symmetric_binary_labels,
     encode_amplitude_target,
     validate_label_support,
 )
@@ -91,3 +92,14 @@ def test_encode_amplitude_target_maps_strings_to_binary():
     assert encoded.iloc[1] == 0
     assert pd.isna(encoded.iloc[2])
     assert pd.isna(encoded.iloc[3])
+
+
+def test_compute_symmetric_binary_labels_marks_long_short_and_neutral():
+    index = pd.date_range("2024-01-01", periods=6, freq="h", tz="UTC")
+    close = pd.Series([100.0, 101.0, 101.0, 98.0, 98.0, 99.0], index=index)
+    labels = compute_symmetric_binary_labels(close, horizon=1, threshold_pct=0.003)
+    # Forward returns: +1.0%, 0.0%, -2.97%, 0.0%, +1.02%, NaN
+    assert labels.iloc[0] == 1.0  # long
+    assert labels.iloc[2] == 0.0  # short
+    assert pd.isna(labels.iloc[1])  # neutral band
+    assert pd.isna(labels.iloc[-1])  # tail shifted to NaN

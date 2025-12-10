@@ -88,6 +88,46 @@ def encode_amplitude_target(labels: pd.Series) -> pd.Series:
     return labels.map(mapping)
 
 
+def compute_symmetric_binary_labels(
+    prices: pd.DataFrame | pd.Series,
+    horizon: int = 6,
+    threshold_pct: float = 0.003,
+) -> pd.Series:
+    """
+    Compute 1/0/NaN labels with a neutral band around zero.
+
+    Args:
+        prices: Close series or prices dataframe with a 'close' column.
+        horizon: Forward horizon (number of bars) to look ahead.
+        threshold_pct: Decimal threshold (e.g., 0.003 = 0.3%).
+
+    Returns:
+        pd.Series of floats where 1.0 = long, 0.0 = short, NaN = neutral.
+    """
+    if isinstance(prices, pd.DataFrame):
+        close = prices["close"]
+    else:
+        close = prices
+    if close.empty:
+        return pd.Series(dtype=float)
+    horizon = max(1, int(horizon))
+    threshold = float(threshold_pct)
+    if threshold <= 0:
+        raise ValueError("threshold_pct must be > 0")
+
+    close = close.astype(float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        future_return = close.shift(-horizon) / close - 1.0
+    labels = pd.Series(np.full(len(close), np.nan, dtype=float), index=close.index)
+    labels[future_return > threshold] = 1.0
+    labels[future_return < -threshold] = 0.0
+
+    invalid_mask = ~np.isfinite(future_return.to_numpy(dtype=float))
+    if invalid_mask.any():
+        labels.iloc[np.where(invalid_mask)[0]] = np.nan
+    return labels
+
+
 def validate_label_support(features: pd.DataFrame, config: LabelConfig) -> None:
     if config.mode != "amplitude":
         return

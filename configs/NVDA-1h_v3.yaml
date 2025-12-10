@@ -1,0 +1,77 @@
+ticker: NVDA
+group: semiconductors
+interval: 1h
+period: 5y
+
+model:
+  type: xgboost
+  artifact: models/nvda_1h_xgb_v3.joblib
+  calibration: none
+  seed: 42
+  feature_columns:
+    - sma_short
+    - sma_long
+    - sma_ratio
+    - trend_ratio
+    - ema_short
+    - ema_long
+    - ema_ratio
+    - rsi_raw
+    - rsi_normalized
+    - volatility
+    - atr_14
+    - atr_normalized
+    - range_pct
+    - rolling_return
+    - sentiment_score
+    - sentiment_zscore
+    - sentiment_volume
+    - extreme_fear_flag
+    - extreme_greed_flag
+
+thresholds:
+  long: 0.53
+  short: 0.45
+
+risk:
+  risk_pct: 0.01
+  atr_multiplier: 1.5
+  reward_multiple: 1.9
+  min_position_size: 5
+
+trailing:
+  enabled: true
+  stop_activation: 1.0
+  stop_distance: 0.04
+
+replay:
+  parity_mode: true
+  signal_log: data/signals/nvda_replay_signal_log_xgb_v3.csv
+
+meta:
+  note: "NVDA 1h v3 (symmetric labels, 5y training, debug short enablement)."
+
+enable_trend_filter: true
+trend_long_min: 0.0014
+trend_short_min: -0.0010
+
+min_ev_multiple: 0.0
+
+multi_timeframes_enabled: true
+multi_timeframes_frames: "15m,1h,4h"
+fusion_method: min
+fusion_weights:
+  15m: 0.2
+  1h: 0.6
+  4h: 0.2
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.03
+  max_group_risk_pct: 0.04
+  max_positions: 5
+
+live:
+  risk:
+    max_position_notional_pct: 1.0
+  max_notional_per_trade: 0
