@@ -213,3 +213,28 @@ def test_run_backtest_native_supports_trailing_stops(monkeypatch: pytest.MonkeyP
     
     assert result.n_trades >= 0
     assert result.native_metrics is not None
+
+
+def test_run_backtest_native_emits_shorts_from_negative_signal() -> None:
+    pytest.importorskip("hyprl_supercalc")
+    pytest.importorskip("polars")
+    if not wrapper_native_available():
+        pytest.skip("hyprl_supercalc not built for native wrapper")
+
+    price_df = _synthetic_price_frame(rows=12)
+    # First half short, second half long to force both directions.
+    signal = [-1.0] * 6 + [1.0] * 6
+    cfg = runner.BacktestConfig(
+        ticker="TEST",
+        period="1mo",
+        interval="1h",
+        initial_balance=12_000.0,
+        long_threshold=0.6,
+        short_threshold=0.4,
+        risk=RiskConfig(balance=12_000.0, risk_pct=0.02, atr_multiplier=1.0, reward_multiple=2.0, min_position_size=5),
+    )
+
+    result = run_backtest_native(price_df, signal, cfg)
+
+    assert result.short_trades > 0
+    assert any(trade["side"] == "SHORT" for trade in result.trades)

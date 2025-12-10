@@ -47,24 +47,27 @@ trailing:
 
 replay:
   parity_mode: true
-  signal_log: data/signals/nvda_replay_signal_log_xgb_v3.csv
+  signal_log: data/signals/nvda_v3_debug.csv
 
 meta:
-  note: "NVDA 1h v3 (symmetric labels, 730d fetch due to Yahoo cap, debug short enablement)."
+  note: "NVDA 1h v3 DEBUG: fusion off, filters off, short-friendly."
 
-enable_trend_filter: true
-trend_long_min: 0.0014
-trend_short_min: -0.0010
+enable_trend_filter: false
+trend_long_min: 0.0
+trend_short_min: 0.0
 
 min_ev_multiple: 0.0
 
-multi_timeframes_enabled: true
+multi_timeframes_enabled: false
 multi_timeframes_frames: "15m,1h,4h"
 fusion_method: min
 fusion_weights:
   15m: 0.2
   1h: 0.6
   4h: 0.2
+
+filters:
+  enable_regime_filter: false
 
 portfolio_risk:
   max_total_risk_pct: 0.05

@@ -24,6 +24,7 @@ from hyprl.labels.amplitude import (
 )
 from hyprl.model.probability import ProbabilityModel
 from hyprl.risk.manager import RiskConfig, RiskOutcome, plan_trade
+from hyprl.strategy.decision_utils import fuse_probabilities, map_decision_to_side
 
 if TYPE_CHECKING:  # pragma: no cover
     from hyprl.backtest.runner import BacktestConfig
@@ -423,7 +424,8 @@ def decide_signals_on_bar(
     inference_design = features.iloc[[current_idx]][design.columns]
     base_probability = float(model.predict_proba(inference_design)[0])
     probabilities: dict[str, float] = {"base": base_probability}
-    if multiframe_features:
+    mtf_enabled = bool(getattr(config, "multi_timeframes_enabled", True))
+    if mtf_enabled and multiframe_features:
         fusion_weights = fusion_weights or {}
         for tf_key, tf_frame in multiframe_features.items():
             if tf_key == "base":
@@ -446,23 +448,7 @@ def decide_signals_on_bar(
                 continue
             probabilities[tf_key] = tf_prob
 
-    fused_probability = base_probability
-    if probabilities:
-        if fusion_method == "max":
-            fused_probability = max(probabilities.values())
-        elif fusion_method == "min":
-            fused_probability = min(probabilities.values())
-        else:
-            weights = []
-            probs = []
-            for key, value in probabilities.items():
-                weight = fusion_weights.get(key, 1.0) if fusion_weights else 1.0
-                weights.append(weight)
-                probs.append(value)
-            try:
-                fused_probability = float(np.average(probs, weights=weights))
-            except Exception:
-                fused_probability = float(np.mean(probs))
+    fused_probability = fuse_probabilities(probabilities, method=fusion_method, weights=fusion_weights)
 
     trace_state["model_artifact"] = artifact_path if model_artifact_used else None
     trace_state["probability_up_base"] = base_probability
@@ -480,35 +466,32 @@ def decide_signals_on_bar(
     trace_state["feature_signature"] = _feature_signature(feature_row)
     probability_up = fused_probability
     probability_down = 1.0 - probability_up
-    # Mechanical short rule to bypass model long-bias
-    rr = float(feature_row.get("rolling_return", 0.0))
-    rsi_value = float(feature_row.get("rsi_normalized", 0.0))
-    short_signal = (probability_up < 0.45) or (rr < 0.0) or (rsi_value > 0.6)
 
+    allow_short = config.short_threshold > 0.0
     long_candidate = probability_up >= long_threshold
-    short_candidate = short_signal or (probability_down >= short_threshold) or (not long_candidate)
+    short_candidate = allow_short and probability_up <= short_threshold
 
-    # Longs respect trend/sentiment; shorts are allowed even if the model is long-biased.
+    long_ok = long_candidate
+    short_ok = short_candidate
+
+    if long_ok and not _trend_permits_trade(feature_row, "long", config):
+        long_ok = False
+    if short_ok and not _trend_permits_trade(feature_row, "short", config):
+        short_ok = False
+    if long_ok and not _sentiment_permits_trade(feature_row, config):
+        long_ok = False
+    if short_ok and not _sentiment_permits_trade(feature_row, config):
+        short_ok = False
+
     direction = None
     decision_threshold = None
-    if probability_up < 0.6:
+    if long_ok:
+        direction = "long"
+        decision_threshold = long_threshold
+    elif short_ok:
         direction = "short"
         decision_threshold = short_threshold
     else:
-        if long_candidate:
-            if _trend_permits_trade(feature_row, "long", config) and _sentiment_permits_trade(
-                feature_row, config
-            ):
-                direction = "long"
-                decision_threshold = long_threshold
-            else:
-                emit("trend_filter_fail", trend_ok=False)
-
-        if direction is None and short_candidate:
-            direction = "short"
-            decision_threshold = short_threshold
-
-    if direction is None:
         trace_state["direction"] = None
         emit("threshold_not_met")
         return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
 import pandas as pd
@@ -14,6 +15,7 @@ from hyprl.backtest.runner import (
     _row_trend_permits,
     _row_sentiment_permits,
 )
+from hyprl.strategy.decision_utils import map_side_to_label
 
 try:  # pragma: no cover - optional native module v2
     from hyprl.native.supercalc import run_backtest_native
@@ -158,6 +160,7 @@ def _build_signal_series(
     trades_in_fear = 0
     trades_in_greed = 0
     allow_short = cfg.short_threshold > 0.0
+    log_rows: list[dict[str, object]] | None = [] if cfg.signal_log_path else None
 
     for row in dataset.rows:
         idx = max(0, min(int(row.price_index), prices_len - 1))
@@ -167,24 +170,16 @@ def _build_signal_series(
 
         desired = 0.0
         probability_down = 1.0 - row.probability_up
-        force_short = (row.probability_up < 0.45) or (row.rolling_return < 0.0)
 
         long_candidate = row.probability_up >= cfg.long_threshold
-        short_candidate = allow_short and (
-            force_short or probability_down >= cfg.short_threshold or not long_candidate
-        )
+        short_candidate = allow_short and row.probability_up <= cfg.short_threshold
 
-        long_ok = False
-        if long_candidate and _row_trend_permits(row, "long", cfg) and _row_sentiment_permits(row, cfg):
-            long_ok = True
+        long_ok = long_candidate and _row_trend_permits(row, "long", cfg) and _row_sentiment_permits(row, cfg)
+        short_ok = short_candidate and _row_trend_permits(row, "short", cfg) and _row_sentiment_permits(row, cfg)
 
-        # Force short when the probability up is weak to counter long-bias models.
-        if row.probability_up < 0.6:
-            desired = -1.0
-        elif long_ok:
+        if long_ok:
             desired = 1.0
-        elif short_candidate:
-            # Force-rule short: bypass trend/sentiment
+        elif short_ok:
             desired = -1.0
 
         current = desired
@@ -197,9 +192,32 @@ def _build_signal_series(
             if row.extreme_greed_flag:
                 trades_in_greed += 1
 
+        if log_rows is not None:
+            decision = "long" if desired > 0 else "short" if desired < 0 else "flat"
+            log_rows.append(
+                {
+                    "timestamp": row.timestamp,
+                    "probability_up": row.probability_up,
+                    "probability_down": probability_down,
+                    "decision": decision,
+                    "side": map_side_to_label(int(desired)),
+                    "rolling_return": row.rolling_return,
+                    "atr_value": row.atr_value,
+                }
+            )
+
     while cursor < prices_len:
         signal[cursor] = current
         cursor += 1
+
+    if log_rows:
+        try:
+            df = pd.DataFrame(log_rows)
+            out_path = Path(cfg.signal_log_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out_path, index=False)
+        except Exception as exc:  # pragma: no cover - debug-only path
+            print(f"[WARN] failed to write signal log {cfg.signal_log_path}: {exc}")
 
     return signal, trades_in_fear, trades_in_greed
 

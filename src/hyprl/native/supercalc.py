@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 import numpy as np
 
 from hyprl.backtest.runner import BacktestConfig, BacktestResult
+from hyprl.strategy.decision_utils import map_decision_to_side, map_side_to_label
 
 try:  # pragma: no cover - hyprl_supercalc may be absent on some hosts
     import hyprl_supercalc as _native
@@ -98,6 +99,7 @@ def _build_trade_rows(
     strategy_label: str | None,
     session_id: str | None,
     source_type: str = "backtest",
+    signal: Sequence[float] | None = None,
 ) -> list[dict[str, object]]:
     if not report_trades:
         return []
@@ -125,8 +127,19 @@ def _build_trade_rows(
         exit_ts_raw = ts_series[exit_idx] if exit_idx < len(ts_series) else ts_series[-1]
         entry_ts = pd.to_datetime(entry_ts_raw, unit="ms", utc=True)
         exit_ts = pd.to_datetime(exit_ts_raw, unit="ms", utc=True)
-        direction = str(trade.get("direction", "flat")).upper()
-        side = "LONG" if direction == "LONG" else "SHORT" if direction == "SHORT" else "FLAT"
+        direction_raw = str(trade.get("direction", "flat")).lower()
+        side_sign = 0
+        if signal is not None:
+            probe_idx = entry_idx if entry_idx < len(signal) else exit_idx
+            if probe_idx < len(signal):
+                probe = signal[probe_idx]
+                if probe > 0:
+                    side_sign = 1
+                elif probe < 0:
+                    side_sign = -1
+        if side_sign == 0:
+            side_sign = map_decision_to_side(direction_raw)
+        side = map_side_to_label(side_sign)
         entry_price = float(trade.get("entry_price", 0.0))
         exit_price = float(trade.get("exit_price", 0.0))
         pnl_pct = float(trade.get("return_pct", 0.0))
@@ -290,6 +303,7 @@ def _build_backtest_result(
     session_id: str | None = None,
     source_type: str = "backtest",
     export_trades_path: str | Path | None = None,
+    signal: Sequence[float] | None = None,
 ) -> BacktestResult:
     metrics = report.get("metrics", {})
     equity_points: list[dict[str, float]] = list(report.get("equity_curve", []))
@@ -325,6 +339,7 @@ def _build_backtest_result(
         strategy_label=strategy_label,
         session_id=session_id,
         source_type=source_type,
+        signal=signal,
     )
     long_trades = 0
     short_trades = 0
@@ -433,6 +448,7 @@ def run_backtest_native(
         session_id=session_id,
         source_type=source_type,
         export_trades_path=export_trades_path,
+        signal=signal_vec,
     )
 
 
@@ -505,15 +521,6 @@ def run_backtest_native_batch(
     if len(reports) != len(cfgs):
         raise RuntimeError("Native engine batch size mismatch between configs and reports")
     return [
-        _build_backtest_result(rep, cfg, polars_df)
+        _build_backtest_result(rep, cfg, polars_df, signal=signal_vec)
         for rep, cfg in zip(reports, cfgs)
     ]
-    def _normalize_exit_reason(reason: str) -> str:
-        mapping = {
-            "stop_or_take": "stop_loss",
-            "stop_loss": "stop_loss",
-            "take_profit": "take_profit",
-            "trailing_stop": "trailing_stop",
-            "end_of_data": "time_exit",
-        }
-        return mapping.get(reason, reason or "unknown")

@@ -19,25 +19,32 @@ from hyprl.labels.amplitude import compute_symmetric_binary_labels
 from hyprl.model.probability import ProbabilityCalibrator, ProbabilityModel
 
 FEATURES: Sequence[str] = (
-    "sma_short",
-    "sma_long",
-    "sma_ratio",
-    "trend_ratio",
-    "ema_short",
-    "ema_long",
-    "ema_ratio",
-    "rsi_raw",
-    "rsi_normalized",
-    "volatility",
+    # Momentum horizons
+    "ret_1h",
+    "ret_3h",
+    "ret_6h",
+    "ret_24h",
+    # ATR stack
     "atr_14",
-    "atr_normalized",
+    "atr_72",
+    "atr_14_norm",
+    "atr_72_norm",
+    # RSI stack
+    "rsi_7",
+    "rsi_14",
+    "rsi_21",
+    # Volatility regime
+    "vol_ratio_10_30",
+    "vol_regime_high",
+    # Volume signals
+    "volume_zscore_24",
+    "volume_surge",
+    # Range/volatility
     "range_pct",
-    "rolling_return",
-    "sentiment_score",
-    "sentiment_zscore",
-    "sentiment_volume",
-    "extreme_fear_flag",
-    "extreme_greed_flag",
+    "true_range",
+    # Higher moments
+    "ret_skew_20",
+    "ret_kurt_20",
 )
 
 DEFAULT_DATASET = pathlib.Path("data/cache/nvda_1h_features_v3.parquet")

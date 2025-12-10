@@ -143,6 +143,10 @@ def parse_args() -> argparse.Namespace:
         help="Optional CSV path to log per-bar signal diagnostics.",
     )
     parser.add_argument(
+        "--feature-preset",
+        help="Feature preset to use when building features (e.g., nvda_v2, equity_v2).",
+    )
+    parser.add_argument(
         "--model-artifact",
         type=Path,
         help="Optional ProbabilityModel artifact used for inference (shared between BT/live).",
@@ -232,6 +236,13 @@ def _apply_backtest_cli_config(args: argparse.Namespace) -> None:
     replay_cfg = cfg.get("replay", {}) or {}
     _assign_if_default(args, defaults, "signal_log", replay_cfg.get("signal_log"))
 
+    # Feature preset (model-level takes precedence over top-level)
+    preset = cfg.get("feature_preset") or model_cfg.get("preset")
+    if not hasattr(args, "feature_preset"):
+        setattr(args, "feature_preset", None)
+    if getattr(args, "feature_preset") is None and preset:
+        setattr(args, "feature_preset", preset)
+
 
 def _resolve_thresholds(args: argparse.Namespace, settings: dict) -> tuple[float, float]:
     settings = settings or {}
@@ -274,6 +285,7 @@ def main() -> None:
     model_type = args.model_type or model_cfg.get("type") or settings.get("model_type", "logistic")
     calibration = args.calibration or model_cfg.get("calibration") or settings.get("calibration", "none")
     model_feature_columns = getattr(args, "model_feature_columns", None) or model_cfg.get("feature_columns") or []
+    feature_preset = getattr(args, "feature_preset", None) or model_cfg.get("preset") or settings.get("feature_preset")
     risk_profile = args.risk_profile or settings.get("default_risk_profile") or "normal"
     risk_params = get_risk_settings(settings, risk_profile)
     if args.risk_pct is not None:
@@ -346,9 +358,10 @@ def main() -> None:
         trend_long_min=trend_long_min,
         trend_short_min=trend_short_min,
         label=label_cfg,
-        signal_log_path=None if args.fast else (str(args.signal_log) if args.signal_log else None),
+        signal_log_path=str(args.signal_log) if args.signal_log else None,
         model_artifact_path=str(args.model_artifact) if args.model_artifact else None,
         model_feature_columns=list(model_feature_columns),
+        feature_preset=feature_preset,
     )
     model_id = str(args.model_artifact) if args.model_artifact else model_type
     trailing_enabled = bool(risk_cfg.trailing_stop_activation or risk_cfg.trailing_stop_distance)
