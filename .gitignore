@@ -29,3 +29,5 @@ live/exp/
 live/logs/
 configs/exp/
 **/__pycache__/
+.env.ops
+.env.ops.example
