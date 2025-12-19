@@ -23,3 +23,9 @@ native/**/target/
 # IDE
 .vscode/
 .idea/
+
+# local outputs
+live/exp/
+live/logs/
+configs/exp/
+**/__pycache__/
