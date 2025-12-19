@@ -63,11 +63,11 @@ def _ensure_columns(
     missing = MANDATORY_COLUMNS - set(df.columns)
     # Fill reasonable defaults for some missing fields
     df = df.copy()
-    if "symbol" not in df.columns and default_symbol is not None:
-        df["symbol"] = default_symbol
+    if "symbol" not in df.columns:
+        df["symbol"] = default_symbol or "UNKNOWN"
         missing.discard("symbol")
-    if "session_id" not in df.columns and default_session is not None:
-        df["session_id"] = default_session
+    if "session_id" not in df.columns:
+        df["session_id"] = default_session or "session_0"
         missing.discard("session_id")
     if missing:
         raise ValueError(f"Missing mandatory columns: {sorted(missing)}")

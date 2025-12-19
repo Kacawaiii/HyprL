@@ -32,3 +32,5 @@ configs/exp/
 .env.ops
 .env.ops.example
 live/exp/
+# audit/debug logs
+live/logs/audit_trades_dryrun.jsonl
