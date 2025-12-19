@@ -76,7 +76,8 @@ def main() -> None:
     features = prepare_feature_frame(prices, config)
     if features.empty:
         raise SystemExit("Feature frame empty; cannot train artifact")
-    design, target = prepare_design_and_target(features, config.label)
+    feature_cols = config.model_feature_columns or None
+    design, target = prepare_design_and_target(features, config.label, feature_cols)
     if design.empty or target.nunique() < 2:
         raise SystemExit("Insufficient training data for artifact")
 

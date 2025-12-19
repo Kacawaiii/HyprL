@@ -31,3 +31,4 @@ configs/exp/
 **/__pycache__/
 .env.ops
 .env.ops.example
+live/exp/

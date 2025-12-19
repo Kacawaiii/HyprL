@@ -575,7 +575,8 @@ def prepare_supercalc_dataset(
                 continue
         else:
             train_slice = features.iloc[:current_idx]
-            design, target = prepare_design_and_target(train_slice, config.label)
+            feature_cols = config.model_feature_columns or FEATURE_COLUMNS
+            design, target = prepare_design_and_target(train_slice, config.label, feature_cols)
             if design.empty or target.nunique() < 2:
                 continue
             model = ProbabilityModel.create(

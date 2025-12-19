@@ -80,7 +80,10 @@ def _resolve_thresholds(args: argparse.Namespace, settings: dict) -> tuple[float
 
 
 def _build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
-    settings = load_ticker_settings(args.symbol, args.interval)
+    if getattr(args, "config", None):
+        settings = load_cli_config(args.config)
+    else:
+        settings = load_ticker_settings(args.symbol, args.interval)
     long_threshold, short_threshold = _resolve_thresholds(args, settings)
     model_type = args.model_type or settings.get("model_type", "logistic")
     calibration = args.calibration or settings.get("calibration", "none")
@@ -111,6 +114,19 @@ def _build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
     dyn_max_mult = args.dynamic_max_multiplier or dyn_cfg.get("max_multiplier") or 2.0
     dyn_min_mult = args.dynamic_min_multiplier or dyn_cfg.get("min_multiplier") or 0.25
     feature_preset = (settings.get("features", {}) or {}).get("preset")
+    model_cfg = (settings.get("model", {}) or {})
+    if not feature_preset:
+        feature_preset = model_cfg.get("preset")
+    model_feature_columns = list(model_cfg.get("feature_columns", []) or [])
+    mtf_frames: list[str] = []
+    if settings.get("multi_timeframes_enabled"):
+        frames = settings.get("multi_timeframes_frames")
+        if isinstance(frames, str):
+            mtf_frames = [tok.strip() for tok in frames.split(",") if tok.strip()]
+        elif isinstance(frames, (list, tuple)):
+            mtf_frames = [str(tok) for tok in frames]
+    fusion_method = settings.get("fusion_method") or (settings.get("fusion") or {}).get("method") or "mean"
+    fusion_weights = settings.get("fusion_weights") or (settings.get("fusion") or {}).get("weights") or {}
     return BacktestConfig(
         ticker=args.symbol,
         period=args.lookback,
@@ -139,6 +155,10 @@ def _build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
         dynamic_sizing_max_multiplier=float(dyn_max_mult),
         dynamic_sizing_min_multiplier=float(dyn_min_mult),
         feature_preset=feature_preset,
+        model_feature_columns=model_feature_columns,
+        multi_timeframes=mtf_frames,
+        fusion_method=fusion_method,
+        fusion_weights=fusion_weights,
     )
 
 

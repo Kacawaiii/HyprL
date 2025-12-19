@@ -97,8 +97,10 @@ def initial_regime_name(adaptive_cfg: AdaptiveConfig, fallback: str | None) -> s
 def prepare_design_and_target(
     feature_slice: pd.DataFrame,
     label_cfg: LabelConfig,
+    feature_cols: Optional[list[str]] = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
-    feature_cols = FEATURE_COLUMNS
+    if not feature_cols:
+        feature_cols = FEATURE_COLUMNS
     design = feature_slice[feature_cols]
     finite_mask = np.isfinite(design).all(axis=1)
     design = design.loc[finite_mask]
@@ -400,7 +402,8 @@ def decide_signals_on_bar(
 
     trace_state["feature_idx"] = current_idx
     train_slice = features.iloc[:current_idx]
-    design, target = prepare_design_and_target(train_slice, config.label)
+    feature_cols = config.model_feature_columns or FEATURE_COLUMNS
+    design, target = prepare_design_and_target(train_slice, config.label, feature_cols)
     trace_state["design_rows"] = int(len(design))
     if design.empty or target.nunique() < 2:
         emit("insufficient_training_data")

@@ -2,6 +2,7 @@
 
 from .core import (
     StrategyDecision,
+    FEATURE_COLUMNS,
     decide_signals_on_bar,
     expected_trade_pnl,
     effective_thresholds,
@@ -13,6 +14,7 @@ from .core import (
 
 __all__ = [
     "StrategyDecision",
+    "FEATURE_COLUMNS",
     "decide_signals_on_bar",
     "expected_trade_pnl",
     "effective_thresholds",
