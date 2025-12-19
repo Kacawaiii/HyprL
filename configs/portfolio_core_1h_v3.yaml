@@ -1,0 +1,15 @@
+portfolio:
+  note: "Core 1h portfolio v3 (NVDA/MSFT/QQQ Gate1) with fixed weights."
+  configs:
+    - configs/NVDA-1h_v3.yaml
+    - configs/MSFT-1h_v3.yaml
+    - configs/QQQ-1h_v3.yaml
+  weights:
+    - 0.4   # NVDA
+    - 0.3   # MSFT
+    - 0.3   # QQQ
+  initial_balance: 10000
+  annualization: 1638.0  # ≈ 252 * 6.5h for 1h bars
+  # Optional start/end; if omitted, per-config period is used.
+  start: null
+  end: null
