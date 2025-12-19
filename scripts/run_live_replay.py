@@ -177,7 +177,7 @@ def _kelly_params_from_config(config: BacktestConfig) -> KellyParams | None:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay historical bars through the live strategy stack.")
     parser.add_argument("--config", type=str, help="Path to YAML config file (e.g. configs/NVDA-1h.yaml).")
     parser.add_argument("--symbol")
@@ -230,7 +230,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--verbose", action="store_true")
     defaults = {action.dest: action.default for action in parser._actions}
-    args = parser.parse_args()
+    args = parser.parse_args(args=args)
     args._defaults = defaults
     return args
 

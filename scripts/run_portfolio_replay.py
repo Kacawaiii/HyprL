@@ -28,7 +28,7 @@ def run_replays(configs: List[str], start: str, end: str, out_dir: Path) -> List
             start,
             "--end",
             end,
-            "--export-trades",
+            "--trade-log",
             str(trade_csv),
         ]
         run_live_replay_main(args=args)  # type: ignore
