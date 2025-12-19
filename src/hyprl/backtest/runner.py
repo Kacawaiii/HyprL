@@ -24,6 +24,7 @@ from hyprl.strategy import (
     effective_thresholds,
     expected_trade_pnl,
     initial_regime_name,
+    FEATURE_COLUMNS,
     prepare_design_and_target,
     prepare_feature_frame,
 )

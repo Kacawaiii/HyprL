@@ -30,3 +30,9 @@
 |---|---|---|---|---|
 | 0.0005 / 0.0005 | 3.01 | 7.32 | 4.53 | 1582 |
 | 0.0010 / 0.0010 | 3.01 | 7.32 | 4.54 | 1582 |
+
+### Revision 2 (2025-12-19)
+- **Fix** : Replay feature contract aligned with v3 models
+- **Validation** : Full portfolio + NVDA/QQQ/MSFT W0/W1/W2 reproduced
+- **Metrics** : Identical to v1 (PF_net 3.01, Sharpe 7.32, MaxDD 4.53%)
+
