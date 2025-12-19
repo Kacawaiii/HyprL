@@ -34,3 +34,4 @@ configs/exp/
 live/exp/
 # audit/debug logs
 live/logs/audit_trades_dryrun.jsonl
+live/logs/*.jsonl
