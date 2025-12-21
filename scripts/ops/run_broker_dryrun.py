@@ -34,6 +34,7 @@ SRC_DIR = ROOT / "src"
 if SRC_DIR.exists() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from hyprl.broker import OrderSide, OrderType, TimeInForce  # noqa: E402
 from hyprl.broker.dryrun import DryRunBroker  # noqa: E402
 
 
@@ -109,19 +110,19 @@ def write_audit_line(path: Path, obj: dict[str, Any]) -> None:
 def build_order_payload(signal: dict[str, Any]) -> dict[str, Any]:
     direction = (signal.get("direction") or "").upper()
     if direction == "LONG":
-        side = "BUY"
+        side = OrderSide.BUY
     elif direction == "SHORT":
-        side = "SELL"
+        side = OrderSide.SELL
     else:
-        side = "BUY"
+        side = OrderSide.BUY
     qty = float(signal.get("position_size") or signal.get("qty") or 0.0)
     price = signal.get("entry_price") or signal.get("exit_price")
     return {
         "side": side,
         "qty": qty,
-        "order_type": "MKT",
-        "time_in_force": "DAY",
-        "price": price if price is not None else None,
+        "order_type": OrderType.MARKET,
+        "time_in_force": TimeInForce.DAY,
+        "limit_price": float(price) if price is not None else None,
     }
 
 
@@ -178,8 +179,7 @@ def main() -> None:
                 qty=order_payload["qty"],
                 order_type=order_payload["order_type"],
                 time_in_force=order_payload["time_in_force"],
-                price=order_payload["price"],
-                meta={"signal_id": sid},
+                limit_price=order_payload["limit_price"],
             )
             broker.set_last_signal(ticker, sid)
 
