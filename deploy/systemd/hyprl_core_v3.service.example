@@ -1,0 +1,13 @@
+[Unit]
+Description=HyprL Core v3 Signal Engine (hourly)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kyo/HyprL
+ExecStart=/home/kyo/HyprL/.venv/bin/python scripts/run_live_hour.py --config configs/NVDA-1h_v3.yaml --trade-log live/logs/core_v3/trades_NVDA.csv --summary-file live/logs/core_v3/summary_NVDA.json
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

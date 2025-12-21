@@ -35,3 +35,6 @@ live/exp/
 # audit/debug logs
 live/logs/audit_trades_dryrun.jsonl
 live/logs/*.jsonl
+# Local broker env + execution outputs
+.env.broker.alpaca
+live/execution/

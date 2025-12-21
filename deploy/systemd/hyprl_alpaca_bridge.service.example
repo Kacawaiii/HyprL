@@ -1,0 +1,14 @@
+[Unit]
+Description=HyprL Alpaca Execution Bridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kyo/HyprL
+EnvironmentFile=/home/kyo/HyprL/.env.broker.alpaca
+ExecStart=/home/kyo/HyprL/.venv/bin/python scripts/execution/run_alpaca_bridge.py --signals live/logs/live_signals.jsonl --out live/execution/alpaca/orders.jsonl --state live/execution/alpaca/state.json --paper --symbols NVDA,MSFT,QQQ --max-orders-per-day 10 --max-notional-per-day 5000 --kill-switch /tmp/hyprl_kill_switch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

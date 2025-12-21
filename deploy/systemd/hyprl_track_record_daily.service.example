@@ -1,0 +1,9 @@
+[Unit]
+Description=HyprL Track Record Daily Snapshot
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kyo/HyprL
+EnvironmentFile=/home/kyo/HyprL/.env.broker.alpaca
+ExecStart=/home/kyo/HyprL/.venv/bin/python scripts/ops/alpaca_track_record_snapshot.py --paper

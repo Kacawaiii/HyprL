@@ -1,0 +1,9 @@
+[Unit]
+Description=HyprL Track Record Daily Snapshot Timer
+
+[Timer]
+OnCalendar=*-*-* 20:10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

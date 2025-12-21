@@ -165,6 +165,9 @@ print(f"Closed {len(orders)} positions")
 
 ### Replace PaperBrokerImpl
 
+Note: For core_v3 frozen releases, do not modify the core runner. Use the
+execution bridge section below instead. Direct integration is for v4+ only.
+
 **Before (paper broker):**
 ```python
 from hyprl.broker.dryrun import PaperBrokerImpl
@@ -198,6 +201,33 @@ broker = AlpacaBroker(paper=True)
 if not broker.is_market_open():
     print("Market closed, skipping")
     exit(0)
+
+```
+
+## Execution Bridge (recommended for frozen core_v3)
+
+Use the bridge to execute orders from core_v3 signals without modifying core_v3.
+
+```bash
+. ./.env.broker.alpaca
+.venv/bin/python scripts/execution/run_alpaca_bridge.py \
+  --signals live/logs/live_signals.jsonl \
+  --out live/execution/alpaca/orders.jsonl \
+  --state live/execution/alpaca/state.json \
+  --paper \
+  --symbols NVDA,MSFT,QQQ \
+  --max-orders-per-day 10 \
+  --max-notional-per-day 5000 \
+  --kill-switch /tmp/hyprl_kill_switch
+```
+
+Bridge safety flags:
+
+- `--dry-run` (log only, no orders)
+- `--once` (process current lines then exit)
+- `--max-orders-per-day`
+- `--max-notional-per-day`
+- `--kill-switch PATH`
 
 # Initialize strategy engine
 engine = StrategyEngine(
