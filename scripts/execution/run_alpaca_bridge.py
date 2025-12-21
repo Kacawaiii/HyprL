@@ -38,6 +38,9 @@ class BridgeState:
     file_offset: int = 0
     last_exec_ts_by_symbol: Dict[str, str] = None
     last_exec_decision_by_symbol: Dict[str, str] = None
+    day: str = ""
+    orders_today: int = 0
+    notional_today: float = 0.0
 
     def __post_init__(self) -> None:
         if self.last_exec_ts_by_symbol is None:
@@ -54,6 +57,9 @@ def load_state(path: Path) -> BridgeState:
         file_offset=int(data.get("file_offset", 0)),
         last_exec_ts_by_symbol=dict(data.get("last_exec_ts_by_symbol", {})),
         last_exec_decision_by_symbol=dict(data.get("last_exec_decision_by_symbol", {})),
+        day=str(data.get("day", "")),
+        orders_today=int(data.get("orders_today", 0) or 0),
+        notional_today=float(data.get("notional_today", 0.0) or 0.0),
     )
 
 
@@ -104,6 +110,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", default="", help="Comma-separated allowlist. Empty = allow all.")
     parser.add_argument("--paper", action="store_true", help="Use Alpaca paper trading.")
     parser.add_argument("--live", action="store_true", help="Use Alpaca live trading.")
+    parser.add_argument("--dry-run", action="store_true", help="Log decisions without submitting orders.")
+    parser.add_argument("--once", action="store_true", help="Process current lines then exit.")
     parser.add_argument(
         "--i-understand-live-orders",
         action="store_true",
@@ -123,6 +131,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-notional-per-order", type=float, default=250.0)
     parser.add_argument("--min-notional-per-order", type=float, default=10.0)
+    parser.add_argument("--max-orders-per-day", type=int, default=None)
+    parser.add_argument("--max-notional-per-day", type=float, default=None)
+    parser.add_argument("--kill-switch", default="", help="Path to kill-switch file.")
     parser.add_argument("--max-qty", type=float, default=None)
     parser.add_argument("--allow-short", action="store_true", help="Allow short decisions.")
     parser.add_argument("--poll-seconds", type=float, default=0.25)
@@ -161,10 +172,16 @@ def main() -> None:
     with signals_path.open("r", encoding="utf-8") as f:
         f.seek(st.file_offset, os.SEEK_SET)
         while True:
+            if args.kill_switch and Path(args.kill_switch).exists():
+                append_jsonl(out_path, {"ts": utc_now_iso(), "event": "kill_switch_active", "path": args.kill_switch})
+                break
+
             line = f.readline()
             if not line:
                 st.file_offset = f.tell()
                 save_state(state_path, st)
+                if args.once:
+                    break
                 time.sleep(args.poll_seconds)
                 continue
 
@@ -190,6 +207,11 @@ def main() -> None:
             size = float(ev.get("size", 0.0) or 0.0)
             if not ts or decision not in ("long", "short", "flat"):
                 continue
+            event_day = parse_ts(ts).date().isoformat()
+            if st.day != event_day:
+                st.day = event_day
+                st.orders_today = 0
+                st.notional_today = 0.0
 
             last_ts = st.last_exec_ts_by_symbol.get(symbol)
             last_dec = st.last_exec_decision_by_symbol.get(symbol)
@@ -220,6 +242,15 @@ def main() -> None:
                 except Exception:
                     pos = None
 
+            price = None
+            for key in ("price", "entry_price", "close", "bar_close"):
+                if key in ev and ev.get(key) is not None:
+                    try:
+                        price = float(ev.get(key))
+                        break
+                    except (TypeError, ValueError):
+                        price = None
+
             def already_long(p) -> bool:
                 return bool(p) and str(getattr(p, "side", "")) == "long"
 
@@ -227,12 +258,19 @@ def main() -> None:
                 return bool(p) and str(getattr(p, "side", "")) == "short"
 
             client_order_id = stable_client_order_id(symbol, ts, target)
+            did_submit = False
+            order_notional: float | None = None
 
             if target == "flat":
                 if pos:
                     try:
-                        res = call_close_position(broker, symbol)
-                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "close_position", "symbol": symbol, "result": str(res)})
+                        if args.dry_run:
+                            append_jsonl(out_path, {"ts": utc_now_iso(), "event": "would_close", "symbol": symbol})
+                            did_submit = True
+                        else:
+                            res = call_close_position(broker, symbol)
+                            append_jsonl(out_path, {"ts": utc_now_iso(), "event": "close_position", "symbol": symbol, "result": str(res)})
+                            did_submit = True
                     except Exception as exc:
                         append_jsonl(out_path, {"ts": utc_now_iso(), "event": "close_failed", "symbol": symbol, "error": str(exc)})
                         continue
@@ -248,25 +286,44 @@ def main() -> None:
 
                 qty = max(0.0, size)
                 if args.size_mode == "notional":
-                    notional = max(args.min_notional_per_order, min(size, args.max_notional_per_order))
-                    # AlpacaBroker requires qty; without price we cannot compute. Fallback to qty mode.
-                    qty = max(0.0, size)
+                    if price is None:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "missing_price_notional", "symbol": symbol})
+                        continue
+                    order_notional = max(args.min_notional_per_order, min(size, args.max_notional_per_order))
+                    qty = order_notional / price if price > 0 else 0.0
+                elif price is not None:
+                    order_notional = qty * price
                 if args.max_qty is not None:
                     qty = min(qty, args.max_qty)
                 if qty <= 0:
                     continue
+                if args.max_orders_per_day is not None and st.orders_today >= args.max_orders_per_day:
+                    append_jsonl(out_path, {"ts": utc_now_iso(), "event": "limit_orders_day", "symbol": symbol})
+                    continue
+                if args.max_notional_per_day is not None:
+                    if order_notional is None:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "missing_price_day_limit", "symbol": symbol})
+                        continue
+                    if (st.notional_today + order_notional) > args.max_notional_per_day:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "limit_notional_day", "symbol": symbol})
+                        continue
 
                 try:
-                    res = call_submit_order(
-                        broker,
-                        symbol=symbol,
-                        qty=qty,
-                        side=OrderSide.BUY,
-                        order_type=OrderType.MARKET,
-                        time_in_force=TimeInForce.DAY,
-                        client_order_id=client_order_id,
-                    )
-                    append_jsonl(out_path, {"ts": utc_now_iso(), "event": "open_long", "symbol": symbol, "qty": qty, "result": str(res)})
+                    if args.dry_run:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "would_open_long", "symbol": symbol, "qty": qty})
+                        did_submit = True
+                    else:
+                        res = call_submit_order(
+                            broker,
+                            symbol=symbol,
+                            qty=qty,
+                            side=OrderSide.BUY,
+                            order_type=OrderType.MARKET,
+                            time_in_force=TimeInForce.DAY,
+                            client_order_id=client_order_id,
+                        )
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "open_long", "symbol": symbol, "qty": qty, "result": str(res)})
+                        did_submit = True
                 except Exception as exc:
                     append_jsonl(out_path, {"ts": utc_now_iso(), "event": "order_failed", "symbol": symbol, "error": str(exc)})
                     continue
@@ -281,28 +338,49 @@ def main() -> None:
                         continue
 
                 qty = max(0.0, size)
+                if price is not None:
+                    order_notional = qty * price
                 if args.max_qty is not None:
                     qty = min(qty, args.max_qty)
                 if qty <= 0:
                     continue
+                if args.max_orders_per_day is not None and st.orders_today >= args.max_orders_per_day:
+                    append_jsonl(out_path, {"ts": utc_now_iso(), "event": "limit_orders_day", "symbol": symbol})
+                    continue
+                if args.max_notional_per_day is not None:
+                    if order_notional is None:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "missing_price_day_limit", "symbol": symbol})
+                        continue
+                    if (st.notional_today + order_notional) > args.max_notional_per_day:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "limit_notional_day", "symbol": symbol})
+                        continue
 
                 try:
-                    res = call_submit_order(
-                        broker,
-                        symbol=symbol,
-                        qty=qty,
-                        side=OrderSide.SELL,
-                        order_type=OrderType.MARKET,
-                        time_in_force=TimeInForce.DAY,
-                        client_order_id=client_order_id,
-                    )
-                    append_jsonl(out_path, {"ts": utc_now_iso(), "event": "open_short", "symbol": symbol, "qty": qty, "result": str(res)})
+                    if args.dry_run:
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "would_open_short", "symbol": symbol, "qty": qty})
+                        did_submit = True
+                    else:
+                        res = call_submit_order(
+                            broker,
+                            symbol=symbol,
+                            qty=qty,
+                            side=OrderSide.SELL,
+                            order_type=OrderType.MARKET,
+                            time_in_force=TimeInForce.DAY,
+                            client_order_id=client_order_id,
+                        )
+                        append_jsonl(out_path, {"ts": utc_now_iso(), "event": "open_short", "symbol": symbol, "qty": qty, "result": str(res)})
+                        did_submit = True
                 except Exception as exc:
                     append_jsonl(out_path, {"ts": utc_now_iso(), "event": "order_failed", "symbol": symbol, "error": str(exc)})
                     continue
 
             st.last_exec_ts_by_symbol[symbol] = ts
             st.last_exec_decision_by_symbol[symbol] = decision
+            if did_submit:
+                st.orders_today += 1
+                if order_notional is not None:
+                    st.notional_today += float(order_notional)
             save_state(state_path, st)
 
 
