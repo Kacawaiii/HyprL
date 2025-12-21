@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,12 +93,12 @@ def build_snapshot(
     }
 
 
-def write_snapshot(payload: Dict[str, Any], out_dir: Path) -> SnapshotResult:
+def write_snapshot(payload: Dict[str, Any], out_dir: Path, asof_date: str | None) -> SnapshotResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     snapshots_dir = out_dir / "snapshots"
     snapshots_dir.mkdir(parents=True, exist_ok=True)
 
-    stamp = _utc_now().date().isoformat()
+    stamp = asof_date or _utc_now().date().isoformat()
     path = snapshots_dir / f"{stamp}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -115,6 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--paper", action="store_true", help="Use Alpaca paper trading.")
     parser.add_argument("--live", action="store_true", help="Use Alpaca live trading.")
     parser.add_argument("--out-dir", default="docs/reports/track_record", help="Output base directory.")
+    parser.add_argument("--asof-date", default="", help="Snapshot date (YYYY-MM-DD).")
     parser.add_argument("--period", default="3M", help="Portfolio history period (1D|1W|1M|3M|1A).")
     parser.add_argument("--timeframe", default="1D", help="Portfolio history timeframe (1Min|5Min|15Min|1H|1D).")
     return parser.parse_args()
@@ -126,12 +129,26 @@ def main() -> None:
         raise SystemExit("Choose only one of --paper or --live")
 
     mode = "paper" if args.paper or not args.live else "live"
+    asof_date = args.asof_date.strip()
+    if asof_date:
+        try:
+            datetime.fromisoformat(asof_date)
+        except ValueError:
+            raise SystemExit("Invalid --asof-date, expected YYYY-MM-DD")
+
+    api_key = os.environ.get("ALPACA_API_KEY")
+    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    if not api_key or not secret_key:
+        print("Missing Alpaca credentials (ALPACA_API_KEY / ALPACA_SECRET_KEY).", file=sys.stderr)
+        raise SystemExit(2)
+
     from hyprl.broker.alpaca import AlpacaBroker
 
     broker = AlpacaBroker(paper=(mode == "paper"))
 
     payload = build_snapshot(broker, mode=mode, period=args.period, timeframe=args.timeframe)
-    result = write_snapshot(payload, Path(args.out_dir))
+    payload["asof_date"] = asof_date or _utc_now().date().isoformat()
+    result = write_snapshot(payload, Path(args.out_dir), asof_date or None)
 
     print(json.dumps({
         "snapshot": str(result.path),

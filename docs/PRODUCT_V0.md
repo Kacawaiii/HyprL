@@ -22,6 +22,12 @@
 Users must read and accept the risk disclaimer:
 - `docs/legal/DISCLAIMER.md`
 
+## Access control plan (v0)
+
+- Discord access via roles (manual assignment).
+- API access via issued API keys (manual provision).
+- Revocation procedure: remove role + revoke API key.
+
 ## Requirements to launch
 
 - Track record in paper (minimum 2 weeks).

@@ -6,6 +6,8 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import shutil
+import sys
 from typing import Any, Dict, List, Optional
 
 
@@ -77,9 +79,10 @@ def load_orders_summary(path: Optional[Path]) -> Dict[str, Any]:
 
 def write_report(out_dir: Path, payload: Dict[str, Any]) -> Dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    report_json = out_dir / "TRACK_RECORD.json"
-    report_md = out_dir / "TRACK_RECORD.md"
-    report_sha = out_dir / "TRACK_RECORD.sha256"
+    asof_date = payload.get("asof_date", "unknown")
+    report_json = out_dir / "track_record_latest.json"
+    report_md = out_dir / f"TRACK_RECORD_{asof_date}.md"
+    latest_md = out_dir / "TRACK_RECORD_latest.md"
 
     report_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -112,36 +115,27 @@ def write_report(out_dir: Path, payload: Dict[str, Any]) -> Dict[str, Path]:
         ]
 
     report_md.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+    shutil.copyfile(report_md, latest_md)
 
-    digest_json = _hash_file(report_json)
-    digest_md = _hash_file(report_md)
-    latest_path = Path(payload.get("latest_snapshot", ""))
-    digest_latest = _hash_file(latest_path) if latest_path.exists() else ""
-
-    report_sha.write_text(
-        f"{digest_json}  {report_json.name}\n"
-        f"{digest_md}  {report_md.name}\n"
-        f"{digest_latest}  {latest_path.name}\n",
-        encoding="utf-8",
-    )
-
-    return {"json": report_json, "md": report_md, "sha": report_sha}
+    return {"json": report_json, "md": report_md, "latest_md": latest_md}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate track-record report.")
-    parser.add_argument("--snapshots-dir", default="docs/reports/track_record/snapshots")
+    parser.add_argument("--in-dir", default="docs/reports/track_record")
     parser.add_argument("--orders-log", default="live/execution/alpaca/orders.jsonl")
-    parser.add_argument("--out-dir", default="docs/reports")
+    parser.add_argument("--out-dir", default="docs/reports/track_record")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    snap_dir = Path(args.snapshots_dir)
+    in_dir = Path(args.in_dir)
+    snap_dir = in_dir / "snapshots"
     snaps = load_snapshots(snap_dir)
     if not snaps:
-        raise SystemExit(f"No snapshots found in {snap_dir}")
+        print(f"No snapshots found in {snap_dir}", file=sys.stderr)
+        raise SystemExit(2)
 
     snaps_sorted = sorted(snaps, key=lambda x: x.get("_date", ""))
     latest = snaps_sorted[-1]
@@ -151,6 +145,7 @@ def main() -> None:
         "mode": latest.get("mode"),
         "period": latest.get("period"),
         "timeframe": latest.get("timeframe"),
+        "asof_date": latest.get("_date"),
         "start_equity": latest.get("start_equity"),
         "end_equity": latest.get("end_equity"),
         "return_pct": latest.get("return_pct"),

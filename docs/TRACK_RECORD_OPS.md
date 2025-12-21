@@ -7,9 +7,11 @@ Core v3 stays frozen. Execution uses the Alpaca bridge.
 
 - Snapshots: `docs/reports/track_record/snapshots/`
 - Latest snapshot: `docs/reports/track_record/latest.json`
-- Reports: `docs/reports/TRACK_RECORD.md` and `docs/reports/TRACK_RECORD.json`
-- Report hash: `docs/reports/TRACK_RECORD.sha256`
+- Reports: `docs/reports/track_record/TRACK_RECORD_<YYYY-MM-DD>.md`
+- Latest report: `docs/reports/track_record/TRACK_RECORD_latest.md`
+- Dashboard JSON: `docs/reports/track_record/track_record_latest.json`
 - Bridge log (optional): `live/execution/alpaca/orders.jsonl`
+- Daily runner: `scripts/ops/run_track_record_daily.sh`
 
 ## Paper procedure (minimum 2 weeks)
 
@@ -43,7 +45,9 @@ Core v3 stays frozen. Execution uses the Alpaca bridge.
 
 4) Weekly report:
 ```bash
-.venv/bin/python scripts/ops/make_track_record_report.py
+.venv/bin/python scripts/ops/make_track_record_report.py \
+  --in-dir docs/reports/track_record \
+  --out-dir docs/reports/track_record
 ```
 
 ## Live micro procedure (after paper stability)
@@ -63,9 +67,9 @@ Core v3 stays frozen. Execution uses the Alpaca bridge.
   --out-dir docs/reports
 ```
 
-3) Verify hashes:
+3) Verify latest JSON exists:
 ```bash
-sha256sum -c docs/reports/TRACK_RECORD.sha256
+test -f docs/reports/track_record/track_record_latest.json
 ```
 
 ## Notes

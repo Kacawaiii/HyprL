@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-REPORT_JSON = Path("docs/reports/TRACK_RECORD.json")
+REPORT_JSON = Path("docs/reports/track_record/track_record_latest.json")
 LATEST_JSON = Path("docs/reports/track_record/latest.json")
 DISCLAIMER_PATH = Path("docs/legal/DISCLAIMER.md")
 
@@ -42,7 +42,13 @@ if DISCLAIMER_PATH.exists():
     st.info("Disclaimer: " + DISCLAIMER_PATH.read_text(encoding="utf-8").splitlines()[0])
 
 if not REPORT_JSON.exists() or not LATEST_JSON.exists():
-    st.error("Track record artifacts not found. Run snapshot + report first.")
+    st.error("No track record yet.")
+    st.code(
+        ". ./.env.broker.alpaca\n"
+        ".venv/bin/python scripts/ops/alpaca_track_record_snapshot.py --paper --out-dir docs/reports/track_record\n"
+        ".venv/bin/python scripts/ops/make_track_record_report.py --in-dir docs/reports/track_record --out-dir docs/reports/track_record",
+        language="bash",
+    )
     st.stop()
 
 report = json.loads(REPORT_JSON.read_text(encoding="utf-8"))

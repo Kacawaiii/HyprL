@@ -33,7 +33,7 @@ class FakeBroker:
 def test_snapshot_write_creates_files(tmp_path: Path) -> None:
     broker = FakeBroker()
     payload = snapshot.build_snapshot(broker, mode="paper", period="3M", timeframe="1D")
-    result = snapshot.write_snapshot(payload, tmp_path)
+    result = snapshot.write_snapshot(payload, tmp_path, "2025-12-20")
 
     assert result.path.exists()
     assert result.sha_path.exists()
@@ -67,13 +67,13 @@ def test_report_generator_from_snapshots(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PYTHONPATH", ".")
     monkeypatch.setattr(report, "Path", Path)
     monkeypatch.setattr(report, "parse_args", lambda: type("Args", (), {
-        "snapshots_dir": str(snap_dir),
+        "in_dir": str(tmp_path),
         "orders_log": "",
         "out_dir": str(out_dir),
     })())
 
     report.main()
 
-    assert (out_dir / "TRACK_RECORD.json").exists()
-    assert (out_dir / "TRACK_RECORD.md").exists()
-    assert (out_dir / "TRACK_RECORD.sha256").exists()
+    assert (out_dir / "track_record_latest.json").exists()
+    assert (out_dir / "TRACK_RECORD_2025-12-08.md").exists()
+    assert (out_dir / "TRACK_RECORD_latest.md").exists()

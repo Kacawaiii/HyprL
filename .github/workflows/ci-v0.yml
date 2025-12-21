@@ -1,0 +1,31 @@
+name: ci-v0
+
+on:
+  push:
+    branches:
+      - product/launch_v0
+      - product/launch_v0r1
+  pull_request:
+    branches:
+      - product/launch_v0
+      - product/launch_v0r1
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+      - name: Run tests (sense)
+        run: pytest -q tests/hyprl_sense -p no:cacheprovider
+      - name: Run tests (supercalc)
+        run: pytest -q tests/test_supercalc_*.py tests/backtest/test_supercalc_native.py -p no:cacheprovider
+      - name: Run tests (broker/ops)
+        run: pytest -q tests/broker tests/ops -p no:cacheprovider
