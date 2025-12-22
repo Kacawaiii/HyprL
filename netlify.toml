@@ -1,0 +1,4 @@
+[build]
+  base = "apps/landing"
+  publish = "."
+  command = ""

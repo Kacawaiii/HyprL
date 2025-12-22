@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyprL — Quantitative Trading Intelligence</title>
+    <meta name="description" content="Algorithmic trading strategy with transparent performance tracking. Live track record, risk-managed execution, and API access.">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">HyprL</div>
+            <nav class="nav">
+                <a href="#features">Features</a>
+                <a href="#pricing">Pricing</a>
+                <a href="#track-record">Track Record</a>
+                <a href="#beta" class="btn-primary">Join Beta</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-badge">Beta Now Open — Limited to 30 Spots</div>
+            <h1 class="hero-title">
+                Quantitative Trading
+                <span class="gradient-text">Intelligence</span>
+            </h1>
+            <p class="hero-subtitle">
+                Algorithmic trading strategy with transparent performance tracking.<br>
+                Live track record. Risk-managed execution. Full audit trail.
+            </p>
+            <div class="hero-cta">
+                <a href="#beta" class="btn-primary btn-large">Join Beta Waitlist</a>
+                <a href="#track-record" class="btn-secondary btn-large">View Track Record (Paper)</a>
+            </div>
+            <div class="hero-stats">
+                <div class="stat-card">
+                    <div class="stat-value">+23.46%</div>
+                    <div class="stat-label">Return (Paper)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">2.23</div>
+                    <div class="stat-label">Profit Factor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">73.42%</div>
+                    <div class="stat-label">Win Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">-2.50%</div>
+                    <div class="stat-label">Max Drawdown</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Problem Section -->
+    <section class="section">
+        <div class="container">
+            <h2 class="section-title">The Challenge</h2>
+            <div class="problem-grid">
+                <div class="problem-card">
+                    <div class="problem-icon">✗</div>
+                    <h3>No Transparency</h3>
+                    <p>Most services hide real results or cherry-pick winners</p>
+                </div>
+                <div class="problem-card">
+                    <div class="problem-icon">✗</div>
+                    <h3>Black Boxes</h3>
+                    <p>No audit trail, no reproducibility, no trust</p>
+                </div>
+                <div class="problem-card">
+                    <div class="problem-icon">✗</div>
+                    <h3>Poor Risk Management</h3>
+                    <p>Overleveraged strategies with no position sizing</p>
+                </div>
+                <div class="problem-card">
+                    <div class="problem-icon">✗</div>
+                    <h3>Manual Execution</h3>
+                    <p>Delayed signals, slippage, missed opportunities</p>
+                </div>
+            </div>
+            <p class="problem-stat">Result: <span class="highlight">90% of retail algorithmic traders lose money</span></p>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="section">
+        <div class="container">
+            <h2 class="section-title">HyprL Solution</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Live Track Record</h3>
+                    <p>Real-time equity curve with full transparency. No cherry-picking, no hidden losses.</p>
+                    <ul class="feature-list">
+                        <li>Public performance dashboard</li>
+                        <li>All trades logged and auditable</li>
+                        <li>Risk metrics (MaxDD, Sharpe, Win Rate)</li>
+                        <li>Full trade history export</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎯</div>
+                    <h3>Signal Intelligence</h3>
+                    <p>XGBoost probability models for NVDA, MSFT, QQQ (1h timeframe).</p>
+                    <ul class="feature-list">
+                        <li>19 technical features (SMA, RSI, ATR)</li>
+                        <li>Kelly-sized positions (1% base risk)</li>
+                        <li>ATR-based stop-loss (1.5x)</li>
+                        <li>Multi-timeframe confirmation</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <h3>API Access</h3>
+                    <p>Real-time signal stream for automated execution (Pro tier).</p>
+                    <ul class="feature-list">
+                        <li>Webhooks for instant signals</li>
+                        <li>Historical backtest data</li>
+                        <li>Position sizing calculator</li>
+                        <li>Custom portfolio weights</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Execution Bridge</h3>
+                    <p>Automated order routing with Alpaca broker (coming soon).</p>
+                    <ul class="feature-list">
+                        <li>Paper + live trading support</li>
+                        <li>Kill-switch protection</li>
+                        <li>Trade logging + reconciliation</li>
+                        <li>Slippage monitoring</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Track Record Section -->
+    <section id="track-record" class="section section-dark">
+        <div class="container">
+            <h2 class="section-title">Current Performance</h2>
+            <div class="disclaimer">⚠️ Paper Trading Results — Past performance is not indicative of future results</div>
+            <div class="track-record-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Account Equity</div>
+                    <div class="metric-value">$12,345.67</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Total Return</div>
+                    <div class="metric-value positive">+23.46%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Max Drawdown</div>
+                    <div class="metric-value negative">-2.50%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Total Trades</div>
+                    <div class="metric-value">474</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value">73.42%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Profit Factor</div>
+                    <div class="metric-value">2.23</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Sharpe Ratio</div>
+                    <div class="metric-value">7.32</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Exit Mix</div>
+                    <div class="metric-detail">Trailing: 73% | Stop: 27%</div>
+                </div>
+            </div>
+            <a href="#" class="btn-secondary">View Full Track Record Dashboard</a>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section id="pricing" class="section">
+        <div class="container">
+            <h2 class="section-title">Pricing</h2>
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <div class="pricing-badge">Beta</div>
+                    <h3 class="pricing-title">Early Access</h3>
+                    <div class="pricing-price">
+                        <span class="price-amount">€19</span>
+                        <span class="price-period">/month</span>
+                    </div>
+                    <div class="pricing-note">Limited to 30 spots</div>
+                    <ul class="pricing-features">
+                        <li>✓ Live track record dashboard</li>
+                        <li>✓ Discord community</li>
+                        <li>✓ Weekly strategy updates</li>
+                        <li>✓ Email support (48h)</li>
+                        <li>✓ <strong>First 10 get 50% off</strong></li>
+                    </ul>
+                    <!-- Replace STRIPE_LINK_BETA with actual Stripe payment link -->
+                    <a href="STRIPE_LINK_BETA" class="btn-primary btn-block">Subscribe Now</a>
+                </div>
+                <div class="pricing-card pricing-popular">
+                    <div class="pricing-badge">Popular</div>
+                    <h3 class="pricing-title">Starter</h3>
+                    <div class="pricing-price">
+                        <span class="price-amount">€39</span>
+                        <span class="price-period">/month</span>
+                    </div>
+                    <div class="pricing-note">Public launch Q1 2026</div>
+                    <ul class="pricing-features">
+                        <li>✓ Everything in Beta</li>
+                        <li>✓ Email alerts on signals</li>
+                        <li>✓ Monthly performance reports</li>
+                        <li>✓ Priority support (24h)</li>
+                        <li>✓ Advanced analytics</li>
+                    </ul>
+                    <!-- Replace STRIPE_LINK_STARTER with actual Stripe payment link -->
+                    <a href="#beta" class="btn-primary btn-block">Get Notified</a>
+                </div>
+                <div class="pricing-card">
+                    <div class="pricing-badge">Pro</div>
+                    <h3 class="pricing-title">Professional</h3>
+                    <div class="pricing-price">
+                        <span class="price-amount">€99</span>
+                        <span class="price-period">/month</span>
+                    </div>
+                    <div class="pricing-note">Coming Q2 2026</div>
+                    <ul class="pricing-features">
+                        <li>✓ Everything in Starter</li>
+                        <li>✓ Real-time API access</li>
+                        <li>✓ Custom webhook integrations</li>
+                        <li>✓ Priority support (12h)</li>
+                        <li>✓ Backtest data export</li>
+                    </ul>
+                    <!-- Replace STRIPE_LINK_PRO with actual Stripe payment link -->
+                    <a href="#beta" class="btn-secondary btn-block">Get Notified</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Beta Waitlist Section -->
+    <section id="beta" class="section section-dark">
+        <div class="container">
+            <h2 class="section-title">Join Beta Waitlist</h2>
+            <p class="section-subtitle">Limited to 30 early access spots</p>
+            <form class="beta-form" name="beta-waitlist" method="POST" action="/thanks.html" data-netlify="true">
+                <input type="hidden" name="form-name" value="beta-waitlist">
+                <div class="form-grid">
+                    <input type="text" name="name" placeholder="Full Name" required class="form-input">
+                    <input type="email" name="email" placeholder="Email" required class="form-input">
+                    <select name="experience" required class="form-input">
+                        <option value="">Trading Experience</option>
+                        <option value="beginner">Beginner</option>
+                        <option value="intermediate">Intermediate</option>
+                        <option value="advanced">Advanced</option>
+                    </select>
+                    <select name="capital" required class="form-input">
+                        <option value="">Capital Range</option>
+                        <option value="<5k"><$5k</option>
+                        <option value="5k-20k">$5k-$20k</option>
+                        <option value="20k-100k">$20k-$100k</option>
+                        <option value="100k+">$100k+</option>
+                    </select>
+                </div>
+                <div class="form-checkboxes">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="dashboard" value="yes">
+                        <span>Dashboard interest</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="api" value="yes">
+                        <span>API interest</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="execution" value="yes">
+                        <span>Execution automation interest</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn-primary btn-large btn-block">Submit Beta Request</button>
+                <p class="form-note">You'll receive an invite within 7 days. First 10 get 50% off.</p>
+            </form>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <h4>HyprL</h4>
+                    <p>Quantitative Trading Intelligence</p>
+                </div>
+                <div class="footer-col">
+                    <h4>Product</h4>
+                    <a href="#features">Features</a>
+                    <a href="#pricing">Pricing</a>
+                    <a href="#track-record">Track Record</a>
+                </div>
+                <div class="footer-col">
+                    <h4>Legal</h4>
+                    <a href="../../docs/legal/CGU.md">Terms of Service</a>
+                    <a href="../../docs/legal/PRIVACY.md">Privacy Policy</a>
+                    <a href="../../docs/legal/DISCLAIMER.md">Risk Disclosure</a>
+                </div>
+                <div class="footer-col">
+                    <h4>Contact</h4>
+                    <a href="mailto:[email protected]">[email protected]</a>
+                    <a href="https://twitter.com/HyprLQuant">Twitter/X</a>
+                    <a href="https://github.com/Kacawaiii/HyprL">GitHub</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>© 2025 HyprL. All rights reserved.</p>
+                <p class="footer-disclaimer">
+                    <strong>Paper Track Record:</strong> All performance metrics shown are from paper trading (simulated execution). Past performance is not indicative of future results.
+                    <br><br>
+                    Risk Warning: Trading involves substantial risk of loss. HyprL is not a registered investment advisor.
+                    Signals are for educational purposes only. You are solely responsible for your trading decisions.
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="bg.js"></script>
+</body>
+</html>
