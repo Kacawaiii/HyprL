@@ -1,0 +1,24 @@
+[Unit]
+Description=HyprL Multi-Account Trading - Every 15 min during market hours
+
+[Timer]
+# Toutes les 15 minutes pendant les heures de marché US
+# Marché US: 9:30-16:00 ET = 15:30-22:00 CET (heure Paris)
+# On démarre à 15:30 et on finit à 22:00
+
+# Lundi à Vendredi, toutes les 15 min de 15:30 à 22:00 (heure locale CET)
+OnCalendar=Mon..Fri 15:30,15:45,16:00,16:15,16:30,16:45
+OnCalendar=Mon..Fri 17:00,17:15,17:30,17:45
+OnCalendar=Mon..Fri 18:00,18:15,18:30,18:45
+OnCalendar=Mon..Fri 19:00,19:15,19:30,19:45
+OnCalendar=Mon..Fri 20:00,20:15,20:30,20:45
+OnCalendar=Mon..Fri 21:00,21:15,21:30,21:45,22:00
+
+# Précision de 1 minute
+AccuracySec=1min
+
+# Rattraper les exécutions manquées si le système était éteint
+Persistent=true
+
+[Install]
+WantedBy=timers.target

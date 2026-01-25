@@ -1,0 +1,48 @@
+# Environment / build
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.o
+*.out
+.pytest_cache/
+*.egg-info/
+.maturin_build/
+
+# Data / artifacts
+data/
+docs/experiments/
+native/target/
+native/**/target/
+*.log
+*.csv
+*.json
+
+# IDE
+.vscode/
+.idea/
+
+# local outputs
+live/exp/
+live/logs/
+configs/exp/
+**/__pycache__/
+.env.ops
+.env.ops.example
+.env.*
+configs/runtime/.env.*
+live/exp/
+# audit/debug logs
+live/logs/audit_trades_dryrun.jsonl
+live/logs/*.jsonl
+# Local broker env + execution outputs
+.env.broker.alpaca
+live/execution/
+
+# Entitlements (sensitive)
+apps/track_record/entitlements_allowlist.txt
+data/entitlements.sqlite
+data/db/*.db
+apps/landing/.env

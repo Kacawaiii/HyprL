@@ -1,0 +1,26 @@
+[Unit]
+Description=HyprL Multi-Account Trading Signal Generator
+After=network.target
+
+[Service]
+Type=oneshot
+User=kyo
+WorkingDirectory=/home/kyo/HyprL
+Environment="PATH=/home/kyo/HyprL/.venv/bin:/usr/bin"
+
+# Load all environment files
+EnvironmentFile=/home/kyo/HyprL/configs/runtime/.env.discord
+EnvironmentFile=/home/kyo/HyprL/.env.ops
+
+# Run the signal generator v2 (optimized)
+ExecStart=/home/kyo/HyprL/.venv/bin/python /home/kyo/HyprL/scripts/run_multi_account_v2.py
+
+# Timeout after 10 minutes
+TimeoutStartSec=600
+
+# Logging (fallback to ~/.hyprl/logs if /home/kyo/HyprL/logs not writable)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
