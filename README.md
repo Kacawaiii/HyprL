@@ -366,6 +366,8 @@ python -c "from hyprl_supercalc import run_backtest; print('Rust engine OK')"
 - **Grid Search**: Parallel parameter optimization with Rayon
 - **PyO3 Bindings**: Seamless Python integration
 
+See [docs/RUST_ENGINE.md](docs/RUST_ENGINE.md) for full API reference.
+
 ---
 
 ## ML Model Details
