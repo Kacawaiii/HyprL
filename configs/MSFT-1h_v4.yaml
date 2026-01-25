@@ -1,0 +1,109 @@
+ticker: MSFT
+group: tech_large
+interval: 1h
+period: 60d
+
+model:
+  type: ensemble
+  artifact: models/msft_1h_ensemble_v4.joblib
+  calibration: platt
+  seed: 42
+  preset: msft_v4
+
+  # Ensemble config
+  ensemble:
+    models:
+      - type: xgboost
+        weight: 0.5
+      - type: lightgbm
+        weight: 0.3
+      - type: catboost
+        weight: 0.2
+    voting: soft
+    calibrate_each: true
+
+  # V2 features (19) + V3 enhanced features (9) = 28 features
+  feature_columns:
+    # === V2 Momentum ===
+    - ret_1h
+    - ret_3h
+    - ret_6h
+    - ret_24h
+    # === V2 Volatility ===
+    - atr_14
+    - atr_72
+    - atr_14_norm
+    - atr_72_norm
+    - range_pct
+    - true_range
+    # === V2 Momentum Indicators ===
+    - rsi_7
+    - rsi_14
+    - rsi_21
+    # === V2 Volatility Regime ===
+    - vol_ratio_10_30
+    - vol_regime_high
+    # === V2 Volume ===
+    - volume_zscore_24
+    - volume_surge
+    # === V2 Higher Moments ===
+    - ret_skew_20
+    - ret_kurt_20
+    # === V3 Enhanced Features ===
+    - vwap_dist_24
+    - vwap_dist_8
+    - overnight_gap
+    - flow_imbalance_10
+    - flow_imbalance_5
+    - intraday_position
+    - close_location
+    - range_expansion
+    - momentum_div
+
+thresholds:
+  long: 0.58
+  short: 0.55
+
+risk:
+  risk_pct: 0.01
+  atr_multiplier: 1.5
+  reward_multiple: 1.9
+  min_position_size: 5
+
+trailing:
+  enabled: true
+  stop_activation: 1.0
+  stop_distance: 0.04
+
+replay:
+  parity_mode: true
+  signal_log: data/signals/msft_replay_signal_log_v4.csv
+
+meta:
+  note: "MSFT 1h v4 - Ensemble XGB+LGB+CatBoost with V3 enhanced features and Platt calibration"
+
+enable_trend_filter: true
+trend_long_min: -0.01
+trend_short_min: -0.0010
+
+min_ev_multiple: 0.15
+
+multi_timeframes_enabled: true
+multi_timeframes_frames: "15m,1h,4h"
+fusion_method: mean
+fusion_weights:
+  15m: 0.2
+  1h: 0.6
+  4h: 0.2
+
+portfolio_risk:
+  max_total_risk_pct: 0.05
+  max_ticker_risk_pct: 0.03
+  max_group_risk_pct: 0.04
+  max_positions: 5
+
+live:
+  risk:
+    max_position_notional_pct: 1.0
+  max_notional_per_trade: 0
+model_artifact: models/msft_1h_ensemble_v4.joblib

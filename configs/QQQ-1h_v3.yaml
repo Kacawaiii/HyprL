@@ -5,7 +5,7 @@ period: 730d
 
 model:
   type: xgboost
-  artifact: models/qqq_1h_xgb_v3.joblib
+  artifact: models/qqq_1h_xgb_v4.joblib
   calibration: none
   seed: 42
   preset: nvda_v2

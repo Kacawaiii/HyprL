@@ -5,7 +5,7 @@ period: 60d
 
 model:
   type: xgboost
-  artifact: models/nvda_1h_xgb_v3.joblib
+  artifact: models/nvda_1h_xgb_v4.joblib
   calibration: none
   seed: 42
   preset: nvda_v2
@@ -76,4 +76,4 @@ live:
   risk:
     max_position_notional_pct: 1.0
   max_notional_per_trade: 0
-model_artifact: models/nvda_1h_xgb_v3.joblib
+model_artifact: models/nvda_1h_xgb_v4.joblib
