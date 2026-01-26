@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyprL — Quantitative Trading Intelligence</title>
+    <meta name="description" content="Algorithmic trading signals with live track record. XGBoost models for NVDA, MSFT, QQQ.">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Grid Background -->
+    <div class="grid-bg"></div>
+
+    <!-- Glow Orbs -->
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+    <div class="glow-orb glow-orb-3"></div>
+    <div class="glow-orb glow-orb-4"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">HyprL</div>
+            <nav class="nav">
+                <a href="#features">Features</a>
+                <a href="portfolio.html">Full System</a>
+                <a href="#pricing">Pricing</a>
+                <a href="#performance">Performance</a>
+            </nav>
+            <div class="auth-buttons" id="auth-buttons">
+                <button class="btn-login" onclick="signInWithGoogle()">Sign In</button>
+                <a href="#pricing" class="btn-primary">Get Started</a>
+            </div>
+            <!-- User Menu (hidden by default) -->
+            <div class="user-menu" id="user-menu" style="display: none;">
+                <div class="user-avatar" id="user-avatar">U</div>
+                <div class="user-dropdown">
+                    <a href="dashboard.html">📊 Dashboard</a>
+                    <a href="#" id="manage-subscription">💳 Subscription</a>
+                    <a href="#" onclick="signOutUser()">🚪 Sign Out</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-badge">🚀 Beta Launch — Limited Spots</div>
+            <h1 class="hero-title">
+                Algo Trading with<br>
+                <span class="gradient-text">Full Transparency</span>
+            </h1>
+            <p class="hero-subtitle">
+                XGBoost-powered signals for NVDA, MSFT, QQQ with live track record.<br>
+                <strong>No hidden results. Every trade logged.</strong>
+            </p>
+            <div class="hero-cta">
+                <a href="#pricing" class="btn-primary btn-large">Get Started</a>
+                <a href="portfolio.html" class="btn-secondary btn-large">View Full System</a>
+            </div>
+            <div class="hero-cta" style="margin-top: 12px;">
+                <a href="/track-record/" class="btn-secondary btn-large" style="opacity: 0.8;">📊 Live Track Record</a>
+            </div>
+
+            <!-- Stats -->
+            <div class="hero-stats">
+                <div class="stat-card">
+                    <div class="stat-value green">1.85</div>
+                    <div class="stat-label">Profit Factor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">1.42</div>
+                    <div class="stat-label">Sharpe Ratio</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value green">-8.2%</div>
+                    <div class="stat-label">Max Drawdown</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">312</div>
+                    <div class="stat-label">Trades</div>
+                </div>
+            </div>
+            <p class="hero-note">Out-of-Sample: March 2024 — December 2024 | Paper Trading</p>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features">
+        <div class="container">
+            <h2 class="section-title">Why <span class="gradient-text">HyprL</span>?</h2>
+            <p class="section-subtitle">Transparent, risk-managed, and fully auditable trading signals.</p>
+
+            <div class="card-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Live Track Record</h3>
+                    <p>Real-time equity curve and P&L. No cherry-picking, every trade is logged and visible.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3>ML-Powered Signals</h3>
+                    <p>XGBoost models trained on 19 technical features. Probability-based entry with smart filtering.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🛡️</div>
+                    <h3>Risk Management</h3>
+                    <p>Kelly-sized positions, ATR-based stops, and max drawdown guards built-in.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Real-Time API</h3>
+                    <p>Webhook signals, JSON API, and Alpaca broker integration for automated execution.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📈</div>
+                    <h3>Multi-Asset</h3>
+                    <p>NVDA, MSFT, QQQ coverage with 1h timeframe. Crypto (BTC, ETH) coming soon.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Fully Auditable</h3>
+                    <p>SHA256 freeze tags, reproducible backtests, and open execution framework.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section id="pricing">
+        <div class="container">
+            <h2 class="section-title">Simple <span class="gradient-text">Pricing</span></h2>
+            <p class="section-subtitle">Choose your plan. Cancel anytime.</p>
+
+            <div class="pricing-grid">
+                <!-- Starter -->
+                <div class="pricing-card">
+                    <div class="pricing-tier">Starter</div>
+                    <div class="pricing-price">€29<span>/mo</span></div>
+                    <div class="pricing-desc">For individual traders</div>
+                    <ul class="pricing-features">
+                        <li>Live track record dashboard</li>
+                        <li>Daily signal alerts (email)</li>
+                        <li>Basic analytics</li>
+                        <li>Community Discord</li>
+                    </ul>
+                    <button class="btn-primary" onclick="subscribe('starter')">Get Starter</button>
+                </div>
+
+                <!-- Pro -->
+                <div class="pricing-card popular">
+                    <div class="pricing-tier">Pro</div>
+                    <div class="pricing-price">€79<span>/mo</span></div>
+                    <div class="pricing-desc">For serious traders</div>
+                    <ul class="pricing-features">
+                        <li>Everything in Starter</li>
+                        <li>Real-time API access</li>
+                        <li>Webhook integrations</li>
+                        <li>Advanced analytics</li>
+                        <li>Priority support</li>
+                    </ul>
+                    <button class="btn-primary" onclick="subscribe('pro')">Get Pro</button>
+                </div>
+
+                <!-- Team -->
+                <div class="pricing-card">
+                    <div class="pricing-tier">Team</div>
+                    <div class="pricing-price">€199<span>/mo</span></div>
+                    <div class="pricing-desc">For trading teams</div>
+                    <ul class="pricing-features">
+                        <li>Everything in Pro</li>
+                        <li>5 team members</li>
+                        <li>Custom integrations</li>
+                        <li>Dedicated support</li>
+                        <li>White-label options</li>
+                    </ul>
+                    <button class="btn-primary" onclick="subscribe('team')">Get Team</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Performance Section -->
+    <section id="performance">
+        <div class="container">
+            <h2 class="section-title">Verified <span class="gradient-text">Performance</span></h2>
+            <p class="section-subtitle">Out-of-sample results from paper trading.</p>
+
+            <div class="hero-stats">
+                <div class="stat-card">
+                    <div class="stat-value green">+32.4%</div>
+                    <div class="stat-label">Annual Return</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">54%</div>
+                    <div class="stat-label">Win Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">1.67</div>
+                    <div class="stat-label">Risk/Reward</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">312</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about" style="padding: 80px 0;">
+        <div class="container">
+            <h2 class="section-title">Built by a <span class="gradient-text">Quant Developer</span></h2>
+            <div style="max-width: 800px; margin: 0 auto; text-align: center;">
+                <p style="font-size: 1.1rem; color: #a0a0a0; line-height: 1.8; margin-bottom: 24px;">
+                    HyprL is built by a quantitative developer with expertise in machine learning,
+                    algorithmic trading, and high-performance systems. The project combines
+                    <strong>Python + Rust</strong> for a 56x speedup on backtests.
+                </p>
+                <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+                    <span class="hero-badge">XGBoost/LightGBM</span>
+                    <span class="hero-badge">Rust + PyO3</span>
+                    <span class="hero-badge">Alpaca API</span>
+                    <span class="hero-badge">Real-time Systems</span>
+                </div>
+                <div style="margin-top: 32px;">
+                    <a href="https://github.com/Kacawaiii/HyprL" class="btn-secondary" target="_blank" style="margin-right: 12px;">View Source Code</a>
+                    <a href="https://linkedin.com/in/hyprl" class="btn-primary" target="_blank">Connect on LinkedIn</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-links">
+                <a href="https://github.com/Kacawaiii/HyprL" target="_blank">GitHub</a>
+                <a href="https://twitter.com/HyprLTrading" target="_blank">Twitter</a>
+                <a href="https://linkedin.com/in/hyprl" target="_blank">LinkedIn</a>
+                <a href="#">Contact</a>
+            </div>
+            <p class="footer-copy">© 2026 HyprL. All rights reserved.</p>
+            <p class="footer-warning">
+                ⚠️ Trading involves risk. Past performance is not indicative of future results.
+                HyprL is not a registered investment advisor. Signals are for educational purposes only.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+
+    <script>
+        // Firebase config
+        const firebaseConfig = {
+            apiKey: "AIzaSyBnc42sHAYxcRNfJXkvTsHoS9q_eFcjoo0",
+            authDomain: "hyprl-ffb97.firebaseapp.com",
+            projectId: "hyprl-ffb97",
+            storageBucket: "hyprl-ffb97.firebasestorage.app",
+            messagingSenderId: "443742012218",
+            appId: "1:443742012218:web:ffc35b141d7c948f21c603"
+        };
+
+        // Stripe config
+        const STRIPE_PRICES = {
+            starter: "price_1Slc8vRfqAn8K66XVF7KOFOX",
+            pro: "price_1Slc8vRfqAn8K66XQCYitR2T",
+            team: "price_1Slc8wRfqAn8K66XsbgomOL0"
+        };
+
+        const STRIPE_PAYMENT_LINKS = {
+            starter: "https://buy.stripe.com/fZueVf75pecN2CmcTMgrS00",
+            pro: "https://buy.stripe.com/28EdRb9dx0lXel41b4grS01",
+            team: "https://buy.stripe.com/cNibJ3blF8Stb8S9HAgrS02"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // Auth state listener
+        auth.onAuthStateChanged(async (user) => {
+            const authButtons = document.getElementById('auth-buttons');
+            const userMenu = document.getElementById('user-menu');
+            const userAvatar = document.getElementById('user-avatar');
+
+            if (user) {
+                // User is signed in
+                authButtons.style.display = 'none';
+                userMenu.style.display = 'block';
+                userAvatar.textContent = user.displayName ? user.displayName[0].toUpperCase() : 'U';
+
+                // Get user subscription from Firestore
+                const userDoc = await db.collection('users').doc(user.uid).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    console.log('User tier:', userData.tier);
+                }
+            } else {
+                // User is signed out
+                authButtons.style.display = 'flex';
+                userMenu.style.display = 'none';
+            }
+        });
+
+        // Google Sign In
+        function signInWithGoogle() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            auth.signInWithPopup(provider)
+                .then((result) => {
+                    console.log('Signed in:', result.user.email);
+                    // Create user doc if doesn't exist
+                    return db.collection('users').doc(result.user.uid).set({
+                        email: result.user.email,
+                        displayName: result.user.displayName,
+                        tier: 'free',
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                })
+                .catch((error) => {
+                    console.error('Sign in error:', error);
+                    alert('Sign in failed: ' + error.message);
+                });
+        }
+
+        // Sign Out
+        function signOutUser() {
+            auth.signOut()
+                .then(() => {
+                    console.log('Signed out');
+                    window.location.reload();
+                });
+        }
+
+        // Subscribe to plan
+        async function subscribe(plan) {
+            const user = auth.currentUser;
+
+            if (!user) {
+                // Sign in first
+                await signInWithGoogle();
+                return;
+            }
+
+            // Create Stripe checkout session
+            const priceId = STRIPE_PRICES[plan];
+            if (!priceId || priceId.startsWith('%%')) {
+                alert('Stripe not configured yet. Please set up Stripe prices.');
+                return;
+            }
+
+            // Redirect to Stripe Payment Link
+            const link = STRIPE_PAYMENT_LINKS[plan];
+            if (link) {
+                // Add client_reference_id for linking to Firebase user
+                window.location.href = link + '?client_reference_id=' + user.uid;
+            } else {
+                alert('Plan not found.');
+            }
+        }
+
+        // Manage subscription (Stripe Customer Portal)
+        document.getElementById('manage-subscription')?.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const user = auth.currentUser;
+            if (!user) return;
+
+            // Get Stripe customer portal URL from your backend
+            // For now, redirect to Stripe dashboard
+            alert('Customer portal coming soon. Contact support to manage subscription.');
+        });
+    </script>
+</body>
+</html>
