@@ -238,7 +238,7 @@ position_size = min(kelly_fraction * 0.5, max_risk_per_trade)  # Half-Kelly
 ### 1. Clone & Setup
 
 ```bash
-git clone https://github.com/your-repo/hyprl.git
+git clone https://github.com/Kacawaiii/HyprL.git
 cd hyprl
 python3 -m venv .venv
 source .venv/bin/activate
@@ -474,7 +474,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-repo/hyprl/issues)
+- **Issues**: [GitHub Issues](https://github.com/Kacawaiii/HyprL.git)
 - **Discord**: [Join our server](#) (coming soon)
 
 ---
