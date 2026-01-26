@@ -6,6 +6,8 @@
 
 **HyprL** is a complete algorithmic trading system for US equities using Machine Learning (XGBoost) and advanced technical analysis.
 
+> **Note**: Infrastructure and technical implementation are open source. Trading strategy and trained models are private to preserve the edge. See [hyprlcore.com](https://hyprlcore.com) for live track record and signals.
+
 ## Performance Summary
 
 | Metric | Backtest (2024) | Paper Trading (Jan 2026) |
@@ -96,10 +98,8 @@ HyprL/
 │   ├── MSFT-1h_v3.yaml           # MSFT strategy config
 │   └── QQQ-1h_v3.yaml            # QQQ strategy config
 │
-├── models/                       # Trained ML models
-│   ├── nvda_1h_xgb_v3.joblib     # NVDA XGBoost model
-│   ├── msft_1h_xgb_v3.joblib     # MSFT XGBoost model
-│   └── qqq_1h_xgb_v3.joblib      # QQQ XGBoost model
+├── models/                       # Trained ML models (private)
+│   └── README.md                 # Model architecture docs
 │
 ├── deploy/                       # Deployment
 │   └── systemd/                  # Systemd services

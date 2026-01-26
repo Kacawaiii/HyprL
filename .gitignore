@@ -46,3 +46,10 @@ apps/track_record/entitlements_allowlist.txt
 data/entitlements.sqlite
 data/db/*.db
 apps/landing/.env
+
+# Proprietary trading logic (private)
+src/hyprl/strategy/
+models/
+configs/*.yaml
+configs/**/*.yaml
+!configs/example.yaml

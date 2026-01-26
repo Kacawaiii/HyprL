@@ -1,0 +1,30 @@
+# Example Configuration File
+# --------------------------
+# Real configurations are private. This shows the structure.
+
+symbol: NVDA
+timeframe: 1h
+
+model:
+  path: models/nvda_1h_xgb_v4.joblib
+  type: xgboost
+  version: 4
+
+signals:
+  # Probability thresholds (actual values private)
+  long_threshold: "REDACTED"
+  short_threshold: "REDACTED"
+
+filters:
+  # Technical indicator filters
+  rsi_overbought: "REDACTED"
+  rsi_oversold: "REDACTED"
+  adx_min: "REDACTED"
+
+risk:
+  # Position sizing and stops
+  max_risk_per_trade: "REDACTED"
+  atr_stop_mult: "REDACTED"
+  atr_tp_mult: "REDACTED"
+
+# See README.md for architecture details
