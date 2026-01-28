@@ -23,6 +23,7 @@ from hyprl.risk.metrics import (
     compute_risk_of_ruin,
     bootstrap_equity_drawdowns,
 )
+from hyprl.risk.statistics import deflated_sharpe_ratio, SharpeStatistics
 from hyprl.portfolio.core import (
     build_portfolio_equity,
     compute_portfolio_stats,
@@ -128,6 +129,8 @@ class SearchResult:
     meta_prediction: Optional[float] = None
     final_score: float = 0.0
     portfolio_weights: dict[str, float] = field(default_factory=dict)
+    deflated_sharpe: Optional[float] = None  # Sharpe corrected for multiple testing
+    pbo: float = 0.5  # Probability of backtest overfitting
 
 
 @dataclass
@@ -229,55 +232,65 @@ def _resolve_str_list(values: Optional[list[str]], fallback: str) -> list[str]:
 def _score_tuple(result: SearchResult) -> tuple[float, float, float]:
     """
     Compute the scoring tuple for lexicographic ranking of search results.
-    
+
+    IMPORTANT: Uses DEFLATED Sharpe ratio to correct for multiple testing bias.
+    Raw Sharpe is inflated when testing many parameter combinations.
+
     Ranking Logic:
     --------------
     Results are sorted by this tuple in ASCENDING order (lower is better).
     Python's tuple comparison is lexicographic: the first element is compared first;
     if equal, the second is compared, and so on.
-    
+
     Tuple Structure (in priority order):
     ------------------------------------
-    1. Primary score: -PF + RoR*2 + sentiment_ratio
+    1. Primary score: -PF + RoR*2 + sentiment_ratio + PBO
        - Rewards high profit_factor (negated, so high PF → low score)
        - Penalizes high risk_of_ruin (RoR > 0.1 is fragile)
+       - Penalizes high probability of backtest overfitting (PBO)
        - Penalizes overconcentration in extreme sentiment trades
-    
-    2. Risk-adjusted score: -Sharpe + RoR
-       - Rewards high Sharpe ratio (risk-adjusted returns)
+
+    2. Risk-adjusted score: -DSR + RoR
+       - Rewards high DEFLATED Sharpe ratio (corrected for multiple testing)
        - Penalizes high RoR again (tail risk)
-    
+
     3. Drawdown/expectancy score: DD + RoR*100 - expectancy*100
        - Penalizes high drawdown (both portfolio and individual)
        - Penalizes high RoR (heavily weighted)
        - Rewards positive expectancy (avg profit per trade)
-    
-    Why Lexicographic Instead of Weighted Sum?
-    -------------------------------------------
-    - No arbitrary weight tuning (e.g., w_pf=1.0, w_sharpe=2.0, w_dd=-5.0)
-    - No scale mismatch (PF ∈ [1, 3], Sharpe ∈ [0, 2], RoR ∈ [0, 1])
-    - No masking: A bad metric at higher priority rejects the strategy outright
-    
+
+    Why Deflated Sharpe?
+    --------------------
+    When testing N strategies, the "best" Sharpe is inflated by selection bias.
+    E[max(Sharpe)] ≈ sqrt(2*ln(N)) * SE(Sharpe)
+    DSR = (Sharpe - E[max]) / SE corrects for this.
+
     Example:
     --------
-    Strategy A: PF=2.5, Sharpe=1.8, DD=0.20, RoR=0.05, exp=0.5
-        tuple = (-2.5 + 0.10 + 0, -1.8 + 0.05, 0.20 + 5 - 0.5) = (-2.40, -1.75, 4.70)
-    
-    Strategy B: PF=2.5, Sharpe=1.6, DD=0.20, RoR=0.05, exp=0.5
-        tuple = (-2.5 + 0.10 + 0, -1.6 + 0.05, 0.20 + 5 - 0.5) = (-2.40, -1.55, 4.70)
-    
-    A ranks above B because second element is lower (higher Sharpe).
-    
+    Testing 1000 configs with raw Sharpe 1.29, 98 trades:
+    - SE(Sharpe) ≈ 0.14
+    - E[max] ≈ 3.7 * 0.14 ≈ 0.52
+    - DSR ≈ (1.29 - 0.52) / 0.14 ≈ 5.5 (still significant)
+
+    But with raw Sharpe 0.8:
+    - DSR ≈ (0.8 - 0.52) / 0.14 ≈ 2.0 (barely significant)
+
     Args:
         result: SearchResult containing backtest metrics
-    
+
     Returns:
         tuple: Scoring tuple for lexicographic ranking (lower is better)
     """
     base_pf = result.portfolio_profit_factor or result.profit_factor
     pf = base_pf if math.isfinite(base_pf) else 0.0
-    base_sharpe = result.portfolio_sharpe if result.portfolio_sharpe else result.sharpe
-    sharpe = base_sharpe if (base_sharpe is not None and math.isfinite(base_sharpe)) else float("-inf")
+
+    # Use DEFLATED Sharpe (corrected for multiple testing) instead of raw
+    dsr = result.deflated_sharpe
+    if dsr is None or not math.isfinite(dsr):
+        # Fall back to raw sharpe if deflated not computed yet
+        base_sharpe = result.portfolio_sharpe if result.portfolio_sharpe else result.sharpe
+        dsr = base_sharpe if (base_sharpe is not None and math.isfinite(base_sharpe)) else float("-inf")
+
     primary_dd = max(
         result.portfolio_max_drawdown_pct,
         result.portfolio_maxdd_p95,
@@ -291,10 +304,14 @@ def _score_tuple(result: SearchResult) -> tuple[float, float, float]:
     if not math.isfinite(ror):
         ror = 1.0
     expectancy = result.expectancy_per_trade
-    # Lower tuple values are better; penalize high RoR/sentiment concentration, reward expectancy.
+
+    # Probability of backtest overfitting (0 = no overfitting, 1 = likely overfit)
+    pbo = result.pbo if math.isfinite(result.pbo) else 0.5
+
+    # Lower tuple values are better
     return (
-        -pf + ror * 2.0 + sentiment_ratio,
-        -sharpe + ror,
+        -pf + ror * 2.0 + sentiment_ratio + pbo,  # Added PBO penalty
+        -dsr + ror,  # Use deflated Sharpe instead of raw
         primary_dd + ror * 100.0 - expectancy * 100.0,
     )
 
@@ -369,54 +386,61 @@ def _correlation_summary(matrix: pd.DataFrame) -> tuple[float, float]:
     return float(np.nanmean(off_diag)), float(np.nanmax(off_diag))
 
 
-def _assign_base_scores(results: list[SearchResult]) -> None:
+def _assign_base_scores(results: list[SearchResult], n_trials_override: int | None = None) -> None:
     """
     Assign normalized rank-based scores to search results.
-    
+
     Scoring Process:
     ----------------
-    1. Sort all results by _score_tuple (lexicographic ranking, lower is better).
-    2. Assign base_score as a linear interpolation of rank:
+    1. Compute deflated Sharpe ratio for each result (corrects for multiple testing)
+    2. Sort all results by _score_tuple (lexicographic ranking, lower is better).
+    3. Assign base_score as a linear interpolation of rank:
        - Best result (rank 0): base_score = 1.0
        - Worst result (rank N-1): base_score = 0.0
        - Intermediate: base_score = 1.0 - (rank / (N-1))
-    
-    3. Initially, final_score = base_score (before meta-model adjustment).
-    
-    Purpose:
-    --------
-    base_score provides a relative ranking within this search batch. It does NOT
-    represent absolute quality (e.g., base_score=0.8 doesn't mean "80% good").
-    It simply means "ranked in the top 20% of this batch".
-    
-    Example (5 results):
-    --------------------
-    After sorting by _score_tuple:
-        Rank 0 (best): base_score = 1.0 - (0 / 4) = 1.00
-        Rank 1: base_score = 1.0 - (1 / 4) = 0.75
-        Rank 2: base_score = 1.0 - (2 / 4) = 0.50
-        Rank 3: base_score = 1.0 - (3 / 4) = 0.25
-        Rank 4 (worst): base_score = 1.0 - (4 / 4) = 0.00
-    
-    Meta-Model Adjustment:
-    ----------------------
-    If a meta-model is configured (via --meta-model flag), _apply_meta_scores()
-    will blend base_score with a robustness prediction:
-        final_score = (1 - meta_weight) * base_score + meta_weight * meta_prediction
-    
-    Without a meta-model, final_score = base_score.
-    
+
+    The deflated Sharpe uses Bailey & López de Prado (2014) correction:
+    - Accounts for the fact that testing N strategies inflates the best Sharpe
+    - DSR > 2 typically indicates genuine skill (not just luck)
+    - DSR < 0 suggests the strategy is likely overfit
+
     Args:
         results: List of SearchResult objects (modified in-place)
+        n_trials_override: Override for number of trials (default: len(results))
     """
     if not results:
         return
+
+    # Step 1: Compute deflated Sharpe for each result
+    n_trials = n_trials_override if n_trials_override else len(results)
+    for res in results:
+        sharpe = res.portfolio_sharpe if res.portfolio_sharpe else res.sharpe
+        if sharpe is None or not math.isfinite(sharpe):
+            res.deflated_sharpe = float("-inf")
+            res.pbo = 1.0
+            continue
+
+        n_obs = res.n_trades
+        if n_obs < 10:
+            res.deflated_sharpe = float("-inf")
+            res.pbo = 1.0
+            continue
+
+        # Compute deflated Sharpe
+        res.deflated_sharpe = deflated_sharpe_ratio(sharpe, n_obs, n_trials)
+        # Probability of backtest overfitting
+        from hyprl.risk.statistics import probability_of_backtest_overfitting
+        res.pbo = probability_of_backtest_overfitting(sharpe, n_obs, n_trials)
+
+    # Step 2: Sort by scoring tuple
     ordering = sorted(range(len(results)), key=lambda idx: _score_tuple(results[idx]))
     total = len(ordering)
     if total == 1:
         results[ordering[0]].base_score = 1.0
         results[ordering[0]].final_score = 1.0
         return
+
+    # Step 3: Assign rank-based scores
     for rank, idx in enumerate(ordering):
         score = 1.0 - (rank / (total - 1))
         results[idx].base_score = score

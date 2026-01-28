@@ -19,9 +19,19 @@ def make_wfo_splits(
     n_splits: int = 6,
     train_days: int = 180,
     test_days: int = 30,
+    embargo_days: int = 5,
 ) -> List[WFOSplit]:
     """
     Build time-based walk-forward splits over the supplied index.
+
+    Args:
+        index: DatetimeIndex of available data points
+        n_splits: Number of train/test splits to create
+        train_days: Length of training period in days
+        test_days: Length of test period in days
+        embargo_days: Gap between train and test to prevent leakage.
+                      Should be >= label horizon + max feature lookback.
+                      Default 5 days covers 1H bars with standard features.
     """
     if index.empty:
         return []
@@ -29,9 +39,11 @@ def make_wfo_splits(
     cursor = index.min()
     while len(splits) < n_splits:
         train_end = cursor + pd.Timedelta(days=train_days)
-        test_end = train_end + pd.Timedelta(days=test_days)
+        # CRITICAL: Add embargo gap to prevent information leakage
+        test_start = train_end + pd.Timedelta(days=embargo_days)
+        test_end = test_start + pd.Timedelta(days=test_days)
         train_slice = index[(index >= cursor) & (index < train_end)]
-        test_slice = index[(index >= train_end) & (index < test_end)]
+        test_slice = index[(index >= test_start) & (index < test_end)]
         if len(train_slice) == 0 or len(test_slice) == 0:
             break
         splits.append(
