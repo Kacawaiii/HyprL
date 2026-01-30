@@ -1,0 +1,20 @@
+[Unit]
+Description=HyprL Notifications API (Email, Discord, Webhooks, Signals)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/HyprL
+Environment="PATH=/home/ubuntu/HyprL/.venv/bin:/usr/bin"
+Environment="SIGNALS_FILE=/home/ubuntu/HyprL/live/logs/live_signals.jsonl"
+Environment="FIREBASE_CREDS=/home/ubuntu/HyprL/secrets/firebase-admin.json"
+Environment="RESEND_API_KEY="
+Environment="INTERNAL_API_KEY=hyprl_internal_broadcast_key_2026"
+Environment="PORT=8082"
+ExecStart=/home/ubuntu/HyprL/.venv/bin/python /home/ubuntu/HyprL/apps/track_record/lib/notifications_api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

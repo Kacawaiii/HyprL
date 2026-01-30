@@ -1,0 +1,20 @@
+[Unit]
+Description=HyprL Core V3 Signal Generator (hourly)
+After=network.target
+
+[Service]
+Type=oneshot
+User=kyo
+WorkingDirectory=/home/kyo/HyprL
+EnvironmentFile=-/home/kyo/HyprL/.env.ops
+ExecStart=/home/kyo/HyprL/.venv/bin/python /home/kyo/HyprL/scripts/cli/hyprl_core_v3.py \
+    --symbols NVDA,MSFT,QQQ \
+    --signal-log /home/kyo/HyprL/live/logs/live_signals.jsonl \
+    --log-file /home/kyo/HyprL/live/logs/core_v3_hourly_batch_cron.log \
+    --dry-run
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-corev3
+
+[Install]
+WantedBy=multi-user.target

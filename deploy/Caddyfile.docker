@@ -1,0 +1,20 @@
+api.hyprlcore.com {
+    reverse_proxy hyprl_api:8000
+    
+    header {
+        Access-Control-Allow-Origin *
+    }
+}
+
+app.hyprlcore.com {
+    reverse_proxy track_record:8501
+}
+
+hyprlcore.com, www.hyprlcore.com {
+    root * /srv/landing
+    file_server
+    
+    handle /api/* {
+        reverse_proxy status_api:8080
+    }
+}

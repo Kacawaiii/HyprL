@@ -1,0 +1,44 @@
+[Unit]
+Description=HyprL Alpaca Crypto Bridge
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/HyprL
+EnvironmentFile=/home/ubuntu/HyprL/.env.bridge
+EnvironmentFile=-/home/ubuntu/HyprL/.env.discord
+ExecStart=/home/ubuntu/HyprL/.venv/bin/python scripts/execution/run_alpaca_bridge.py \
+    --enable-crypto \
+    --crypto-signals live/logs/crypto_signals.jsonl \
+    --out live/execution/crypto/orders.jsonl \
+    --state live/execution/crypto/state.json \
+    --paper \
+    --max-crypto-allocation 0.60 \
+    --max-notional-per-order 5000 \
+    --max-orders-per-day 4 \
+    --min-notional-per-order 10 \
+    --min-seconds-between-orders 300 \
+    --max-signal-age-seconds 1800 \
+    --max-daily-drawdown-pct 0.006 \
+    --crypto-rotate-on-cash \
+    --crypto-rotate-prob-gap 0.0 \
+    --crypto-rotate-only-profit \
+    --crypto-scale-in-profit-only \
+    --crypto-allow-scale-in-on-dd-stop \
+    --poll-seconds 30 \
+    --positions-snapshot-seconds 300 \
+    --discord-webhook ${DISCORD_WEBHOOK_URL} \
+    --kill-switch /tmp/hyprl_crypto_kill_switch \
+    --enable-smart-filter \
+    --smart-filter-min-prob 0.52
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-crypto-bridge
+
+[Install]
+WantedBy=multi-user.target

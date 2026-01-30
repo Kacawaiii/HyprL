@@ -1,0 +1,9 @@
+[Unit]
+Description=Run HyprL Crypto signals hourly (24/7)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

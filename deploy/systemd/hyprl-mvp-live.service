@@ -1,0 +1,39 @@
+[Unit]
+Description=HyprL MVP Live Trading Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kyo
+Group=kyo
+WorkingDirectory=/home/kyo/HyprL
+
+# Load environment
+EnvironmentFile=/home/kyo/HyprL/.env.broker.alpaca
+
+# Python virtual environment
+Environment="PATH=/home/kyo/HyprL/.venv/bin:/usr/local/bin:/usr/bin"
+Environment="PYTHONPATH=/home/kyo/HyprL/src"
+
+# Run the live trading bot
+ExecStart=/home/kyo/HyprL/.venv/bin/python scripts/run_live_monitored.py \
+    --config configs/runtime/strategy_mix.yaml \
+    --equity 2000 \
+    --interval 3600
+
+# Restart policy
+Restart=on-failure
+RestartSec=60
+
+# Logging
+StandardOutput=append:/home/kyo/HyprL/live/logs/mvp-live.log
+StandardError=append:/home/kyo/HyprL/live/logs/mvp-live.log
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/kyo/HyprL/live
+
+[Install]
+WantedBy=multi-user.target

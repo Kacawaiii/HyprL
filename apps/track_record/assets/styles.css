@@ -1,0 +1,303 @@
+:root {
+    --bg-color: #0a0e17;
+    --text-primary: #f0f4f8;
+    --text-secondary: #94a3b8;
+    --accent-1: #7C3AED;
+    --accent-2: #22D3EE;
+    --accent-3: #F472B6;
+    --accent-4: #34D399;
+    --accent-red: #ef4444;
+    --glass-bg: rgba(15, 23, 42, 0.8);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --card-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* Base Styles */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+    background: linear-gradient(135deg, #0a0e17 0%, #0f172a 50%, #0a0e17 100%) !important;
+    color: var(--text-primary) !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Animated Background Gradient */
+[data-testid="stAppViewContainer"]::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background:
+        radial-gradient(ellipse 80% 50% at 20% 40%, rgba(124, 58, 237, 0.15), transparent),
+        radial-gradient(ellipse 60% 40% at 80% 60%, rgba(34, 211, 238, 0.1), transparent),
+        radial-gradient(ellipse 50% 30% at 50% 80%, rgba(244, 114, 182, 0.08), transparent);
+    pointer-events: none;
+    z-index: 0;
+    animation: pulse 15s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* Grid Pattern Overlay */
+[data-testid="stAppViewContainer"]::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Main Content */
+[data-testid="stMain"] {
+    position: relative;
+    z-index: 1;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(10, 14, 23, 0.98) 100%) !important;
+    backdrop-filter: blur(20px);
+    border-right: 1px solid var(--glass-border);
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdown"] {
+    color: var(--text-secondary);
+}
+
+/* KPI Cards with Glassmorphism */
+div[data-testid="stMetric"] {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border) !important;
+    border-radius: 16px !important;
+    padding: 1.25rem !important;
+    box-shadow: var(--card-shadow) !important;
+    transition: all 0.3s ease !important;
+}
+
+div[data-testid="stMetric"]:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(34, 211, 238, 0.15) !important;
+    border-color: rgba(34, 211, 238, 0.3) !important;
+}
+
+div[data-testid="stMetricLabel"] {
+    color: var(--text-secondary) !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+}
+
+div[data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+    font-weight: 800 !important;
+    font-size: 1.75rem !important;
+    text-shadow: 0 0 30px rgba(34, 211, 238, 0.4);
+}
+
+/* Positive/Negative Delta */
+div[data-testid="stMetricDelta"] > div {
+    background: rgba(52, 211, 153, 0.15);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+}
+
+div[data-testid="stMetricDelta"][data-testid-delta-type="negative"] > div {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+/* Headers with Gradient */
+h1 {
+    font-size: 2.5rem !important;
+    font-weight: 800 !important;
+    background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent !important;
+    letter-spacing: -0.03em;
+}
+
+h2, h3 {
+    color: var(--text-primary) !important;
+    font-weight: 700 !important;
+}
+
+.gradient-text-brand {
+    background: linear-gradient(135deg, var(--accent-2) 0%, var(--accent-1) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background: var(--glass-bg);
+    border-radius: 12px;
+    padding: 8px;
+    border: 1px solid var(--glass-border);
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: 44px;
+    background: transparent;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.3), rgba(34, 211, 238, 0.3)) !important;
+    color: white !important;
+    border: none;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+}
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.3), rgba(34, 211, 238, 0.3)) !important;
+    border: 1px solid var(--glass-border) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 12px !important;
+    padding: 0.75rem 1.5rem !important;
+    transition: all 0.3s ease !important;
+}
+
+.stButton > button:hover {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.5), rgba(34, 211, 238, 0.5)) !important;
+    border-color: var(--accent-2) !important;
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.4) !important;
+    transform: translateY(-2px);
+}
+
+/* DataFrames */
+[data-testid="stDataFrame"] {
+    background: var(--glass-bg) !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--glass-border) !important;
+    overflow: hidden;
+}
+
+/* Expanders */
+.streamlit-expanderHeader {
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: 12px !important;
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+}
+
+/* Status Badges */
+.status-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(34, 211, 153, 0.15);
+    color: #34D399;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    border: 1px solid rgba(34, 211, 153, 0.3);
+}
+
+.status-live::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: #34D399;
+    border-radius: 50%;
+    animation: blink 1.5s ease-in-out infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Positive/Negative Values */
+.positive {
+    color: var(--accent-4) !important;
+}
+
+.negative {
+    color: var(--accent-red) !important;
+}
+
+/* Chart Container */
+.chart-container {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+/* Progress Bar */
+.progress-bar {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    height: 8px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--accent-2), var(--accent-1));
+    transition: width 0.5s ease;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Hide Streamlit Branding */
+#MainMenu, footer, header {
+    visibility: hidden;
+}
+
+/* Custom Divider */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--glass-border), transparent);
+    margin: 2rem 0;
+}

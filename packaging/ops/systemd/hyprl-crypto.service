@@ -1,0 +1,15 @@
+[Unit]
+Description=HyprL Crypto Signal Generator (24/7)
+After=network.target
+
+[Service]
+Type=oneshot
+User={{HYPRL_USER}}
+WorkingDirectory={{HYPRL_ROOT}}
+ExecStart=/bin/bash {{HYPRL_ROOT}}/scripts/ops/run_crypto_signals.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-crypto
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+=== Basic stats ===
+Trades: 70
+Win rate: 25.71%
+Avg win (pnl): 38.10
+Avg loss (pnl): -38.99
+Expectancy (pnl): -19.16
+Profit factor: 0.34
+Best trade: 95.64 | Worst trade: -150.77
+Max consecutive wins: 2 | Max consecutive losses: 8
+Average expected pnl: 0.00
+
+=== Return distribution ===
+count    70.000000
+mean     -0.002045
+std       0.004531
+min      -0.016722
+25%      -0.004525
+50%      -0.002684
+75%       0.000196
+max       0.010024
+
+=== Calibration by probability bin ===
+No trades in specified probability range.
+
+=== Exit reasons ===
+stop_loss: 51 (72.9%)
+take_profit: 19 (27.1%)
+Trailing stop usage: 0.0% | Stop-loss: 72.9% | Take-profit: 27.1%
+End-of-data exits: 0.0%

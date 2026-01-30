@@ -49,7 +49,28 @@ apps/landing/.env
 
 # Proprietary trading logic (private)
 src/hyprl/strategy/
+src/hyprl/features/
+src/hyprl/live/
+src/hyprl/backtest/
+src/hyprl/risk/
+src/hyprl/execution/
+src/hyprl/meta/
+src/hyprl/regime/
+src/hyprl/adaptive/
 models/
 configs/*.yaml
 configs/**/*.yaml
 !configs/example.yaml
+
+# Scripts (proprietary)
+scripts/train*.py
+scripts/backtest*.py
+scripts/execution/
+scripts/analysis/
+scripts/ops/
+scripts/cli/
+scripts/marketing/
+
+# Reports (private data)
+reports/
+docs/reports/

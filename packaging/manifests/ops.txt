@@ -1,0 +1,8 @@
+# HyprL Ops Toolkit manifest
+packaging/ops/README.md -> README.md
+packaging/ops/DISCLAIMER.txt -> DISCLAIMER.txt
+packaging/ops/LICENSE.txt -> LICENSE.txt
+packaging/ops/ENV.example -> .env.bridge.example
+packaging/ops/systemd -> systemd
+scripts/ops/monitor_crypto_bridge.py
+scripts/ops/run_crypto_signals.sh

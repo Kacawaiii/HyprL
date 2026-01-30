@@ -1,0 +1,15 @@
+[Unit]
+Description=HyprL MT5 Signal API
+After=network.target
+
+[Service]
+Type=simple
+User=kyo
+WorkingDirectory=/opt/hyprl
+Environment="MT5_API_KEY=hyprl_mt5_ftmo_2026"
+ExecStart=/opt/hyprl/venv/bin/python /opt/hyprl/scripts/execution/mt5_signal_api.py --port 5050 --signals /opt/hyprl/live/logs/live_signals.jsonl
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
