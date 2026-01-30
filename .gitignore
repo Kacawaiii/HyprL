@@ -74,3 +74,22 @@ scripts/marketing/
 # Reports (private data)
 reports/
 docs/reports/
+
+# Experiment runs (private)
+runs/
+
+# Sensitive scripts
+scripts/run_*.py
+scripts/go_live.py
+scripts/sweep_*.py
+scripts/validate_*.py
+scripts/train_*.py
+scripts/calibrate_*.py
+scripts/evaluate_*.py
+scripts/full_*.py
+scripts/generate_*.py
+scripts/prepare_*.py
+
+# Live trading data
+live/
+SECURITY_INTERVENTION_LOG.md
