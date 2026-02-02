@@ -93,3 +93,7 @@ scripts/prepare_*.py
 # Live trading data
 live/
 SECURITY_INTERVENTION_LOG.md
+catboost_info/
+run_paper.sh
+scripts/download_mt5_5y.bat
+scripts/paper_trading.py
