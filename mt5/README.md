@@ -106,3 +106,46 @@ Test rapide:
 curl "https://hyprlcore.com/mt5-api/health"
 curl "https://hyprlcore.com/mt5-api/signals?key=hyprl_mt5_ftmo_2026"
 ```
+
+---
+
+# HyprL DataBridge (Données Historiques)
+
+EA qui expose une API REST **locale** pour récupérer les données historiques MT5 et les utiliser pour le backtesting/training.
+
+## Installation DataBridge
+
+1. Copier `HyprL_DataBridge.mq5` dans `MQL5/Experts/`
+2. Compiler (F7 dans MetaEditor)
+3. Attacher à n'importe quel graphique
+4. Cocher:
+   - ✅ Allow DLL imports
+   - ✅ Allow algorithmic trading
+
+## Utilisation depuis WSL/Python
+
+```bash
+# Télécharger données 5 minutes
+python scripts/data/download_mt5_history.py \
+    --symbols NVDA,MSFT,QQQ \
+    --timeframe 5m \
+    --years 2 \
+    --output-dir data/mt5
+```
+
+## API Locale (port 5555)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Vérification connexion |
+| `GET /bars?symbol=NVDA.US&timeframe=M5&count=1000` | Données OHLCV |
+| `GET /symbols` | Symboles disponibles |
+| `GET /account` | Infos compte |
+
+## Test rapide
+
+```bash
+# Depuis WSL (MT5 doit tourner sur Windows)
+curl http://localhost:5555/health
+curl "http://localhost:5555/bars?symbol=NVDA.US&timeframe=M5&count=10"
+```
