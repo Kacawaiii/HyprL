@@ -1,0 +1,14 @@
+[Unit]
+Description=HyprL Health Check
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/hyprl
+EnvironmentFile=/opt/hyprl/configs/runtime/.env.discord
+ExecStart=/usr/bin/python3 /opt/hyprl/scripts/ops/health_check.py
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

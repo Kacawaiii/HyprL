@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout — HyprL</title>
+    <meta name="robots" content="noindex">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+
+    <header class="header">
+        <div class="container">
+            <a href="index.html" class="logo">HyprL</a>
+            <nav class="nav">
+                <a href="index.html#pricing">Pricing</a>
+                <a href="https://app.hyprlcore.com" target="_blank">Track Record</a>
+                <a href="index.html#beta" class="btn-primary">Join Beta</a>
+            </nav>
+        </div>
+    </header>
+
+    <section class="hero" style="min-height: 80vh; display: flex; align-items: center;">
+        <div class="container">
+            <div style="max-width: 720px; margin: 0 auto; text-align: center;">
+                <div class="hero-badge">Secure Checkout</div>
+                <h1 class="hero-title" style="font-size: 44px; margin-bottom: 12px;">
+                    Complete your <span class="gradient-text">subscription</span>
+                </h1>
+                <p class="hero-subtitle" style="margin-bottom: 36px;">
+                    Payments are handled by Stripe. Choose your plan and continue.
+                </p>
+
+                <div class="pricing-grid" style="grid-template-columns: 1fr; max-width: 520px; margin: 0 auto;">
+                    <div class="pricing-card pricing-popular" id="plan-card">
+                        <div class="pricing-badge" id="plan-badge">Starter</div>
+                        <h3 class="pricing-title" id="plan-title">Starter</h3>
+                        <div class="pricing-price">
+                            <span class="price-amount" id="plan-price">€29</span>
+                            <span class="price-period">/month</span>
+                        </div>
+                        <div class="pricing-note-spacer"></div>
+                        <ul class="pricing-features" id="plan-features">
+                            <li>✓ Live trading signals</li>
+                            <li>✓ Email alerts</li>
+                            <li>✓ 90-day history</li>
+                        </ul>
+                        <a href="#" id="checkout-btn" class="btn-primary btn-block">Proceed to Payment</a>
+                        <p class="pricing-note" id="checkout-note">You will be redirected to Stripe.</p>
+                    </div>
+                </div>
+
+                <p style="margin-top: 24px; color: var(--text-muted); font-size: 14px;">
+                    Need help? Email <a href="mailto:contact@hyprlcore.com" style="color: var(--accent2); text-decoration: none;">contact@hyprlcore.com</a>.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <script src="bg.js"></script>
+    <script>
+        const stripeLinks = {
+            beta: "https://buy.stripe.com/fZueVf75pecN2CmcTMgrS00",
+            starter: "https://buy.stripe.com/fZueVf75pecN2CmcTMgrS00",
+            pro: "https://buy.stripe.com/28EdRb9dx0lXel41b4grS01",
+            team: "https://buy.stripe.com/cNibJ3blF8Stb8S9HAgrS02"
+        };
+
+        const tierMeta = {
+            beta: {
+                badge: "Beta",
+                title: "Early Access",
+                price: "€19",
+                features: [
+                    "Live track record dashboard",
+                    "Full trade history export",
+                    "Discord community access",
+                    "Weekly strategy updates"
+                ]
+            },
+            starter: {
+                badge: "Starter",
+                title: "Starter",
+                price: "€29",
+                features: [
+                    "Live trading signals",
+                    "Email alerts",
+                    "90-day history",
+                    "Monthly performance reports"
+                ]
+            },
+            pro: {
+                badge: "Pro",
+                title: "Professional",
+                price: "€79",
+                features: [
+                    "Everything in Starter",
+                    "REST API access",
+                    "Webhook integrations",
+                    "Discord realtime alerts"
+                ]
+            },
+            team: {
+                badge: "Team",
+                title: "Team",
+                price: "€199",
+                features: [
+                    "Everything in Pro",
+                    "5 team seats",
+                    "Priority support",
+                    "Custom integrations"
+                ]
+            }
+        };
+
+        const params = new URLSearchParams(window.location.search);
+        const tier = (params.get("tier") || "starter").toLowerCase();
+        const meta = tierMeta[tier] || tierMeta.starter;
+        const link = stripeLinks[tier] || stripeLinks.starter;
+
+        document.getElementById("plan-badge").textContent = meta.badge;
+        document.getElementById("plan-title").textContent = meta.title;
+        document.getElementById("plan-price").textContent = meta.price;
+
+        const featuresHtml = meta.features.map((f) => "<li>✓ " + f + "</li>").join("");
+        document.getElementById("plan-features").innerHTML = featuresHtml;
+
+        const checkoutBtn = document.getElementById("checkout-btn");
+        const note = document.getElementById("checkout-note");
+
+        if (link.startsWith("STRIPE_LINK_")) {
+            checkoutBtn.classList.add("btn-secondary");
+            checkoutBtn.classList.remove("btn-primary");
+            checkoutBtn.textContent = "Checkout not configured";
+            checkoutBtn.href = "mailto:contact@hyprlcore.com";
+            note.textContent = "Stripe links are not configured yet.";
+        } else {
+            checkoutBtn.href = link;
+            checkoutBtn.target = "_blank";
+            checkoutBtn.rel = "noopener";
+        }
+    </script>
+</body>
+</html>

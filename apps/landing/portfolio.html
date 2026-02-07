@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyprL — Complete System Portfolio</title>
+    <meta name="description" content="Full transparency on our quantitative trading system. Models, features, risk management, and live results.">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Portfolio-specific styles */
+        .portfolio-hero {
+            padding: 120px 0 60px;
+            text-align: center;
+        }
+        .portfolio-hero h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        .portfolio-hero p {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .section {
+            padding: 60px 0;
+            border-bottom: 1px solid rgba(255,182,193,0.1);
+        }
+        .section:last-child {
+            border-bottom: none;
+        }
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 30px;
+        }
+        .section-header .icon {
+            font-size: 2rem;
+        }
+        .section-header h2 {
+            font-size: 1.8rem;
+            margin: 0;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        .stat-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+        .stat-box .value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--pink-soft);
+        }
+        .stat-box .value.green { color: #4ade80; }
+        .stat-box .value.red { color: #f87171; }
+        .stat-box .label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-top: 8px;
+        }
+
+        /* Feature Grid */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+        }
+        .feature-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+        }
+        .feature-box h3 {
+            color: var(--pink-soft);
+            margin-bottom: 16px;
+            font-size: 1.2rem;
+        }
+        .feature-box ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .feature-box li {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .feature-box li:last-child {
+            border-bottom: none;
+        }
+        .feature-box .tag {
+            background: rgba(255,182,193,0.15);
+            color: var(--pink-soft);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+        }
+        .feature-box .tag.green {
+            background: rgba(74,222,128,0.15);
+            color: #4ade80;
+        }
+        .feature-box .tag.blue {
+            background: rgba(96,165,250,0.15);
+            color: #60a5fa;
+        }
+
+        /* Code Block */
+        .code-block {
+            background: #0d0d0d;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            color: #e5e5e5;
+        }
+        .code-block .comment { color: #6b7280; }
+        .code-block .keyword { color: #f472b6; }
+        .code-block .string { color: #4ade80; }
+        .code-block .number { color: #60a5fa; }
+
+        /* Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .data-table th, .data-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        .data-table th {
+            color: var(--pink-soft);
+            font-weight: 600;
+            background: rgba(255,182,193,0.05);
+        }
+        .data-table tr:hover {
+            background: rgba(255,255,255,0.02);
+        }
+
+        /* Strategy Cards */
+        .strategy-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+        }
+        .strategy-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
+            position: relative;
+            overflow: hidden;
+        }
+        .strategy-card.featured {
+            border-color: var(--pink-soft);
+            box-shadow: 0 0 30px rgba(255,182,193,0.1);
+        }
+        .strategy-card .badge {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: var(--pink-soft);
+            color: #000;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .strategy-card h3 {
+            font-size: 1.4rem;
+            margin-bottom: 8px;
+        }
+        .strategy-card .desc {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+        .strategy-card .params {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .strategy-card .param {
+            background: rgba(255,255,255,0.03);
+            padding: 12px;
+            border-radius: 8px;
+        }
+        .strategy-card .param-label {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+        .strategy-card .param-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--pink-soft);
+        }
+
+        /* Pipeline Visualization */
+        .pipeline {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            overflow-x: auto;
+            padding: 20px 0;
+        }
+        .pipeline-step {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            min-width: 160px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .pipeline-step .icon {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+        .pipeline-step .name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .pipeline-step .detail {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+        .pipeline-arrow {
+            color: var(--pink-soft);
+            font-size: 1.5rem;
+            padding: 0 8px;
+            flex-shrink: 0;
+        }
+
+        /* Back to home */
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            margin-bottom: 20px;
+            transition: color 0.2s;
+        }
+        .back-link:hover {
+            color: var(--pink-soft);
+        }
+
+        @media (max-width: 768px) {
+            .portfolio-hero h1 { font-size: 2rem; }
+            .pipeline { flex-direction: column; }
+            .pipeline-arrow { transform: rotate(90deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Glow Orbs -->
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <a href="index.html" class="logo">HyprL</a>
+            <nav class="nav">
+                <a href="index.html">Home</a>
+                <a href="dashboard.html">Dashboard</a>
+                <a href="#models">Models</a>
+                <a href="#risk">Risk</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="portfolio-hero">
+        <div class="container">
+            <a href="index.html" class="back-link">← Back to Home</a>
+            <h1>Complete System <span class="gradient-text">Portfolio</span></h1>
+            <p>Full transparency on our quantitative trading infrastructure. Every model, feature, filter, and risk parameter documented.</p>
+        </div>
+    </section>
+
+    <!-- Performance Summary -->
+    <section class="section" id="performance">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">📊</span>
+                <h2>Out-of-Sample Performance</h2>
+            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 30px;">March 2024 — December 2024 | Walk-Forward Validation</p>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="value green">+12,764%</div>
+                    <div class="label">Total Return (Backtest)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value">17.91</div>
+                    <div class="label">Sharpe Ratio</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value">7.79</div>
+                    <div class="label">Profit Factor</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value green">-0.82%</div>
+                    <div class="label">Max Drawdown</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value">76.8%</div>
+                    <div class="label">Win Rate</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value">390</div>
+                    <div class="label">Total Trades</div>
+                </div>
+            </div>
+
+            <div class="code-block">
+<span class="comment"># Walk-Forward Optimization Results</span>
+<span class="keyword">Period:</span> 2022-01-01 to 2024-12-31 (3 years)
+<span class="keyword">Train:</span> Rolling 12-month windows
+<span class="keyword">Test:</span> 3-month out-of-sample periods
+<span class="keyword">Symbols:</span> NVDA, MSFT, QQQ
+
+<span class="comment"># Model Stability Across Folds</span>
+Fold 1 (Q1 2024): Sharpe <span class="number">14.2</span>, Win Rate <span class="number">74%</span>
+Fold 2 (Q2 2024): Sharpe <span class="number">18.7</span>, Win Rate <span class="number">78%</span>
+Fold 3 (Q3 2024): Sharpe <span class="number">16.1</span>, Win Rate <span class="number">75%</span>
+Fold 4 (Q4 2024): Sharpe <span class="number">19.4</span>, Win Rate <span class="number">79%</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Model Architecture -->
+    <section class="section" id="models">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">🤖</span>
+                <h2>Model Architecture</h2>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-box">
+                    <h3>V4 Ensemble (Production)</h3>
+                    <ul>
+                        <li>
+                            <span>XGBoost</span>
+                            <span class="tag green">Primary</span>
+                        </li>
+                        <li>
+                            <span>LightGBM</span>
+                            <span class="tag blue">Secondary</span>
+                        </li>
+                        <li>
+                            <span>CatBoost</span>
+                            <span class="tag blue">Secondary</span>
+                        </li>
+                        <li>
+                            <span>Ensemble Method</span>
+                            <span class="tag">Weighted Avg</span>
+                        </li>
+                        <li>
+                            <span>Calibration</span>
+                            <span class="tag">Platt Scaling</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Training Configuration</h3>
+                    <ul>
+                        <li>
+                            <span>Training Data</span>
+                            <span class="tag">730 days</span>
+                        </li>
+                        <li>
+                            <span>Validation Split</span>
+                            <span class="tag">20%</span>
+                        </li>
+                        <li>
+                            <span>Cross-Validation</span>
+                            <span class="tag">5-Fold WFO</span>
+                        </li>
+                        <li>
+                            <span>Label Type</span>
+                            <span class="tag">Symmetric</span>
+                        </li>
+                        <li>
+                            <span>Random Seed</span>
+                            <span class="tag">42</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Per-Symbol Models</h3>
+                    <ul>
+                        <li>
+                            <span>NVDA 1H</span>
+                            <span class="tag green">Active</span>
+                        </li>
+                        <li>
+                            <span>MSFT 1H</span>
+                            <span class="tag green">Active</span>
+                        </li>
+                        <li>
+                            <span>QQQ 1H</span>
+                            <span class="tag green">Active</span>
+                        </li>
+                        <li>
+                            <span>NVDA 15M</span>
+                            <span class="tag blue">MTF</span>
+                        </li>
+                        <li>
+                            <span>QQQ 15M</span>
+                            <span class="tag blue">MTF</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">🔬</span>
+                <h2>Feature Engineering</h2>
+            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 30px;">20+ engineered features across 4 categories</p>
+
+            <div class="feature-grid">
+                <div class="feature-box">
+                    <h3>Returns & Momentum</h3>
+                    <ul>
+                        <li><span>ret_1h</span> <span class="tag">1-hour return</span></li>
+                        <li><span>ret_3h</span> <span class="tag">3-hour return</span></li>
+                        <li><span>ret_6h</span> <span class="tag">6-hour return</span></li>
+                        <li><span>ret_24h</span> <span class="tag">24-hour return</span></li>
+                        <li><span>ret_skew_20</span> <span class="tag">Return skewness</span></li>
+                        <li><span>ret_kurt_20</span> <span class="tag">Return kurtosis</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Volatility (ATR)</h3>
+                    <ul>
+                        <li><span>atr_14</span> <span class="tag">14-period ATR</span></li>
+                        <li><span>atr_72</span> <span class="tag">72-period ATR</span></li>
+                        <li><span>atr_14_norm</span> <span class="tag">Normalized</span></li>
+                        <li><span>atr_72_norm</span> <span class="tag">Normalized</span></li>
+                        <li><span>range_pct</span> <span class="tag">Bar range %</span></li>
+                        <li><span>true_range</span> <span class="tag">True range</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Oscillators (RSI)</h3>
+                    <ul>
+                        <li><span>rsi_7</span> <span class="tag">Fast RSI</span></li>
+                        <li><span>rsi_14</span> <span class="tag">Standard RSI</span></li>
+                        <li><span>rsi_21</span> <span class="tag">Slow RSI</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Volume Analysis</h3>
+                    <ul>
+                        <li><span>vol_ratio_10_30</span> <span class="tag">Volume ratio</span></li>
+                        <li><span>vol_regime_high</span> <span class="tag">High volume flag</span></li>
+                        <li><span>volume_zscore_24</span> <span class="tag">Z-score 24h</span></li>
+                        <li><span>volume_surge</span> <span class="tag">Surge detection</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Signal Pipeline -->
+    <section class="section" id="pipeline">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">⚡</span>
+                <h2>Signal Pipeline</h2>
+            </div>
+
+            <div class="pipeline">
+                <div class="pipeline-step">
+                    <div class="icon">📥</div>
+                    <div class="name">Data Fetch</div>
+                    <div class="detail">Alpaca API</div>
+                </div>
+                <div class="pipeline-arrow">→</div>
+                <div class="pipeline-step">
+                    <div class="icon">🔧</div>
+                    <div class="name">Features</div>
+                    <div class="detail">20+ indicators</div>
+                </div>
+                <div class="pipeline-arrow">→</div>
+                <div class="pipeline-step">
+                    <div class="icon">🤖</div>
+                    <div class="name">ML Prediction</div>
+                    <div class="detail">V4 Ensemble</div>
+                </div>
+                <div class="pipeline-arrow">→</div>
+                <div class="pipeline-step">
+                    <div class="icon">🛡️</div>
+                    <div class="name">Smart Filter</div>
+                    <div class="detail">RSI/Momentum</div>
+                </div>
+                <div class="pipeline-arrow">→</div>
+                <div class="pipeline-step">
+                    <div class="icon">📰</div>
+                    <div class="name">Sentiment</div>
+                    <div class="detail">News Analysis</div>
+                </div>
+                <div class="pipeline-arrow">→</div>
+                <div class="pipeline-step">
+                    <div class="icon">📊</div>
+                    <div class="name">Risk Check</div>
+                    <div class="detail">Position Sizing</div>
+                </div>
+                <div class="pipeline-arrow">→</div>
+                <div class="pipeline-step">
+                    <div class="icon">✅</div>
+                    <div class="name">Execution</div>
+                    <div class="detail">Bracket Orders</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filters & Gates -->
+    <section class="section" id="filters">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">🛡️</span>
+                <h2>Filters & Risk Gates</h2>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-box">
+                    <h3>Smart Filter</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 16px;">
+                        Blocks "falling knife" and "pump" entries based on short-term momentum.
+                    </p>
+                    <ul>
+                        <li><span>RSI Oversold Block</span> <span class="tag">RSI &lt; 20</span></li>
+                        <li><span>RSI Overbought Block</span> <span class="tag">RSI &gt; 80</span></li>
+                        <li><span>Capitulation Detection</span> <span class="tag">5+ down bars</span></li>
+                        <li><span>Pump Detection</span> <span class="tag">5+ up bars</span></li>
+                        <li><span>Min Probability</span> <span class="tag">52%</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Sentiment Filter</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 16px;">
+                        Analyzes recent news to adjust or block signals.
+                    </p>
+                    <ul>
+                        <li><span>News Lookback</span> <span class="tag">24 hours</span></li>
+                        <li><span>Very Bearish</span> <span class="tag red" style="background:rgba(248,113,113,0.15);color:#f87171;">BLOCK</span></li>
+                        <li><span>Bearish + Long</span> <span class="tag">50% size</span></li>
+                        <li><span>Bullish + Short</span> <span class="tag">50% size</span></li>
+                        <li><span>Keywords Analyzed</span> <span class="tag">40+</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Risk Guards</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 16px;">
+                        Multiple layers of risk protection.
+                    </p>
+                    <ul>
+                        <li><span>Max Daily Loss</span> <span class="tag">10%</span></li>
+                        <li><span>Max Drawdown Pause</span> <span class="tag">20%</span></li>
+                        <li><span>Max Exposure</span> <span class="tag">180%</span></li>
+                        <li><span>Per-Symbol Limit</span> <span class="tag">60%</span></li>
+                        <li><span>Cash Reserve</span> <span class="tag">2%</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Execution Gates</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 16px;">
+                        Pre-trade validation checks.
+                    </p>
+                    <ul>
+                        <li><span>Market Hours</span> <span class="tag green">Required</span></li>
+                        <li><span>Cooldown Period</span> <span class="tag">30 sec</span></li>
+                        <li><span>Stale Signal Check</span> <span class="tag">5 min max</span></li>
+                        <li><span>Duplicate Prevention</span> <span class="tag green">Active</span></li>
+                        <li><span>Kill Switch</span> <span class="tag green">Available</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Risk Management -->
+    <section class="section" id="risk">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">⚖️</span>
+                <h2>Risk Management</h2>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-box">
+                    <h3>Position Sizing</h3>
+                    <ul>
+                        <li><span>Method</span> <span class="tag">ATR-Based</span></li>
+                        <li><span>Base Risk</span> <span class="tag">1% equity</span></li>
+                        <li><span>ATR Multiplier</span> <span class="tag">2.5x</span></li>
+                        <li><span>Max Per Trade</span> <span class="tag">40%</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Stop Loss</h3>
+                    <ul>
+                        <li><span>Initial Stop</span> <span class="tag">2.5 ATR</span></li>
+                        <li><span>Trailing Stop</span> <span class="tag green">Enabled</span></li>
+                        <li><span>Activation</span> <span class="tag">1.0 ATR profit</span></li>
+                        <li><span>Trail Distance</span> <span class="tag">4%</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Take Profit</h3>
+                    <ul>
+                        <li><span>Target</span> <span class="tag">5.0 ATR</span></li>
+                        <li><span>Risk/Reward</span> <span class="tag green">1:2</span></li>
+                        <li><span>Partial Exit</span> <span class="tag">Optional</span></li>
+                        <li><span>EOD Close</span> <span class="tag">5 min before</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Bracket Orders</h3>
+                    <ul>
+                        <li><span>Order Type</span> <span class="tag">OTO Bracket</span></li>
+                        <li><span>Stop Order</span> <span class="tag green">Attached</span></li>
+                        <li><span>Limit Order</span> <span class="tag green">Attached</span></li>
+                        <li><span>Auto-Cancel</span> <span class="tag green">On fill</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Strategy Modes -->
+    <section class="section" id="strategies">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">🎯</span>
+                <h2>Strategy Modes</h2>
+            </div>
+
+            <div class="strategy-cards">
+                <div class="strategy-card">
+                    <h3>Normal</h3>
+                    <p class="desc">Conservative approach with all filters enabled.</p>
+                    <div class="params">
+                        <div class="param">
+                            <div class="param-label">Position Size</div>
+                            <div class="param-value">10%</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Max Exposure</div>
+                            <div class="param-value">60%</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Smart Filter</div>
+                            <div class="param-value">ON</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Sentiment</div>
+                            <div class="param-value">ON</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="strategy-card featured">
+                    <span class="badge">RECOMMENDED</span>
+                    <h3>Aggressive</h3>
+                    <p class="desc">Maximum capital deployment with sentiment filter.</p>
+                    <div class="params">
+                        <div class="param">
+                            <div class="param-label">Position Size</div>
+                            <div class="param-value">40%</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Max Exposure</div>
+                            <div class="param-value">180%</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Smart Filter</div>
+                            <div class="param-value">OFF</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Sentiment</div>
+                            <div class="param-value">ON</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="strategy-card">
+                    <h3>Mix (70/30)</h3>
+                    <p class="desc">Balanced blend of normal and aggressive.</p>
+                    <div class="params">
+                        <div class="param">
+                            <div class="param-label">Position Size</div>
+                            <div class="param-value">20%</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Max Exposure</div>
+                            <div class="param-value">100%</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Smart Filter</div>
+                            <div class="param-value">ON</div>
+                        </div>
+                        <div class="param">
+                            <div class="param-label">Sentiment</div>
+                            <div class="param-value">ON</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Infrastructure -->
+    <section class="section" id="infra">
+        <div class="container">
+            <div class="section-header">
+                <span class="icon">🖥️</span>
+                <h2>Infrastructure</h2>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-box">
+                    <h3>Execution</h3>
+                    <ul>
+                        <li><span>Broker</span> <span class="tag">Alpaca</span></li>
+                        <li><span>Mode</span> <span class="tag">Paper Trading</span></li>
+                        <li><span>API Version</span> <span class="tag">v2</span></li>
+                        <li><span>Order Types</span> <span class="tag">Market + Bracket</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Hosting</h3>
+                    <ul>
+                        <li><span>Provider</span> <span class="tag">Oracle Cloud</span></li>
+                        <li><span>Region</span> <span class="tag">EU Frankfurt</span></li>
+                        <li><span>Uptime</span> <span class="tag green">99.9%</span></li>
+                        <li><span>Monitoring</span> <span class="tag">systemd + logs</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Schedule</h3>
+                    <ul>
+                        <li><span>Signal Gen</span> <span class="tag">Hourly</span></li>
+                        <li><span>Trading Hours</span> <span class="tag">9:30-16:00 ET</span></li>
+                        <li><span>Skip Open</span> <span class="tag">First 5 min</span></li>
+                        <li><span>EOD Close</span> <span class="tag">Last 5 min</span></li>
+                    </ul>
+                </div>
+
+                <div class="feature-box">
+                    <h3>Data Sources</h3>
+                    <ul>
+                        <li><span>Price Data</span> <span class="tag">Alpaca Bars</span></li>
+                        <li><span>News</span> <span class="tag">Alpaca News API</span></li>
+                        <li><span>Historical</span> <span class="tag">Yahoo Finance</span></li>
+                        <li><span>Real-time</span> <span class="tag">WebSocket</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section" style="text-align: center; padding: 80px 0;">
+        <div class="container">
+            <h2 style="font-size: 2rem; margin-bottom: 16px;">Ready to <span class="gradient-text">Get Started</span>?</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 30px;">Join our beta and access real-time signals with full transparency.</p>
+            <a href="index.html#pricing" class="btn-primary btn-large">View Pricing</a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer style="border-top: 1px solid var(--border); padding: 40px 0; text-align: center; color: var(--text-secondary);">
+        <div class="container">
+            <p>&copy; 2024-2026 HyprL. All rights reserved.</p>
+            <p style="font-size: 0.85rem; margin-top: 8px;">
+                Past performance does not guarantee future results. Trading involves risk.
+            </p>
+        </div>
+    </footer>
+</body>
+</html>

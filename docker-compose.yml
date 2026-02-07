@@ -1,0 +1,53 @@
+services:
+  track_record:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - /opt/hyprl:/app
+    environment:
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - STREAMLIT_SERVER_HEADLESS=true
+    command: >
+      bash -lc "pip install -U pip &&
+      pip install -r requirements_dashboard.txt &&
+      streamlit run apps/track_record/streamlit_app.py
+      --server.address=0.0.0.0 --server.port=8501"
+    ports:
+      - "127.0.0.1:8501:8501"
+    restart: unless-stopped
+
+  status_api:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - /opt/hyprl:/app
+    env_file:
+      - /opt/hyprl/.env.broker.alpaca
+    environment:
+      - BRIDGE_STATE_FILE=/app/live/state/bridge_alpaca.json
+    command: >
+      bash -lc "pip install flask flask-cors alpaca-py &&
+      python apps/track_record/lib/status_api.py --mode serve --port 8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  notifications_api:
+    container_name: hyprl_notifications_api
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - /opt/hyprl:/app
+      - /opt/hyprl/secrets:/secrets:ro
+    environment:
+      - SIGNALS_FILE=/app/live/logs/live_signals.jsonl
+      - FIREBASE_CREDS=/secrets/firebase-admin.json
+      - RESEND_API_KEY=
+      - INTERNAL_API_KEY=hyprl_internal_broadcast_key_2026
+      - PORT=8082
+    command: >
+      bash -lc "pip install flask flask-cors firebase-admin resend requests &&
+      python apps/track_record/lib/notifications_api.py"
+    ports:
+      - "127.0.0.1:8082:8082"
+    restart: unless-stopped

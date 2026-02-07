@@ -1,0 +1,52 @@
+[Unit]
+Description=HyprL Alpaca Execution Bridge
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/HyprL
+EnvironmentFile=/home/ubuntu/HyprL/.env.broker.alpaca
+ExecStart=/home/ubuntu/HyprL/.venv/bin/python scripts/execution/run_alpaca_bridge.py \
+    --signals live/logs/live_signals.jsonl \
+    --out live/execution/alpaca/orders.jsonl \
+    --state live/execution/alpaca/state.json \
+    --symbols NVDA,MSFT \
+    --paper \
+    --allow-short \
+    --use-brackets \
+    --max-orders-per-day 20 \
+    --max-qty 50 \
+    --max-notional-per-order 500 \
+    --max-notional-per-day 2000 \
+    --max-daily-drawdown-pct 5 \
+    --poll-seconds 30 \
+    --poll-seconds-rth 10 \
+    --positions-snapshot-seconds 60 \
+    --max-entry-slippage-pct 0.5 \
+    --max-spread-pct 0.3 \
+    --skip-past-tp \
+    --close-eod-minutes 15 \
+    --cooldown-seconds 300 \
+    --discord-webhook ${DISCORD_WEBHOOK_URL} \
+    --kill-switch /tmp/hyprl_kill_switch \
+    --enable-strategy-v3 \
+    --v3-min-quality-score 0.6 \
+    --v3-partial-r-levels "1.5,2.5" \
+    --v3-stagnant-hours 6 \
+    --v3-trailing-atr-mult 2.0 \
+    --enable-guards-v2 \
+    --earnings-blackout-days 3 \
+    --max-correlated-notional 15000 \
+    --enable-smart-filter \
+    --smart-filter-min-prob 0.55
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-bridge
+
+[Install]
+WantedBy=multi-user.target

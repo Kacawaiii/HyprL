@@ -46,12 +46,12 @@ Full stack backtest — 1 year, 1H bars, 5 bps slippage, long-only, all filters 
 
 | Metric | NVDA | MSFT | Portfolio |
 |--------|------|------|-----------|
-| Return | +41.1% | +35.9% | +17.9% |
-| Sharpe | 1.55 | 1.03 | 1.29 |
+| Return | +36.3% | +42.5% | +21.3% |
+| Sharpe | 1.42 | 1.15 | 1.29 |
 | Win Rate | 55.3% | 52.9% | 54.1% |
-| Profit Factor | 1.51 | 1.39 | 1.45 |
+| Profit Factor | 1.47 | 1.46 | 1.47 |
 | Trades | 47 | 51 | 98 |
-| Max Drawdown | -9% | -15% | -22.6% |
+| Max Drawdown | -9% | -15% | -20.4% |
 
 Live track record dashboard: [app.hyprlcore.com](https://app.hyprlcore.com)
 

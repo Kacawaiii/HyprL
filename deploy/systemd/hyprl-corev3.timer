@@ -1,0 +1,11 @@
+[Unit]
+Description=HyprL Core V3 Signal Generator (hourly)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=15s
+Unit=hyprl-corev3.service
+
+[Install]
+WantedBy=timers.target

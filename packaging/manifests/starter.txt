@@ -1,0 +1,15 @@
+# HyprL Starter Kit manifest
+packaging/starter/README.md -> README.md
+packaging/starter/QUICKSTART.md -> QUICKSTART.md
+packaging/starter/DISCLAIMER.txt -> DISCLAIMER.txt
+packaging/starter/LICENSE.txt -> LICENSE.txt
+packaging/starter/ENV.example -> .env.example
+pyproject.toml
+requirements.txt
+src/hyprl
+scripts/run_crypto_signals.py
+scripts/train_crypto_xgb.py
+scripts/run_backtest.py
+scripts/analyze_trades.py
+scripts/execution/run_alpaca_bridge.py
+scripts/ops/run_crypto_signals.sh

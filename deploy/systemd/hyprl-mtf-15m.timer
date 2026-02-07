@@ -1,0 +1,12 @@
+[Unit]
+Description=Run HyprL MTF signals every 15 minutes
+
+[Timer]
+# Run at :01, :16, :31, :46 of each hour during market hours
+OnCalendar=Mon..Fri 9:31,9:46 America/New_York
+OnCalendar=Mon..Fri 10..15:01,16,31,46 America/New_York
+OnCalendar=Mon..Fri 16:01 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

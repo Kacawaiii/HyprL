@@ -183,16 +183,58 @@ class ProbabilityModel:
         calibrator = ProbabilityCalibrator(method=calibration, random_state=seed)
         return cls(scaler=scaler, classifier=classifier, calibrator=calibrator, model_type=model_type)
 
-    def fit(self, feature_df: pd.DataFrame, target: pd.Series) -> Tuple[np.ndarray, np.ndarray]:
+    def fit(
+        self,
+        feature_df: pd.DataFrame,
+        target: pd.Series,
+        calibration_cv: int = 5,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Fit the model with proper calibration using cross-validation.
+
+        Args:
+            feature_df: Feature matrix
+            target: Target labels (0/1)
+            calibration_cv: Number of CV folds for calibration (0 = use train preds, not recommended)
+
+        The calibrator is fitted on out-of-fold predictions to avoid overfitting.
+        This is critical for reliable probability estimates and position sizing.
+        """
         feature_matrix = feature_df.to_numpy(dtype=float)
         target_vector = target.to_numpy(dtype=float)
         feature_scaled = (
             self.scaler.fit_transform(feature_matrix) if self.scaler is not None else feature_matrix
         )
+
+        # Collect out-of-fold predictions for calibration
+        if self.calibrator.method != "none" and calibration_cv > 1 and len(target_vector) >= calibration_cv * 10:
+            from sklearn.model_selection import KFold
+            import copy
+
+            oof_probs = np.zeros(len(target_vector))
+            kf = KFold(n_splits=calibration_cv, shuffle=False)  # No shuffle to preserve time order
+
+            for train_idx, val_idx in kf.split(feature_scaled):
+                # Clone classifier for this fold
+                fold_clf = copy.deepcopy(self.classifier)
+                fold_clf.fit(feature_scaled[train_idx], target_vector[train_idx])
+                # Get OOF predictions
+                fold_probs = fold_clf.predict_proba(feature_scaled[val_idx])
+                if fold_probs.ndim == 2:
+                    fold_probs = fold_probs[:, 1]
+                oof_probs[val_idx] = fold_probs
+
+            # Fit calibrator on OOF predictions (unbiased)
+            self.calibrator.fit(oof_probs, target_vector)
+
+        # Now fit final classifier on ALL data
         self.classifier.fit(feature_scaled, target_vector)
-        raw_probs = self.classifier.predict_proba(feature_scaled)[:, 1]
-        if self.calibrator.method != "none":
+
+        # If no CV calibration, fall back to train predictions (not recommended)
+        if self.calibrator.method != "none" and not self.calibrator.is_fitted:
+            raw_probs = self.classifier.predict_proba(feature_scaled)[:, 1]
             self.calibrator.fit(raw_probs, target_vector)
+
         return feature_scaled, target_vector
 
     def predict_proba(self, feature_df: pd.DataFrame | np.ndarray) -> np.ndarray:

@@ -1,0 +1,19 @@
+[Unit]
+Description=HyprL Crypto Bridge Monitor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kyo/HyprL
+EnvironmentFile=-/home/kyo/HyprL/.env.discord
+ExecStart=/home/kyo/HyprL/.venv/bin/python scripts/ops/monitor_crypto_bridge.py \
+    --orders-log live/execution/crypto/orders.jsonl \
+    --state live/execution/crypto/monitor_state.json \
+    --poll-seconds 10
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

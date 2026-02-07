@@ -1,0 +1,7 @@
+PROPRIETARY LICENSE
+
+Copyright (c) <YEAR> <YOUR_NAME>
+All rights reserved.
+
+No part of this package may be copied, modified, distributed, or sold
+without explicit written permission from the copyright holder.

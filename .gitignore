@@ -49,7 +49,51 @@ apps/landing/.env
 
 # Proprietary trading logic (private)
 src/hyprl/strategy/
+src/hyprl/features/
+src/hyprl/live/
+src/hyprl/backtest/
+src/hyprl/risk/
+src/hyprl/execution/
+src/hyprl/meta/
+src/hyprl/regime/
+src/hyprl/adaptive/
 models/
 configs/*.yaml
 configs/**/*.yaml
 !configs/example.yaml
+
+# Scripts (proprietary)
+scripts/train*.py
+scripts/backtest*.py
+scripts/execution/
+scripts/analysis/
+scripts/ops/
+scripts/cli/
+scripts/marketing/
+
+# Reports (private data)
+reports/
+docs/reports/
+
+# Experiment runs (private)
+runs/
+
+# Sensitive scripts
+scripts/run_*.py
+scripts/go_live.py
+scripts/sweep_*.py
+scripts/validate_*.py
+scripts/train_*.py
+scripts/calibrate_*.py
+scripts/evaluate_*.py
+scripts/full_*.py
+scripts/generate_*.py
+scripts/prepare_*.py
+
+# Live trading data
+live/
+SECURITY_INTERVENTION_LOG.md
+catboost_info/
+run_paper.sh
+scripts/download_mt5_5y.bat
+scripts/paper_trading.py

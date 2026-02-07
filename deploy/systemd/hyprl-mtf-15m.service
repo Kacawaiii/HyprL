@@ -1,0 +1,15 @@
+[Unit]
+Description=HyprL Multi-Timeframe 15min Signal Generator
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/HyprL
+ExecStart=/bin/bash /home/ubuntu/HyprL/scripts/ops/run_mtf_signals.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-mtf
+
+[Install]
+WantedBy=multi-user.target

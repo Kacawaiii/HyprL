@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Deque, Literal
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from hyprl.meta.features import build_feature_frame_from_records, select_meta_features
@@ -23,6 +24,8 @@ from hyprl.rt.features import compute_features
 from hyprl.rt.logging import LiveLogger
 from hyprl.rt.risk import size_position
 from hyprl.rt.tuner import Tuner
+from hyprl.monitoring.regime import RegimeDetector, MarketRegime
+from hyprl.monitoring.drift_detector import DriftDetector
 
 
 INTERVAL_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
@@ -207,6 +210,14 @@ async def run_realtime_paper(
     simulated_brackets: dict[str, dict] = {}
     tuner = live_cfg.tuner
     symbol_bar_counts: dict[str, int] = defaultdict(int)
+    regime_detector = RegimeDetector()
+    current_regime: dict[str, str] = {}
+    drift_detector = DriftDetector(
+        baseline_path=Path("models/drift_baseline.npz")
+        if Path("models/drift_baseline.npz").exists() else None
+    )
+    drift_check_interval = 50  # Check drift every N bars
+    drift_size_mult: dict[str, float] = defaultdict(lambda: 1.0)
     pending_signals: dict[str, Deque[dict]] = defaultdict(deque)
     rolling_results: Deque[int] = deque(maxlen=50)
     equity_window: Deque[tuple[int, float]] = deque(maxlen=64)
@@ -446,6 +457,38 @@ async def run_realtime_paper(
                 except TypeError:
                     meta_pred = float(meta_model.predict(matrix)[0])
 
+            # --- Regime detection (every bar) ---
+            regime_state = regime_detector.detect(bar_df)
+            current_regime[symbol] = regime_state.regime.value
+            regime_size_mult = 1.0
+            regime_block = False
+            if regime_state.regime == MarketRegime.VOLATILE and regime_state.volatility_percentile > 90:
+                regime_size_mult = 0.5  # Halve size in extreme volatility
+            if regime_state.regime == MarketRegime.VOLATILE and regime_state.volatility_percentile > 95:
+                regime_block = True  # Block new trades in crisis-level vol
+
+            # --- Drift detection (every N bars per symbol) ---
+            if drift_detector.baseline and symbol_bar_counts[symbol] % drift_check_interval == 0:
+                drift_current = {
+                    k: np.array([f.get(k) for f in features_history[symbol][-200:]])
+                    for k in drift_detector.baseline
+                    if any(f.get(k) is not None for f in features_history[symbol][-200:])
+                }
+                drift_alerts = drift_detector.check_feature_drift(drift_current)
+                if drift_alerts:
+                    has_critical = any(a.severity == "critical" for a in drift_alerts)
+                    drift_size_mult[symbol] = 0.0 if has_critical else 0.5
+                    logger.log_prediction({
+                        "ts": ts.timestamp(),
+                        "symbol": symbol,
+                        "event": "drift_check",
+                        "n_alerts": len(drift_alerts),
+                        "critical": has_critical,
+                        "alerts": [a.to_dict() for a in drift_alerts[:5]],
+                    })
+                else:
+                    drift_size_mult[symbol] = 1.0
+
             direction = 1 if prob_up >= live_cfg.threshold else -1
             prediction_payload = {
                 "ts": ts.timestamp(),
@@ -459,7 +502,24 @@ async def run_realtime_paper(
                 "rsi_raw": feats.get("rsi_raw"),
                 "bb_width": feats.get("bb_width"),
                 "meta_pred": meta_pred,
+                "regime": regime_state.regime.value,
+                "regime_confidence": regime_state.confidence,
+                "regime_vol_pct": regime_state.volatility_percentile,
+                "regime_size_mult": regime_size_mult,
+                "drift_size_mult": drift_size_mult[symbol],
             }
+
+            if drift_size_mult[symbol] <= 0.0:
+                _log_reason(logger, prediction_payload, "drift_block_critical")
+                if await finalize_bar():
+                    return
+                continue
+
+            if regime_block:
+                _log_reason(logger, prediction_payload, f"regime_block_{regime_state.regime.value}")
+                if await finalize_bar():
+                    return
+                continue
 
             if not all(pd.notna(feats.get(field)) for field in ["atr", "sma_short", "sma_long", "rsi_raw"]):
                 _log_reason(logger, prediction_payload, "nan_features")
@@ -469,7 +529,7 @@ async def run_realtime_paper(
 
             qty, stop_price, take_profit = size_position(
                 equity=equity,
-                risk_pct=live_cfg.risk_pct,
+                risk_pct=live_cfg.risk_pct * regime_size_mult * drift_size_mult[symbol],
                 atr=float(feats.get("atr", 0.0) or 0.0),
                 price=float(feats.get("close", bar["close"])),
                 min_qty=live_cfg.min_qty,

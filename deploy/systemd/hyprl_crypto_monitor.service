@@ -1,0 +1,24 @@
+[Unit]
+Description=HyprL Crypto Bridge Monitor
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/HyprL
+EnvironmentFile=/home/ubuntu/HyprL/.env.discord
+ExecStart=/home/ubuntu/HyprL/.venv/bin/python scripts/ops/monitor_crypto_bridge.py \
+    --orders-log live/execution/crypto/orders.jsonl \
+    --state live/execution/crypto/monitor_state.json \
+    --poll-seconds 10 \
+    --webhook ${DISCORD_WEBHOOK_URL}
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-crypto-monitor
+
+[Install]
+WantedBy=multi-user.target

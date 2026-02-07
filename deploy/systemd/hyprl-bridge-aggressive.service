@@ -1,0 +1,43 @@
+[Unit]
+Description=HyprL Alpaca Bridge - Aggressive Strategy (HIGH RISK)
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/hyprl/hyprl
+
+[Service]
+Type=simple
+User=hyprl
+Group=hyprl
+WorkingDirectory=/opt/hyprl
+
+# Environment
+EnvironmentFile=/opt/hyprl/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=HYPRL_STRATEGY=aggressive
+Environment=HYPRL_BASE_EQUITY=100000
+
+# Command - AGGRESSIVE strategy (no filters, high risk)
+ExecStart=/opt/hyprl/venv/bin/python scripts/execution/run_strategy_bridge.py \
+    --strategy aggressive \
+    --paper
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/hyprl/live
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hyprl-bridge-aggressive
+
+[Install]
+WantedBy=multi-user.target
