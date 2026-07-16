@@ -1,3 +1,7 @@
+# Secrets - NEVER commit
+.env
+telegram_bot/.env
+
 # Environment / build
 .venv/
 __pycache__/
@@ -12,7 +16,12 @@ __pycache__/
 .maturin_build/
 
 # Data / artifacts
-data/
+# Ignored wholesale, except a carved path to the small universe files the live
+# engine needs at runtime on the CI runner. Git cannot re-include a file whose
+# parent directory is excluded, hence opening the path one level at a time.
+data/*
+!data/momentum/
+data/momentum/*
 docs/experiments/
 native/target/
 native/**/target/
@@ -90,8 +99,20 @@ scripts/full_*.py
 scripts/generate_*.py
 scripts/prepare_*.py
 
+# The engine needs the S&P universe + PIT membership at runtime on the CI runner;
+# they are small text files, unlike the price parquets which stay ignored.
+!data/momentum/sp500_current.json
+!data/momentum/sp500_membership.csv
+!data/momentum/ndx100_current.json
+
 # Live trading data
-live/
+live/*
+# ...except the paper portfolio state: equity.jsonl is the public, git-timestamped
+# track record, and heartbeat.json is what the watchdog reads. No secrets in here.
+# The *.json rule above (line ~25) also catches these, so re-include explicitly.
+!live/portfolio/
+!live/portfolio/*.json
+live/portfolio/last_alert.json
 SECURITY_INTERVENTION_LOG.md
 catboost_info/
 run_paper.sh

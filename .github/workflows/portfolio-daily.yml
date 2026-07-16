@@ -1,0 +1,86 @@
+name: Portfolio Daily (2-sleeve paper)
+
+# Runs the two-sleeve book (equity momentum + ETF cross-asset trend) against the
+# Alpaca paper account, then commits state + equity curve back to the repo.
+#
+# Why GitHub Actions and not a VPS: the Oracle VPS and the GCP VM both died
+# silently (free-tier reclaim), which flat-lined the account for 3 weeks without
+# anyone noticing. Actions is free/unlimited for public repos and runs on
+# GitHub's infra. Committing the state each run also keeps the repo active, which
+# prevents GitHub from auto-disabling scheduled workflows after 60 days idle.
+#
+# The committed live/portfolio/equity.jsonl IS the public, git-timestamped
+# track record.
+
+on:
+  schedule:
+    # 21:00 UTC = 17:00 ET, one hour AFTER the US close.
+    # This matters: during market hours yfinance returns today's *incomplete*
+    # daily bar, so signals would be computed on a close that doesn't exist yet.
+    # Running post-close means signals use the completed close and the market
+    # orders queue to the next open — which is exactly the next-open execution
+    # the Clenow backtest assumes. Mon-Fri; momentum only rebalances Wednesdays.
+    - cron: '0 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      live:
+        description: 'Submit real paper orders (false = dry-run)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portfolio-daily
+  cancel-in-progress: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install --quiet pandas numpy yfinance pyarrow
+
+      - name: Run portfolio engine
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+        run: |
+          if [ "${{ github.event.inputs.live }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+            python scripts/momentum_stocks/live_portfolio.py --live
+          else
+            python scripts/momentum_stocks/live_portfolio.py
+          fi
+
+      # Runs even if the engine failed, so a crash still gets alerted rather than
+      # sitting silent — the exact failure mode that killed the account in June.
+      - name: Watchdog
+        if: always()
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALERT_CHAT: ${{ secrets.TELEGRAM_ALERT_CHAT }}
+        run: python scripts/momentum_stocks/watchdog.py
+
+      - name: Commit state + track record
+        if: always()
+        run: |
+          git config user.name "HyprL Bot"
+          git config user.email "bot@hyprlcore.com"
+          git add live/portfolio/ || true
+          if git diff --staged --quiet; then
+            echo "no state change"
+          else
+            git commit -m "portfolio: daily run $(date -u +%Y-%m-%d)"
+            git pull --rebase --autostash || true
+            git push
+          fi
