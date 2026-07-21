@@ -1,11 +1,11 @@
 {
-  "ts": "2026-07-20T21:57:54.888702+00:00",
+  "ts": "2026-07-21T22:01:37.726271+00:00",
   "ok": true,
-  "equity": 111740.09,
+  "equity": 112876.8,
   "mode": "live",
-  "orders": 12,
+  "orders": 13,
   "sent": 10,
-  "failed": 2,
+  "failed": 3,
   "momentum": 33,
-  "trend": 3
+  "trend": 4
 }
