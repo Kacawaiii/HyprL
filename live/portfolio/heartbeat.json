@@ -1,11 +1,20 @@
 {
-  "ts": "2026-07-21T22:01:37.726271+00:00",
+  "ts": "2026-07-22T22:03:46.672195+00:00",
   "ok": true,
-  "equity": 112876.8,
+  "equity": 112568.56,
   "mode": "live",
-  "orders": 13,
-  "sent": 10,
-  "failed": 3,
-  "momentum": 33,
-  "trend": 4
+  "orders": 27,
+  "sent": 27,
+  "failed": 0,
+  "api_failed": 0,
+  "blocked": 0,
+  "deferred": 0,
+  "planning_errors": 0,
+  "momentum_targets": 34,
+  "trend_targets": 1,
+  "actual_positions": 34,
+  "actual_trend_positions": 1,
+  "open_orders_at_start": 0,
+  "reconciled_state": 3,
+  "issues": []
 }
