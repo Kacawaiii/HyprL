@@ -6,7 +6,8 @@ Sleeve B: ETF cross-asset trend (Clenow Following the Trend) — evaluated daily
 
 Capital split MOM_ALLOC / TREND_ALLOC of live account equity. Signals computed
 on yfinance daily closes (same as the backtest); execution + account state via
-Alpaca. Fractional shares -> dollar sizing, no rounding.
+Alpaca. Long positions may be fractional. Short orders are deliberately rounded
+to whole shares because Alpaca rejects fractional short sales.
 
 DRY-RUN by default: prints the reconciled order list and submits nothing.
 Pass --live to actually submit market orders.
@@ -14,12 +15,17 @@ Pass --live to actually submit market orders.
 State (trend trailing stops) persisted in live/portfolio/state.json.
 """
 from __future__ import annotations
+
 import argparse
+import copy
 import json
 import math
 import os
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,17 +43,48 @@ LOG_PATH = STATE_DIR / "orders.jsonl"
 HEARTBEAT_PATH = STATE_DIR / "heartbeat.json"
 EQUITY_LOG = STATE_DIR / "equity.jsonl"
 
-# --- Alpaca paper creds (paper account PA3VMR6S2EQN) ---
-# Never hardcode: this repo is public. Supply via env / GitHub Secrets.
-ALPACA_KEY = os.environ.get("ALPACA_KEY", "")
-ALPACA_SECRET = os.environ.get("ALPACA_SECRET", "")
-ALPACA_BASE = os.environ.get("ALPACA_BASE", "https://paper-api.alpaca.markets")
+# --- Alpaca paper credentials ---
+# Never hardcode: this repo is public. Supply via env / GitHub Secrets.  The
+# aliases make the script compatible with both Alpaca's documented names and
+# the historical names used by this workflow.
+ALPACA_KEY = (
+    os.environ.get("ALPACA_KEY")
+    or os.environ.get("ALPACA_API_KEY")
+    or os.environ.get("APCA_API_KEY_ID")
+    or ""
+)
+ALPACA_SECRET = (
+    os.environ.get("ALPACA_SECRET")
+    or os.environ.get("ALPACA_SECRET_KEY")
+    or os.environ.get("APCA_API_SECRET_KEY")
+    or ""
+)
+ALPACA_BASE = (
+    os.environ.get("ALPACA_BASE")
+    or os.environ.get("ALPACA_BASE_URL")
+    or "https://paper-api.alpaca.markets"
+).rstrip("/")
+ALLOW_LIVE_ALPACA = os.environ.get("ALLOW_LIVE_ALPACA", "").lower() == "true"
+
+
+class AlpacaAPIError(RuntimeError):
+    """A sanitized Alpaca API error safe to write to public CI logs."""
+
 
 def _require_creds():
     """Checked lazily, not at import: the pure signal functions below are imported
     by the backtest/validation harnesses, which need no account access."""
     if not ALPACA_KEY or not ALPACA_SECRET:
         sys.exit("ALPACA_KEY / ALPACA_SECRET not set — export them or add repo secrets.")
+    parsed_base = urllib.parse.urlparse(ALPACA_BASE)
+    is_paper_endpoint = (
+        parsed_base.scheme == "https" and parsed_base.hostname == "paper-api.alpaca.markets"
+    )
+    if not is_paper_endpoint and not ALLOW_LIVE_ALPACA:
+        sys.exit(
+            "Refusing non-paper Alpaca endpoint. Set ALLOW_LIVE_ALPACA=true "
+            "only after an explicit live-trading review."
+        )
 
 # --- allocation ---
 MOM_ALLOC = 0.60
@@ -67,17 +104,38 @@ TREND_GROSS = 1.5
 ETF_UNIVERSE = ["SPY", "QQQ", "IWM", "EEM", "EFA", "TLT", "IEF", "LQD", "HYG",
                 "GLD", "SLV", "DBC", "USO", "DBA", "UUP", "FXE", "FXY", "VNQ"]
 
+MIN_REBALANCE_USD = 50.0
+QTY_EPS = 1e-8
+SHORT_INTENTS = {"open_short", "increase_short"}
+
 
 # ============ Alpaca REST ============
 def _req(method, path, body=None):
     _require_creds()
     url = ALPACA_BASE + path
-    data = json.dumps(body).encode() if body else None
+    data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers={
         "APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET,
         "Content-Type": "application/json"})
-    with urllib.request.urlopen(req) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")[:1000]
+        try:
+            payload = json.loads(raw)
+            detail = payload.get("message") or payload.get("code") or raw
+        except (json.JSONDecodeError, AttributeError):
+            detail = raw or str(exc.reason)
+        endpoint = path.split("?", 1)[0]
+        raise AlpacaAPIError(
+            f"Alpaca {method} {endpoint} -> HTTP {exc.code}: {detail}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        endpoint = path.split("?", 1)[0]
+        raise AlpacaAPIError(
+            f"Alpaca {method} {endpoint} unreachable: {exc.reason}"
+        ) from exc
 
 
 def get_equity():
@@ -88,10 +146,38 @@ def get_positions():
     return {p["symbol"]: float(p["qty"]) for p in _req("GET", "/v2/positions")}
 
 
+def get_open_orders():
+    query = urllib.parse.urlencode({"status": "open", "limit": 500, "nested": "true"})
+    return _req("GET", f"/v2/orders?{query}")
+
+
+def get_asset(symbol):
+    return _req("GET", f"/v2/assets/{urllib.parse.quote(symbol, safe='')}")
+
+
 def submit_order(symbol, qty, side):
     return _req("POST", "/v2/orders", {
-        "symbol": symbol, "qty": str(abs(qty)), "side": side,
+        "symbol": symbol, "qty": format_qty(abs(qty)), "side": side,
         "type": "market", "time_in_force": "day"})
+
+
+def format_qty(qty: float) -> str:
+    """Format without scientific notation and within Alpaca's decimal limit."""
+    return f"{qty:.8f}".rstrip("0").rstrip(".")
+
+
+def shortability_problem(asset: dict) -> str | None:
+    """Return why an asset cannot be opened short without a paid locate."""
+    if not asset.get("tradable"):
+        return "asset is not tradable"
+    if not asset.get("shortable"):
+        return "asset is not shortable"
+    borrow_status = asset.get("borrow_status")
+    if borrow_status and borrow_status != "easy_to_borrow":
+        return f"borrow_status={borrow_status}; locate workflow is not enabled"
+    if not borrow_status and not asset.get("easy_to_borrow", False):
+        return "asset is not easy-to-borrow"
+    return None
 
 
 # ============ data + indicators ============
@@ -206,7 +292,7 @@ def trend_targets(equity, data, state):
     sleeve_eq = TREND_ALLOC * equity
     budget_gross = TREND_GROSS * sleeve_eq
     tstate = state.get("trend", {})
-    targets, gross, notes = {}, 0.0, []
+    targets, gross = {}, 0.0
     for sym in ETF_UNIVERSE:
         df = data.get(sym)
         if df is None:
@@ -255,10 +341,152 @@ def trend_targets(equity, data, state):
         gross += abs(dollars)
         targets[sym] = side * dollars
     state["trend"] = tstate
-    return targets, f"{len(targets)} ETF positions, gross ${gross:,.0f}/{budget_gross:,.0f}"
+    return targets, f"{len(targets)} ETF targets, gross ${gross:,.0f}/{budget_gross:,.0f}"
 
 
 # ============ reconcile ============
+@dataclass(frozen=True)
+class PlannedOrder:
+    symbol: str
+    delta_qty: float
+    side: str
+    target_qty: float
+    desired_qty: float
+    current_qty: float
+    price: float
+    intent: str
+
+    def legacy_log_row(self) -> list:
+        """Keep the original public JSONL row shape for downstream readers."""
+        return [
+            self.symbol,
+            round(self.delta_qty, 8),
+            self.side,
+            round(self.target_qty, 8),
+            self.current_qty,
+            round(self.price, 4),
+        ]
+
+
+def plan_order(
+    symbol: str,
+    desired_qty: float,
+    current_qty: float,
+    price: float,
+    min_rebalance_usd: float = MIN_REBALANCE_USD,
+) -> PlannedOrder | None:
+    """Create one safe order toward a desired share quantity.
+
+    Alpaca marks every fractional sell as a long sale, so opening or increasing
+    a short must use a whole-share quantity. Side reversals are staged: first
+    flatten the existing position, then enter the opposite side on a later run.
+    This prevents a single fractional sell from accidentally crossing through
+    zero and being rejected.
+    """
+    if not math.isfinite(price) or price <= 0:
+        raise ValueError(f"invalid price for {symbol}: {price!r}")
+
+    current_qty = float(current_qty)
+    desired_qty = float(desired_qty)
+    executable_target = desired_qty
+
+    if current_qty > QTY_EPS and desired_qty < -QTY_EPS:
+        executable_target = 0.0
+        intent = "close_long_before_short"
+    elif current_qty < -QTY_EPS and desired_qty > QTY_EPS:
+        executable_target = 0.0
+        intent = "cover_short_before_long"
+    elif desired_qty < -QTY_EPS and desired_qty < current_qty - QTY_EPS:
+        # New short inventory must be sold in whole shares.  Existing fractional
+        # residue (for example after a corporate action) is left untouched.
+        whole_shares = math.floor(abs(desired_qty - current_qty) + QTY_EPS)
+        if whole_shares < 1:
+            return None
+        executable_target = current_qty - whole_shares
+        intent = "open_short" if current_qty >= -QTY_EPS else "increase_short"
+    elif current_qty < -QTY_EPS:
+        intent = "close_short" if abs(desired_qty) <= QTY_EPS else "reduce_short"
+    elif current_qty > QTY_EPS:
+        intent = "close_long" if abs(desired_qty) <= QTY_EPS else "rebalance_long"
+    else:
+        intent = "open_long"
+
+    delta = executable_target - current_qty
+    if abs(delta) <= QTY_EPS:
+        return None
+
+    is_flattening = abs(executable_target) <= QTY_EPS and abs(current_qty) > QTY_EPS
+    if not is_flattening and abs(delta * price) < min_rebalance_usd:
+        return None
+
+    return PlannedOrder(
+        symbol=symbol,
+        delta_qty=delta,
+        side="buy" if delta > 0 else "sell",
+        target_qty=executable_target,
+        desired_qty=desired_qty,
+        current_qty=current_qty,
+        price=price,
+        intent=intent,
+    )
+
+
+def reconcile_trend_state(
+    state: dict,
+    current: dict[str, float],
+    open_order_symbols: set[str],
+    data: dict,
+) -> list[str]:
+    """Make persisted trend state agree with broker positions and pending orders."""
+    tstate = state.setdefault("trend", {})
+    notes: list[str] = []
+
+    for sym in list(tstate):
+        st = tstate[sym]
+        qty = float(current.get(sym, 0.0))
+        expected_side = 1 if float(st.get("side", 0)) > 0 else -1
+        actual_side = 1 if qty > QTY_EPS else -1 if qty < -QTY_EPS else 0
+        if actual_side == expected_side:
+            # The broker is authoritative about filled quantity.
+            st["shares"] = abs(qty)
+        elif sym in open_order_symbols:
+            notes.append(f"{sym}: awaiting an existing broker order")
+        else:
+            tstate.pop(sym, None)
+            notes.append(f"{sym}: removed stale trend state (no matching position/order)")
+
+    # Recover safely if the state file was lost but the dedicated account still
+    # holds an ETF position. The current close initializes the trailing extreme.
+    for sym in ETF_UNIVERSE:
+        qty = float(current.get(sym, 0.0))
+        if abs(qty) <= QTY_EPS or sym in tstate:
+            continue
+        df = data.get(sym)
+        if df is None or df.empty:
+            notes.append(f"{sym}: position exists but price data is unavailable")
+            continue
+        px = float(df["Close"].iloc[-1])
+        tstate[sym] = {
+            "side": 1 if qty > 0 else -1,
+            "extreme": px,
+            "shares": abs(qty),
+        }
+        notes.append(f"{sym}: reconstructed trend state from broker position")
+
+    return notes
+
+
+def restore_trend_symbol(state: dict, previous_trend: dict, symbol: str) -> None:
+    """Roll back a proposed trend transition when its broker order fails."""
+    if symbol not in ETF_UNIVERSE:
+        return
+    tstate = state.setdefault("trend", {})
+    if symbol in previous_trend:
+        tstate[symbol] = copy.deepcopy(previous_trend[symbol])
+    else:
+        tstate.pop(symbol, None)
+
+
 def latest_price(sym, cache):
     if sym in cache:
         return cache[sym]
@@ -274,8 +502,16 @@ def write_heartbeat(ok: bool, **detail):
     """Always written, even on failure — the watchdog reads this to know we ran.
     A run that errors still leaves a heartbeat with ok=False, so 'crashed' is
     distinguishable from 'never started'."""
-    HEARTBEAT_PATH.write_text(json.dumps(
-        {"ts": datetime.now(timezone.utc).isoformat(), "ok": ok, **detail}, indent=2))
+    write_json_atomic(
+        HEARTBEAT_PATH,
+        {"ts": datetime.now(timezone.utc).isoformat(), "ok": ok, **detail},
+    )
+
+
+def write_json_atomic(path: Path, payload: dict) -> None:
+    temp_path = path.with_name(path.name + ".tmp")
+    temp_path.write_text(json.dumps(payload, indent=2) + "\n")
+    temp_path.replace(path)
 
 
 def log_equity(equity: float):
@@ -292,13 +528,24 @@ def run_once(args):
     equity = get_equity()
     print(f"=== Live portfolio {today.date()} | equity ${equity:,.0f} | "
           f"{'LIVE' if args.live else 'DRY-RUN'} ===")
-    log_equity(equity)   # track-record curve, one point per run
+    if args.live:
+        # Dry-runs must not contaminate the public, git-timestamped track record.
+        log_equity(equity)
 
     current = get_positions()
+    open_orders = get_open_orders()
+    open_order_symbols = {o.get("symbol") for o in open_orders if o.get("symbol")}
     held_stocks = {s for s in current if s not in ETF_UNIVERSE}
 
     # sleeve targets ($)
     etf_data = fetch(ETF_UNIVERSE)
+    reconciliation_notes = reconcile_trend_state(
+        state, current, open_order_symbols, etf_data
+    )
+    for note in reconciliation_notes:
+        print(f"  reconcile: {note}")
+    previous_trend = copy.deepcopy(state.get("trend", {}))
+
     if is_wed:
         stock_tickers = json.load(open(ROOT / "data/momentum/sp500_current.json"))
         stock_data = fetch(stock_tickers)
@@ -312,60 +559,201 @@ def run_once(args):
     print(f"  momentum: {mnote}")
     print(f"  trend:    {tnote}")
 
-    # combined target $ (long-only stocks + signed ETFs)
-    target_usd = {}
-    for s, d in mom.items():
-        target_usd[s] = target_usd.get(s, 0) + d
-    for s, d in trend.items():
-        target_usd[s] = target_usd.get(s, 0) + d
+    # Momentum is sized in dollars only on Wednesday, then persisted as fixed
+    # share quantities. Re-dividing old dollar targets by each day's new price
+    # would accidentally turn a weekly strategy into a daily constant-dollar
+    # rebalance. Trend targets already derive from fixed entry shares.
+    has_momentum_share_state = "momentum_shares" in state
+    momentum_shares = {
+        symbol: float(qty)
+        for symbol, qty in state.get("momentum_shares", {}).items()
+    }
+    if not is_wed and not has_momentum_share_state:
+        # One-time migration from the old dollar-target state. Once the share
+        # map exists, an omitted symbol means "exit" and must not be re-added,
+        # otherwise a failed Wednesday sell would never be retried.
+        momentum_shares = {
+            symbol: float(current[symbol]) for symbol in held_stocks
+        }
 
     pxcache = {}
-    all_syms = set(target_usd) | set(current)
-    orders = []
+    all_syms = set(current) | set(trend)
+    all_syms |= set(mom) if is_wed else set(momentum_shares)
+    orders: list[PlannedOrder] = []
+    planning_issues: list[dict[str, str]] = []
+    next_momentum_shares: dict[str, float] = {}
     for sym in sorted(all_syms):
         px = latest_price(sym, pxcache)
         if not px:
+            planning_issues.append({
+                "symbol": sym,
+                "stage": "planning",
+                "error": "latest price unavailable",
+            })
             continue
-        tgt_qty = target_usd.get(sym, 0) / px
-        cur_qty = current.get(sym, 0)
-        delta = tgt_qty - cur_qty
-        if abs(delta * px) < 50:  # ignore <$50 drift
-            continue
-        side = "buy" if delta > 0 else "sell"
-        orders.append((sym, round(delta, 4), side, round(tgt_qty, 3), cur_qty, round(px, 2)))
 
-    print(f"\n  {'SYM':<6}{'ORDER':>12}{'side':>6}{'target':>12}{'current':>12}{'px':>9}")
-    print("  " + "-" * 57)
-    for sym, delta, side, tgt, cur, px in orders:
-        print(f"  {sym:<6}{delta:>12}{side:>6}{tgt:>12}{cur:>12}{px:>9}")
+        if sym in ETF_UNIVERSE:
+            desired_qty = trend.get(sym, 0.0) / px
+        elif is_wed:
+            desired_qty = mom.get(sym, 0.0) / px
+            if sym in mom:
+                next_momentum_shares[sym] = desired_qty
+        else:
+            desired_qty = momentum_shares.get(sym, 0.0)
+
+        try:
+            order = plan_order(
+                sym,
+                desired_qty,
+                current.get(sym, 0.0),
+                px,
+            )
+        except (TypeError, ValueError) as exc:
+            planning_issues.append({
+                "symbol": sym,
+                "stage": "planning",
+                "error": str(exc)[:240],
+            })
+            continue
+        if order:
+            orders.append(order)
+
+    if is_wed:
+        state["momentum_shares"] = next_momentum_shares
+    else:
+        state["momentum_shares"] = momentum_shares
+
+    print(
+        f"\n  {'SYM':<6}{'ORDER':>12}{'side':>6}{'target':>12}"
+        f"{'desired':>12}{'current':>12}{'px':>9}  intent"
+    )
+    print("  " + "-" * 92)
+    for order in orders:
+        print(
+            f"  {order.symbol:<6}{order.delta_qty:>12.4f}{order.side:>6}"
+            f"{order.target_qty:>12.3f}{order.desired_qty:>12.3f}"
+            f"{order.current_qty:>12.4f}{order.price:>9.2f}  {order.intent}"
+        )
     if not orders:
         print("  (no orders — portfolio already at target)")
+    for issue in planning_issues:
+        print(f"  PLANNING FAILED {issue['symbol']}: {issue['error']}")
 
-    sent, failed = 0, 0
+    sent = api_failed = blocked = deferred = 0
+    issues = list(planning_issues)
+    outcomes: list[dict] = []
     if args.live and orders:
         print("\n  submitting...")
-        for sym, delta, side, *_ in orders:
+        asset_cache: dict[str, dict] = {}
+        for order in orders:
+            outcome = asdict(order)
+
+            if order.symbol in open_order_symbols:
+                deferred += 1
+                message = "existing open broker order; duplicate submission skipped"
+                issue = {"symbol": order.symbol, "stage": "pending", "error": message}
+                issues.append(issue)
+                outcome.update({"result": "deferred", "error": message})
+                outcomes.append(outcome)
+                print(f"    {order.symbol} DEFERRED: {message}")
+                continue
+
+            if order.intent in SHORT_INTENTS:
+                try:
+                    if order.symbol not in asset_cache:
+                        asset_cache[order.symbol] = get_asset(order.symbol)
+                    asset = asset_cache[order.symbol]
+                    problem = shortability_problem(asset)
+                except Exception as exc:
+                    problem = str(exc)[:240]
+                if problem:
+                    blocked += 1
+                    issue = {"symbol": order.symbol, "stage": "shortability", "error": problem}
+                    issues.append(issue)
+                    outcome.update({"result": "blocked", "error": problem})
+                    outcomes.append(outcome)
+                    restore_trend_symbol(state, previous_trend, order.symbol)
+                    print(f"    {order.symbol} BLOCKED: {problem}")
+                    continue
+
             try:
-                submit_order(sym, delta, side)
+                response = submit_order(order.symbol, order.delta_qty, order.side)
+                broker_status = str(response.get("status", "unknown"))
+                if broker_status in {"rejected", "canceled", "expired", "suspended"}:
+                    raise AlpacaAPIError(f"broker returned status={broker_status}")
                 sent += 1
-                print(f"    {side} {abs(delta)} {sym} OK")
-            except Exception as e:
-                failed += 1
-                print(f"    {side} {sym} FAILED: {repr(e)[:120]}")
+                outcome.update({"result": "accepted", "broker_status": broker_status})
+                outcomes.append(outcome)
+                print(
+                    f"    {order.side} {format_qty(abs(order.delta_qty))} "
+                    f"{order.symbol} ACCEPTED ({broker_status})"
+                )
+            except Exception as exc:
+                api_failed += 1
+                message = str(exc)[:240]
+                issue = {"symbol": order.symbol, "stage": "submit", "error": message}
+                issues.append(issue)
+                outcome.update({"result": "failed", "error": message})
+                outcomes.append(outcome)
+                restore_trend_symbol(state, previous_trend, order.symbol)
+                print(f"    {order.side} {order.symbol} FAILED: {message}")
+
+    if args.live:
+        for issue in planning_issues:
+            restore_trend_symbol(state, previous_trend, issue["symbol"])
         with open(LOG_PATH, "a") as f:
-            f.write(json.dumps({"ts": today.isoformat(), "equity": equity,
-                                "sent": sent, "failed": failed,
-                                "orders": [list(o) for o in orders]}) + "\n")
+            f.write(json.dumps({
+                "ts": today.isoformat(),
+                "equity": equity,
+                "sent": sent,
+                "failed": api_failed + blocked,
+                "api_failed": api_failed,
+                "blocked": blocked,
+                "deferred": deferred,
+                "orders": [order.legacy_log_row() for order in orders],
+                "order_details": outcomes,
+                "issues": issues,
+            }) + "\n")
 
-    if args.live or is_wed:
-        json.dump(state, open(STATE_PATH, "w"), indent=2)
-
-    # a run where every order failed is NOT a healthy run — say so
-    healthy = not (args.live and orders and sent == 0)
-    write_heartbeat(healthy, equity=equity, mode="live" if args.live else "dry-run",
-                    orders=len(orders), sent=sent, failed=failed,
-                    momentum=len(mom), trend=len(trend))
+        write_json_atomic(STATE_PATH, state)
+        healthy = not issues
+        write_heartbeat(
+            healthy,
+            equity=equity,
+            mode="live",
+            orders=len(orders),
+            sent=sent,
+            failed=api_failed + blocked,
+            api_failed=api_failed,
+            blocked=blocked,
+            deferred=deferred,
+            planning_errors=len(planning_issues),
+            momentum_targets=len(mom),
+            trend_targets=len(trend),
+            actual_positions=len(current),
+            actual_trend_positions=sum(
+                1 for symbol, qty in current.items()
+                if symbol in ETF_UNIVERSE and abs(qty) > QTY_EPS
+            ),
+            open_orders_at_start=len(open_orders),
+            reconciled_state=len(reconciliation_notes),
+            issues=[
+                f"{issue['symbol']} [{issue['stage']}]: {issue['error']}"
+                for issue in issues[:20]
+            ],
+        )
+    else:
+        print("\n  dry-run: no orders submitted and no state/track-record files changed")
     print("\ndone.")
+
+    return {
+        "healthy": not issues,
+        "orders": len(orders),
+        "sent": sent,
+        "failed": api_failed + blocked,
+        "deferred": deferred,
+        "issues": issues,
+    }
 
 
 def main():
@@ -375,10 +763,11 @@ def main():
     args = ap.parse_args()
     try:
         run_once(args)
-    except Exception as e:
+    except Exception as exc:
         # still leave a heartbeat so the watchdog sees "ran but crashed",
         # not "never started" — different problems, different fixes.
-        write_heartbeat(False, error=repr(e)[:300])
+        if args.live:
+            write_heartbeat(False, mode="live", error=str(exc)[:300])
         raise
 
 

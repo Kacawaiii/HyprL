@@ -10,11 +10,13 @@ with it. Run it from a separate cron entry (ideally a separate host).
 
 Checks:
   1. heartbeat freshness  — live_portfolio writes live/portfolio/heartbeat.json each run
-  2. Alpaca reachability  — account endpoint responds
-  3. account sanity       — equity present, trading not blocked
+  2. engine result        — partial failures and planning errors are unhealthy
+  3. Alpaca reachability  — account endpoint responds
+  4. account sanity       — equity present, trading not blocked
 Alerts via Telegram (reuses the bot already configured for HyprL).
 """
 from __future__ import annotations
+
 import json
 import os
 import sys
@@ -32,9 +34,23 @@ STATE_ALERT = ROOT / "live/portfolio/last_alert.json"
 MAX_AGE_HOURS = 50
 
 # Never hardcode: this repo is public. Supply via env / GitHub Secrets.
-ALPACA_KEY = os.environ.get("ALPACA_KEY", "")
-ALPACA_SECRET = os.environ.get("ALPACA_SECRET", "")
-ALPACA_BASE = os.environ.get("ALPACA_BASE", "https://paper-api.alpaca.markets")
+ALPACA_KEY = (
+    os.environ.get("ALPACA_KEY")
+    or os.environ.get("ALPACA_API_KEY")
+    or os.environ.get("APCA_API_KEY_ID")
+    or ""
+)
+ALPACA_SECRET = (
+    os.environ.get("ALPACA_SECRET")
+    or os.environ.get("ALPACA_SECRET_KEY")
+    or os.environ.get("APCA_API_SECRET_KEY")
+    or ""
+)
+ALPACA_BASE = (
+    os.environ.get("ALPACA_BASE")
+    or os.environ.get("ALPACA_BASE_URL")
+    or "https://paper-api.alpaca.markets"
+).rstrip("/")
 
 # reuses the project's existing Telegram convention (see telegram_bot/config.py)
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -81,10 +97,34 @@ def check_heartbeat() -> list[str]:
         ts = datetime.fromisoformat(hb["ts"])
     except Exception as e:
         return [f"heartbeat unreadable: {e!r}"]
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
     age = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+    problems = []
     if age > MAX_AGE_HOURS:
-        return [f"engine SILENT for {age:.0f}h (last run {ts:%Y-%m-%d %H:%M} UTC)"]
-    return []
+        problems.append(
+            f"engine SILENT for {age:.0f}h (last run {ts:%Y-%m-%d %H:%M} UTC)"
+        )
+
+    failure_counts = {}
+    for name in ("failed", "deferred", "planning_errors"):
+        try:
+            failure_counts[name] = int(hb.get(name, 0) or 0)
+        except (TypeError, ValueError):
+            failure_counts[name] = 1
+    unhealthy = hb.get("ok") is not True or any(failure_counts.values())
+    if unhealthy:
+        detail = ", ".join(
+            f"{name}={count}" for name, count in failure_counts.items() if count
+        )
+        if hb.get("error"):
+            detail = f"error={str(hb['error'])[:180]}"
+        heartbeat_issues = hb.get("issues") or []
+        if heartbeat_issues:
+            excerpt = "; ".join(str(item)[:160] for item in heartbeat_issues[:3])
+            detail = f"{detail}; {excerpt}" if detail else excerpt
+        problems.append(f"engine reported an unhealthy run ({detail or 'no detail'})")
+    return problems
 
 
 def check_alpaca() -> list[str]:

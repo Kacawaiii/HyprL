@@ -40,14 +40,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install --quiet pandas numpy yfinance pyarrow
+        run: pip install --quiet pandas numpy yfinance pyarrow pytest pytest-asyncio
+
+      - name: Run portfolio safety tests
+        run: python -m pytest -q tests/momentum_stocks
 
       - name: Run portfolio engine
         env:
@@ -63,7 +66,7 @@ jobs:
       # Runs even if the engine failed, so a crash still gets alerted rather than
       # sitting silent — the exact failure mode that killed the account in June.
       - name: Watchdog
-        if: always()
+        if: always() && (github.event_name == 'schedule' || inputs.live == true)
         env:
           ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
           ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
@@ -72,7 +75,7 @@ jobs:
         run: python scripts/momentum_stocks/watchdog.py
 
       - name: Commit state + track record
-        if: always()
+        if: always() && (github.event_name == 'schedule' || inputs.live == true)
         run: |
           git config user.name "HyprL Bot"
           git config user.email "bot@hyprlcore.com"
@@ -81,6 +84,6 @@ jobs:
             echo "no state change"
           else
             git commit -m "portfolio: daily run $(date -u +%Y-%m-%d)"
-            git pull --rebase --autostash || true
+            git pull --rebase
             git push
           fi
