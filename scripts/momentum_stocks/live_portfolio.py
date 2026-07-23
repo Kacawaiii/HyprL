@@ -7,7 +7,8 @@ Sleeve B: ETF cross-asset trend (Clenow Following the Trend) — evaluated daily
 Capital split MOM_ALLOC / TREND_ALLOC of live account equity. Signals computed
 on yfinance daily closes (same as the backtest); execution + account state via
 Alpaca. Long positions may be fractional. Short orders are deliberately rounded
-to whole shares because Alpaca rejects fractional short sales.
+to whole shares because Alpaca rejects fractional short sales, and are skipped
+when Alpaca reports that the account is not permitted to short.
 
 DRY-RUN by default: prints the reconciled order list and submits nothing.
 Pass --live to actually submit market orders.
@@ -138,8 +139,17 @@ def _req(method, path, body=None):
         ) from exc
 
 
-def get_equity():
-    return float(_req("GET", "/v2/account")["equity"])
+def get_account():
+    return _req("GET", "/v2/account")
+
+
+def get_equity(account=None):
+    return float((account if account is not None else get_account())["equity"])
+
+
+def account_allows_shorting(account: dict) -> bool:
+    """Fail closed unless Alpaca explicitly permits new short exposure."""
+    return account.get("shorting_enabled") is True
 
 
 def get_positions():
@@ -525,9 +535,12 @@ def run_once(args):
     is_wed = today.weekday() == 2 or args.force_wed
     state = json.load(open(STATE_PATH)) if STATE_PATH.exists() else {}
 
-    equity = get_equity()
+    account = get_account()
+    equity = get_equity(account)
+    shorting_enabled = account_allows_shorting(account)
+    account_mode = "long-short" if shorting_enabled else "long-only"
     print(f"=== Live portfolio {today.date()} | equity ${equity:,.0f} | "
-          f"{'LIVE' if args.live else 'DRY-RUN'} ===")
+          f"{'LIVE' if args.live else 'DRY-RUN'} | {account_mode} ===")
     if args.live:
         # Dry-runs must not contaminate the public, git-timestamped track record.
         log_equity(equity)
@@ -639,7 +652,7 @@ def run_once(args):
     for issue in planning_issues:
         print(f"  PLANNING FAILED {issue['symbol']}: {issue['error']}")
 
-    sent = api_failed = blocked = deferred = 0
+    sent = api_failed = blocked = deferred = skipped_short_targets = 0
     issues = list(planning_issues)
     outcomes: list[dict] = []
     if args.live and orders:
@@ -659,6 +672,14 @@ def run_once(args):
                 continue
 
             if order.intent in SHORT_INTENTS:
+                if not shorting_enabled:
+                    skipped_short_targets += 1
+                    message = "account is long-only; new short exposure skipped"
+                    outcome.update({"result": "skipped", "reason": message})
+                    outcomes.append(outcome)
+                    restore_trend_symbol(state, previous_trend, order.symbol)
+                    print(f"    {order.symbol} SKIPPED: {message}")
+                    continue
                 try:
                     if order.symbol not in asset_cache:
                         asset_cache[order.symbol] = get_asset(order.symbol)
@@ -710,6 +731,7 @@ def run_once(args):
                 "api_failed": api_failed,
                 "blocked": blocked,
                 "deferred": deferred,
+                "skipped_short_targets": skipped_short_targets,
                 "orders": [order.legacy_log_row() for order in orders],
                 "order_details": outcomes,
                 "issues": issues,
@@ -727,7 +749,10 @@ def run_once(args):
             api_failed=api_failed,
             blocked=blocked,
             deferred=deferred,
+            skipped_short_targets=skipped_short_targets,
             planning_errors=len(planning_issues),
+            account_mode=account_mode,
+            shorting_enabled=shorting_enabled,
             momentum_targets=len(mom),
             trend_targets=len(trend),
             actual_positions=len(current),
@@ -743,6 +768,15 @@ def run_once(args):
             ],
         )
     else:
+        if not shorting_enabled:
+            skipped = [
+                order.symbol for order in orders if order.intent in SHORT_INTENTS
+            ]
+            if skipped:
+                print(
+                    "  account is long-only; live execution would skip new shorts: "
+                    + ", ".join(skipped)
+                )
         print("\n  dry-run: no orders submitted and no state/track-record files changed")
     print("\ndone.")
 
@@ -752,6 +786,8 @@ def run_once(args):
         "sent": sent,
         "failed": api_failed + blocked,
         "deferred": deferred,
+        "skipped_short_targets": skipped_short_targets,
+        "account_mode": account_mode,
         "issues": issues,
     }
 

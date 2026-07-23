@@ -173,7 +173,9 @@ def test_non_wednesday_keeps_fixed_momentum_shares_and_dry_run_is_read_only(
     monkeypatch.setattr(lp, "LOG_PATH", tmp_path / "orders.jsonl")
     monkeypatch.setattr(lp, "HEARTBEAT_PATH", tmp_path / "heartbeat.json")
     monkeypatch.setattr(lp, "EQUITY_LOG", tmp_path / "equity.jsonl")
-    monkeypatch.setattr(lp, "get_equity", lambda: 100_000.0)
+    monkeypatch.setattr(
+        lp, "get_account", lambda: {"equity": "100000", "shorting_enabled": True}
+    )
     monkeypatch.setattr(lp, "get_positions", lambda: {"AAPL": 10.0})
     monkeypatch.setattr(lp, "get_open_orders", lambda: [])
     monkeypatch.setattr(lp, "fetch", lambda symbols: {})
@@ -207,7 +209,9 @@ def test_non_wednesday_omitted_share_target_retries_exit(
     }))
     monkeypatch.setattr(lp, "datetime", Thursday)
     monkeypatch.setattr(lp, "STATE_PATH", state_path)
-    monkeypatch.setattr(lp, "get_equity", lambda: 100_000.0)
+    monkeypatch.setattr(
+        lp, "get_account", lambda: {"equity": "100000", "shorting_enabled": True}
+    )
     monkeypatch.setattr(lp, "get_positions", lambda: {"AAPL": 10.0})
     monkeypatch.setattr(lp, "get_open_orders", lambda: [])
     monkeypatch.setattr(lp, "fetch", lambda symbols: {})
@@ -232,7 +236,9 @@ def configure_mock_live_run(lp, monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(lp, "LOG_PATH", tmp_path / "orders.jsonl")
     monkeypatch.setattr(lp, "HEARTBEAT_PATH", tmp_path / "heartbeat.json")
     monkeypatch.setattr(lp, "EQUITY_LOG", tmp_path / "equity.jsonl")
-    monkeypatch.setattr(lp, "get_equity", lambda: 100_000.0)
+    monkeypatch.setattr(
+        lp, "get_account", lambda: {"equity": "100000", "shorting_enabled": True}
+    )
     monkeypatch.setattr(lp, "get_positions", lambda: {})
     monkeypatch.setattr(lp, "get_open_orders", lambda: [])
     monkeypatch.setattr(lp, "fetch", lambda symbols: {})
@@ -290,3 +296,53 @@ def test_partial_submit_failure_is_unhealthy_and_rolls_back_state(
     assert heartbeat["ok"] is False
     assert heartbeat["failed"] == 1
     assert "GLD" not in json.loads(state_path.read_text())["trend"]
+
+
+def test_long_only_account_skips_short_without_alert_and_rolls_back_state(
+    lp, monkeypatch, tmp_path: Path
+) -> None:
+    state_path = configure_mock_live_run(lp, monkeypatch, tmp_path)
+
+    def mixed_targets(equity, data, state):
+        state["trend"] = {
+            "GLD": {"side": -1, "extreme": 100.0, "shares": 9.5},
+            "UUP": {"side": 1, "extreme": 100.0, "shares": 7.0},
+        }
+        return {"GLD": -950.0, "UUP": 700.0}, "one short and one long target"
+
+    monkeypatch.setattr(lp, "trend_targets", mixed_targets)
+    monkeypatch.setattr(
+        lp, "get_account", lambda: {"equity": "100000", "shorting_enabled": False}
+    )
+    submitted = []
+
+    def submit(symbol, qty, side):
+        submitted.append((symbol, qty, side))
+        return {"status": "accepted"}
+
+    monkeypatch.setattr(lp, "submit_order", submit)
+
+    result = lp.run_once(SimpleNamespace(live=True, force_wed=False))
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    log_row = json.loads((tmp_path / "orders.jsonl").read_text().strip())
+    saved_trend = json.loads(state_path.read_text())["trend"]
+
+    assert submitted == [("UUP", 7.0, "buy")]
+    assert result["healthy"] is True
+    assert result["sent"] == 1
+    assert result["failed"] == 0
+    assert result["skipped_short_targets"] == 1
+    assert result["account_mode"] == "long-only"
+    assert heartbeat["ok"] is True
+    assert heartbeat["failed"] == 0
+    assert heartbeat["skipped_short_targets"] == 1
+    assert heartbeat["shorting_enabled"] is False
+    assert heartbeat["issues"] == []
+    assert log_row["order_details"][0]["result"] == "skipped"
+    assert log_row["order_details"][1]["result"] == "accepted"
+    assert "GLD" not in saved_trend
+    assert "UUP" in saved_trend
+
+
+def test_missing_shorting_permission_fails_closed(lp) -> None:
+    assert lp.account_allows_shorting({"equity": "100000"}) is False

@@ -41,6 +41,22 @@ def test_healthy_heartbeat_has_no_problem(watchdog) -> None:
     assert watchdog.check_heartbeat() == []
 
 
+def test_known_long_only_skip_is_not_an_alert(watchdog) -> None:
+    write_heartbeat(
+        watchdog.HEARTBEAT,
+        ok=True,
+        failed=0,
+        deferred=0,
+        planning_errors=0,
+        account_mode="long-only",
+        shorting_enabled=False,
+        skipped_short_targets=1,
+        issues=[],
+    )
+
+    assert watchdog.check_heartbeat() == []
+
+
 def test_false_ok_is_reported_with_issue_details(watchdog) -> None:
     write_heartbeat(
         watchdog.HEARTBEAT,
