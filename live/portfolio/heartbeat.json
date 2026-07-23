@@ -1,20 +1,22 @@
 {
-  "ts": "2026-07-22T22:03:46.672195+00:00",
-  "ok": true,
-  "equity": 112568.56,
+  "ts": "2026-07-23T22:02:01.014856+00:00",
+  "ok": false,
+  "equity": 111775.31,
   "mode": "live",
-  "orders": 27,
-  "sent": 27,
-  "failed": 0,
-  "api_failed": 0,
+  "orders": 2,
+  "sent": 1,
+  "failed": 1,
+  "api_failed": 1,
   "blocked": 0,
   "deferred": 0,
   "planning_errors": 0,
   "momentum_targets": 34,
-  "trend_targets": 1,
-  "actual_positions": 34,
+  "trend_targets": 3,
+  "actual_positions": 35,
   "actual_trend_positions": 1,
   "open_orders_at_start": 0,
-  "reconciled_state": 3,
-  "issues": []
+  "reconciled_state": 0,
+  "issues": [
+    "FXY [submit]: Alpaca POST /v2/orders -> HTTP 403: account is not allowed to short"
+  ]
 }
