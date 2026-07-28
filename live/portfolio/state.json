@@ -38,7 +38,7 @@
   "trend": {
     "VNQ": {
       "side": 1,
-      "extreme": 100.80999755859375,
+      "extreme": 100.94999694824219,
       "shares": 67.9259
     },
     "UUP": {
@@ -48,8 +48,8 @@
     },
     "FXY": {
       "side": -1,
-      "extreme": 56.0099983215332,
-      "shares": 384.44676034371264
+      "extreme": 56.0,
+      "shares": 384.0
     }
   },
   "momentum_shares": {
