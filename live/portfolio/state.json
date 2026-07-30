@@ -40,15 +40,10 @@
       "extreme": 100.94999694824219,
       "shares": 67.9259
     },
-    "UUP": {
+    "EFA": {
       "side": 1,
-      "extreme": 28.600000381469727,
-      "shares": 688.9145243
-    },
-    "FXY": {
-      "side": -1,
-      "extreme": 56.0,
-      "shares": 384.0
+      "extreme": 106.23999786376953,
+      "shares": 58.59531141406407
     }
   },
   "momentum_shares": {
