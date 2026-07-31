@@ -8,6 +8,8 @@ import pytest
 from scripts.eth_paper.live_eth import (
     _client_order_id,
     _completed_close_series,
+    _is_owned_terminal_order,
+    _logged_order_ids,
     _portfolio_peak,
     _position_snapshot,
 )
@@ -76,3 +78,35 @@ def test_client_order_id_is_short_deterministic_and_variant_specific() -> None:
     assert first == second
     assert first != control
     assert len(first) <= 48
+
+
+def test_only_owned_terminal_orders_are_reconciled() -> None:
+    owned = {
+        "symbol": "ETH/USD",
+        "client_order_id": "hyprl-eth-n-20260731T12-b-1500",
+        "status": "filled",
+    }
+    assert _is_owned_terminal_order(owned, "news")
+    assert not _is_owned_terminal_order(owned, "control")
+    assert not _is_owned_terminal_order({**owned, "symbol": "BTC/USD"}, "news")
+    assert not _is_owned_terminal_order({**owned, "status": "new"}, "news")
+    assert not _is_owned_terminal_order(
+        {**owned, "client_order_id": "manual-order"},
+        "news",
+    )
+
+
+def test_logged_order_ids_tolerates_invalid_and_legacy_lines(tmp_path) -> None:
+    path = tmp_path / "orders.jsonl"
+    path.write_text(
+        "\n".join(
+            (
+                '{"order":{"id":"first"}}',
+                "not-json",
+                '{"order":{"id":"second"}}',
+                '{"legacy":true}',
+            )
+        ),
+        encoding="utf-8",
+    )
+    assert _logged_order_ids(path) == {"first", "second"}
