@@ -81,8 +81,10 @@ jobs:
         run: |
           git config user.name "HyprL ETH Paper"
           git config user.email "eth-paper@hyprlcore.com"
-          git add live/eth_control/ 2>/dev/null || true
-          git add live/eth_news/ 2>/dev/null || true
+          # live/* is ignored by design. Force-add only the two isolated,
+          # public paper track-record directories; never the rest of live/.
+          git add -f live/eth_control/ 2>/dev/null || true
+          git add -f live/eth_news/ 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no ETH paper state change"
           else
