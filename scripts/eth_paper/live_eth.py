@@ -152,6 +152,20 @@ class AlpacaPaperClient:
         )
         return list(payload or [])
 
+    def get_recent_orders(self) -> list[dict]:
+        payload = self._request(
+            "GET",
+            PAPER_API,
+            "/v2/orders",
+            params={
+                "status": "all",
+                "limit": 100,
+                "direction": "desc",
+                "nested": "true",
+            },
+        )
+        return list(payload or [])
+
     def get_asset(self) -> dict:
         path_symbol = urllib.parse.quote(SYMBOL, safe="")
         return self._request("GET", PAPER_API, f"/v2/assets/{path_symbol}")
@@ -384,6 +398,57 @@ def _already_logged(path: Path, field: str, value: object) -> bool:
         except (json.JSONDecodeError, AttributeError):
             continue
     return False
+
+
+def _logged_order_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    result: set[str] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            payload = json.loads(raw)
+            order = payload.get("order", {})
+            order_id = str(order.get("id") or "")
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        if order_id:
+            result.add(order_id)
+    return result
+
+
+def _is_owned_terminal_order(order: Mapping[str, object], variant: str) -> bool:
+    short_variant = "n" if variant == "news" else "c"
+    prefix = f"hyprl-eth-{short_variant}-"
+    status = str(order.get("status") or "").lower()
+    return (
+        _normalize_symbol(order.get("symbol")) == NORMALIZED_SYMBOL
+        and str(order.get("client_order_id") or "").startswith(prefix)
+        and (status == "filled" or status in TERMINAL_FAILURES)
+    )
+
+
+def _order_log_payload(
+    snapshot: Mapping[str, object],
+    order: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        **snapshot,
+        "order": {
+            "id": str(order.get("id") or ""),
+            "client_order_id": str(order.get("client_order_id") or ""),
+            "status": str(order.get("status") or ""),
+            "side": str(order.get("side") or ""),
+            "qty": str(order.get("qty") or ""),
+            "notional": str(order.get("notional") or ""),
+            "filled_qty": str(order.get("filled_qty") or ""),
+            "filled_avg_price": str(order.get("filled_avg_price") or ""),
+            "submitted_at": str(order.get("submitted_at") or ""),
+            "filled_at": str(order.get("filled_at") or ""),
+            "failed_at": str(order.get("failed_at") or ""),
+            "canceled_at": str(order.get("canceled_at") or ""),
+            "expired_at": str(order.get("expired_at") or ""),
+        },
+    }
 
 
 def _wait_for_order(
@@ -620,27 +685,23 @@ def run_once(args: argparse.Namespace) -> dict:
                         "news_policy_count": news.policy_count,
                     },
                 )
-        if order_result is not None:
+        orders_path = out / "orders.jsonl"
+        logged_order_ids = _logged_order_ids(orders_path)
+        candidates = ([] if order_result is None else [order_result])
+        candidates.extend(client.get_recent_orders())
+        for broker_order in candidates:
+            order_id = str(broker_order.get("id") or "")
+            if (
+                not order_id
+                or order_id in logged_order_ids
+                or not _is_owned_terminal_order(broker_order, args.variant)
+            ):
+                continue
             _append_jsonl(
-                out / "orders.jsonl",
-                {
-                    **snapshot,
-                    "order": {
-                        "id": str(order_result.get("id") or ""),
-                        "client_order_id": str(
-                            order_result.get("client_order_id") or ""
-                        ),
-                        "status": str(order_result.get("status") or ""),
-                        "side": str(order_result.get("side") or ""),
-                        "qty": str(order_result.get("qty") or ""),
-                        "notional": str(order_result.get("notional") or ""),
-                        "filled_qty": str(order_result.get("filled_qty") or ""),
-                        "filled_avg_price": str(
-                            order_result.get("filled_avg_price") or ""
-                        ),
-                    },
-                },
+                orders_path,
+                _order_log_payload(snapshot, broker_order),
             )
+            logged_order_ids.add(order_id)
 
     print(json.dumps(snapshot, sort_keys=True))
     return snapshot
