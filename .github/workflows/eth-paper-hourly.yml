@@ -1,0 +1,103 @@
+name: ETH Paper A/B (news vs control)
+
+# Two dedicated Alpaca paper accounts run the same frozen ETH long/cash signal.
+# The news variant may only reduce exposure.  Runs are offset from the top of
+# the hour because GitHub documents heavier schedule congestion at :00.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      live:
+        description: 'Submit Alpaca paper orders (false = read-only dry-run)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eth-paper-ab
+  cancel-in-progress: false
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install pinned runtime and test dependencies
+        run: >-
+          python -m pip install --quiet
+          numpy==2.3.4
+          pandas==2.3.3
+          pytest==8.4.2
+
+      - name: Verify frozen ETH strategy and isolation contracts
+        run: python -m pytest -q tests/crypto
+
+      - name: Run ETH control account
+        id: control
+        continue-on-error: true
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_ETH_CONTROL_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_ETH_CONTROL_SECRET }}
+        run: |
+          MODE=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.live }}" = "true" ]; then
+            MODE="--live"
+          fi
+          python scripts/eth_paper/live_eth.py \
+            --variant control \
+            --expected-account-suffix 2189a1 \
+            --state-dir live/eth_control \
+            $MODE
+
+      - name: Run ETH news account
+        id: news
+        continue-on-error: true
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_ETH_NEWS_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_ETH_NEWS_SECRET }}
+        run: |
+          MODE=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.live }}" = "true" ]; then
+            MODE="--live"
+          fi
+          python scripts/eth_paper/live_eth.py \
+            --variant news \
+            --expected-account-suffix 4fbcbe \
+            --state-dir live/eth_news \
+            $MODE
+
+      - name: Commit paper track records
+        if: always()
+        run: |
+          git config user.name "HyprL ETH Paper"
+          git config user.email "eth-paper@hyprlcore.com"
+          git add live/eth_control/ 2>/dev/null || true
+          git add live/eth_news/ 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no ETH paper state change"
+          else
+            git commit -m "paper: update ETH news/control track records"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Fail workflow when either isolated runner failed
+        if: always()
+        env:
+          CONTROL_OUTCOME: ${{ steps.control.outcome }}
+          NEWS_OUTCOME: ${{ steps.news.outcome }}
+        run: |
+          if [ "$CONTROL_OUTCOME" != "success" ] || [ "$NEWS_OUTCOME" != "success" ]; then
+            echo "control=$CONTROL_OUTCOME news=$NEWS_OUTCOME"
+            exit 1
+          fi
