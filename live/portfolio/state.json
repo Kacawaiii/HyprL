@@ -43,7 +43,12 @@
     "EFA": {
       "side": 1,
       "extreme": 106.23999786376953,
-      "shares": 58.59531141406407
+      "shares": 58.59531141
+    },
+    "TLT": {
+      "side": -1,
+      "extreme": 82.25,
+      "shares": 135.07270331699857
     }
   },
   "momentum_shares": {
