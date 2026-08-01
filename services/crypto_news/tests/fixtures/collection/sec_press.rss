@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>SEC Press Releases</title>
+    <link>https://www.sec.gov/news/press-releases</link>
+    <description>Official releases</description>
+    <item>
+      <guid>sec-btc-etf-2026</guid>
+      <title>SEC publishes order concerning spot bitcoin exchange-traded products</title>
+      <link>https://www.sec.gov/newsroom/press-releases/2026-100?utm_source=rss&amp;b=2&amp;a=1</link>
+      <description>The Commission published an official order concerning spot bitcoin products.</description>
+      <author>U.S. Securities and Exchange Commission</author>
+      <pubDate>Fri, 31 Jul 2026 11:59:00 GMT</pubDate>
+    </item>
+    <item>
+      <guid>sec-custody-2026</guid>
+      <title>SEC issues statement on crypto asset custody</title>
+      <link>https://www.sec.gov/newsroom/press-releases/2026-101</link>
+      <description>The Commission issued a statement on qualified custodians.</description>
+      <pubDate>2026-07-31T12:00:00Z</pubDate>
+    </item>
+  </channel>
+</rss>

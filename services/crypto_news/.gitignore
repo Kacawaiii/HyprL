@@ -1,0 +1,12 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.whl
+*.egg-info/
+build/
+dist/
+exports/
+!src/crypto_news/protocol_v0.json
+!tests/fixtures/collection/*.json

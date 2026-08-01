@@ -1,0 +1,78 @@
+{
+  "assets": [
+    "BTC",
+    "ETH"
+  ],
+  "automatic_execution": false,
+  "averaging_down_allowed": false,
+  "clock_fields": [
+    "first_seen_at",
+    "frozen_at",
+    "human_decided_at"
+  ],
+  "confirmatory_horizons": {
+    "bad_news_absorbed": "24h",
+    "official_underreaction": "4h",
+    "sell_the_news": "24h",
+    "systemic_risk": "safety_protocol"
+  },
+  "decisions": [
+    "LONG",
+    "REDUCE",
+    "EXIT",
+    "WAIT",
+    "NO_TRADE"
+  ],
+  "diagnostic_horizons": [
+    "5m",
+    "15m",
+    "1h",
+    "4h",
+    "24h",
+    "72h"
+  ],
+  "evaluation_delays_seconds": {
+    "ai": 60,
+    "human": 30
+  },
+  "forbidden_clock_fields": [
+    "t_freeze"
+  ],
+  "journal": {
+    "canonicalization": "RFC8785-JCS-restricted-no-floats",
+    "genesis_previous_record_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "hash_algorithm": "SHA-256",
+    "manifest_signature": "Ed25519",
+    "previous_hash_concatenation": "raw-32-byte-digest || canonical-payload"
+  },
+  "leverage_allowed": false,
+  "max_simultaneous_theses": 2,
+  "notional_spot_usd": "10000.00",
+  "priced_in_data_coverage": {
+    "maximum": 100,
+    "minimum": 0,
+    "missing_weights_redistributed": false,
+    "type": "integer"
+  },
+  "protocol_id": "crypto-news-v0-2026-07-31",
+  "research_only": true,
+  "risk_limits_bps": {
+    "cumulative": 50,
+    "daily_loss": 100,
+    "per_thesis": 25,
+    "weekly_loss": 200
+  },
+  "schema_version": 1,
+  "score_semantics": {
+    "event_quality_score": "ordinal_0_100",
+    "priced_in_score": "ordinal_0_100_or_unknown",
+    "probabilities_allowed": false,
+    "top_risk_score": "ordinal_0_100_or_unknown",
+    "trade_opportunity_score": "ordinal_0_100"
+  },
+  "timestamp_policy": {
+    "timezone": "UTC",
+    "first_seen_at_immutable": true,
+    "prices_strictly_after_first_seen_at": true
+  }
+}

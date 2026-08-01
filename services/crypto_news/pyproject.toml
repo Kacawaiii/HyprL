@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools==78.1.0", "wheel==0.42.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hyprl-crypto-news-research"
+version = "0.1.0"
+description = "Isolated, research-only BTC/ETH event intelligence contract"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "cryptography==41.0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.0.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crypto_news = ["protocol_v0.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
