@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hyprl.local/schemas/trading-lab/market-bar-v1.schema.json",
+  "title": "Trading Lab MarketBar V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "bar_id",
+    "bar_version_id",
+    "asset",
+    "venue",
+    "provider",
+    "timeframe",
+    "bar_status",
+    "bar_open_at",
+    "bar_close_at",
+    "available_at",
+    "ingested_at",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "raw_payload_sha256",
+    "content_sha256"
+  ],
+  "$defs": {
+    "price": {
+      "type": "string",
+      "pattern": "^(?:0\\.(?=[0-9]{10}$)[0-9]*[1-9][0-9]*|[1-9][0-9]{0,99}\\.[0-9]{10})$"
+    },
+    "volume": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,99})\\.[0-9]{18}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sourceName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "trading-lab.market-bar.v1"
+    },
+    "bar_id": {
+      "type": "string",
+      "pattern": "^hyprl-market-bar-[0-9a-f]{64}$"
+    },
+    "bar_version_id": {
+      "type": "string",
+      "pattern": "^hyprl-market-bar-version-[0-9a-f]{64}$"
+    },
+    "asset": {
+      "enum": ["BTC/USD", "ETH/USD"]
+    },
+    "venue": {
+      "$ref": "#/$defs/sourceName"
+    },
+    "provider": {
+      "$ref": "#/$defs/sourceName"
+    },
+    "timeframe": {
+      "enum": ["1h", "1d"]
+    },
+    "bar_status": {
+      "const": "complete"
+    },
+    "bar_open_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "bar_close_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "available_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "open": {
+      "$ref": "#/$defs/price"
+    },
+    "high": {
+      "$ref": "#/$defs/price"
+    },
+    "low": {
+      "$ref": "#/$defs/price"
+    },
+    "close": {
+      "$ref": "#/$defs/price"
+    },
+    "volume": {
+      "$ref": "#/$defs/volume"
+    },
+    "raw_payload_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "content_sha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  }
+}

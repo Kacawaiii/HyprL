@@ -118,3 +118,9 @@ catboost_info/
 run_paper.sh
 scripts/download_mt5_5y.bat
 scripts/paper_trading.py
+
+# Deterministic offline Coinbase candle fixtures required to reproduce the
+# Phase 1A market-data tests from a clean checkout. Narrow on purpose: only
+# these two files, never all JSON under tests/.
+!tests/fixtures/crypto/coinbase_btc_usd_1h.json
+!tests/fixtures/crypto/coinbase_eth_usd_1d.json
