@@ -579,6 +579,27 @@ class MarketDataStore:
                 CREATE INDEX IF NOT EXISTS market_bar_receipts_open_lookup
                     ON market_bar_receipts (bar_open_at, ingested_at);
 
+                -- Serves the Phase 1C snapshot selection, which filters by
+                -- domain first (provider/product_id/timeframe resolve to a
+                -- set of ingestion_id) and only then by range. Leading with
+                -- ingestion_id is what keeps that read independent of how
+                -- many OTHER domains happen to share the same bar_open_at
+                -- values; leading with bar_open_at instead would make the
+                -- cost grow with every colocated domain, and would also
+                -- divert the two lookups above onto a different index.
+                -- Covering on purpose: it carries every column the snapshot
+                -- selection projects, so that read never touches the table.
+                CREATE INDEX IF NOT EXISTS market_bar_receipts_snapshot_domain_lookup
+                    ON market_bar_receipts (
+                        ingestion_id,
+                        bar_open_at,
+                        ingested_at,
+                        content_sha256,
+                        bar_version_id,
+                        bar_id,
+                        available_at
+                    );
+
                 CREATE TABLE IF NOT EXISTS market_data_gap_events (
                     event_id TEXT PRIMARY KEY,
                     schema_version TEXT NOT NULL,

@@ -1,4 +1,5 @@
-"""Phase 1C-A: causal eligibility and deterministic revision selection.
+"""Phase 1C-A/1C-B: causal eligibility, deterministic revision selection,
+bounded cardinality and a bounded streaming read.
 
 Historical causal snapshots based on declared ingestion time (Contract A,
 see scripts/trading_lab/market_data_store.py): `as_of` is a cutoff over the
@@ -10,6 +11,18 @@ which already-persisted MarketBar receipt represents the state of declared
 knowledge as of `as_of` for each bar_open_at in a requested range. It never
 persists a snapshot manifest, never touches market_bar_receipts' rows, and
 never imports network or broker code.
+
+Phase 1C-B adds three bounds, all fail-closed and all enforced before or
+during the read rather than after it:
+
+* every range bound must sit exactly on the timeframe's epoch-anchored UTC
+  grid, and the range may span at most MAX_SNAPSHOT_RANGE_OPENS openings --
+  both checked by O(1) integer arithmetic, before SQLite is touched at all;
+* at most MAX_SNAPSHOT_ELIGIBLE_RECEIPTS receipts may be eligible; the SQL
+  LIMIT is a detector for that condition and never a functional truncation;
+* rows are consumed in bounded chunks and folded into a per-opening
+  aggregate, so memory follows the number of openings, not the number of
+  revisions behind them.
 """
 
 from __future__ import annotations
@@ -20,10 +33,34 @@ import hashlib
 import json
 import sqlite3
 
+from scripts.trading_lab.market_bar import TIMEFRAME_DURATIONS
+
 
 SNAPSHOT_REQUEST_SCHEMA_VERSION = "trading-lab.market-snapshot-request.v1"
 SNAPSHOT_SCHEMA_VERSION = "trading-lab.market-snapshot.v1"
 SELECTION_POLICY_VERSION = "trading-lab.market-snapshot-selection.v1"
+
+# Largest range a single V1 snapshot may describe, counted in timeframe
+# openings: 10 000 covers ~1.14 year of 1h bars or ~27 years of 1d bars.
+MAX_SNAPSHOT_RANGE_OPENS = 10_000
+# Largest number of eligible receipts a single V1 selection will read. The
+# range bounds the openings but never the revisions behind them, so this is
+# a separate bound: without it one pathological opening could return an
+# unbounded number of rows.
+MAX_SNAPSHOT_ELIGIBLE_RECEIPTS = 100_000
+# Single source of truth for the overflow detection: this exact value is both
+# bound into the query's LIMIT and used as the row-counter threshold, so the
+# detector and the threshold it detects can never drift apart. Interpolating
+# a literal into the SQL instead would freeze it at import time while the
+# counter kept reading the live constant.
+SNAPSHOT_ELIGIBLE_RECEIPT_QUERY_LIMIT = MAX_SNAPSHOT_ELIGIBLE_RECEIPTS + 1
+# Rows are consumed in chunks of this size; the chunk boundaries carry no
+# semantics whatsoever (see _OpenAggregate).
+SNAPSHOT_RECEIPT_FETCH_CHUNK_SIZE = 1_000
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_MICROSECONDS_PER_DAY = 86_400 * 1_000_000
+_MICROSECONDS_PER_SECOND = 1_000_000
 
 
 class MarketSnapshotError(RuntimeError):
@@ -62,6 +99,49 @@ class SnapshotSelectionConflict(MarketSnapshotError):
             f"ingested_at -- provider={provider!r} product_id={product_id!r} "
             f"timeframe={timeframe!r} bar_open_at={bar_open_at!r} "
             f"ingested_at={ingested_at!r} bar_version_ids={bar_version_ids!r}"
+        )
+
+
+class SnapshotEligibilityLimitExceeded(MarketSnapshotError):
+    """Raised when more receipts are eligible than V1 agrees to read.
+
+    Strictly fail-closed and atomic: the caller receives nothing at all. No
+    selection is ever derived from the first MAX_SNAPSHOT_ELIGIBLE_RECEIPTS
+    rows -- the SQL LIMIT exists only to detect this condition, never to
+    truncate a result into a plausible-looking snapshot.
+
+    V1 error precedence, deliberate and documented: overflow takes
+    precedence over a SnapshotSelectionConflict located beyond the
+    eligibility limit. Both branches are fail-closed and neither returns a
+    partial result, so the precedence only decides which typed refusal the
+    caller sees, never whether the request is refused.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        product_id: str,
+        timeframe: str,
+        range_start: str,
+        range_end: str,
+        as_of: str,
+        limit: int,
+    ) -> None:
+        self.provider = provider
+        self.product_id = product_id
+        self.timeframe = timeframe
+        self.range_start = range_start
+        self.range_end = range_end
+        self.as_of = as_of
+        self.limit = limit
+        super().__init__(
+            "market snapshot selection exceeds the maximum number of eligible "
+            f"receipts ({limit}) -- provider={provider!r} "
+            f"product_id={product_id!r} timeframe={timeframe!r} "
+            f"range_start={range_start!r} range_end={range_end!r} "
+            f"as_of={as_of!r}; split the range and compute the snapshot in "
+            "several parts"
         )
 
 
@@ -108,19 +188,82 @@ def _canonical_timestamp(value: datetime | str, *, field: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
+def _microseconds_since_epoch(canonical_timestamp: str) -> int:
+    """Exact integer microseconds since 1970-01-01T00:00:00+00:00.
+
+    Integer arithmetic only, on purpose: timedelta.total_seconds() returns a
+    float, and int(float) silently truncates a residual microsecond -- which
+    would let a bound one microsecond off the grid pass an alignment check.
+    """
+    elapsed = datetime.fromisoformat(canonical_timestamp) - _EPOCH
+    return (
+        elapsed.days * _MICROSECONDS_PER_DAY
+        + elapsed.seconds * _MICROSECONDS_PER_SECOND
+        + elapsed.microseconds
+    )
+
+
+def _timeframe_duration_microseconds(timeframe: str) -> int:
+    """Timeframe length in exact microseconds, derived from market_bar's
+    public TIMEFRAME_DURATIONS rather than redeclared here: a snapshot grid
+    that disagreed with MarketBar's own notion of a timeframe could name
+    positions no stored bar could ever occupy.
+    """
+    if not isinstance(timeframe, str) or timeframe not in TIMEFRAME_DURATIONS:
+        raise MarketSnapshotError(
+            f"timeframe must be one of {sorted(TIMEFRAME_DURATIONS)}"
+        )
+    duration = TIMEFRAME_DURATIONS[timeframe]
+    return (
+        duration.days * _MICROSECONDS_PER_DAY
+        + duration.seconds * _MICROSECONDS_PER_SECOND
+        + duration.microseconds
+    )
+
+
 def _canonical_range(
-    range_start: datetime | str, range_end: datetime | str
+    range_start: datetime | str,
+    range_end: datetime | str,
+    *,
+    timeframe: str,
 ) -> tuple[str, str]:
-    """Validate and canonicalize a [range_start, range_end) pair.
+    """Validate and canonicalize a [range_start, range_end) pair against the
+    timeframe's grid, and bound its cardinality -- all before any SQL runs.
 
     Factored out so the selector and build_snapshot_request_id can never
     diverge on what makes a range valid: both call this, so a future change
-    to one automatically applies to the other.
+    to one automatically applies to the other, and an identity is never
+    minted for a range the selector would refuse to compute.
+
+    Alignment is checked PER BOUND against the epoch-anchored grid, never by
+    the divisibility of the span: [10:30, 12:30) spans exactly two hours yet
+    lies entirely off the hourly grid, so no stored bar_open_at could ever
+    fall inside it. The open count is then pure integer division, so an
+    absurdly wide range is refused in constant time and constant memory
+    instead of materializing a grid of timestamps to count it.
     """
+    duration_us = _timeframe_duration_microseconds(timeframe)
     canonical_range_start = _canonical_timestamp(range_start, field="range_start")
     canonical_range_end = _canonical_timestamp(range_end, field="range_end")
-    if canonical_range_end <= canonical_range_start:
+    start_us = _microseconds_since_epoch(canonical_range_start)
+    end_us = _microseconds_since_epoch(canonical_range_end)
+    if end_us <= start_us:
         raise MarketSnapshotError("range_end must be strictly after range_start")
+    for field, canonical, value_us in (
+        ("range_start", canonical_range_start, start_us),
+        ("range_end", canonical_range_end, end_us),
+    ):
+        if value_us % duration_us != 0:
+            raise MarketSnapshotError(
+                f"{field} ({canonical!r}) is not aligned on the {timeframe} "
+                f"grid anchored at {_EPOCH.isoformat()}"
+            )
+    expected_open_count = (end_us - start_us) // duration_us
+    if expected_open_count > MAX_SNAPSHOT_RANGE_OPENS:
+        raise MarketSnapshotError(
+            f"snapshot range spans {expected_open_count} {timeframe} openings, "
+            f"which exceeds the maximum of {MAX_SNAPSHOT_RANGE_OPENS}"
+        )
     return canonical_range_start, canonical_range_end
 
 
@@ -133,6 +276,58 @@ def _canonical_json(payload: object) -> str:
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_ELIGIBLE_RECEIPTS_SQL = """
+        SELECT r.bar_open_at, r.ingested_at, r.content_sha256,
+               r.bar_id, r.bar_version_id, r.available_at
+        FROM market_bar_receipts r
+        WHERE r.ingestion_id IN (
+                SELECT i.ingestion_id
+                FROM market_ingestions i
+                WHERE i.provider = ? AND i.product_id = ? AND i.timeframe = ?
+              )
+          AND r.bar_open_at >= ? AND r.bar_open_at < ?
+          AND r.ingested_at <= ?
+        LIMIT ?
+        """
+
+
+class _OpenAggregate:
+    """Streaming aggregate for one bar_open_at.
+
+    Holds only what the final decision needs -- the largest declared
+    ingested_at seen so far, the distinct bar_version_id values sitting at
+    it, and the current canonical row -- never the rows behind them. This is
+    what keeps memory proportional to the number of openings instead of the
+    number of revisions.
+
+    Makes no assumption about the order rows arrive in, and therefore none
+    about chunk boundaries: an opening split across chunks, or a group of
+    rows sharing the maximal ingested_at split across chunks, folds to the
+    same state as any other arrival order. A contradiction observed at some
+    ingested_at is simply forgotten when a strictly more recent declaration
+    supersedes it, which is why conflicts are only decided once every row
+    has been folded in.
+    """
+
+    __slots__ = ("max_ingested_at", "bar_version_ids", "winner")
+
+    def __init__(self, row: tuple) -> None:
+        self.max_ingested_at = row[1]
+        self.bar_version_ids = {row[4]}
+        self.winner = row
+
+    def observe(self, row: tuple) -> None:
+        ingested_at = row[1]
+        if ingested_at > self.max_ingested_at:
+            self.max_ingested_at = ingested_at
+            self.bar_version_ids = {row[4]}
+            self.winner = row
+        elif ingested_at == self.max_ingested_at:
+            self.bar_version_ids.add(row[4])
+            if row[2] > self.winner[2]:
+                self.winner = row
 
 
 def _select_snapshot_receipts(
@@ -149,9 +344,11 @@ def _select_snapshot_receipts(
     [range_start, range_end) representing the state of DECLARED historical
     knowledge as of `as_of` (Contract A).
 
-    All timestamps are validated and normalized to canonical UTC ISO form
-    BEFORE any query is issued: an invalid range or a naive timestamp fails
-    closed without ever touching `connection`.
+    All timestamps are validated and normalized to canonical UTC ISO form,
+    both range bounds are checked against the timeframe grid, and the range
+    cardinality is bounded BEFORE any query is issued: an unaligned,
+    inverted, naive or oversized range fails closed without ever touching
+    `connection`.
 
     For each bar_open_at, among receipts with ingested_at <= as_of, the one
     (or ones) with the largest ingested_at are the candidates; if they carry
@@ -160,26 +357,29 @@ def _select_snapshot_receipts(
     content_sha256 is only ever used to break a tie among candidates sharing
     the SAME bar_version_id, never to arbitrate between different OHLCV
     contents. Determinism never depends on rowid, INSERT order, SQL's
-    returned row order, or dict/set iteration order: the winning ingested_at
-    and the winning content_sha256 are each computed with an explicit max()
-    over the fetched rows, and bar_open_at groups are visited in explicit
-    sorted() order.
+    returned row order, or dict/set iteration order: the query carries no
+    ORDER BY at all, each opening's state is folded from the rows in
+    whatever order they arrive, and bar_open_at groups are visited in
+    explicit sorted() order at the end.
+
+    Rows are consumed in bounded chunks and never accumulated: at most
+    MAX_SNAPSHOT_ELIGIBLE_RECEIPTS receipts may be eligible, and one row
+    beyond that refuses the whole request rather than truncating it.
     """
 
-    canonical_range_start, canonical_range_end = _canonical_range(range_start, range_end)
+    canonical_range_start, canonical_range_end = _canonical_range(
+        range_start, range_end, timeframe=timeframe
+    )
     canonical_as_of = _canonical_timestamp(as_of, field="as_of")
 
-    rows = connection.execute(
-        """
-        SELECT r.bar_open_at, r.ingested_at, r.content_sha256,
-               r.bar_id, r.bar_version_id, r.available_at
-        FROM market_bar_receipts r
-        JOIN market_ingestions i ON i.ingestion_id = r.ingestion_id
-        WHERE i.provider = ? AND i.product_id = ? AND i.timeframe = ?
-          AND r.bar_open_at >= ? AND r.bar_open_at < ?
-          AND r.ingested_at <= ?
-        ORDER BY r.bar_open_at ASC, r.ingested_at DESC, r.content_sha256 DESC
-        """,
+    aggregates: dict[str, _OpenAggregate] = {}
+    eligible_row_count = 0
+    # Read once, then used for BOTH the SQL bound and the counter threshold:
+    # the query can never be allowed to return more rows than the counter is
+    # willing to refuse, nor fewer than it is willing to accept.
+    query_limit = SNAPSHOT_ELIGIBLE_RECEIPT_QUERY_LIMIT
+    cursor = connection.execute(
+        _ELIGIBLE_RECEIPTS_SQL,
         (
             provider,
             product_id,
@@ -187,19 +387,42 @@ def _select_snapshot_receipts(
             canonical_range_start,
             canonical_range_end,
             canonical_as_of,
+            query_limit,
         ),
-    ).fetchall()
-
-    by_open: dict[str, list[tuple]] = {}
-    for row in rows:
-        by_open.setdefault(row[0], []).append(row)
+    )
+    try:
+        while True:
+            chunk = cursor.fetchmany(SNAPSHOT_RECEIPT_FETCH_CHUNK_SIZE)
+            if not chunk:
+                break
+            eligible_row_count += len(chunk)
+            if eligible_row_count >= query_limit:
+                # Refuse the whole request here, before folding this chunk in
+                # and before any entry is built: a snapshot must never be
+                # derived from a prefix of a result set that was cut short.
+                raise SnapshotEligibilityLimitExceeded(
+                    provider=provider,
+                    product_id=product_id,
+                    timeframe=timeframe,
+                    range_start=canonical_range_start,
+                    range_end=canonical_range_end,
+                    as_of=canonical_as_of,
+                    limit=query_limit - 1,
+                )
+            for row in chunk:
+                aggregate = aggregates.get(row[0])
+                if aggregate is None:
+                    aggregates[row[0]] = _OpenAggregate(row)
+                else:
+                    aggregate.observe(row)
+    finally:
+        cursor.close()
 
     selected: list[SelectedSnapshotReceipt] = []
-    for bar_open_at in sorted(by_open):
-        candidates = by_open[bar_open_at]
-        max_ingested_at = max(row[1] for row in candidates)
-        winners = [row for row in candidates if row[1] == max_ingested_at]
-        distinct_versions = sorted({row[4] for row in winners})
+    for bar_open_at in sorted(aggregates):
+        aggregate = aggregates[bar_open_at]
+        max_ingested_at = aggregate.max_ingested_at
+        distinct_versions = sorted(aggregate.bar_version_ids)
         if len(distinct_versions) > 1:
             raise SnapshotSelectionConflict(
                 provider=provider,
@@ -209,7 +432,7 @@ def _select_snapshot_receipts(
                 ingested_at=max_ingested_at,
                 bar_version_ids=tuple(distinct_versions),
             )
-        canonical_winner = max(winners, key=lambda row: row[2])
+        canonical_winner = aggregate.winner
         winner_available_at = canonical_winner[5]
         # Defensive re-check on data already fetched (no extra query): the
         # build-time invariant (bar_close_at <= available_at <= ingested_at)
@@ -260,7 +483,9 @@ def build_snapshot_request_id(
     selection_policy_version always produces a different id, so a future
     change of selection rule can never silently reuse an incompatible id.
     """
-    canonical_range_start, canonical_range_end = _canonical_range(range_start, range_end)
+    canonical_range_start, canonical_range_end = _canonical_range(
+        range_start, range_end, timeframe=timeframe
+    )
     identity = {
         "kind": "market_snapshot_request",
         "schema_version": SNAPSHOT_REQUEST_SCHEMA_VERSION,

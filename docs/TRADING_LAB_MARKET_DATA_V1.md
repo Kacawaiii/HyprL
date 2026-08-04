@@ -103,7 +103,7 @@ Tous dans `tests/crypto/test_market_data_store.py` (14 tests, exécutés le 2026
 ### Hors périmètre actuel
 
 - Le collecteur réseau réel (requêtes HTTP vers Coinbase, gestion `429`, backoff, jitter, timeout) n'existe pas encore. `MarketDataStore` ne fait que persister des octets déjà capturés ailleurs.
-- Les snapshots causaux reproductibles (vue figée de l'historique tel qu'il était disponible à un instant donné) ne sont pas implémentés.
+- La **sélection** des snapshots causaux historiques est implémentée (Phase 1C-A/1C-B, voir plus bas) ; leur **matérialisation** persistée (tables `market_snapshot_*`, APIs `create_snapshot` / `load_snapshot` / `list_snapshot_bars`) ne l'est pas encore.
 - Le backfill automatique, le retry, les alertes et toute forme de comblement (forward-fill, bougie synthétique) restent explicitement hors périmètre : la détection de gap ne fait qu'observer et journaliser, jamais combler.
 
 ## Détection persistée des gaps MarketBar (Phase 1B)
@@ -283,6 +283,89 @@ Aucun faux gap sur ouverture déjà connue, isolation, limite sur les candidats 
 Preuve d'accès indexé et de couverture des tests (correctif après 4ᵉ contre-revue, CR4-F2/F3) :
 - `test_indexed_search_guard_rejects_full_table_scan_plans`
 - `test_existence_check_and_first_seen_use_indexed_access`
+
+## Snapshots causaux historiques — sélection (Phase 1C-A / 1C-B)
+
+`scripts/trading_lab/market_snapshots.py` sélectionne, sans effet de bord et sans rien persister, quel receipt MarketBar déjà stocké représente l'état de la connaissance **déclarée** pour chaque `bar_open_at` d'une plage demandée.
+
+Terminologie exacte : ce sont des **snapshots causaux historiques fondés sur le temps d'ingestion déclaré** (Contrat A). `as_of` est un seuil sur le `ingested_at` **déclaré** des receipts déjà persistés — jamais une horloge locale réelle, jamais une preuve qu'une connaissance était réellement disponible en temps réel à cet instant.
+
+### Sélection (Phase 1C-A)
+
+- éligibilité : `ingested_at <= as_of` ; isolation stricte `provider` / `product_id` / `timeframe` ; `range_start` inclusif, `range_end` exclusif ;
+- pour chaque `bar_open_at`, le ou les receipts au `MAX(ingested_at)` éligible sont les candidats ;
+- si ces candidats portent **plusieurs `bar_version_id` distincts**, c'est une contradiction réelle de l'historique déclaré : `SnapshotSelectionConflict`, fail-closed, aucun résultat partiel. `content_sha256` ne départage **jamais** deux contenus OHLCV contradictoires — uniquement des receipts partageant le **même** `bar_version_id` ;
+- aucune dépendance au `rowid`, à l'ordre d'insertion, ni à l'ordre des lignes SQL ; résultat trié par `bar_open_at` croissant.
+
+### Alignement des plages (Phase 1C-B)
+
+Les deux bornes doivent tomber **exactement** sur la grille UTC du timeframe, ancrée sur `1970-01-01T00:00:00+00:00` :
+
+- `1h` : `minute == second == microsecond == 0` ;
+- `1d` : en plus `hour == 0` (minuit UTC).
+
+Le contrôle est structurellement un **modulo en microsecondes entières** (`µs_depuis_époque % durée == 0`), appliqué **borne par borne**. Deux pièges que cette forme évite :
+
+- la **divisibilité de la plage ne prouve pas l'alignement** : `[10:30Z, 12:30Z)` dure exactement deux heures mais aucune `bar_open_at` stockée ne peut y tomber ;
+- `timedelta.total_seconds()` est un flottant et **tronque silencieusement** une microseconde résiduelle : toute l'arithmétique est donc entière.
+
+La durée du timeframe est dérivée de `TIMEFRAME_DURATIONS` importé de `market_bar.py`, jamais redéclarée : une grille de snapshot en désaccord avec MarketBar V1 pourrait désigner des positions qu'aucune barre ne peut occuper. L'équivalence est prouvée dans les deux sens par `test_alignment_rules_match_market_bar_v1_exactly`.
+
+Toute la validation de plage se produit **avant** le moindre accès SQLite, et `build_snapshot_request_id` partage exactement le même préflight que le sélecteur : une identité n'est jamais frappée pour une plage que le sélecteur refuserait de calculer.
+
+### Limites de cardinalité (Phase 1C-B)
+
+- `MAX_SNAPSHOT_RANGE_OPENS = 10 000` — nombre d'ouvertures **attendues** dans la grille, calculé par division entière `(end_us - start_us) // duration_us`. O(1), sans matérialiser aucun timestamp, sans requête. Couvre ~1,14 an en `1h` et ~27 ans en `1d`. Une plage de 87 millions d'ouvertures est rejetée en mémoire constante.
+- `MAX_SNAPSHOT_ELIGIBLE_RECEIPTS = 100 000` — la plage borne les **ouvertures**, jamais les **révisions** derrière elles : sans cette seconde limite, une seule ouverture pathologique pourrait renvoyer un nombre non borné de lignes.
+
+`LIMIT 100001` dans le SQL est un **détecteur de dépassement, jamais une troncature fonctionnelle**. Comportement : 0 à 100 000 receipts éligibles → traitement intégral ; 100 001 → `SnapshotEligibilityLimitExceeded`, rejet complet, **aucun résultat dérivé des 100 000 premières lignes**.
+
+**Précédence d'erreurs V1, explicite** : *le dépassement l'emporte sur un conflit situé au-delà de la limite d'éligibilité.* Les deux branches sont fail-closed et aucune ne renvoie de résultat partiel ; la précédence ne décide donc que du refus typé que voit l'appelant, jamais du fait que la requête est refusée. En deçà de la limite, **toutes** les lignes sont traitées et tout conflit est détecté.
+
+Contrainte croisée à connaître : à la plage maximale (10 000 ouvertures), 100 000 receipts n'autorisent qu'une moyenne de **10 révisions par ouverture**. Une demande légitime plus révisée doit être **découpée en plusieurs plages** ; le découpage est déterministe et le message d'erreur le rappelle.
+
+### Stratégie de lecture (Phase 1C-B)
+
+Lecture par `fetchmany(SNAPSHOT_RECEIPT_FETCH_CHUNK_SIZE = 1 000)` avec compteur exact, jamais `fetchall`. Chaque ligne est repliée dans un agrégat par ouverture qui ne retient que le `MAX(ingested_at)` courant, les `bar_version_id` distincts à ce maximum, et le receipt canonique au `content_sha256` maximal.
+
+Conséquences vérifiées :
+
+- la mémoire suit le **nombre d'ouvertures** (≤ 10 000), pas le nombre de révisions ;
+- les frontières de chunk ne portent **aucune sémantique** : une même ouverture, ou un même `MAX(ingested_at)`, peut être répartie sur plusieurs chunks sans changer le résultat ;
+- un conflit ancien **supplanté** par une révision plus récente non ambiguë n'est jamais levé — les conflits ne sont décidés qu'après avoir replié toutes les lignes.
+
+### Requête et index (Phase 1C-B)
+
+La requête filtre **par domaine d'abord** (sous-requête `IN` sur `market_ingestions`) puis par plage, et ne porte **aucun `ORDER BY`** : l'ordre final est produit en Python. Supprimer le tri SQL élimine le `TEMP B-TREE` et la latence de première ligne qu'il imposait.
+
+Un unique index est ajouté au DDL de `MarketDataStore` :
+
+```sql
+CREATE INDEX IF NOT EXISTS market_bar_receipts_snapshot_domain_lookup
+    ON market_bar_receipts (ingestion_id, bar_open_at, ingested_at,
+                            content_sha256, bar_version_id, bar_id, available_at);
+```
+
+- **Couvrant** : il porte les six colonnes projetées plus la colonne de jointure, donc la sélection ne touche jamais la table.
+- **Tête `ingestion_id`, délibérément** : c'est ce qui rend le coût indépendant du nombre d'**autres** domaines partageant les mêmes `bar_open_at`. Un index à tête `bar_open_at` ferait croître le coût avec chaque domaine colocalisé **et** détournerait les deux lookups Phase 1B vers un autre index, cassant `test_existence_check_and_first_seen_use_indexed_access` — vérifié empiriquement.
+- **Aucun index n'est ajouté sur `market_ingestions`** : celui qui supprimerait le `SCAN i` résiduel casse justement l'assertion Phase 1B ci-dessus.
+
+Plan réellement obtenu : `SEARCH r USING COVERING INDEX market_bar_receipts_snapshot_domain_lookup (ingestion_id=? AND bar_open_at>? AND bar_open_at<?)` · `LIST SUBQUERY 1` · `SCAN i`.
+
+Migration : `CREATE INDEX IF NOT EXISTS` s'exécute à chaque `MarketDataStore.__init__`, donc une base Phase 1B antérieure gagne l'index à la simple réouverture — vérifié par test.
+
+### Risques résiduels acceptés
+
+- **`SCAN i` sur `market_ingestions`** : coût en O(nombre total d'ingestions), pas en O(receipts hors plage). Accepté ; l'index qui l'éliminerait casserait une assertion Phase 1B.
+- **Petite plage sur énorme historique hors plage** : légère régression en absolu, négligeable.
+- **Coût de stockage de l'index** : l'index ajoute **plusieurs centaines d'octets par receipt** dans les mesures réalisées — de l'ordre de **293 à 520 octets selon le dataset**. Le **pourcentage** de croissance de la base n'est pas une constante : il dépend fortement de la taille des `payload_json`, du remplissage des pages SQLite et de la distribution des données, et n'a donc pas de valeur universelle. Compromis accepté au vu de la forte réduction du coût multi-domaines.
+- **Débit d'ingestion** : réduction de l'ordre de quelques pourcents.
+- **Duplication de `_canonical_timestamp`** entre `market_data_store.py` et `market_snapshots.py` (dette, suivie).
+- **`SelectedSnapshotReceipt.available_at` brut** (non canonicalisé) : sans effet sur la sélection ni sur les identités, atteignable uniquement par corruption SQL directe.
+
+### Hors périmètre de 1C-B
+
+Aucune table `market_snapshot_*`, aucune matérialisation, aucune API `create_snapshot` / `load_snapshot` / `list_snapshot_bars`. Une entrée absente d'un snapshot n'est **jamais** un gap fournisseur confirmé : c'est l'absence d'un receipt éligible à cet `as_of`. Les gaps confirmés ont leur propre mécanisme persisté (`market_data_gap_events`), décrit plus haut.
 
 ## Gate commercial
 
