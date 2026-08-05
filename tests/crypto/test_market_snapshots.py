@@ -3102,3 +3102,1356 @@ def test_unexpected_error_after_writes_rolls_back_and_releases_the_write_lock(
         assert result.entry_count == 3
     finally:
         connection.close()
+
+
+# =========================================================================
+# Phase 1C-D: verified loading, bounded listing and offline replay.
+# =========================================================================
+
+
+def _one_snapshot(store_module, snapshots_module, tmp_path, *, openings=3, name="load"):
+    """A store holding one materialized snapshot built from REAL MarketBar
+    payloads, so replay can verify content_sha256 against payload_json."""
+    database = tmp_path / f"{name}.sqlite3"
+    if database.exists():
+        database.unlink()
+    store = store_module.MarketDataStore(database)
+    connection = store._connect()
+    ingested = INGEST_BASE + timedelta(days=800)
+    connection.execute(
+        "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+        ("a" * 64, "coinbase_exchange_rest", b"x", 1, _iso(GRID_BASE)),
+    )
+    connection.execute(
+        "INSERT INTO market_ingestions VALUES ('i0', 's', 'coinbase_exchange_rest', "
+        "'BTC-USD', '1h', ?, ?, ?, '{}', ?)",
+        (_iso(ingested), _iso(ingested), "a" * 64, openings),
+    )
+    market_bar = importlib.import_module("scripts.trading_lab.market_bar")
+    for index in range(openings):
+        bar = market_bar.build_market_bar(
+            asset="BTC/USD", venue="coinbase_exchange", provider="coinbase_exchange",
+            timeframe="1h",
+            bar_open_at=GRID_BASE + timedelta(hours=index),
+            bar_close_at=GRID_BASE + timedelta(hours=index + 1),
+            available_at=ingested, ingested_at=ingested,
+            open_price="64123.12345678901", high_price="64200.00000000004",
+            low_price="64000.00000000001", close_price="64150.50000000005",
+            volume="12.345678901234567891", raw_payload_sha256="a" * 64,
+        )
+        connection.execute(
+            "INSERT INTO market_bar_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                bar["content_sha256"], "i0", bar["bar_id"], bar["bar_version_id"],
+                bar["bar_open_at"], bar["bar_close_at"], bar["available_at"],
+                bar["ingested_at"], "a" * 64,
+                json.dumps(bar, sort_keys=True, separators=(",", ":")),
+            ),
+        )
+    connection.commit()
+    result = snapshots_module._materialize_snapshot(
+        connection,
+        provider="coinbase_exchange_rest", product_id="BTC-USD", timeframe="1h",
+        range_start=_iso(GRID_BASE),
+        range_end=_iso(GRID_BASE + timedelta(hours=max(openings, 1))),
+        as_of=_iso(ingested + timedelta(days=1)),
+    )
+    connection.close()
+    return store, result
+
+
+class _ForbiddenBusinessConnection:
+    """Allows PRAGMA reads, fails the test on any business statement."""
+
+    def __init__(self) -> None:
+        self.in_transaction = False
+        self.statements: list[str] = []
+
+    def execute(self, sql, parameters=()):
+        self.statements.append(sql)
+        upper = sql.strip().upper()
+        if upper.startswith("PRAGMA"):
+            class _R:
+                def fetchone(self_inner):
+                    return (1,)
+            return _R()
+        pytest.fail(f"a business statement ran on invalid input: {sql!r}")
+
+
+# --- 1C-D: input validation ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [None, b"a" * 64, 12345, "", "a" * 64, "hyprl-market-snapshot-" + "A" * 64,
+     "hyprl-market-snapshot-" + "a" * 63, "hyprl-market-snapshot-" + "a" * 65,
+     "hyprl-market-snapshot-" + "g" * 64, " hyprl-market-snapshot-" + "a" * 64,
+     "hyprl-market-snapshot-request-" + "a" * 64],
+)
+def test_load_snapshot_rejects_invalid_snapshot_id_before_any_query(
+    snapshots_module, bad
+) -> None:
+    connection = _ForbiddenBusinessConnection()
+    with pytest.raises(snapshots_module.SnapshotInputError):
+        snapshots_module.load_snapshot(connection, snapshot_id=bad)
+    assert connection.in_transaction is False
+
+
+@pytest.mark.parametrize("bad", [None, 12345, "", "hyprl-market-snapshot-" + "a" * 64,
+                                 "hyprl-market-snapshot-request-" + "A" * 64])
+def test_list_rejects_invalid_request_id_before_any_query(snapshots_module, bad) -> None:
+    connection = _ForbiddenBusinessConnection()
+    with pytest.raises(snapshots_module.SnapshotInputError):
+        snapshots_module.list_snapshot_manifests(connection, snapshot_request_id=bad)
+
+
+@pytest.mark.parametrize("bad", [True, False, 1.0, "10", 0, -1, 1001])
+def test_list_rejects_invalid_limit_before_any_query(snapshots_module, bad) -> None:
+    connection = _ForbiddenBusinessConnection()
+    with pytest.raises(snapshots_module.SnapshotInputError):
+        snapshots_module.list_snapshot_manifests(
+            connection,
+            snapshot_request_id="hyprl-market-snapshot-request-" + "a" * 64,
+            limit=bad,
+        )
+
+
+def test_list_rejects_invalid_cursor_before_any_query(snapshots_module) -> None:
+    connection = _ForbiddenBusinessConnection()
+    with pytest.raises(snapshots_module.SnapshotInputError):
+        snapshots_module.list_snapshot_manifests(
+            connection,
+            snapshot_request_id="hyprl-market-snapshot-request-" + "a" * 64,
+            after_snapshot_id="not-a-snapshot-id",
+        )
+
+
+# --- 1C-D: public dataclasses --------------------------------------------
+
+
+def test_public_dataclasses_are_frozen_and_minimal(tmp_path, store_module, snapshots_module) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="dc")
+    connection = store._connect()
+    try:
+        loaded = snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+    import dataclasses
+
+    assert dataclasses.is_dataclass(loaded)
+    entry = loaded.entries[0]
+    # SnapshotEntryRef must expose the reference and nothing internal.
+    assert [field.name for field in dataclasses.fields(entry)] == ["bar_open_at", "content_sha256"]
+    for internal in ("bar_id", "bar_version_id", "ingested_at", "available_at",
+                     "provider", "product_id", "timeframe", "payload_json"):
+        assert not hasattr(entry, internal), internal
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.bar_open_at = "x"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        loaded.manifest.provider = "x"
+    assert [field.name for field in dataclasses.fields(loaded.manifest)] == [
+        "snapshot_id", "snapshot_request_id", "entries_content_hash",
+        "snapshot_schema_version", "selection_policy_version", "provider",
+        "product_id", "timeframe", "range_start", "range_end", "as_of", "entry_count",
+    ]
+
+
+# --- 1C-D: load nominal ---------------------------------------------------
+
+
+def test_load_snapshot_returns_manifest_and_ordered_entries(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=5, name="ord")
+    connection = store._connect()
+    try:
+        loaded = snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+        assert connection.in_transaction is False
+        again = snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+    assert loaded.manifest.snapshot_id == result.snapshot_id
+    assert loaded.manifest.entry_count == 5
+    assert loaded.manifest.provider == "coinbase_exchange_rest"
+    opens = [entry.bar_open_at for entry in loaded.entries]
+    assert opens == sorted(opens) and len(opens) == 5
+    assert again == loaded  # connection reusable, deterministic
+
+
+def test_load_snapshot_of_an_empty_snapshot_returns_no_entries(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=0, name="empty")
+    connection = store._connect()
+    try:
+        loaded = snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+    assert loaded.entries == ()
+    assert loaded.manifest.entry_count == 0
+
+
+def test_load_snapshot_raises_not_found_for_an_unknown_snapshot(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="nf")
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotNotFound):
+            snapshots_module.load_snapshot(
+                connection, snapshot_id="hyprl-market-snapshot-" + "b" * 64
+            )
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_load_snapshot_never_reads_a_payload(tmp_path, store_module, snapshots_module) -> None:
+    """load_snapshot returns references only: touching payload_json would make
+    every load pay the replay cost."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="nopay")
+    seen: list[str] = []
+
+    class _Spy:
+        def __init__(self, inner): self._inner = inner
+        @property
+        def in_transaction(self): return self._inner.in_transaction
+        def execute(self, sql, parameters=()):
+            seen.append(sql)
+            return self._inner.execute(sql, parameters)
+        def commit(self): return self._inner.commit()
+        def rollback(self): return self._inner.rollback()
+
+    connection = store._connect()
+    try:
+        snapshots_module.load_snapshot(_Spy(connection), snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+    assert seen and all("payload_json" not in sql for sql in seen), seen
+
+
+# --- 1C-D: read context ---------------------------------------------------
+
+
+def test_read_path_refuses_a_connection_already_in_a_transaction(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="ctx")
+    connection = store._connect()
+    try:
+        connection.execute("BEGIN")
+        with pytest.raises(snapshots_module.SnapshotReadContextError):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+        connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_read_path_refuses_a_connection_without_health_pragmas(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="prag")
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+        with pytest.raises(snapshots_module.SnapshotReadContextError):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+
+
+# --- 1C-D: listing --------------------------------------------------------
+
+
+def test_list_returns_an_empty_page_for_an_unknown_request(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="lst0")
+    connection = store._connect()
+    try:
+        page = snapshots_module.list_snapshot_manifests(
+            connection, snapshot_request_id="hyprl-market-snapshot-request-" + "c" * 64
+        )
+    finally:
+        connection.close()
+    assert page.items == ()
+    assert page.next_after_snapshot_id is None
+
+
+def test_list_paginates_by_keyset_without_duplicates_or_gaps(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Several materializations of the SAME request (backfill) must paginate
+    exactly once each, ordered lexicographically by snapshot_id."""
+    store, first = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="lstn")
+    connection = store._connect()
+    ingested = INGEST_BASE + timedelta(days=800)
+    market_bar = importlib.import_module("scripts.trading_lab.market_bar")
+    expected = {first.snapshot_id}
+    try:
+        for revision in range(1, 4):
+            later = ingested + timedelta(hours=revision)
+            connection.execute(
+                "INSERT INTO market_ingestions VALUES (?, 's', 'coinbase_exchange_rest', "
+                "'BTC-USD', '1h', ?, ?, ?, '{}', 3)",
+                (f"i{revision}", _iso(later), _iso(later), "a" * 64),
+            )
+            for index in range(3):
+                bar = market_bar.build_market_bar(
+                    asset="BTC/USD", venue="coinbase_exchange", provider="coinbase_exchange",
+                    timeframe="1h",
+                    bar_open_at=GRID_BASE + timedelta(hours=index),
+                    bar_close_at=GRID_BASE + timedelta(hours=index + 1),
+                    available_at=later, ingested_at=later,
+                    open_price=f"{64123 + revision}.12345678901",
+                    high_price="64200.00000000004", low_price="64000.00000000001",
+                    close_price="64150.50000000005", volume="12.345678901234567891",
+                    raw_payload_sha256="a" * 64,
+                )
+                connection.execute(
+                    "INSERT INTO market_bar_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (bar["content_sha256"], f"i{revision}", bar["bar_id"], bar["bar_version_id"],
+                     bar["bar_open_at"], bar["bar_close_at"], bar["available_at"],
+                     bar["ingested_at"], "a" * 64,
+                     json.dumps(bar, sort_keys=True, separators=(",", ":"))),
+                )
+            connection.commit()
+            expected.add(
+                snapshots_module._materialize_snapshot(
+                    connection,
+                    provider="coinbase_exchange_rest", product_id="BTC-USD", timeframe="1h",
+                    range_start=_iso(GRID_BASE), range_end=_iso(GRID_BASE + timedelta(hours=3)),
+                    as_of=_iso(ingested + timedelta(days=1)),
+                ).snapshot_id
+            )
+
+        collected: list[str] = []
+        cursor = None
+        pages = 0
+        while True:
+            page = snapshots_module.list_snapshot_manifests(
+                connection,
+                snapshot_request_id=first.snapshot_request_id,
+                after_snapshot_id=cursor,
+                limit=2,
+            )
+            pages += 1
+            assert len(page.items) <= 2
+            collected.extend(item.snapshot_id for item in page.items)
+            cursor = page.next_after_snapshot_id
+            if cursor is None:
+                break
+            assert cursor == page.items[-1].snapshot_id
+    finally:
+        connection.close()
+
+    assert len(expected) == 4
+    assert collected == sorted(expected)
+    assert len(collected) == len(set(collected))
+    assert pages == 2
+
+
+def test_list_sql_uses_no_offset_rowid_or_chronology(snapshots_module) -> None:
+    for sql in (snapshots_module._LIST_MANIFESTS_SQL,
+                snapshots_module._LIST_MANIFESTS_AFTER_SQL):
+        upper = sql.upper()
+        assert "OFFSET" not in upper
+        assert "ROWID" not in upper
+        assert "MAX(" not in upper
+        assert "LATEST" not in upper
+        assert "ORDER BY SNAPSHOT_ID ASC" in " ".join(upper.split())
+
+
+# --- 1C-D: replay ---------------------------------------------------------
+
+
+def test_replay_returns_exact_ordered_market_bars(tmp_path, store_module, snapshots_module) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=4, name="rep")
+    connection = store._connect()
+    try:
+        bars = snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+    assert len(bars) == 4
+    assert [bar["bar_open_at"] for bar in bars] == sorted(bar["bar_open_at"] for bar in bars)
+    market_bar = importlib.import_module("scripts.trading_lab.market_bar")
+    for bar in bars:
+        assert bar["schema_version"] == market_bar.SCHEMA_VERSION
+        unsigned = {key: value for key, value in bar.items() if key != "content_sha256"}
+        assert hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest() == bar["content_sha256"]
+
+
+def test_replay_of_an_empty_snapshot_returns_an_empty_tuple(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=0, name="rep0")
+    connection = store._connect()
+    try:
+        assert snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id) == ()
+    finally:
+        connection.close()
+
+
+# --- 1C-D: amendment R1 ---------------------------------------------------
+
+
+def test_read_transaction_is_closed_before_python_validation(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """The SQL capture must end before the CPU-bound validation starts: in
+    journal_mode=delete a read transaction blocks every writer's COMMIT, so
+    holding it through JSON decoding would stall writers for the whole replay."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=4, name="r1")
+    observed: dict[str, object] = {}
+    original = snapshots_module._validate_captured_snapshot
+
+    def _slow_validation(captured, **kwargs):
+        observed["in_transaction"] = kwargs["connection_probe"].in_transaction \
+            if "connection_probe" in kwargs else None
+        return original(captured, **kwargs)
+
+    connection = store._connect()
+    writer = store._connect()
+    try:
+        real_decode = snapshots_module._decode_market_bar
+
+        def _slow_decode(*args, **kwargs):
+            # While decoding, the reader must hold no transaction and a writer
+            # must be able to take AND commit the write lock.
+            observed["reader_in_transaction"] = connection.in_transaction
+            if "writer_committed" not in observed:
+                writer.execute("BEGIN IMMEDIATE")
+                writer.execute(
+                    "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                    ("f" * 64, "coinbase_exchange_rest", b"y", 1, _iso(GRID_BASE)),
+                )
+                writer.commit()
+                observed["writer_committed"] = True
+            return real_decode(*args, **kwargs)
+
+        monkeypatch.setattr(snapshots_module, "_decode_market_bar", _slow_decode)
+        bars = snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+        writer.close()
+
+    assert observed["reader_in_transaction"] is False
+    assert observed["writer_committed"] is True
+    assert len(bars) == 4
+
+
+# --- 1C-D: budget --------------------------------------------------------
+
+
+def test_payload_budget_is_preflighted_before_any_payload_query(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=4, name="bud")
+    monkeypatch.setattr(snapshots_module, "MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES", 10)
+    seen: list[str] = []
+
+    class _Spy:
+        def __init__(self, inner): self._inner = inner
+        @property
+        def in_transaction(self): return self._inner.in_transaction
+        def execute(self, sql, parameters=()):
+            seen.append(sql)
+            return self._inner.execute(sql, parameters)
+        def commit(self): return self._inner.commit()
+        def rollback(self): return self._inner.rollback()
+
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotReplayLimitExceeded) as excinfo:
+            snapshots_module.replay_snapshot(_Spy(connection), snapshot_id=result.snapshot_id)
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+    # The preflight may name payload_json inside length(CAST(... AS BLOB)) --
+    # that counts bytes in SQLite without transferring them. What must never
+    # run is the query that actually ships the payloads to Python.
+    assert snapshots_module._SELECT_SNAPSHOT_PAYLOADS_SQL not in seen, seen
+    assert any("length(CAST(r.payload_json AS BLOB))" in sql for sql in seen), seen
+    message = str(excinfo.value)
+    assert str(snapshots_module.MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES) in message
+    assert "{" not in message and "schema_version" not in message
+
+
+def test_payload_budget_counts_utf8_bytes_not_characters(snapshots_module) -> None:
+    text = "é" * 10  # 10 characters, 20 UTF-8 bytes
+    assert snapshots_module._payload_byte_length(text) == 20
+    assert snapshots_module._payload_byte_length(text) != len(text)
+
+
+# --- 1C-D: corruption -----------------------------------------------------
+
+
+def _sabotage(database: Path, statements: list[tuple[str, tuple]]) -> None:
+    connection = sqlite3.connect(database)
+    try:
+        for name in ("market_snapshot_entries", "market_snapshot_manifests",
+                     "market_bar_receipts", "market_ingestions"):
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}_no_update")
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}_no_delete")
+        connection.execute("DROP TRIGGER IF EXISTS market_snapshot_entries_no_late_insert")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        for sql, params in statements:
+            connection.execute(sql, params)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "label, statements",
+    [
+        ("receipt manquant", [("DELETE FROM market_bar_receipts WHERE bar_open_at = "
+                               "(SELECT MIN(bar_open_at) FROM market_bar_receipts)", ())]),
+        ("ingestion manquante", [("DELETE FROM market_ingestions WHERE ingestion_id = 'i0'", ())]),
+        ("entry manquante", [("DELETE FROM market_snapshot_entries WHERE bar_open_at = "
+                              "(SELECT MAX(bar_open_at) FROM market_snapshot_entries)", ())]),
+        ("mauvais provider", [("UPDATE market_ingestions SET provider = 'other_rest'", ())]),
+        ("mauvais product_id", [("UPDATE market_ingestions SET product_id = 'ETH-USD'", ())]),
+        ("mauvais timeframe", [("UPDATE market_ingestions SET timeframe = '1d'", ())]),
+        ("entry_count faux", [("UPDATE market_snapshot_manifests SET entry_count = 99", ())]),
+        ("entries_content_hash faux",
+         [("UPDATE market_snapshot_manifests SET entries_content_hash = ?", ("f" * 64,))]),
+        ("ingested_at > as_of",
+         [("UPDATE market_bar_receipts SET ingested_at = '2999-01-01T00:00:00+00:00'", ())]),
+        ("available_at > as_of",
+         [("UPDATE market_bar_receipts SET available_at = '2999-01-01T00:00:00+00:00'", ())]),
+    ],
+)
+def test_structural_corruption_is_detected_by_load(
+    tmp_path, store_module, snapshots_module, label, statements
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name=f"c{abs(hash(label))%9999}")
+    _sabotage(store.database_path, statements)
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_unknown_manifest_version_is_refused_without_conversion(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="ver")
+    _sabotage(store.database_path,
+              [("UPDATE market_snapshot_manifests SET snapshot_schema_version = ?",
+                ("trading-lab.market-snapshot.v99",))])
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotUnsupportedVersion):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+def test_unknown_selection_policy_is_refused(tmp_path, store_module, snapshots_module) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="pol")
+    _sabotage(store.database_path,
+              [("UPDATE market_snapshot_manifests SET selection_policy_version = ?", ("",))])
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotUnsupportedVersion):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+def test_replay_detects_an_invalid_payload_and_returns_nothing(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """A corrupted LAST bar must prevent every earlier bar from surfacing."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=4, name="badp")
+    _sabotage(store.database_path,
+              [("UPDATE market_bar_receipts SET payload_json = '{\"broken\":' "
+                "WHERE bar_open_at = (SELECT MAX(bar_open_at) FROM market_bar_receipts)", ())])
+    connection = store._connect()
+    outcome = "not-set"
+    try:
+        try:
+            outcome = snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+        except snapshots_module.SnapshotStateCorruption as exc:
+            assert exc.__cause__ is not None
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+    assert outcome == "not-set"
+
+
+def test_replay_detects_a_semantically_invalid_bar_with_a_consistent_hash(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Rehashing a tampered payload defeats hash-only checking: the bar is
+    rebuilt through MarketBar V1 itself, so a bad venue is still caught."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="tamper")
+    with sqlite3.connect(store.database_path) as connection:
+        sha, payload = connection.execute(
+            "SELECT content_sha256, payload_json FROM market_bar_receipts LIMIT 1"
+        ).fetchone()
+    record = json.loads(payload)
+    record["venue"] = "INVALID VENUE!"
+    unsigned = {key: value for key, value in record.items() if key != "content_sha256"}
+    record["content_sha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    _sabotage(store.database_path,
+              [("UPDATE market_bar_receipts SET payload_json = ? WHERE content_sha256 = ?",
+                (json.dumps(record, sort_keys=True, separators=(",", ":")), sha))])
+
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption):
+            snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+# --- 1C-D: plans and ordering --------------------------------------------
+
+
+def test_read_query_plans_use_the_expected_indexes(tmp_path, store_module, snapshots_module) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="plan1cd")
+    with sqlite3.connect(store.database_path) as connection:
+        plans = {
+            "manifest": " ".join(
+                row[3] for row in connection.execute(
+                    "EXPLAIN QUERY PLAN " + snapshots_module._SELECT_SNAPSHOT_MANIFEST_SQL,
+                    (result.snapshot_id,))),
+            "listing": " ".join(
+                row[3] for row in connection.execute(
+                    "EXPLAIN QUERY PLAN " + snapshots_module._LIST_MANIFESTS_AFTER_SQL,
+                    (result.snapshot_request_id, "", 2))),
+            "metadata": " ".join(
+                row[3] for row in connection.execute(
+                    "EXPLAIN QUERY PLAN " + snapshots_module._SELECT_SNAPSHOT_METADATA_SQL,
+                    (result.snapshot_id,))),
+        }
+    assert "sqlite_autoindex_market_snapshot_manifests_1" in plans["manifest"]
+    assert "market_snapshot_manifests_request_lookup" in plans["listing"]
+    assert "SEARCH e USING PRIMARY KEY" in plans["metadata"]
+    for name, plan in plans.items():
+        assert "TEMP B-TREE" not in plan, (name, plan)
+        assert "SCAN market_snapshot_manifests" not in plan, (name, plan)
+
+
+def test_results_are_unchanged_under_reverse_unordered_selects(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=6, name="rev")
+    connection = store._connect()
+    try:
+        normal_load = snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+        normal_replay = snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+        connection.execute("PRAGMA reverse_unordered_selects = ON")
+        reversed_load = snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+        reversed_replay = snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+        connection.execute("PRAGMA reverse_unordered_selects = OFF")
+    finally:
+        connection.close()
+    assert reversed_load == normal_load
+    assert reversed_replay == normal_replay
+
+
+def test_read_path_uses_fetchmany_and_never_fetchall(snapshots_module) -> None:
+    import inspect
+    capture = inspect.getsource(snapshots_module._capture_snapshot)
+    drain = inspect.getsource(snapshots_module._fetch_all_bounded)
+    listing = inspect.getsource(snapshots_module.list_snapshot_manifests)
+    for source in (capture, drain, listing):
+        assert "fetchall(" not in source, source
+    assert "fetchmany(" in drain
+    assert "_fetch_all_bounded(" in capture and "_fetch_all_bounded(" in listing
+
+
+# --- 1C-D: guarantees the first mutation round found untested -------------
+
+
+def test_missing_receipt_is_reported_as_a_broken_reference(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """An INNER JOIN would drop the row and surface a mere count mismatch;
+    the LEFT JOIN must name the broken reference itself."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="mref")
+    _sabotage(store.database_path, [("DELETE FROM market_bar_receipts WHERE bar_open_at = "
+                                     "(SELECT MIN(bar_open_at) FROM market_bar_receipts)", ())])
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption, match="missing receipt"):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+def test_missing_ingestion_is_reported_as_a_broken_reference(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="mking")
+    _sabotage(store.database_path, [("DELETE FROM market_ingestions WHERE ingestion_id = 'i0'", ())])
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption, match="ingestion is"):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+def test_reading_never_takes_the_write_lock(tmp_path, store_module, snapshots_module) -> None:
+    """BEGIN, never BEGIN IMMEDIATE: a reader must succeed while a writer
+    already holds the write lock, reading the pre-existing state."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="nolock")
+    writer = store._connect()
+    reader = store._connect()
+    try:
+        reader.execute("PRAGMA busy_timeout = 300")
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("e" * 64, "coinbase_exchange_rest", b"z", 1, _iso(GRID_BASE)),
+        )
+        loaded = snapshots_module.load_snapshot(reader, snapshot_id=result.snapshot_id)
+        assert loaded.manifest.snapshot_id == result.snapshot_id
+        writer.rollback()
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_tampered_manifest_request_id_is_detected(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="treq")
+    _sabotage(store.database_path,
+              [("UPDATE market_snapshot_manifests SET snapshot_request_id = ?",
+                ("hyprl-market-snapshot-request-" + "9" * 64,))])
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption,
+                           match="snapshot_request_id"):
+            snapshots_module.load_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+def test_manifest_whose_snapshot_id_does_not_hash_its_own_identities_is_detected(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Only the snapshot_id recomputation catches this: the manifest is
+    internally consistent apart from its own identifier."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="tid")
+    forged = "hyprl-market-snapshot-" + "7" * 64
+    connection = sqlite3.connect(store.database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        row = connection.execute(
+            "SELECT * FROM market_snapshot_manifests WHERE snapshot_id = ?", (result.snapshot_id,)
+        ).fetchone()
+        connection.executemany(
+            "INSERT INTO market_snapshot_entries (snapshot_id, bar_open_at, content_sha256) "
+            "VALUES (?, ?, ?)",
+            [(forged, bar_open_at, content_sha256) for bar_open_at, content_sha256 in
+             connection.execute("SELECT bar_open_at, content_sha256 FROM market_snapshot_entries "
+                                "WHERE snapshot_id = ?", (result.snapshot_id,)).fetchall()],
+        )
+        connection.execute(
+            "INSERT INTO market_snapshot_manifests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (forged, *row[1:]),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption, match="identity"):
+            snapshots_module.load_snapshot(connection, snapshot_id=forged)
+    finally:
+        connection.close()
+
+
+def _replace_payload(database: Path, *, mutate) -> None:
+    """Forge a fully self-consistent snapshot around a mutated bar: receipt
+    hash, entry reference and manifest identities are ALL recomputed, so only
+    a real MarketBar rebuild can still reject it."""
+    snapshots = importlib.import_module("scripts.trading_lab.market_snapshots")
+    connection = sqlite3.connect(database)
+    try:
+        for name in ("market_snapshot_entries", "market_snapshot_manifests",
+                     "market_bar_receipts"):
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}_no_update")
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}_no_delete")
+        connection.execute("DROP TRIGGER IF EXISTS market_snapshot_entries_no_late_insert")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        sha, payload = connection.execute(
+            "SELECT content_sha256, payload_json FROM market_bar_receipts "
+            "ORDER BY bar_open_at LIMIT 1"
+        ).fetchone()
+        record = mutate(json.loads(payload))
+        unsigned = {key: value for key, value in record.items() if key != "content_sha256"}
+        record["content_sha256"] = hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        connection.execute(
+            "UPDATE market_bar_receipts SET content_sha256 = ?, payload_json = ? "
+            "WHERE content_sha256 = ?",
+            (record["content_sha256"], json.dumps(record, sort_keys=True, separators=(",", ":")), sha),
+        )
+        connection.execute(
+            "UPDATE market_snapshot_entries SET content_sha256 = ? WHERE content_sha256 = ?",
+            (record["content_sha256"], sha),
+        )
+        manifest = connection.execute("SELECT * FROM market_snapshot_manifests").fetchone()
+        pairs = connection.execute(
+            "SELECT bar_open_at, content_sha256 FROM market_snapshot_entries "
+            "WHERE snapshot_id = ? ORDER BY bar_open_at", (manifest[0],)
+        ).fetchall()
+        entries_hash = snapshots.build_entries_content_hash(
+            tuple(snapshots.SelectedSnapshotReceipt(
+                bar_open_at=b, content_sha256=c, bar_id="", bar_version_id="",
+                ingested_at="", available_at="") for b, c in pairs)
+        )
+        request_id = manifest[1]
+        new_id = snapshots.build_snapshot_id(
+            snapshot_request_id=request_id, entries_content_hash=entries_hash
+        )
+        connection.execute(
+            "UPDATE market_snapshot_entries SET snapshot_id = ? WHERE snapshot_id = ?",
+            (new_id, manifest[0]),
+        )
+        connection.execute("DELETE FROM market_snapshot_manifests WHERE snapshot_id = ?",
+                           (manifest[0],))
+        connection.execute(
+            "INSERT INTO market_snapshot_manifests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_id, request_id, entries_hash, *manifest[3:]),
+        )
+        connection.commit()
+        return new_id
+    finally:
+        connection.close()
+
+
+def test_replay_rejects_a_forged_bar_that_market_bar_rebuilds_differently(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Everything is recomputed consistently -- receipt hash, entry, manifest
+    identities -- so every hash check passes. Only rebuilding the bar through
+    MarketBar V1 exposes that bar_status was forged."""
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="forge")
+    forged_id = _replace_payload(
+        store.database_path, mutate=lambda record: {**record, "bar_status": "partial"}
+    )
+    connection = store._connect()
+    try:
+        snapshots_module.load_snapshot(connection, snapshot_id=forged_id)  # structurally sound
+        with pytest.raises(snapshots_module.SnapshotStateCorruption, match="rebuild"):
+            snapshots_module.replay_snapshot(connection, snapshot_id=forged_id)
+    finally:
+        connection.close()
+
+
+def test_replay_refuses_an_unknown_market_bar_schema_version(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="mbver")
+    forged_id = _replace_payload(
+        store.database_path,
+        mutate=lambda record: {**record, "schema_version": "trading-lab.market-bar.v99"},
+    )
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotUnsupportedVersion):
+            snapshots_module.replay_snapshot(connection, snapshot_id=forged_id)
+    finally:
+        connection.close()
+
+
+def test_replay_detects_a_payload_whose_self_hash_is_wrong(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """The payload keeps the content_sha256 it is referenced by, but its
+    other fields were changed: only recomputing the payload's own hash
+    catches that."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="selfhash")
+    connection = sqlite3.connect(store.database_path)
+    try:
+        for name in ("market_bar_receipts",):
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}_no_update")
+        sha, payload = connection.execute(
+            "SELECT content_sha256, payload_json FROM market_bar_receipts "
+            "ORDER BY bar_open_at LIMIT 1"
+        ).fetchone()
+        record = json.loads(payload)
+        record["volume"] = "999.000000000000000000"   # hash NOT recomputed
+        connection.execute(
+            "UPDATE market_bar_receipts SET payload_json = ? WHERE content_sha256 = ?",
+            (json.dumps(record, sort_keys=True, separators=(",", ":")), sha),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption, match="hash"):
+            snapshots_module.replay_snapshot(connection, snapshot_id=result.snapshot_id)
+    finally:
+        connection.close()
+
+
+# =========================================================================
+# Phase 1C-D / F1-F4: invariants the code upholds but no test protected.
+# Each of these dies if its guard is removed -- verified by mutation.
+# =========================================================================
+
+
+class _StaticCursor:
+    """Serves a fixed row list through the bounded-read protocol."""
+
+    def __init__(self, rows: list) -> None:
+        self._rows = list(rows)
+        self._offset = 0
+
+    def fetchmany(self, size):
+        chunk = self._rows[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+    def fetchall(self):
+        pytest.fail("fetchall() must never be used on the read path")
+
+    def close(self):
+        return None
+
+
+class _RewritingConnection:
+    """Delegates to a real connection but rewrites the rows of one exact
+    query, so the two capture passes can be made to disagree."""
+
+    def __init__(self, inner, *, target_sql: str, rewrite) -> None:
+        self._inner = inner
+        self._target_sql = target_sql
+        self._rewrite = rewrite
+
+    @property
+    def in_transaction(self):
+        return self._inner.in_transaction
+
+    def execute(self, sql, parameters=()):
+        cursor = self._inner.execute(sql, parameters)
+        if sql == self._target_sql:
+            return _StaticCursor(self._rewrite(list(cursor)))
+        return cursor
+
+    def commit(self):
+        return self._inner.commit()
+
+    def rollback(self):
+        return self._inner.rollback()
+
+
+# --- F1: the payload pass must never be zipped against a different length --
+
+
+@pytest.mark.parametrize(
+    "label, rewrite",
+    [
+        ("payload row missing", lambda rows: rows[:-1]),
+        ("payload row added", lambda rows: rows + [rows[-1]]),
+        ("payload order reversed", lambda rows: list(reversed(rows))),
+        ("payload bar_open_at differs",
+         lambda rows: [("2999-01-01T00:00:00+00:00", *rows[0][1:])] + rows[1:]),
+        ("payload content_sha256 differs",
+         lambda rows: [(rows[0][0], "f" * 64, *rows[0][2:])] + rows[1:]),
+    ],
+)
+def test_payload_pass_disagreeing_with_metadata_is_refused(
+    tmp_path, store_module, snapshots_module, label, rewrite
+) -> None:
+    """zip() silently stops at the shorter sequence. A length guard must run
+    first, and the per-row alignment must be checked too -- otherwise a
+    replay could return fewer bars than the snapshot attests to, with no
+    error at all."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="f1")
+    outcome = "not-set"
+    connection = store._connect()
+    try:
+        rewriting = _RewritingConnection(
+            connection,
+            target_sql=snapshots_module._SELECT_SNAPSHOT_PAYLOADS_SQL,
+            rewrite=rewrite,
+        )
+        with pytest.raises(snapshots_module.SnapshotStateCorruption) as excinfo:
+            outcome = snapshots_module.replay_snapshot(
+                rewriting, snapshot_id=result.snapshot_id
+            )
+        assert outcome == "not-set", "a partial replay escaped"
+        assert connection.in_transaction is False
+        message = str(excinfo.value)
+        assert "schema_version" not in message and "{" not in message
+        # The connection is still usable afterwards.
+        assert len(snapshots_module.replay_snapshot(
+            connection, snapshot_id=result.snapshot_id)) == 3
+    finally:
+        connection.close()
+
+
+# --- F2: limit + 1 on the cursor path ------------------------------------
+
+
+def _many_snapshots(store_module, snapshots_module, tmp_path, *, count, name):
+    """`count` distinct materializations of the SAME request, so listing has
+    a real multi-page dataset to paginate."""
+    store, first = _one_snapshot(store_module, snapshots_module, tmp_path, openings=2, name=name)
+    market_bar = importlib.import_module("scripts.trading_lab.market_bar")
+    ingested = INGEST_BASE + timedelta(days=800)
+    ids = {first.snapshot_id}
+    connection = store._connect()
+    try:
+        for revision in range(1, count):
+            later = ingested + timedelta(hours=revision)
+            connection.execute(
+                "INSERT INTO market_ingestions VALUES (?, 's', 'coinbase_exchange_rest', "
+                "'BTC-USD', '1h', ?, ?, ?, '{}', 2)",
+                (f"r{revision}", _iso(later), _iso(later), "a" * 64),
+            )
+            for index in range(2):
+                bar = market_bar.build_market_bar(
+                    asset="BTC/USD", venue="coinbase_exchange", provider="coinbase_exchange",
+                    timeframe="1h",
+                    bar_open_at=GRID_BASE + timedelta(hours=index),
+                    bar_close_at=GRID_BASE + timedelta(hours=index + 1),
+                    available_at=later, ingested_at=later,
+                    open_price=f"{70000 + revision}.12345678901",
+                    high_price="80000.00000000004", low_price="60000.00000000001",
+                    close_price="70000.50000000005", volume="12.345678901234567891",
+                    raw_payload_sha256="a" * 64,
+                )
+                connection.execute(
+                    "INSERT INTO market_bar_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (bar["content_sha256"], f"r{revision}", bar["bar_id"], bar["bar_version_id"],
+                     bar["bar_open_at"], bar["bar_close_at"], bar["available_at"],
+                     bar["ingested_at"], "a" * 64,
+                     json.dumps(bar, sort_keys=True, separators=(",", ":"))),
+                )
+            connection.commit()
+            ids.add(snapshots_module._materialize_snapshot(
+                connection,
+                provider="coinbase_exchange_rest", product_id="BTC-USD", timeframe="1h",
+                range_start=_iso(GRID_BASE), range_end=_iso(GRID_BASE + timedelta(hours=2)),
+                as_of=_iso(ingested + timedelta(days=1)),
+            ).snapshot_id)
+    finally:
+        connection.close()
+    assert len(ids) == count
+    return store, first.snapshot_request_id, sorted(ids)
+
+
+def test_pagination_spans_four_pages_without_omitting_a_manifest(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Seven manifests read two at a time: pages 2 and 3 go through the
+    cursor path AND still have a following page, which is exactly where a
+    missing `limit + 1` omits a manifest while reporting the end of the
+    listing."""
+    store, request_id, expected = _many_snapshots(
+        store_module, snapshots_module, tmp_path, count=7, name="f2"
+    )
+    connection = store._connect()
+    collected: list[str] = []
+    cursors: list[str | None] = []
+    try:
+        cursor = None
+        for page_index in range(4):
+            page = snapshots_module.list_snapshot_manifests(
+                connection, snapshot_request_id=request_id,
+                after_snapshot_id=cursor, limit=2,
+            )
+            ids = [item.snapshot_id for item in page.items]
+            assert ids == sorted(ids)
+            if cursor is not None:
+                assert all(item > cursor for item in ids), (cursor, ids)
+            collected.extend(ids)
+            cursors.append(page.next_after_snapshot_id)
+            cursor = page.next_after_snapshot_id
+            if page_index < 3:
+                assert cursor is not None, f"page {page_index} lost its cursor"
+                assert cursor == ids[-1]
+        assert cursors[3] is None
+    finally:
+        connection.close()
+
+    assert collected == expected
+    assert len(collected) == len(set(collected)) == 7
+
+
+# --- F3: the capture must be one single SQLite view -----------------------
+
+
+def test_capture_reads_manifest_and_entries_in_one_view(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Without an explicit BEGIN every SELECT is its own view, so a writer
+    landing between the manifest and the entries would be half-seen. Proven
+    on a real file database with two connections: while the reader holds its
+    capture, the writer cannot commit, and the reader sees the old state
+    whole."""
+    import threading
+
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="f3")
+    # The sealing trigger exists precisely to forbid this; drop it for the
+    # fixture so a late entry is technically possible to attempt.
+    with sqlite3.connect(store.database_path) as setup:
+        setup.execute("DROP TRIGGER market_snapshot_entries_no_late_insert")
+
+    reader = store._connect()
+    metadata_reached = threading.Event()
+    writer_done = threading.Event()
+    observed: dict[str, object] = {}
+
+    def _writer() -> None:
+        # sqlite3 forbids sharing a connection across threads: this one is
+        # created, used and closed entirely here.
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            metadata_reached.wait(timeout=10)
+            try:
+                writer.execute("BEGIN IMMEDIATE")
+                writer.execute(
+                    "INSERT INTO market_snapshot_entries "
+                    "(snapshot_id, bar_open_at, content_sha256) "
+                    "SELECT ?, '2027-01-01T00:00:00+00:00', content_sha256 "
+                    "FROM market_snapshot_entries WHERE snapshot_id = ? LIMIT 1",
+                    (result.snapshot_id, result.snapshot_id),
+                )
+                writer.commit()
+                observed["writer_committed"] = True
+            except sqlite3.OperationalError as exc:
+                observed["writer_committed"] = False
+                observed["writer_error"] = str(exc)
+                writer.rollback()
+        finally:
+            writer_done.set()
+            writer.close()
+
+    class _PausingConnection(_RewritingConnection):
+        def execute(self, sql, parameters=()):
+            if sql == snapshots_module._SELECT_SNAPSHOT_METADATA_SQL:
+                metadata_reached.set()
+                writer_done.wait(timeout=10)
+            return self._inner.execute(sql, parameters)
+
+    thread = threading.Thread(target=_writer)
+    thread.start()
+    try:
+        loaded = snapshots_module.load_snapshot(
+            _PausingConnection(reader, target_sql="", rewrite=lambda rows: rows),
+            snapshot_id=result.snapshot_id,
+        )
+    finally:
+        metadata_reached.set()
+        thread.join(timeout=10)
+        reader.close()
+
+    # The reader saw the pre-existing state in full, never a torn view.
+    assert loaded.manifest.entry_count == 3
+    assert len(loaded.entries) == 3
+    # And it held a real transaction: the writer could not commit through it.
+    assert observed.get("writer_committed") is False, observed
+
+
+# --- F4: the sqlite3.Error handler must release the read lock -------------
+
+
+class _FailingOnQueryConnection(_RewritingConnection):
+    def execute(self, sql, parameters=()):
+        if sql == self._target_sql:
+            raise sqlite3.OperationalError("injected disk I/O error")
+        return self._inner.execute(sql, parameters)
+
+
+def test_sqlite_failure_during_capture_releases_the_read_lock(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """An sqlite3 failure after BEGIN and after a successful manifest read
+    must still roll back. Otherwise the read transaction stays open and, in
+    journal_mode=delete, blocks every writer's COMMIT until the connection
+    dies."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="f4")
+    reader = store._connect()
+    outcome = "not-set"
+    try:
+        failing = _FailingOnQueryConnection(
+            reader, target_sql=snapshots_module._SELECT_SNAPSHOT_METADATA_SQL,
+            rewrite=lambda rows: rows,
+        )
+        with pytest.raises(snapshots_module.SnapshotReadError) as excinfo:
+            outcome = snapshots_module.load_snapshot(failing, snapshot_id=result.snapshot_id)
+        assert outcome == "not-set"
+        assert type(excinfo.value.__cause__) is sqlite3.OperationalError
+        assert reader.in_transaction is False
+
+        # The lock must be genuinely gone: a second connection writes and commits.
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                ("d" * 64, "coinbase_exchange_rest", b"w", 1, _iso(GRID_BASE)),
+            )
+            writer.commit()
+        finally:
+            writer.close()
+
+        # And the original connection still works.
+        assert len(snapshots_module.load_snapshot(
+            reader, snapshot_id=result.snapshot_id).entries) == 3
+    finally:
+        reader.close()
+
+
+# --- Strict input typing --------------------------------------------------
+
+
+class _StrSubclass(str):
+    pass
+
+
+def test_identifier_validation_rejects_a_str_subclass(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """`type(x) is str`, not isinstance: a str subclass may carry arbitrary
+    behaviour, and an identifier is compared and stored verbatim."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="typ")
+    connection = store._connect()
+    try:
+        assert snapshots_module.load_snapshot(
+            connection, snapshot_id=result.snapshot_id).manifest.entry_count == 3
+        with pytest.raises(snapshots_module.SnapshotInputError):
+            snapshots_module.load_snapshot(
+                connection, snapshot_id=_StrSubclass(result.snapshot_id)
+            )
+        with pytest.raises(snapshots_module.SnapshotInputError):
+            snapshots_module.list_snapshot_manifests(
+                connection, snapshot_request_id=_StrSubclass(result.snapshot_request_id)
+            )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "bad", [True, False, bytearray(b"5"), b"5", 5.0, "5"]
+)
+def test_limit_validation_rejects_anything_that_is_not_exactly_int(
+    snapshots_module, bad
+) -> None:
+    """bool subclasses int, so isinstance would silently accept True as 1."""
+    connection = _ForbiddenBusinessConnection()
+    with pytest.raises(snapshots_module.SnapshotInputError):
+        snapshots_module.list_snapshot_manifests(
+            connection,
+            snapshot_request_id="hyprl-market-snapshot-request-" + "a" * 64,
+            limit=bad,
+        )
+
+
+class _IntSubclass(int):
+    pass
+
+
+def test_limit_validation_rejects_an_int_subclass(snapshots_module) -> None:
+    connection = _ForbiddenBusinessConnection()
+    with pytest.raises(snapshots_module.SnapshotInputError):
+        snapshots_module.list_snapshot_manifests(
+            connection,
+            snapshot_request_id="hyprl-market-snapshot-request-" + "a" * 64,
+            limit=_IntSubclass(10),
+        )
+
+
+class _RaisingOnQueryConnection(_RewritingConnection):
+    """Raises an error the primitive does not model at all."""
+
+    def execute(self, sql, parameters=()):
+        if sql == self._target_sql:
+            raise RuntimeError("injected unexpected failure during capture")
+        return self._inner.execute(sql, parameters)
+
+
+def test_unexpected_error_during_capture_releases_the_read_lock(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """The generic handler must roll back too. An unmodelled error escaping
+    with the read transaction still open would hold the lock against every
+    writer, exactly like the sqlite3 case."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="f4g")
+    reader = store._connect()
+    outcome = "not-set"
+    try:
+        raising = _RaisingOnQueryConnection(
+            reader, target_sql=snapshots_module._SELECT_SNAPSHOT_METADATA_SQL,
+            rewrite=lambda rows: rows,
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            outcome = snapshots_module.load_snapshot(raising, snapshot_id=result.snapshot_id)
+        assert outcome == "not-set"
+        # Propagated unchanged, never disguised as corruption.
+        assert type(excinfo.value) is RuntimeError
+        assert not isinstance(excinfo.value, snapshots_module.MarketSnapshotError)
+        assert reader.in_transaction is False
+
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                ("c" * 64, "coinbase_exchange_rest", b"g", 1, _iso(GRID_BASE)),
+            )
+            writer.commit()
+        finally:
+            writer.close()
+
+        assert len(snapshots_module.load_snapshot(
+            reader, snapshot_id=result.snapshot_id).entries) == 3
+    finally:
+        reader.close()
+
+
+def test_business_error_during_capture_releases_the_read_lock(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """SnapshotNotFound travels through the MarketSnapshotError handler of the
+    capture: it too must leave no transaction and no held lock behind."""
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="f4b")
+    reader = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotNotFound):
+            snapshots_module.load_snapshot(
+                reader, snapshot_id="hyprl-market-snapshot-" + "1" * 64
+            )
+        assert reader.in_transaction is False
+
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                ("b" * 64, "coinbase_exchange_rest", b"b", 1, _iso(GRID_BASE)),
+            )
+            writer.commit()
+        finally:
+            writer.close()
+    finally:
+        reader.close()

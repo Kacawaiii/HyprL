@@ -12,8 +12,9 @@ receipt represents the state of declared knowledge as of `as_of` for each
 bar_open_at in a requested range, and (Phase 1C-C) persists that selection
 as an immutable snapshot. It never modifies market_bar_receipts' rows,
 never copies market data into a snapshot, and never imports network or
-broker code. No public create/load/list API exists yet: the write path is
-the internal primitive _materialize_snapshot.
+broker code. The write path is the internal primitive _materialize_snapshot;
+Phase 1C-D adds the public read surface: load_snapshot,
+list_snapshot_manifests and replay_snapshot.
 
 Phase 1C-B adds three bounds, all fail-closed and all enforced before or
 during the read rather than after it:
@@ -32,6 +33,14 @@ BEGIN IMMEDIATE *before* the selection so the attested rows cannot move
 underneath it, writes entries before the manifest whose insertion seals
 them, and proves rather than assumes idempotence: an existing snapshot_id
 is verified field by field and entry by entry, never trusted.
+
+Phase 1C-D reads it back. Reads run in two phases: one SQLite transaction
+captures every value needed and commits at once, then all decoding, hashing
+and validation happen on the captured copies with no transaction held --
+because in journal_mode=delete a read transaction blocks every writer's
+COMMIT. Nothing is ever repaired, no partial result is ever returned, and a
+replay proves each bar by rebuilding it through MarketBar V1 rather than
+trusting a stored hash.
 """
 
 from __future__ import annotations
@@ -40,9 +49,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 import sqlite3
 
-from scripts.trading_lab.market_bar import TIMEFRAME_DURATIONS
+from scripts.trading_lab.market_bar import (
+    SCHEMA_VERSION as MARKET_BAR_SCHEMA_VERSION,
+    TIMEFRAME_DURATIONS,
+    build_market_bar,
+)
 
 
 SNAPSHOT_REQUEST_SCHEMA_VERSION = "trading-lab.market-snapshot-request.v1"
@@ -873,3 +887,639 @@ def build_snapshot_id(*, snapshot_request_id: str, entries_content_hash: str) ->
         "entries_content_hash": entries_content_hash,
     }
     return f"hyprl-market-snapshot-{_sha256_text(_canonical_json(identity))}"
+
+
+# =========================================================================
+# Phase 1C-D: verified loading, bounded listing and offline replay.
+#
+# Reads are split in two phases on purpose. Phase A captures every value
+# needed under ONE SQLite transaction and commits immediately; phase B does
+# all decoding, hashing and validation on the captured copies, with no
+# transaction open. In journal_mode=delete a read transaction blocks every
+# writer's COMMIT, so holding it across JSON decoding would stall writers
+# for the whole replay instead of just the capture. The split is safe
+# because manifests, entries, receipts and ingestions are all insert-only
+# and sealed: the captured values cannot become stale in a way that matters.
+# =========================================================================
+
+DEFAULT_SNAPSHOT_LIST_LIMIT = 100
+MAX_SNAPSHOT_LIST_LIMIT = 1_000
+SNAPSHOT_LOAD_FETCH_SIZE = 1_000
+# Defence in depth against a sabotaged database, counted in UTF-8 bytes of
+# payload_json. NOT a RAM limit: decoded Python objects cost several times
+# their JSON size, so the peak sits well above this number.
+MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES = 32_000_000
+
+_SNAPSHOT_ID_PATTERN = re.compile(r"^hyprl-market-snapshot-[0-9a-f]{64}$")
+_SNAPSHOT_REQUEST_ID_PATTERN = re.compile(r"^hyprl-market-snapshot-request-[0-9a-f]{64}$")
+_REQUIRED_READ_PRAGMAS = ("foreign_keys", "recursive_triggers")
+
+
+class SnapshotInputError(MarketSnapshotError):
+    """Raised when a public read argument is malformed.
+
+    Rejected before any transaction and before any business query, and never
+    normalized silently: an identifier that differs by case or whitespace is
+    a different string, not the same one written carelessly.
+    """
+
+
+class SnapshotNotFound(MarketSnapshotError):
+    """Raised when no manifest carries the requested snapshot_id.
+
+    Strictly distinct from SnapshotStateCorruption: absent is a legitimate
+    answer, incomplete never is.
+    """
+
+
+class SnapshotUnsupportedVersion(MarketSnapshotError):
+    """Raised when a stored version string is not one this build understands.
+
+    Never upcast, never converted. An old proof stays readable only by a
+    build that declares it can read it; anything else is a refusal.
+    """
+
+
+class SnapshotReadContextError(MarketSnapshotError):
+    """Raised when the connection handed to a read cannot be used as-is."""
+
+
+class SnapshotReplayLimitExceeded(MarketSnapshotError):
+    """Raised when the stored bytes a replay would transfer exceed the budget."""
+
+
+class SnapshotReadError(MarketSnapshotError):
+    """Raised when SQLite fails during the capture phase."""
+
+
+@dataclass(frozen=True)
+class SnapshotManifest:
+    """The immutable header of one materialized snapshot."""
+
+    snapshot_id: str
+    snapshot_request_id: str
+    entries_content_hash: str
+    snapshot_schema_version: str
+    selection_policy_version: str
+    provider: str
+    product_id: str
+    timeframe: str
+    range_start: str
+    range_end: str
+    as_of: str
+    entry_count: int
+
+
+@dataclass(frozen=True)
+class SnapshotEntryRef:
+    """One selected opening and the receipt it points at.
+
+    Deliberately minimal: bar_id, bar_version_id, ingested_at, available_at,
+    the receipt's domain and its payload are all verified during loading but
+    never published here. Exposing them would duplicate the domain across up
+    to 10 000 objects and weld this API to Phase 1B's row shape.
+    """
+
+    bar_open_at: str
+    content_sha256: str
+
+
+@dataclass(frozen=True)
+class LoadedSnapshot:
+    manifest: SnapshotManifest
+    entries: tuple[SnapshotEntryRef, ...]
+
+
+@dataclass(frozen=True)
+class SnapshotManifestPage:
+    items: tuple[SnapshotManifest, ...]
+    next_after_snapshot_id: str | None
+
+
+@dataclass(frozen=True)
+class _CapturedSnapshot:
+    """Raw values copied out of one SQLite view, before any validation."""
+
+    snapshot_id: str
+    manifest_row: tuple
+    metadata_rows: tuple[tuple, ...]
+    payload_rows: tuple[tuple, ...] | None
+
+
+def _require_snapshot_identifier(value: object, *, field: str, pattern: re.Pattern[str]) -> str:
+    if type(value) is not str or pattern.fullmatch(value) is None:
+        raise SnapshotInputError(
+            f"{field} must be a canonical identifier matching {pattern.pattern}"
+        )
+    return value
+
+
+def _require_list_limit(limit: object) -> int:
+    # bool is an int subclass; True would otherwise pass as limit=1.
+    if type(limit) is not int or not (1 <= limit <= MAX_SNAPSHOT_LIST_LIMIT):
+        raise SnapshotInputError(
+            f"limit must be an int between 1 and {MAX_SNAPSHOT_LIST_LIMIT}"
+        )
+    return limit
+
+
+def _payload_byte_length(payload_json: str) -> int:
+    """UTF-8 byte length, never len(str): a character count would under-count
+    every non-ASCII payload and quietly widen the budget."""
+    return len(payload_json.encode("utf-8"))
+
+
+def _require_read_context(connection: sqlite3.Connection) -> None:
+    """Refuse a connection that cannot host a clean read.
+
+    The read path writes nothing, so the PRAGMAs are not needed for its own
+    correctness; they are required as a health check that this connection
+    came from MarketDataStore, so an audit never runs against a handle that
+    could not uphold the store's guarantees.
+    """
+    if connection.in_transaction:
+        raise SnapshotReadContextError(
+            "snapshot reads own their transaction and cannot join an open one"
+        )
+    for pragma in _REQUIRED_READ_PRAGMAS:
+        try:
+            enabled = connection.execute(f"PRAGMA {pragma}").fetchone()[0]
+        except sqlite3.Error as exc:
+            raise SnapshotReadContextError(
+                f"snapshot read context could not be verified: PRAGMA {pragma}"
+            ) from exc
+        if enabled != 1:
+            raise SnapshotReadContextError(
+                f"snapshot read context requires PRAGMA {pragma} = ON; "
+                "open the connection through MarketDataStore"
+            )
+
+
+_SELECT_SNAPSHOT_MANIFEST_SQL = """
+        SELECT snapshot_id, snapshot_request_id, entries_content_hash,
+               snapshot_schema_version, selection_policy_version,
+               provider, product_id, timeframe, range_start, range_end, as_of,
+               entry_count
+        FROM market_snapshot_manifests
+        WHERE snapshot_id = ?
+        """
+
+# LEFT JOIN, never INNER: a missing receipt or ingestion must show up as a
+# NULL to be reported, not vanish from the result set.
+_SELECT_SNAPSHOT_METADATA_SQL = """
+        SELECT e.bar_open_at, e.content_sha256,
+               r.content_sha256, r.bar_open_at, r.bar_id, r.bar_version_id,
+               r.ingested_at, r.available_at,
+               i.ingestion_id, i.provider, i.product_id, i.timeframe
+        FROM market_snapshot_entries e
+        LEFT JOIN market_bar_receipts r ON r.content_sha256 = e.content_sha256
+        LEFT JOIN market_ingestions i ON i.ingestion_id = r.ingestion_id
+        WHERE e.snapshot_id = ?
+        ORDER BY e.bar_open_at ASC
+        """
+
+# Same shape plus the stored byte length, measured by SQLite so the payloads
+# themselves are never transferred just to be counted.
+_SELECT_SNAPSHOT_METADATA_WITH_BYTES_SQL = """
+        SELECT e.bar_open_at, e.content_sha256,
+               r.content_sha256, r.bar_open_at, r.bar_id, r.bar_version_id,
+               r.ingested_at, r.available_at,
+               i.ingestion_id, i.provider, i.product_id, i.timeframe,
+               length(CAST(r.payload_json AS BLOB))
+        FROM market_snapshot_entries e
+        LEFT JOIN market_bar_receipts r ON r.content_sha256 = e.content_sha256
+        LEFT JOIN market_ingestions i ON i.ingestion_id = r.ingestion_id
+        WHERE e.snapshot_id = ?
+        ORDER BY e.bar_open_at ASC
+        """
+
+_SELECT_SNAPSHOT_PAYLOADS_SQL = """
+        SELECT e.bar_open_at, e.content_sha256, r.content_sha256, r.payload_json
+        FROM market_snapshot_entries e
+        LEFT JOIN market_bar_receipts r ON r.content_sha256 = e.content_sha256
+        WHERE e.snapshot_id = ?
+        ORDER BY e.bar_open_at ASC
+        """
+
+_LIST_MANIFESTS_SQL = """
+        SELECT snapshot_id, snapshot_request_id, entries_content_hash,
+               snapshot_schema_version, selection_policy_version,
+               provider, product_id, timeframe, range_start, range_end, as_of,
+               entry_count
+        FROM market_snapshot_manifests
+        WHERE snapshot_request_id = ?
+        ORDER BY snapshot_id ASC
+        LIMIT ?
+        """
+
+_LIST_MANIFESTS_AFTER_SQL = """
+        SELECT snapshot_id, snapshot_request_id, entries_content_hash,
+               snapshot_schema_version, selection_policy_version,
+               provider, product_id, timeframe, range_start, range_end, as_of,
+               entry_count
+        FROM market_snapshot_manifests
+        WHERE snapshot_request_id = ? AND snapshot_id > ?
+        ORDER BY snapshot_id ASC
+        LIMIT ?
+        """
+
+
+def _require_supported_versions(manifest_row: tuple, *, snapshot_id: str) -> None:
+    for label, found, expected in (
+        ("snapshot_schema_version", manifest_row[3], SNAPSHOT_SCHEMA_VERSION),
+        ("selection_policy_version", manifest_row[4], SELECTION_POLICY_VERSION),
+    ):
+        if found != expected:
+            raise SnapshotUnsupportedVersion(
+                f"snapshot {snapshot_id!r} declares {label}={found!r}; this build "
+                f"only reads {expected!r}"
+            )
+
+
+def _fetch_all_bounded(cursor) -> tuple[tuple, ...]:
+    """Drain a cursor in bounded chunks of SNAPSHOT_LOAD_FETCH_SIZE.
+
+    The row count is already bounded by MAX_SNAPSHOT_RANGE_OPENS, but the
+    transfer is still paced rather than materialized in one implicit step --
+    and a guard test greps this module to keep it that way.
+    """
+    rows: list[tuple] = []
+    while True:
+        chunk = cursor.fetchmany(SNAPSHOT_LOAD_FETCH_SIZE)
+        if not chunk:
+            break
+        rows.extend(chunk)
+    return tuple(rows)
+
+
+def _capture_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_id: str,
+    include_payloads: bool,
+) -> _CapturedSnapshot:
+    """Copy everything one snapshot needs out of a single SQLite view.
+
+    Owns its transaction exclusively, uses a plain BEGIN (never IMMEDIATE:
+    a read must not take the write lock), and commits as soon as the values
+    are in memory so the CPU-bound validation happens with no transaction
+    held. All reads share one view, so a manifest can never be paired with
+    entries written after it.
+    """
+    _require_read_context(connection)
+    connection.execute("BEGIN")
+    try:
+        manifest_rows = _fetch_all_bounded(
+            connection.execute(_SELECT_SNAPSHOT_MANIFEST_SQL, (snapshot_id,))
+        )
+        if not manifest_rows:
+            raise SnapshotNotFound(f"no snapshot manifest for snapshot_id={snapshot_id!r}")
+        if len(manifest_rows) > 1:
+            raise SnapshotStateCorruption(
+                f"snapshot_id={snapshot_id!r} matches {len(manifest_rows)} manifests"
+            )
+        manifest_row = tuple(manifest_rows[0])
+        _require_supported_versions(manifest_row, snapshot_id=snapshot_id)
+
+        metadata_sql = (
+            _SELECT_SNAPSHOT_METADATA_WITH_BYTES_SQL
+            if include_payloads
+            else _SELECT_SNAPSHOT_METADATA_SQL
+        )
+        metadata_rows = tuple(
+            tuple(row)
+            for row in _fetch_all_bounded(connection.execute(metadata_sql, (snapshot_id,)))
+        )
+
+        payload_rows: tuple[tuple, ...] | None = None
+        if include_payloads:
+            total_bytes = 0
+            for row in metadata_rows:
+                stored_bytes = row[12]
+                if not isinstance(stored_bytes, int) or stored_bytes < 0:
+                    raise SnapshotStateCorruption(
+                        f"snapshot {snapshot_id!r} has an unreadable payload length for "
+                        f"bar_open_at={row[0]!r}"
+                    )
+                total_bytes += stored_bytes
+                if total_bytes > MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES:
+                    # Refused from the lengths alone: not one payload has been
+                    # transferred to Python at this point.
+                    raise SnapshotReplayLimitExceeded(
+                        f"snapshot {snapshot_id!r} stores at least {total_bytes} bytes, "
+                        f"over the budget of {MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES}"
+                    )
+            payload_rows = tuple(
+                tuple(row)
+                for row in _fetch_all_bounded(
+                    connection.execute(_SELECT_SNAPSHOT_PAYLOADS_SQL, (snapshot_id,))
+                )
+            )
+        connection.commit()
+    except MarketSnapshotError:
+        connection.rollback()
+        raise
+    except sqlite3.Error as exc:
+        connection.rollback()
+        raise SnapshotReadError(
+            f"snapshot capture failed for snapshot_id={snapshot_id!r}"
+        ) from exc
+    except Exception:
+        connection.rollback()
+        raise
+
+    return _CapturedSnapshot(
+        snapshot_id=snapshot_id,
+        manifest_row=manifest_row,
+        metadata_rows=metadata_rows,
+        payload_rows=payload_rows,
+    )
+
+
+def _validate_captured_snapshot(
+    captured: _CapturedSnapshot,
+) -> tuple[SnapshotManifest, tuple[SnapshotEntryRef, ...], tuple[str, ...]]:
+    """Validate a captured snapshot end to end, with no transaction open.
+
+    Returns the public manifest, the public entry references, and the
+    internal bar_version_id list the replay needs. Every failure is
+    fail-closed and nothing partial is ever handed back.
+    """
+    row = captured.manifest_row
+    snapshot_id = captured.snapshot_id
+    manifest = SnapshotManifest(
+        snapshot_id=row[0], snapshot_request_id=row[1], entries_content_hash=row[2],
+        snapshot_schema_version=row[3], selection_policy_version=row[4],
+        provider=row[5], product_id=row[6], timeframe=row[7],
+        range_start=row[8], range_end=row[9], as_of=row[10], entry_count=row[11],
+    )
+    if not isinstance(manifest.entry_count, int) or not (
+        0 <= manifest.entry_count <= MAX_SNAPSHOT_RANGE_OPENS
+    ):
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} declares entry_count={manifest.entry_count!r}"
+        )
+    if len(captured.metadata_rows) != manifest.entry_count:
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} declares {manifest.entry_count} entries but "
+            f"stores {len(captured.metadata_rows)}"
+        )
+
+    selected: list[SelectedSnapshotReceipt] = []
+    entries: list[SnapshotEntryRef] = []
+    previous_open: str | None = None
+    for meta in captured.metadata_rows:
+        (bar_open_at, content_sha256, receipt_sha, receipt_open, bar_id, bar_version_id,
+         ingested_at, available_at, ingestion_id, provider, product_id, timeframe) = meta[:12]
+        if previous_open is not None and not bar_open_at > previous_open:
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} entries are not strictly increasing at "
+                f"bar_open_at={bar_open_at!r}"
+            )
+        previous_open = bar_open_at
+        if receipt_sha is None:
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} references a missing receipt at "
+                f"bar_open_at={bar_open_at!r}"
+            )
+        if ingestion_id is None:
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} references a receipt whose ingestion is "
+                f"missing at bar_open_at={bar_open_at!r}"
+            )
+        if receipt_sha != content_sha256 or receipt_open != bar_open_at:
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} entry at bar_open_at={bar_open_at!r} does not "
+                "match the receipt it points at"
+            )
+        if (provider, product_id, timeframe) != (
+            manifest.provider, manifest.product_id, manifest.timeframe
+        ):
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} references a receipt from another domain at "
+                f"bar_open_at={bar_open_at!r}"
+            )
+        canonical_as_of = _canonical_timestamp(manifest.as_of, field="as_of")
+        for label, value in (("ingested_at", ingested_at), ("available_at", available_at)):
+            if _canonical_timestamp(value, field=label) > canonical_as_of:
+                raise SnapshotStateCorruption(
+                    f"snapshot {snapshot_id!r} references a receipt whose {label} is after "
+                    f"as_of at bar_open_at={bar_open_at!r}"
+                )
+        entries.append(SnapshotEntryRef(bar_open_at=bar_open_at, content_sha256=content_sha256))
+        selected.append(
+            SelectedSnapshotReceipt(
+                bar_open_at=bar_open_at, content_sha256=content_sha256, bar_id=bar_id,
+                bar_version_id=bar_version_id, ingested_at=ingested_at,
+                available_at=available_at,
+            )
+        )
+
+    # Identities are recomputed with the module's own builders, never
+    # reimplemented, and never trusted from the stored columns.
+    try:
+        entries_content_hash = build_entries_content_hash(tuple(selected))
+        snapshot_request_id = build_snapshot_request_id(
+            provider=manifest.provider, product_id=manifest.product_id,
+            timeframe=manifest.timeframe, range_start=manifest.range_start,
+            range_end=manifest.range_end, as_of=manifest.as_of,
+            selection_policy_version=manifest.selection_policy_version,
+        )
+        recomputed_snapshot_id = build_snapshot_id(
+            snapshot_request_id=snapshot_request_id,
+            entries_content_hash=entries_content_hash,
+        )
+    except MarketSnapshotError as exc:
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} stores parameters its own identities cannot be "
+            "recomputed from"
+        ) from exc
+    if entries_content_hash != manifest.entries_content_hash:
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} entries_content_hash does not describe its entries"
+        )
+    if snapshot_request_id != manifest.snapshot_request_id:
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} snapshot_request_id does not match its parameters"
+        )
+    if recomputed_snapshot_id != manifest.snapshot_id or recomputed_snapshot_id != snapshot_id:
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} identity does not match its own content"
+        )
+    return manifest, tuple(entries), tuple(item.content_sha256 for item in selected)
+
+
+def _decode_market_bar(payload_json: str, *, expected_content_sha256: str) -> dict[str, object]:
+    """Decode one stored MarketBar and prove it is the bar it claims to be.
+
+    Rebuilt through market_bar's own builder rather than field-checked here:
+    a payload whose hash was recomputed after tampering would satisfy a
+    hash-only check, but cannot survive MarketBar V1 rebuilding it from its
+    own declared fields.
+    """
+    try:
+        record = json.loads(payload_json)
+    except (TypeError, ValueError) as exc:
+        raise SnapshotStateCorruption(
+            f"stored payload for content_sha256={expected_content_sha256!r} is not valid JSON"
+        ) from exc
+    if not isinstance(record, dict):
+        raise SnapshotStateCorruption(
+            f"stored payload for content_sha256={expected_content_sha256!r} is not an object"
+        )
+    declared_version = record.get("schema_version")
+    if declared_version != MARKET_BAR_SCHEMA_VERSION:
+        raise SnapshotUnsupportedVersion(
+            f"stored bar declares schema_version={declared_version!r}; this build only "
+            f"reads {MARKET_BAR_SCHEMA_VERSION!r}"
+        )
+    unsigned = {key: value for key, value in record.items() if key != "content_sha256"}
+    if _sha256_text(_canonical_json(unsigned)) != record.get("content_sha256"):
+        raise SnapshotStateCorruption(
+            f"stored payload does not hash to its own content_sha256 "
+            f"({expected_content_sha256!r})"
+        )
+    if record.get("content_sha256") != expected_content_sha256:
+        raise SnapshotStateCorruption(
+            f"stored payload hashes to {record.get('content_sha256')!r}, not the referenced "
+            f"{expected_content_sha256!r}"
+        )
+    try:
+        rebuilt = build_market_bar(
+            asset=record["asset"], venue=record["venue"], provider=record["provider"],
+            timeframe=record["timeframe"], bar_open_at=record["bar_open_at"],
+            bar_close_at=record["bar_close_at"], available_at=record["available_at"],
+            ingested_at=record["ingested_at"], open_price=record["open"],
+            high_price=record["high"], low_price=record["low"], close_price=record["close"],
+            volume=record["volume"], raw_payload_sha256=record["raw_payload_sha256"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SnapshotStateCorruption(
+            f"stored payload for content_sha256={expected_content_sha256!r} is not a valid "
+            "MarketBar V1 record"
+        ) from exc
+    if rebuilt != record:
+        raise SnapshotStateCorruption(
+            f"stored payload for content_sha256={expected_content_sha256!r} does not match "
+            "the MarketBar its own fields rebuild"
+        )
+    return record
+
+
+def load_snapshot(connection: sqlite3.Connection, *, snapshot_id: str) -> LoadedSnapshot:
+    """Load one snapshot's manifest and entry references, fully verified.
+
+    Reads no payload at all -- a load is a proof of structure, not a replay.
+    Absent, empty and corrupted are three different answers: SnapshotNotFound,
+    an empty entries tuple, and SnapshotStateCorruption respectively. Nothing
+    is ever repaired, and nothing is written.
+    """
+    _require_snapshot_identifier(snapshot_id, field="snapshot_id", pattern=_SNAPSHOT_ID_PATTERN)
+    captured = _capture_snapshot(connection, snapshot_id=snapshot_id, include_payloads=False)
+    manifest, entries, _ = _validate_captured_snapshot(captured)
+    return LoadedSnapshot(manifest=manifest, entries=entries)
+
+
+def list_snapshot_manifests(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_request_id: str,
+    after_snapshot_id: str | None = None,
+    limit: int = DEFAULT_SNAPSHOT_LIST_LIMIT,
+) -> SnapshotManifestPage:
+    """List the materializations of one request, one keyset page at a time.
+
+    Ordered lexicographically by snapshot_id -- never chronologically, since
+    no local clock exists and every materialization of a request shares the
+    same as_of. A page is a consistent, ordered extract; paginating across
+    several calls does NOT guarantee exhaustiveness while new snapshots are
+    being written, because snapshot_id is a hash and therefore not monotonic:
+    a new materialization sorting below the cursor already consumed will not
+    be seen. No OFFSET, no rowid, no notion of latest.
+    """
+    _require_snapshot_identifier(
+        snapshot_request_id, field="snapshot_request_id",
+        pattern=_SNAPSHOT_REQUEST_ID_PATTERN,
+    )
+    if after_snapshot_id is not None:
+        _require_snapshot_identifier(
+            after_snapshot_id, field="after_snapshot_id", pattern=_SNAPSHOT_ID_PATTERN
+        )
+    bounded_limit = _require_list_limit(limit)
+    _require_read_context(connection)
+
+    if after_snapshot_id is None:
+        sql, parameters = _LIST_MANIFESTS_SQL, (snapshot_request_id, bounded_limit + 1)
+    else:
+        sql, parameters = (
+            _LIST_MANIFESTS_AFTER_SQL,
+            (snapshot_request_id, after_snapshot_id, bounded_limit + 1),
+        )
+    cursor = connection.execute(sql, parameters)
+    try:
+        rows = _fetch_all_bounded(cursor)
+    except sqlite3.Error as exc:
+        raise SnapshotReadError(
+            f"snapshot listing failed for snapshot_request_id={snapshot_request_id!r}"
+        ) from exc
+    finally:
+        cursor.close()
+
+    has_more = len(rows) > bounded_limit
+    page_rows = rows[:bounded_limit]
+    items = tuple(
+        SnapshotManifest(
+            snapshot_id=row[0], snapshot_request_id=row[1], entries_content_hash=row[2],
+            snapshot_schema_version=row[3], selection_policy_version=row[4],
+            provider=row[5], product_id=row[6], timeframe=row[7],
+            range_start=row[8], range_end=row[9], as_of=row[10], entry_count=row[11],
+        )
+        for row in page_rows
+    )
+    return SnapshotManifestPage(
+        items=items,
+        next_after_snapshot_id=items[-1].snapshot_id if has_more and items else None,
+    )
+
+
+def replay_snapshot(
+    connection: sqlite3.Connection, *, snapshot_id: str
+) -> tuple[dict[str, object], ...]:
+    """Rebuild the exact MarketBars a snapshot attests to, entirely offline.
+
+    Nothing is contacted: no network, no provider, no broker. Every bar is
+    decoded from its stored payload and proven against the receipt it is
+    referenced by. Returns only once the LAST bar has been validated -- no
+    generator, no partial tuple, no callback ever sees an unverified bar.
+    """
+    _require_snapshot_identifier(snapshot_id, field="snapshot_id", pattern=_SNAPSHOT_ID_PATTERN)
+    captured = _capture_snapshot(connection, snapshot_id=snapshot_id, include_payloads=True)
+    manifest, entries, _ = _validate_captured_snapshot(captured)
+
+    payload_rows = captured.payload_rows or ()
+    if len(payload_rows) != len(entries):
+        raise SnapshotStateCorruption(
+            f"snapshot {snapshot_id!r} returned {len(payload_rows)} payload rows for "
+            f"{len(entries)} entries"
+        )
+    bars: list[dict[str, object]] = []
+    observed_bytes = 0
+    for entry, payload_row in zip(entries, payload_rows):
+        bar_open_at, content_sha256, receipt_sha, payload_json = payload_row
+        if bar_open_at != entry.bar_open_at or content_sha256 != entry.content_sha256:
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} payload rows do not align with its entries"
+            )
+        if receipt_sha is None or payload_json is None:
+            raise SnapshotStateCorruption(
+                f"snapshot {snapshot_id!r} has no stored payload at "
+                f"bar_open_at={bar_open_at!r}"
+            )
+        observed_bytes += _payload_byte_length(payload_json)
+        if observed_bytes > MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES:
+            raise SnapshotReplayLimitExceeded(
+                f"snapshot {snapshot_id!r} transferred {observed_bytes} bytes, over the "
+                f"budget of {MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES}"
+            )
+        bars.append(_decode_market_bar(payload_json, expected_content_sha256=entry.content_sha256))
+    return tuple(bars)

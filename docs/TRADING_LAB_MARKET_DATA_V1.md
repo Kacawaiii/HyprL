@@ -425,6 +425,73 @@ Une plage valide sans receipt éligible produit un manifest avec `entry_count = 
 
 **F2 reste reporté** dans sa forme générale : `executescript` peut committer des tables avant l'échec ultérieur d'un trigger. 1C-C n'y touche pas, mais ajoute cette assertion locale, qui rend la conséquence détectable pour ses propres objets — une table de snapshot debout sans ses triggers d'immutabilité serait bien pire qu'en Phase 1B.
 
+## Lecture, listing et replay des snapshots (Phase 1C-D)
+
+Trois fonctions publiques, aucune dépendance runtime, aucun DDL, aucun index nouveau — le schéma 1C-C suffit.
+
+```python
+load_snapshot(connection, *, snapshot_id) -> LoadedSnapshot
+list_snapshot_manifests(connection, *, snapshot_request_id,
+                        after_snapshot_id=None, limit=100) -> SnapshotManifestPage
+replay_snapshot(connection, *, snapshot_id) -> tuple[dict, ...]
+```
+
+### Dataclasses publiques
+
+`SnapshotManifest` (les 12 champs du manifest) · `SnapshotEntryRef` · `LoadedSnapshot` · `SnapshotManifestPage`. Toutes gelées.
+
+### Format exact des identifiants
+
+Les identifiants publics sont **préfixés** — ce ne sont pas de simples hashs de 64 caractères :
+
+| Identifiant | Forme | Longueur |
+|---|---|---|
+| `snapshot_id` | `hyprl-market-snapshot-` + 64 hex minuscules | **86** |
+| `snapshot_request_id` | `hyprl-market-snapshot-request-` + 64 hex minuscules | **94** |
+| `entries_content_hash` | SHA-256 **nu**, 64 hex minuscules, sans préfixe | **64** |
+
+`snapshot_id` et `snapshot_request_id` sont validés par correspondance **exacte et ancrée** sur ces motifs. Sont rejetés par `SnapshotInputError`, **sans aucune normalisation** : préfixe absent ou incorrect, suffixe de 63 ou 65 caractères, majuscules, caractère non hexadécimal, espace ou saut de ligne en tête ou en fin, `bytes`, et toute valeur dont le type n'est pas exactement `str` (une sous-classe de `str` est refusée). `entries_content_hash` n'est pas un identifiant d'entrée publique : il est recalculé, jamais accepté d'un appelant.
+
+`SnapshotEntryRef` est **délibérément minimal** : `bar_open_at` et `content_sha256`, rien d'autre. Le `bar_id`, le `bar_version_id`, `ingested_at`, `available_at`, le domaine du receipt et le `payload_json` sont tous **vérifiés** pendant le chargement mais **jamais publiés** — les exposer dupliquerait le domaine sur jusqu'à 10 000 objets et souderait cette API à la forme des lignes Phase 1B.
+
+### Absent, vide, corrompu : trois réponses distinctes
+
+`SnapshotNotFound` quand aucun manifest ne porte cet identifiant · un `LoadedSnapshot` avec `entries == ()` pour un snapshot **légitimement vide** · `SnapshotStateCorruption` quand le manifest existe mais que son état est incomplet ou incohérent. Un snapshot vide signifie **uniquement** « aucun receipt éligible à cet `as_of` », jamais un gap fournisseur confirmé. **Aucune réparation, aucune écriture, aucun réseau, aucun broker.**
+
+### Validation content-addressed
+
+Le chargement recalcule les **trois identités** avec les builders existants (`build_entries_content_hash`, `build_snapshot_request_id`, `build_snapshot_id`) et les compare au manifest **et** à l'identifiant demandé. Le replay va plus loin : chaque payload est rehashé, puis **reconstruit par `build_market_bar` lui-même** et comparé au stocké. Un payload altéré **puis rehashé** satisferait un contrôle de hash seul ; il ne survit pas à la reconstruction par MarketBar V1.
+
+### LEFT JOIN obligatoire
+
+Les jointures entries → receipts → ingestions sont **externes**. Mesuré : sur un snapshot de 3 entries dont le receipt d'une barre a été supprimé, une `INNER JOIN` renvoie 2 lignes — la référence brisée **disparaît silencieusement** et `entry_count` reste correct. La `LEFT JOIN` la rend visible comme `NULL`, et le chargement lève `SnapshotStateCorruption`.
+
+### Transaction : capture seulement, validation après COMMIT
+
+En `journal_mode=delete`, une transaction de lecture **empêche tout writer de committer**. La lecture est donc scindée : **phase A** capture sous une seule vue SQLite (manifest, métadonnées, éventuellement payloads) puis committe immédiatement ; **phase B** décode, rehashe et valide sur les copies, **sans transaction ouverte**. C'est sûr parce que manifests, entries, receipts et ingestions sont insert-only et scellés.
+
+Observé à 10 000 barres, **sans instrumentation mémoire** : capture ≈ **50 ms**, replay total ≈ **761 ms**, soit une transaction tenue sur ≈ **6,6 %** du replay. `BEGIN` simple, jamais `BEGIN IMMEDIATE` — une lecture ne prend pas le verrou d'écriture. Une connexion déjà en transaction est refusée (`SnapshotReadContextError`).
+
+⚠️ **Ce sont des observations de benchmark sur une machine donnée, pas un SLA.** Sous `tracemalloc` — nécessaire pour mesurer le pic mémoire mais qui perturbe fortement le temps — les mêmes appels donnent ≈ 130 ms de capture pour ≈ 4 432 ms de total, soit une **inflation d'environ ×5,8 du temps total**. Les deux jeux de chiffres ne sont pas comparables entre eux, et une mesure de latence ne doit jamais être prise sous `tracemalloc`.
+
+⚠️ **Ceci ne résout pas complètement la limitation** : la capture bloque encore brièvement un writer. La gate `journal_mode`/WAL reste **séparée et non traitée ici**.
+
+### Aucun résultat partiel
+
+`replay_snapshot` ne retourne qu'après validation de la **dernière** barre. Aucun générateur, aucun `yield`, aucun callback ne voit une barre non vérifiée. **Aucune API de streaming en V1** — un futur itérateur devra être une fonction distincte, pas une modification de celle-ci.
+
+### Budget de payload
+
+`MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES = 32 000 000`, compté en **octets UTF-8**, jamais en `len(str)`. Préflighté via `length(CAST(payload_json AS BLOB))` : SQLite compte les octets **sans transférer les payloads**, et un dépassement lève `SnapshotReplayLimitExceeded` avant que la requête de payload ne soit exécutée.
+
+⚠️ **Ce budget n'est pas une limite de RAM** : les objets Python décodés coûtent plusieurs fois la taille de leur JSON. C'est une **défense en profondeur contre une base sabotée**, pas une protection contre des données légitimes : un `payload_json` légitime est structurellement borné à **1 417 octets** (jeu de champs MarketBar figé, décimales bornées), soit ~14 Mo au pire cas légal absolu de 10 000 entries.
+
+### Pagination
+
+Contrat public exact : **« Une page est cohérente et ordonnée lexicalement. Une pagination effectuée par plusieurs appels ne garantit pas l'exhaustivité en présence de nouvelles matérialisations concurrentes, car `snapshot_id` est un hash non monotone. »**
+
+Keyset strict (`snapshot_id > curseur`), `LIMIT limit + 1` pour détecter la page suivante, curseur émis uniquement si une ligne surnuméraire existe. **Aucun `OFFSET`, aucun `rowid`, aucune notion de `latest` ou `newest`, aucun tri chronologique** — aucune horloge locale n'existe et toutes les matérialisations d'une même demande partagent le même `as_of`.
+
 ## Gate commercial
 
 Avant affichage dans un cockpit accessible à des tiers :
