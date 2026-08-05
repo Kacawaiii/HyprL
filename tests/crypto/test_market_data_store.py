@@ -1645,3 +1645,505 @@ def test_existence_check_and_first_seen_use_indexed_access(
             _assert_indexed_search(
                 plan, alias="r", index_name="market_bar_receipts_open_lookup"
             )
+
+
+# =========================================================================
+# Phase 1C-C: write-context PRAGMAs, snapshot schema, and its structural
+# verification. The snapshot MATERIALIZATION primitive itself lives in
+# market_snapshots.py and is tested there; this file owns the schema.
+# =========================================================================
+
+
+SNAPSHOT_MANIFESTS = "market_snapshot_manifests"
+SNAPSHOT_ENTRIES = "market_snapshot_entries"
+
+
+def _seed_snapshot(database: Path, *, snapshot_id: str, content_sha256: str, bar_open_at: str,
+                   entries_content_hash: str = "e" * 64, snapshot_request_id: str = "req-1") -> None:
+    """Seed one snapshot directly (entries first, manifest last -- the order
+    the sealing trigger imposes), bypassing the materialization primitive so
+    the SCHEMA can be tested independently of it."""
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA recursive_triggers = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            f"INSERT INTO {SNAPSHOT_ENTRIES} (snapshot_id, bar_open_at, content_sha256) VALUES (?, ?, ?)",
+            (snapshot_id, bar_open_at, content_sha256),
+        )
+        connection.execute(
+            f"INSERT INTO {SNAPSHOT_MANIFESTS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                snapshot_id, snapshot_request_id, entries_content_hash,
+                "trading-lab.market-snapshot.v1",
+                "trading-lab.market-snapshot-selection.v1",
+                "coinbase_exchange_rest", "BTC-USD", "1h",
+                "2026-08-02T00:00:00+00:00", "2026-08-03T00:00:00+00:00",
+                "2026-08-03T00:00:00+00:00", 1,
+            ),
+        )
+        connection.commit()
+
+
+def _one_receipt(database: Path) -> tuple[str, str]:
+    with sqlite3.connect(database) as connection:
+        return connection.execute(
+            "SELECT content_sha256, bar_open_at FROM market_bar_receipts LIMIT 1"
+        ).fetchone()
+
+
+def _insert_only_tables(database: Path) -> set[str]:
+    """Discover insert-only tables from the schema itself, so a table added
+    later without its protections cannot silently escape this test."""
+    with sqlite3.connect(database) as connection:
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT tbl_name FROM sqlite_master WHERE type = 'trigger' "
+                "AND name LIKE '%_no_delete'"
+            )
+        }
+
+
+def _table_rows(database: Path, table: str) -> list[tuple]:
+    with sqlite3.connect(database) as connection:
+        return connection.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall()
+
+
+# --- 1C-C: write-context PRAGMAs (TM-1 / TM-2) ---------------------------
+
+
+def test_store_connection_enables_foreign_keys_and_recursive_triggers(
+    tmp_path, store_module
+) -> None:
+    store = _store(store_module, tmp_path)
+
+    connection = store._connect()
+    try:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert connection.execute("PRAGMA recursive_triggers").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+def test_insert_or_replace_cannot_bypass_any_append_only_trigger(
+    tmp_path, store_module
+) -> None:
+    """Without recursive_triggers, INSERT OR REPLACE deletes the conflicting
+    row WITHOUT firing the BEFORE DELETE trigger, silently rewriting a row
+    the schema calls immutable. Every insert-only table must refuse it, and
+    the original row must survive byte for byte."""
+    store = _store(store_module, tmp_path)
+    # A gap-producing ingestion so market_data_gap_events also holds a row:
+    # every insert-only table must be covered, not just the convenient ones.
+    upper = GAP_BASE + timedelta(hours=3)
+    _ingest(
+        store,
+        _candles_payload([_bar(_iso(GAP_BASE)), _bar(_iso(upper))]),
+        available_at=_iso(upper + timedelta(hours=1, minutes=5)),
+        ingested_at=_iso(upper + timedelta(hours=1, minutes=6)),
+    )
+    content_sha256, bar_open_at = _one_receipt(store.database_path)
+    _seed_snapshot(
+        store.database_path,
+        snapshot_id="snap-replace",
+        content_sha256=content_sha256,
+        bar_open_at=bar_open_at,
+    )
+
+    tables = _insert_only_tables(store.database_path)
+    assert {SNAPSHOT_MANIFESTS, SNAPSHOT_ENTRIES}.issubset(tables)
+    assert len(tables) >= 6
+
+    for table in sorted(tables):
+        before = _table_rows(store.database_path, table)
+        assert before, f"{table} needs a row for this test to mean anything"
+        with sqlite3.connect(store.database_path) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA recursive_triggers = ON")
+            columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
+            primary_key = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})") if row[5]
+            }
+            hijacked = []
+            for column, value in zip(columns, before[0]):
+                if column in primary_key:
+                    hijacked.append(value)
+                elif isinstance(value, int):
+                    hijacked.append(value + 4242)
+                elif isinstance(value, bytes):
+                    hijacked.append(b"hijacked")
+                else:
+                    hijacked.append("hijacked")
+            placeholders = ", ".join("?" for _ in columns)
+            with pytest.raises(sqlite3.DatabaseError):
+                connection.execute(
+                    f"INSERT OR REPLACE INTO {table} VALUES ({placeholders})", hijacked
+                )
+            connection.rollback()
+
+        assert _table_rows(store.database_path, table) == before, f"{table} was rewritten"
+
+
+# --- 1C-C: snapshot schema ------------------------------------------------
+
+
+def _table_info(database: Path, table: str) -> list[tuple]:
+    with sqlite3.connect(database) as connection:
+        return [
+            (row[1], row[2], row[3], row[5])  # name, type, notnull, pk
+            for row in connection.execute(f"PRAGMA table_info({table})")
+        ]
+
+
+def test_snapshot_manifest_table_has_the_exact_expected_structure(
+    tmp_path, store_module
+) -> None:
+    store = _store(store_module, tmp_path)
+
+    assert _table_info(store.database_path, SNAPSHOT_MANIFESTS) == [
+        ("snapshot_id", "TEXT", 1, 1),
+        ("snapshot_request_id", "TEXT", 1, 0),
+        ("entries_content_hash", "TEXT", 1, 0),
+        ("snapshot_schema_version", "TEXT", 1, 0),
+        ("selection_policy_version", "TEXT", 1, 0),
+        ("provider", "TEXT", 1, 0),
+        ("product_id", "TEXT", 1, 0),
+        ("timeframe", "TEXT", 1, 0),
+        ("range_start", "TEXT", 1, 0),
+        ("range_end", "TEXT", 1, 0),
+        ("as_of", "TEXT", 1, 0),
+        ("entry_count", "INTEGER", 1, 0),
+    ]
+
+
+def test_snapshot_entries_table_has_the_exact_expected_structure(
+    tmp_path, store_module
+) -> None:
+    store = _store(store_module, tmp_path)
+
+    assert _table_info(store.database_path, SNAPSHOT_ENTRIES) == [
+        ("snapshot_id", "TEXT", 1, 1),
+        ("bar_open_at", "TEXT", 1, 2),
+        ("content_sha256", "TEXT", 1, 0),
+    ]
+
+
+def test_snapshot_entries_table_is_without_rowid(tmp_path, store_module) -> None:
+    """WITHOUT ROWID removes the rowid entirely, so no ordering or identity
+    can accidentally come to depend on it."""
+    store = _store(store_module, tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        with pytest.raises(sqlite3.OperationalError, match="rowid"):
+            connection.execute(f"SELECT rowid FROM {SNAPSHOT_ENTRIES}").fetchall()
+        connection.execute("SELECT rowid FROM market_bar_receipts").fetchall()
+
+
+def test_snapshot_entries_foreign_keys_are_exact(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        foreign_keys = {
+            (row[2], row[3], row[4])  # target table, from column, to column
+            for row in connection.execute(f"PRAGMA foreign_key_list({SNAPSHOT_ENTRIES})")
+        }
+        (definition,) = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = ?", (SNAPSHOT_ENTRIES,)
+        ).fetchone()
+
+    assert foreign_keys == {
+        (SNAPSHOT_MANIFESTS, "snapshot_id", "snapshot_id"),
+        ("market_bar_receipts", "content_sha256", "content_sha256"),
+    }
+    # The manifest link must be DEFERRABLE INITIALLY DEFERRED: entries are
+    # inserted BEFORE their parent manifest, which seals them. PRAGMA
+    # foreign_key_list exposes no deferrability column, so this is asserted on
+    # the definition, and behaviorally by test_orphan_entries_are_refused_at_commit.
+    assert "DEFERRABLE INITIALLY DEFERRED" in definition
+
+
+def test_snapshot_manifest_has_exactly_one_expected_index(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        explicit = [
+            row[1]
+            for row in connection.execute(f"PRAGMA index_list({SNAPSHOT_MANIFESTS})")
+            if not row[1].startswith("sqlite_autoindex")
+        ]
+        columns = [
+            row[2]
+            for row in connection.execute(
+                "PRAGMA index_info(market_snapshot_manifests_request_lookup)"
+            )
+        ]
+
+    assert explicit == ["market_snapshot_manifests_request_lookup"]
+    assert columns == ["snapshot_request_id", "snapshot_id"]
+
+
+def test_snapshot_tables_have_all_five_immutability_triggers(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        triggers = {
+            row[0]: row[1]
+            for row in connection.execute(
+                "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' "
+                "AND tbl_name LIKE 'market_snapshot%'"
+            )
+        }
+
+    assert triggers == {
+        "market_snapshot_manifests_no_update": SNAPSHOT_MANIFESTS,
+        "market_snapshot_manifests_no_delete": SNAPSHOT_MANIFESTS,
+        "market_snapshot_entries_no_update": SNAPSHOT_ENTRIES,
+        "market_snapshot_entries_no_delete": SNAPSHOT_ENTRIES,
+        "market_snapshot_entries_no_late_insert": SNAPSHOT_ENTRIES,
+    }
+
+
+def test_snapshot_schema_adds_no_unexpected_object(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+
+    assert tables == {
+        "raw_market_payloads",
+        "market_ingestions",
+        "market_bar_receipts",
+        "market_data_gap_events",
+        SNAPSHOT_MANIFESTS,
+        SNAPSHOT_ENTRIES,
+    }
+
+
+# --- 1C-C: sealing and immutability at the schema level -------------------
+
+
+def test_manifest_seals_its_entries_against_late_insertion(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+    _ingest(store, _candles_payload([_bar("2026-08-02T10:00:00+00:00")]))
+    content_sha256, bar_open_at = _one_receipt(store.database_path)
+    _seed_snapshot(
+        store.database_path, snapshot_id="sealed",
+        content_sha256=content_sha256, bar_open_at=bar_open_at,
+    )
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with pytest.raises(sqlite3.DatabaseError, match="sealed by its manifest"):
+            connection.execute(
+                f"INSERT INTO {SNAPSHOT_ENTRIES} VALUES (?, ?, ?)",
+                ("sealed", "2026-08-02T11:00:00+00:00", content_sha256),
+            )
+        connection.rollback()
+
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute(
+            f"SELECT COUNT(*) FROM {SNAPSHOT_ENTRIES} WHERE snapshot_id = 'sealed'"
+        ).fetchone()[0] == 1
+
+
+def test_snapshot_rows_reject_update_and_delete(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+    _ingest(store, _candles_payload([_bar("2026-08-02T10:00:00+00:00")]))
+    content_sha256, bar_open_at = _one_receipt(store.database_path)
+    _seed_snapshot(
+        store.database_path, snapshot_id="frozen",
+        content_sha256=content_sha256, bar_open_at=bar_open_at,
+    )
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        for statement, message in (
+            (f"UPDATE {SNAPSHOT_MANIFESTS} SET entry_count = 99", "manifests is insert-only"),
+            (f"DELETE FROM {SNAPSHOT_MANIFESTS}", "manifests is insert-only"),
+            (f"UPDATE {SNAPSHOT_ENTRIES} SET content_sha256 = 'x'", "entries is insert-only"),
+            (f"DELETE FROM {SNAPSHOT_ENTRIES}", "entries is insert-only"),
+        ):
+            with pytest.raises(sqlite3.DatabaseError, match=message):
+                connection.execute(statement)
+            connection.rollback()
+
+
+def test_snapshot_entry_cannot_reference_an_unknown_receipt(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            connection.execute(
+                f"INSERT INTO {SNAPSHOT_ENTRIES} VALUES (?, ?, ?)",
+                ("ghost", "2026-08-02T10:00:00+00:00", "f" * 64),
+            )
+        connection.rollback()
+
+
+def test_orphan_entries_are_refused_at_commit(tmp_path, store_module) -> None:
+    """The deferred manifest FK is what makes 'entries first' legal; it must
+    still refuse a snapshot whose manifest never arrives."""
+    store = _store(store_module, tmp_path)
+    _ingest(store, _candles_payload([_bar("2026-08-02T10:00:00+00:00")]))
+    content_sha256, bar_open_at = _one_receipt(store.database_path)
+
+    connection = sqlite3.connect(store.database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            f"INSERT INTO {SNAPSHOT_ENTRIES} VALUES (?, ?, ?)",
+            ("orphan", bar_open_at, content_sha256),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            connection.commit()
+        connection.rollback()
+    finally:
+        connection.close()
+
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute(f"SELECT COUNT(*) FROM {SNAPSHOT_ENTRIES}").fetchone()[0] == 0
+
+
+def test_two_entries_for_the_same_opening_are_impossible(tmp_path, store_module) -> None:
+    store = _store(store_module, tmp_path)
+    _ingest(store, _candles_payload([_bar("2026-08-02T10:00:00+00:00")]))
+    content_sha256, bar_open_at = _one_receipt(store.database_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            f"INSERT INTO {SNAPSHOT_ENTRIES} VALUES (?, ?, ?)", ("dup", bar_open_at, content_sha256)
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO {SNAPSHOT_ENTRIES} VALUES (?, ?, ?)",
+                ("dup", bar_open_at, content_sha256),
+            )
+        connection.rollback()
+
+
+# --- 1C-C: structural schema verification (managerial amendment) ---------
+
+
+def _phase_1b_database(tmp_path, store_module) -> Path:
+    """A database carrying the Phase 1B schema only, built by removing the
+    Phase 1C-C objects -- the exact shape a pre-1C-C deployment has."""
+    store = _store(store_module, tmp_path)
+    _ingest(store, _candles_payload([_bar("2026-08-02T10:00:00+00:00")]))
+    with sqlite3.connect(store.database_path) as connection:
+        for name in (
+            "market_snapshot_entries_no_late_insert",
+            "market_snapshot_entries_no_update",
+            "market_snapshot_entries_no_delete",
+            "market_snapshot_manifests_no_update",
+            "market_snapshot_manifests_no_delete",
+        ):
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}")
+        connection.execute("DROP INDEX IF EXISTS market_snapshot_manifests_request_lookup")
+        connection.execute(f"DROP TABLE IF EXISTS {SNAPSHOT_ENTRIES}")
+        connection.execute(f"DROP TABLE IF EXISTS {SNAPSHOT_MANIFESTS}")
+    return store.database_path
+
+
+def test_existing_phase_1b_database_is_migrated_on_reopen(tmp_path, store_module) -> None:
+    database = _phase_1b_database(tmp_path, store_module)
+    before = _counts(database)
+
+    store_module.MarketDataStore(database)
+
+    with sqlite3.connect(database) as connection:
+        names = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master")
+        }
+    assert SNAPSHOT_MANIFESTS in names and SNAPSHOT_ENTRIES in names
+    assert "market_snapshot_entries_no_late_insert" in names
+    assert _counts(database) == before, "historical receipts must be untouched"
+
+
+def test_reopening_is_idempotent_and_creates_no_duplicate_object(
+    tmp_path, store_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    with sqlite3.connect(store.database_path) as connection:
+        first = sorted(row[0] for row in connection.execute("SELECT name FROM sqlite_master"))
+
+    store_module.MarketDataStore(store.database_path)
+    store_module.MarketDataStore(store.database_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        third = sorted(row[0] for row in connection.execute("SELECT name FROM sqlite_master"))
+    assert first == third
+    assert len(third) == len(set(third))
+
+
+def test_a_wrongly_shaped_table_with_the_right_name_is_refused(
+    tmp_path, store_module
+) -> None:
+    """CREATE TABLE IF NOT EXISTS is a no-op against an existing table with
+    the same name and a different structure: initialisation must fail rather
+    than silently accept it."""
+    database = _phase_1b_database(tmp_path, store_module)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            f"CREATE TABLE {SNAPSHOT_MANIFESTS} (snapshot_id TEXT, unexpected TEXT)"
+        )
+
+    with pytest.raises(store_module.MarketDataStoreError, match="schema"):
+        store_module.MarketDataStore(database)
+
+
+def test_a_wrong_index_with_the_right_name_is_refused(tmp_path, store_module) -> None:
+    database = _phase_1b_database(tmp_path, store_module)
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            f"""
+            CREATE TABLE {SNAPSHOT_MANIFESTS} (
+                snapshot_id TEXT PRIMARY KEY NOT NULL,
+                snapshot_request_id TEXT NOT NULL,
+                entries_content_hash TEXT NOT NULL,
+                snapshot_schema_version TEXT NOT NULL,
+                selection_policy_version TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                product_id TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                range_start TEXT NOT NULL,
+                range_end TEXT NOT NULL,
+                as_of TEXT NOT NULL,
+                entry_count INTEGER NOT NULL
+                    CHECK (entry_count >= 0 AND entry_count <= 10000),
+                CHECK (range_end > range_start)
+            );
+            CREATE INDEX market_snapshot_manifests_request_lookup
+                ON {SNAPSHOT_MANIFESTS} (provider);
+            """
+        )
+
+    with pytest.raises(store_module.MarketDataStoreError, match="schema"):
+        store_module.MarketDataStore(database)
+
+
+def test_an_inoperative_trigger_with_the_right_name_is_refused(
+    tmp_path, store_module
+) -> None:
+    """A trigger carrying the expected name but raising nothing would leave
+    the snapshot mutable while every name-based check still passed."""
+    store = _store(store_module, tmp_path)
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("DROP TRIGGER market_snapshot_entries_no_late_insert")
+        connection.execute(
+            f"CREATE TRIGGER market_snapshot_entries_no_late_insert "
+            f"BEFORE INSERT ON {SNAPSHOT_ENTRIES} BEGIN SELECT 1; END"
+        )
+
+    with pytest.raises(store_module.MarketDataStoreError, match="schema"):
+        store_module.MarketDataStore(store.database_path)

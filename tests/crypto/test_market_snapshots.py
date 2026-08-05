@@ -9,6 +9,7 @@ no snapshot manifest is created or persisted anywhere in this file.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib
@@ -2247,3 +2248,857 @@ def test_phase_1b_open_lookup_plan_is_not_hijacked_by_the_new_index(
 
     assert "market_bar_receipts_open_lookup" in plan, plan
     assert SNAPSHOT_DOMAIN_INDEX not in plan, plan
+
+
+# =========================================================================
+# Phase 1C-C: atomic, idempotent and immutable materialization of a causal
+# snapshot. Storage only -- no public create/load/list API exists yet.
+# =========================================================================
+
+
+def _write_connection(store):
+    """A connection carrying the PRAGMAs the write path requires."""
+    return store._connect()
+
+
+def _materialize(snapshots_module, store, **overrides):
+    values = {
+        "provider": "coinbase_exchange_rest",
+        "product_id": "BTC-USD",
+        "timeframe": "1h",
+        "range_start": _iso(GRID_BASE),
+        "range_end": _iso(GRID_BASE + timedelta(hours=3)),
+        "as_of": _iso(INGEST_BASE + timedelta(days=1)),
+    }
+    values.update(overrides)
+    connection = _write_connection(store)
+    try:
+        return snapshots_module._materialize_snapshot(connection, **values)
+    finally:
+        connection.close()
+
+
+def _manifests(database: Path) -> list[tuple]:
+    with sqlite3.connect(database) as connection:
+        return connection.execute(
+            "SELECT snapshot_id, snapshot_request_id, entries_content_hash, "
+            "snapshot_schema_version, selection_policy_version, provider, product_id, "
+            "timeframe, range_start, range_end, as_of, entry_count "
+            "FROM market_snapshot_manifests ORDER BY snapshot_id"
+        ).fetchall()
+
+
+def _entries(database: Path, snapshot_id: str | None = None) -> list[tuple]:
+    with sqlite3.connect(database) as connection:
+        if snapshot_id is None:
+            return connection.execute(
+                "SELECT snapshot_id, bar_open_at, content_sha256 FROM market_snapshot_entries "
+                "ORDER BY snapshot_id, bar_open_at"
+            ).fetchall()
+        return connection.execute(
+            "SELECT bar_open_at, content_sha256 FROM market_snapshot_entries "
+            "WHERE snapshot_id = ? ORDER BY bar_open_at",
+            (snapshot_id,),
+        ).fetchall()
+
+
+def _seed_manifest(database: Path, *, snapshot_id: str, entries: list[tuple], **overrides) -> None:
+    """Persist a snapshot directly (entries first, manifest last) so states
+    the primitive would never itself produce -- a missing entry, an extra
+    one, a wrong hash -- can be built and detected."""
+    values = {
+        "snapshot_request_id": "req",
+        "entries_content_hash": "e" * 64,
+        "snapshot_schema_version": "trading-lab.market-snapshot.v1",
+        "selection_policy_version": "trading-lab.market-snapshot-selection.v1",
+        "provider": "coinbase_exchange_rest",
+        "product_id": "BTC-USD",
+        "timeframe": "1h",
+        "range_start": _iso(GRID_BASE),
+        "range_end": _iso(GRID_BASE + timedelta(hours=3)),
+        "as_of": _iso(INGEST_BASE + timedelta(days=1)),
+        "entry_count": len(entries),
+    }
+    values.update(overrides)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA recursive_triggers = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.executemany(
+            "INSERT INTO market_snapshot_entries (snapshot_id, bar_open_at, content_sha256) "
+            "VALUES (?, ?, ?)",
+            [(snapshot_id, bar_open_at, content_sha256) for bar_open_at, content_sha256 in entries],
+        )
+        connection.execute(
+            "INSERT INTO market_snapshot_manifests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                snapshot_id, values["snapshot_request_id"], values["entries_content_hash"],
+                values["snapshot_schema_version"], values["selection_policy_version"],
+                values["provider"], values["product_id"], values["timeframe"],
+                values["range_start"], values["range_end"], values["as_of"],
+                values["entry_count"],
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _expected_identities(snapshots_module, store, **overrides) -> tuple[str, str, str, tuple]:
+    """Recompute what the primitive must produce, independently of it."""
+    values = {
+        "provider": "coinbase_exchange_rest",
+        "product_id": "BTC-USD",
+        "timeframe": "1h",
+        "range_start": _iso(GRID_BASE),
+        "range_end": _iso(GRID_BASE + timedelta(hours=3)),
+        "as_of": _iso(INGEST_BASE + timedelta(days=1)),
+    }
+    values.update(overrides)
+    with sqlite3.connect(store.database_path) as connection:
+        selected = snapshots_module._select_snapshot_receipts(connection, **values)
+    request_id = snapshots_module.build_snapshot_request_id(**values)
+    content_hash = snapshots_module.build_entries_content_hash(selected)
+    snapshot_id = snapshots_module.build_snapshot_id(
+        snapshot_request_id=request_id, entries_content_hash=content_hash
+    )
+    return snapshot_id, request_id, content_hash, selected
+
+
+# --- 1C-C: write-context guard -------------------------------------------
+
+
+def test_materialization_refuses_a_connection_without_the_write_pragmas(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=1, tag="ctx")
+
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+        with pytest.raises(snapshots_module.SnapshotWriteContextError):
+            snapshots_module._materialize_snapshot(
+                connection,
+                provider="coinbase_exchange_rest",
+                product_id="BTC-USD",
+                timeframe="1h",
+                range_start=_iso(GRID_BASE),
+                range_end=_iso(GRID_BASE + timedelta(hours=3)),
+                as_of=_iso(INGEST_BASE + timedelta(days=1)),
+            )
+
+    assert _manifests(store.database_path) == []
+    assert _entries(store.database_path) == []
+
+
+def test_materialization_refuses_a_connection_already_in_a_transaction(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    connection = _write_connection(store)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        assert connection.in_transaction
+        with pytest.raises(snapshots_module.SnapshotWriteContextError):
+            snapshots_module._materialize_snapshot(
+                connection,
+                provider="coinbase_exchange_rest",
+                product_id="BTC-USD",
+                timeframe="1h",
+                range_start=_iso(GRID_BASE),
+                range_end=_iso(GRID_BASE + timedelta(hours=3)),
+                as_of=_iso(INGEST_BASE + timedelta(days=1)),
+            )
+        connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_write_context_is_checked_before_any_query(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """The guard must fire before the causal selection runs: a bad write
+    context must cost nothing and touch nothing."""
+    class _Probe:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+            self.in_transaction = False
+
+        def execute(self, sql, parameters=()):
+            self.statements.append(sql)
+            if "PRAGMA" in sql.upper():
+                class _R:
+                    def fetchone(self_inner):
+                        return (0,)
+                return _R()
+            pytest.fail(f"a non-PRAGMA statement ran despite a bad write context: {sql!r}")
+
+    probe = _Probe()
+    with pytest.raises(snapshots_module.SnapshotWriteContextError):
+        snapshots_module._materialize_snapshot(
+            probe,
+            provider="coinbase_exchange_rest",
+            product_id="BTC-USD",
+            timeframe="1h",
+            range_start=_iso(GRID_BASE),
+            range_end=_iso(GRID_BASE + timedelta(hours=3)),
+            as_of=_iso(INGEST_BASE + timedelta(days=1)),
+        )
+    assert all("PRAGMA" in sql.upper() for sql in probe.statements), probe.statements
+
+
+# --- 1C-C: creation -------------------------------------------------------
+
+
+def test_materializing_a_snapshot_persists_manifest_and_entries(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=2, tag="create")
+    snapshot_id, request_id, content_hash, selected = _expected_identities(
+        snapshots_module, store
+    )
+
+    result = _materialize(snapshots_module, store)
+
+    assert result.created is True
+    assert result.snapshot_id == snapshot_id
+    assert result.snapshot_request_id == request_id
+    assert result.entries_content_hash == content_hash
+    assert result.entry_count == 3
+    assert _manifests(store.database_path) == [
+        (
+            snapshot_id, request_id, content_hash,
+            snapshots_module.SNAPSHOT_SCHEMA_VERSION,
+            snapshots_module.SELECTION_POLICY_VERSION,
+            "coinbase_exchange_rest", "BTC-USD", "1h",
+            _iso(GRID_BASE), _iso(GRID_BASE + timedelta(hours=3)),
+            _iso(INGEST_BASE + timedelta(days=1)), 3,
+        )
+    ]
+    assert _entries(store.database_path, snapshot_id) == [
+        (entry.bar_open_at, entry.content_sha256) for entry in selected
+    ]
+
+
+def test_materialized_entries_copy_no_market_data(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """An entry is a reference, never a copy: OHLCV, payload_json, bar_id and
+    bar_version_id must live only in the Phase 1B receipt."""
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=2, revisions=1, tag="nocopy")
+
+    _materialize(snapshots_module, store)
+
+    with sqlite3.connect(store.database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(market_snapshot_entries)")
+        }
+    assert columns == {"snapshot_id", "bar_open_at", "content_sha256"}
+
+
+def test_materializing_an_empty_range_persists_a_valid_empty_snapshot(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """An empty snapshot means 'no eligible receipt at this as_of', never a
+    confirmed provider gap."""
+    store = _store(store_module, tmp_path)
+    snapshot_id, _, content_hash, selected = _expected_identities(snapshots_module, store)
+    assert selected == ()
+
+    result = _materialize(snapshots_module, store)
+
+    assert result.created is True
+    assert result.entry_count == 0
+    assert result.entries_content_hash == content_hash
+    assert [row[0] for row in _manifests(store.database_path)] == [snapshot_id]
+    assert _entries(store.database_path) == []
+
+
+def test_materializing_ten_thousand_entries_stays_within_the_range_limit(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    openings = snapshots_module.MAX_SNAPSHOT_RANGE_OPENS
+    _seed_grid(store.database_path, openings=openings, revisions=1, tag="big")
+
+    result = _materialize(
+        snapshots_module, store, range_end=_iso(GRID_BASE + timedelta(hours=openings))
+    )
+
+    assert result.created is True
+    assert result.entry_count == openings
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM market_snapshot_entries"
+        ).fetchone()[0] == openings
+
+
+# --- 1C-C: idempotence ----------------------------------------------------
+
+
+def test_second_materialization_of_the_same_request_is_a_no_op(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=2, tag="idem")
+
+    first = _materialize(snapshots_module, store)
+    manifests_after_first = _manifests(store.database_path)
+    entries_after_first = _entries(store.database_path)
+    second = _materialize(snapshots_module, store)
+
+    assert first.created is True
+    assert second.created is False
+    assert second.snapshot_id == first.snapshot_id
+    assert second.entry_count == first.entry_count
+    assert _manifests(store.database_path) == manifests_after_first
+    assert _entries(store.database_path) == entries_after_first
+
+
+def test_divergent_persisted_manifest_is_detected_as_corruption(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=2, revisions=1, tag="corrupt")
+    snapshot_id, request_id, content_hash, selected = _expected_identities(
+        snapshots_module, store
+    )
+    _seed_manifest(
+        store.database_path,
+        snapshot_id=snapshot_id,
+        entries=[(entry.bar_open_at, entry.content_sha256) for entry in selected],
+        snapshot_request_id=request_id,
+        entries_content_hash=content_hash,
+        timeframe="1d",  # divergent from the request that produced this id
+    )
+
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        _materialize(snapshots_module, store)
+
+
+def test_missing_extra_and_wrong_entries_are_all_detected_as_corruption(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=1, tag="entries")
+    snapshot_id, request_id, content_hash, selected = _expected_identities(
+        snapshots_module, store
+    )
+    exact = [(entry.bar_open_at, entry.content_sha256) for entry in selected]
+    other_sha = [row for row in exact if row[1] != exact[0][1]][0][1]
+
+    corruptions = {
+        "missing entry": exact[:-1],
+        "extra entry": exact + [(_iso(GRID_BASE + timedelta(hours=9)), exact[0][1])],
+        "wrong content_sha256": [(exact[0][0], other_sha)] + exact[1:],
+        "wrong bar_open_at": [(_iso(GRID_BASE + timedelta(hours=7)), exact[0][1])] + exact[1:],
+    }
+    for index, (label, entries) in enumerate(corruptions.items()):
+        database = tmp_path / f"corrupt-{index}.sqlite3"
+        broken = store_module.MarketDataStore(database)
+        _seed_grid(database, openings=3, revisions=1, tag="entries")
+        _seed_manifest(
+            database,
+            snapshot_id=snapshot_id,
+            entries=entries,
+            snapshot_request_id=request_id,
+            entries_content_hash=content_hash,
+            entry_count=len(exact),
+        )
+        with pytest.raises(snapshots_module.SnapshotStateCorruption):
+            _materialize(snapshots_module, broken)
+
+
+def test_wrong_persisted_entries_content_hash_is_detected(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=2, revisions=1, tag="hash")
+    snapshot_id, request_id, _, selected = _expected_identities(snapshots_module, store)
+    _seed_manifest(
+        store.database_path,
+        snapshot_id=snapshot_id,
+        entries=[(entry.bar_open_at, entry.content_sha256) for entry in selected],
+        snapshot_request_id=request_id,
+        entries_content_hash="f" * 64,
+    )
+
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        _materialize(snapshots_module, store)
+
+
+# --- 1C-C: backfill -------------------------------------------------------
+
+
+def test_backfill_produces_a_new_snapshot_and_leaves_the_old_one_intact(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=1, tag="before")
+    first = _materialize(snapshots_module, store)
+    first_entries = _entries(store.database_path, first.snapshot_id)
+
+    # A retrodated revision changes the selected content for the same request.
+    _seed_grid(
+        store.database_path, openings=3, revisions=1, tag="after",
+        ingest_base=INGEST_BASE + timedelta(hours=2),
+    )
+    second = _materialize(snapshots_module, store)
+
+    assert second.created is True
+    assert second.snapshot_id != first.snapshot_id
+    assert second.entries_content_hash != first.entries_content_hash
+    assert second.snapshot_request_id == first.snapshot_request_id
+    assert len(_manifests(store.database_path)) == 2
+    assert _entries(store.database_path, first.snapshot_id) == first_entries
+
+
+# --- 1C-C: atomicity ------------------------------------------------------
+
+
+def test_selection_conflict_persists_nothing(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    for suffix in ("a", "b"):
+        _seed_receipt(
+            store.database_path,
+            bar_open_at=_iso(GRID_BASE),
+            ingested_at=_iso(INGEST_BASE),
+            bar_version_id=f"conflict-{suffix}",
+            tag=f"conf-{suffix}",
+        )
+
+    with pytest.raises(snapshots_module.SnapshotSelectionConflict):
+        _materialize(snapshots_module, store)
+
+    assert _manifests(store.database_path) == []
+    assert _entries(store.database_path) == []
+
+
+def test_eligibility_limit_persists_nothing(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=2, revisions=4, tag="limit")
+    monkeypatch.setattr(snapshots_module, "SNAPSHOT_ELIGIBLE_RECEIPT_QUERY_LIMIT", 3)
+
+    with pytest.raises(snapshots_module.SnapshotEligibilityLimitExceeded):
+        _materialize(snapshots_module, store)
+
+    assert _manifests(store.database_path) == []
+    assert _entries(store.database_path) == []
+
+
+def test_failure_while_sealing_rolls_back_every_entry(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Entries are inserted before the manifest; if the seal never lands, the
+    entries must not survive."""
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=1, tag="rollback")
+
+    class _FailOnManifest:
+        def __init__(self, connection):
+            self._connection = connection
+
+        @property
+        def in_transaction(self):
+            return self._connection.in_transaction
+
+        def execute(self, sql, parameters=()):
+            if "INSERT INTO market_snapshot_manifests" in sql:
+                raise sqlite3.OperationalError("disk I/O error")
+            return self._connection.execute(sql, parameters)
+
+        def executemany(self, sql, seq):
+            return self._connection.executemany(sql, seq)
+
+        def commit(self):
+            return self._connection.commit()
+
+        def rollback(self):
+            return self._connection.rollback()
+
+    connection = _write_connection(store)
+    try:
+        with pytest.raises(snapshots_module.SnapshotPersistenceError):
+            snapshots_module._materialize_snapshot(
+                _FailOnManifest(connection),
+                provider="coinbase_exchange_rest",
+                product_id="BTC-USD",
+                timeframe="1h",
+                range_start=_iso(GRID_BASE),
+                range_end=_iso(GRID_BASE + timedelta(hours=3)),
+                as_of=_iso(INGEST_BASE + timedelta(days=1)),
+            )
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+    assert _manifests(store.database_path) == []
+    assert _entries(store.database_path) == []
+
+
+def test_retry_after_a_rollback_succeeds_cleanly(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    for suffix in ("a", "b"):
+        _seed_receipt(
+            store.database_path,
+            bar_open_at=_iso(GRID_BASE),
+            ingested_at=_iso(INGEST_BASE),
+            bar_version_id=f"retry-{suffix}",
+            tag=f"retry-{suffix}",
+        )
+    with pytest.raises(snapshots_module.SnapshotSelectionConflict):
+        _materialize(snapshots_module, store)
+
+    # A later unambiguous revision resolves the contradiction.
+    _seed_receipt(
+        store.database_path,
+        bar_open_at=_iso(GRID_BASE),
+        ingested_at=_iso(INGEST_BASE + timedelta(hours=1)),
+        bar_version_id="retry-resolved",
+        tag="retry-resolved",
+    )
+    result = _materialize(snapshots_module, store)
+
+    assert result.created is True
+    assert result.entry_count == 1
+    assert len(_manifests(store.database_path)) == 1
+
+
+# --- 1C-C: concurrency ----------------------------------------------------
+
+
+def test_two_writers_creating_the_same_snapshot_produce_one_manifest(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=1, tag="race")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result()
+            for future in [
+                pool.submit(_materialize, snapshots_module, store),
+                pool.submit(_materialize, snapshots_module, store),
+            ]
+        ]
+
+    assert {result.snapshot_id for result in results} == {results[0].snapshot_id}
+    assert sorted(result.created for result in results) == [False, True]
+    assert len(_manifests(store.database_path)) == 1
+    assert len(_entries(store.database_path)) == 3
+
+
+# --- 1C-C: guarantees the first mutation round found untested -------------
+
+
+class _ProxyConnection:
+    """Minimal pass-through the write primitive can drive, so a probe can be
+    injected at a chosen point of its sequence."""
+
+    def __init__(self, connection) -> None:
+        self._connection = connection
+
+    @property
+    def in_transaction(self):
+        return self._connection.in_transaction
+
+    def execute(self, sql, parameters=()):
+        return self._connection.execute(sql, parameters)
+
+    def executemany(self, sql, seq):
+        return self._connection.executemany(sql, seq)
+
+    def commit(self):
+        return self._connection.commit()
+
+    def rollback(self):
+        return self._connection.rollback()
+
+
+def test_write_lock_is_held_before_the_causal_selection_runs(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """BEGIN IMMEDIATE, not BEGIN: the write lock must already be held while
+    the selection reads, otherwise a concurrent backfill landing between the
+    selection and the insert would produce a manifest attesting a state that
+    never existed. Probed from a second connection at that exact moment."""
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=2, revisions=1, tag="lock")
+    observed: list[str] = []
+
+    class _ProbeDuringSelection(_ProxyConnection):
+        def execute(self, sql, parameters=()):
+            if "FROM market_bar_receipts r" in sql and not observed:
+                other = sqlite3.connect(store.database_path, timeout=0.2)
+                try:
+                    other.execute("PRAGMA busy_timeout = 200")
+                    try:
+                        other.execute("BEGIN IMMEDIATE")
+                        observed.append("write lock was NOT held")
+                        other.rollback()
+                    except sqlite3.OperationalError:
+                        observed.append("write lock held")
+                finally:
+                    other.close()
+            return super().execute(sql, parameters)
+
+    connection = _write_connection(store)
+    try:
+        snapshots_module._materialize_snapshot(
+            _ProbeDuringSelection(connection),
+            provider="coinbase_exchange_rest",
+            product_id="BTC-USD",
+            timeframe="1h",
+            range_start=_iso(GRID_BASE),
+            range_end=_iso(GRID_BASE + timedelta(hours=3)),
+            as_of=_iso(INGEST_BASE + timedelta(days=1)),
+        )
+    finally:
+        connection.close()
+
+    assert observed == ["write lock held"], observed
+
+
+def test_snapshot_inserts_never_suppress_a_conflict(snapshots_module) -> None:
+    """Idempotence is proven by verifying the persisted state, never by
+    letting SQLite swallow a conflicting insert: OR IGNORE would turn a real
+    collision into a silent partial write, OR REPLACE would breach
+    immutability."""
+    for sql in (snapshots_module._INSERT_ENTRY_SQL, snapshots_module._INSERT_MANIFEST_SQL):
+        upper = sql.upper()
+        assert "OR IGNORE" not in upper, sql
+        assert "OR REPLACE" not in upper, sql
+        assert "OR FAIL" not in upper, sql
+
+
+def _foreign_receipt(database: Path, *, product_id: str) -> tuple[str, str]:
+    with sqlite3.connect(database) as connection:
+        return connection.execute(
+            "SELECT r.content_sha256, r.bar_open_at FROM market_bar_receipts r "
+            "JOIN market_ingestions i ON i.ingestion_id = r.ingestion_id "
+            "WHERE i.product_id = ? LIMIT 1",
+            (product_id,),
+        ).fetchone()
+
+
+def test_post_insert_validation_rejects_a_receipt_from_another_domain(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """The pre-commit validation exists to catch a selection bug, so it is
+    tested against one: the selection is forced to return a receipt that
+    belongs to a different product."""
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=1, revisions=1, tag="own")
+    _seed_grid(store.database_path, openings=1, revisions=1, tag="foreign", product_id="ETH-USD")
+    content_sha256, bar_open_at = _foreign_receipt(store.database_path, product_id="ETH-USD")
+    intruder = snapshots_module.SelectedSnapshotReceipt(
+        bar_open_at=bar_open_at, content_sha256=content_sha256,
+        bar_id="", bar_version_id="", ingested_at="", available_at="",
+    )
+    monkeypatch.setattr(
+        snapshots_module, "_select_snapshot_receipts", lambda *args, **kwargs: (intruder,)
+    )
+
+    with pytest.raises(snapshots_module.SnapshotPersistenceError):
+        _materialize(snapshots_module, store)
+
+    assert _manifests(store.database_path) == []
+    assert _entries(store.database_path) == []
+
+
+def test_post_insert_validation_rejects_an_entry_whose_opening_does_not_match(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=1, revisions=1, tag="mismatch")
+    with sqlite3.connect(store.database_path) as connection:
+        content_sha256 = connection.execute(
+            "SELECT content_sha256 FROM market_bar_receipts LIMIT 1"
+        ).fetchone()[0]
+    mismatched = snapshots_module.SelectedSnapshotReceipt(
+        bar_open_at=_iso(GRID_BASE + timedelta(hours=2)),  # not this receipt's opening
+        content_sha256=content_sha256,
+        bar_id="", bar_version_id="", ingested_at="", available_at="",
+    )
+    monkeypatch.setattr(
+        snapshots_module, "_select_snapshot_receipts", lambda *args, **kwargs: (mismatched,)
+    )
+
+    with pytest.raises(snapshots_module.SnapshotPersistenceError):
+        _materialize(snapshots_module, store)
+
+    assert _manifests(store.database_path) == []
+    assert _entries(store.database_path) == []
+
+
+# --- 1C-C / F1: rollback coverage of the non-sqlite3 handlers -------------
+
+
+def _write_lock_is_released(database: Path) -> bool:
+    """Prove the BEGIN IMMEDIATE write lock is actually gone, on a real file
+    database. `connection.in_transaction` alone is a Python-side flag: it
+    would not reveal a lock still held against every other writer."""
+    other = sqlite3.connect(database, timeout=0.3)
+    try:
+        other.execute("PRAGMA busy_timeout = 300")
+        try:
+            other.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            return False
+        other.rollback()
+        return True
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize("scenario", ["selection_conflict", "state_corruption"])
+def test_business_failure_rolls_back_and_releases_the_write_lock(
+    tmp_path, store_module, snapshots_module, scenario
+) -> None:
+    """Both business failures travel through `except MarketSnapshotError`,
+    which must roll back before re-raising. Without that rollback the
+    exception still surfaces unchanged and nothing is persisted -- so a test
+    checking only the exception passes -- while the transaction stays open
+    and the write lock is held against every other writer, forever."""
+    store = _store(store_module, tmp_path)
+    select_kwargs = {
+        "range_start": _iso(GRID_BASE),
+        "range_end": _iso(GRID_BASE + timedelta(hours=3)),
+        "as_of": _iso(INGEST_BASE + timedelta(days=1)),
+    }
+
+    if scenario == "selection_conflict":
+        for suffix in ("a", "b"):
+            _seed_receipt(
+                store.database_path,
+                bar_open_at=_iso(GRID_BASE),
+                ingested_at=_iso(INGEST_BASE),
+                bar_version_id=f"f1-conflict-{suffix}",
+                tag=f"f1-conf-{suffix}",
+            )
+        expected_error = snapshots_module.SnapshotSelectionConflict
+    else:
+        _seed_grid(store.database_path, openings=2, revisions=1, tag="f1corrupt")
+        snapshot_id, request_id, content_hash, selected = _expected_identities(
+            snapshots_module, store
+        )
+        _seed_manifest(
+            store.database_path,
+            snapshot_id=snapshot_id,
+            entries=[(entry.bar_open_at, entry.content_sha256) for entry in selected],
+            snapshot_request_id=request_id,
+            entries_content_hash=content_hash,
+            timeframe="1d",  # divergent from the request that produced this id
+        )
+        expected_error = snapshots_module.SnapshotStateCorruption
+
+    manifests_before = _manifests(store.database_path)
+    entries_before = _entries(store.database_path)
+
+    connection = _write_connection(store)
+    try:
+        with pytest.raises(expected_error) as excinfo:
+            snapshots_module._materialize_snapshot(
+                connection,
+                provider="coinbase_exchange_rest",
+                product_id="BTC-USD",
+                timeframe="1h",
+                **select_kwargs,
+            )
+        # The business exception must reach the caller unchanged, never
+        # wrapped into a persistence error.
+        assert type(excinfo.value) is expected_error
+        assert connection.in_transaction is False
+        assert _write_lock_is_released(store.database_path)
+
+        # Nothing partial: the database holds exactly what it held before.
+        assert _manifests(store.database_path) == manifests_before
+        assert _entries(store.database_path) == entries_before
+
+        # The same connection is still usable: it reaches the same business
+        # failure again instead of a write-context refusal.
+        with pytest.raises(expected_error):
+            snapshots_module._materialize_snapshot(
+                connection,
+                provider="coinbase_exchange_rest",
+                product_id="BTC-USD",
+                timeframe="1h",
+                **select_kwargs,
+            )
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_unexpected_error_after_writes_rolls_back_and_releases_the_write_lock(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """An error the primitive does not model at all travels through the
+    generic `except Exception` handler. Injected late, once entries AND the
+    manifest are already written inside the open transaction, so the
+    rollback has real uncommitted state to undo."""
+    store = _store(store_module, tmp_path)
+    _seed_grid(store.database_path, openings=3, revisions=1, tag="f1generic")
+    observed: dict[str, int] = {}
+
+    def _raise_after_writes(connection, **_kwargs):
+        # Read inside the still-open transaction: proves the injection point
+        # is genuinely after the writes, not before them.
+        observed["entries"] = connection.execute(
+            "SELECT COUNT(*) FROM market_snapshot_entries"
+        ).fetchone()[0]
+        observed["manifests"] = connection.execute(
+            "SELECT COUNT(*) FROM market_snapshot_manifests"
+        ).fetchone()[0]
+        raise RuntimeError("injected failure after uncommitted writes")
+
+    monkeypatch.setattr(snapshots_module, "_verify_existing_snapshot", _raise_after_writes)
+
+    connection = _write_connection(store)
+    try:
+        with pytest.raises(RuntimeError) as excinfo:
+            snapshots_module._materialize_snapshot(
+                connection,
+                provider="coinbase_exchange_rest",
+                product_id="BTC-USD",
+                timeframe="1h",
+                range_start=_iso(GRID_BASE),
+                range_end=_iso(GRID_BASE + timedelta(hours=3)),
+                as_of=_iso(INGEST_BASE + timedelta(days=1)),
+            )
+
+        assert observed == {"entries": 3, "manifests": 1}, observed
+        # The generic handler re-raises unchanged: not wrapped, so no cause.
+        assert type(excinfo.value) is RuntimeError
+        assert not isinstance(excinfo.value, snapshots_module.MarketSnapshotError)
+        assert excinfo.value.__cause__ is None
+
+        assert connection.in_transaction is False
+        assert _write_lock_is_released(store.database_path)
+        assert _manifests(store.database_path) == []
+        assert _entries(store.database_path) == []
+
+        # Once the injected fault is gone the very same connection works.
+        monkeypatch.undo()
+        result = snapshots_module._materialize_snapshot(
+            connection,
+            provider="coinbase_exchange_rest",
+            product_id="BTC-USD",
+            timeframe="1h",
+            range_start=_iso(GRID_BASE),
+            range_end=_iso(GRID_BASE + timedelta(hours=3)),
+            as_of=_iso(INGEST_BASE + timedelta(days=1)),
+        )
+        assert result.created is True
+        assert result.entry_count == 3
+    finally:
+        connection.close()

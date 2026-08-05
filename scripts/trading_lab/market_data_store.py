@@ -501,6 +501,166 @@ def _reconcile_gap_events(
     return detected, resolved
 
 
+# --- Phase 1C-C snapshot persistence schema ------------------------------
+#
+# Declared once, here, and used BOTH to create the objects and to verify
+# them: a single source of truth means a drifting expectation is impossible.
+# CREATE ... IF NOT EXISTS is a no-op against an existing object carrying the
+# same name and a different definition, so name-based checks alone would
+# happily accept a manifest table with the wrong columns, an index on the
+# wrong column, or a trigger that raises nothing. Hence _verify_snapshot_schema.
+_SNAPSHOT_SCHEMA_OBJECTS: tuple[tuple[str, str, str], ...] = (
+    (
+        "table",
+        "market_snapshot_manifests",
+        """CREATE TABLE IF NOT EXISTS market_snapshot_manifests (
+                    snapshot_id TEXT PRIMARY KEY NOT NULL,
+                    snapshot_request_id TEXT NOT NULL,
+                    entries_content_hash TEXT NOT NULL,
+                    snapshot_schema_version TEXT NOT NULL,
+                    selection_policy_version TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    product_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    range_start TEXT NOT NULL,
+                    range_end TEXT NOT NULL,
+                    as_of TEXT NOT NULL,
+                    entry_count INTEGER NOT NULL
+                        CHECK (entry_count >= 0 AND entry_count <= 10000),
+                    CHECK (range_end > range_start)
+                )""",
+    ),
+    (
+        "table",
+        "market_snapshot_entries",
+        """CREATE TABLE IF NOT EXISTS market_snapshot_entries (
+                    snapshot_id TEXT NOT NULL,
+                    bar_open_at TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    PRIMARY KEY (snapshot_id, bar_open_at),
+                    FOREIGN KEY (snapshot_id)
+                        REFERENCES market_snapshot_manifests(snapshot_id)
+                        DEFERRABLE INITIALLY DEFERRED,
+                    FOREIGN KEY (content_sha256)
+                        REFERENCES market_bar_receipts(content_sha256)
+                ) WITHOUT ROWID""",
+    ),
+    (
+        "index",
+        "market_snapshot_manifests_request_lookup",
+        """CREATE INDEX IF NOT EXISTS market_snapshot_manifests_request_lookup
+                    ON market_snapshot_manifests (
+                        snapshot_request_id,
+                        snapshot_id
+                    )""",
+    ),
+    (
+        "trigger",
+        "market_snapshot_manifests_no_update",
+        """CREATE TRIGGER IF NOT EXISTS market_snapshot_manifests_no_update
+                BEFORE UPDATE ON market_snapshot_manifests
+                BEGIN
+                    SELECT RAISE(ABORT, 'market_snapshot_manifests is insert-only');
+                END""",
+    ),
+    (
+        "trigger",
+        "market_snapshot_manifests_no_delete",
+        """CREATE TRIGGER IF NOT EXISTS market_snapshot_manifests_no_delete
+                BEFORE DELETE ON market_snapshot_manifests
+                BEGIN
+                    SELECT RAISE(ABORT, 'market_snapshot_manifests is insert-only');
+                END""",
+    ),
+    (
+        "trigger",
+        "market_snapshot_entries_no_update",
+        """CREATE TRIGGER IF NOT EXISTS market_snapshot_entries_no_update
+                BEFORE UPDATE ON market_snapshot_entries
+                BEGIN
+                    SELECT RAISE(ABORT, 'market_snapshot_entries is insert-only');
+                END""",
+    ),
+    (
+        "trigger",
+        "market_snapshot_entries_no_delete",
+        """CREATE TRIGGER IF NOT EXISTS market_snapshot_entries_no_delete
+                BEFORE DELETE ON market_snapshot_entries
+                BEGIN
+                    SELECT RAISE(ABORT, 'market_snapshot_entries is insert-only');
+                END""",
+    ),
+    (
+        # The seal. Entries are inserted BEFORE their manifest (the manifest
+        # FK is DEFERRABLE INITIALLY DEFERRED precisely to allow it), so
+        # during creation this trigger stays silent. Inserting the manifest
+        # last closes the snapshot forever: any later entry finds the
+        # manifest present and is aborted.
+        "trigger",
+        "market_snapshot_entries_no_late_insert",
+        """CREATE TRIGGER IF NOT EXISTS market_snapshot_entries_no_late_insert
+                BEFORE INSERT ON market_snapshot_entries
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM market_snapshot_manifests m
+                    WHERE m.snapshot_id = NEW.snapshot_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'market_snapshot_entries is sealed by its manifest');
+                END""",
+    ),
+)
+
+# (name, type, notnull, pk position) exactly as PRAGMA table_info reports it.
+_SNAPSHOT_TABLE_COLUMNS: dict[str, tuple[tuple[str, str, int, int], ...]] = {
+    "market_snapshot_manifests": (
+        ("snapshot_id", "TEXT", 1, 1),
+        ("snapshot_request_id", "TEXT", 1, 0),
+        ("entries_content_hash", "TEXT", 1, 0),
+        ("snapshot_schema_version", "TEXT", 1, 0),
+        ("selection_policy_version", "TEXT", 1, 0),
+        ("provider", "TEXT", 1, 0),
+        ("product_id", "TEXT", 1, 0),
+        ("timeframe", "TEXT", 1, 0),
+        ("range_start", "TEXT", 1, 0),
+        ("range_end", "TEXT", 1, 0),
+        ("as_of", "TEXT", 1, 0),
+        ("entry_count", "INTEGER", 1, 0),
+    ),
+    "market_snapshot_entries": (
+        ("snapshot_id", "TEXT", 1, 1),
+        ("bar_open_at", "TEXT", 1, 2),
+        ("content_sha256", "TEXT", 1, 0),
+    ),
+}
+
+# {table: {(target_table, from_column, to_column)}}. PRAGMA foreign_key_list
+# exposes no deferrability column, so the DEFERRABLE INITIALLY DEFERRED
+# clause on the manifest link is covered by the normalized DDL comparison
+# above and, behaviorally, by the orphan-entry test.
+_SNAPSHOT_FOREIGN_KEYS: dict[str, set[tuple[str, str, str]]] = {
+    "market_snapshot_manifests": set(),
+    "market_snapshot_entries": {
+        ("market_snapshot_manifests", "snapshot_id", "snapshot_id"),
+        ("market_bar_receipts", "content_sha256", "content_sha256"),
+    },
+}
+
+_SNAPSHOT_INDEX_COLUMNS: dict[str, tuple[str, ...]] = {
+    "market_snapshot_manifests_request_lookup": ("snapshot_request_id", "snapshot_id"),
+}
+
+_SNAPSHOT_SCHEMA_SCRIPT = ";\n".join(sql for _, _, sql in _SNAPSHOT_SCHEMA_OBJECTS) + ";"
+
+
+def _normalized_ddl(sql: str) -> str:
+    """Whitespace- and case-insensitive form of a CREATE statement, with the
+    optional IF NOT EXISTS clause removed so a stored definition can be
+    compared against the one this module would have written."""
+    collapsed = " ".join(str(sql).split()).lower()
+    return collapsed.replace("if not exists ", "")
+
+
 class MarketDataStore:
     """Store captured Coinbase pages and normalized receipts in one transaction.
 
@@ -661,11 +821,136 @@ class MarketDataStore:
                 END;
                 """
             )
+            # Phase 1C-C objects are created as their own script and then
+            # structurally verified: executescript commits statement by
+            # statement, so a failure part-way through must never leave a
+            # snapshot table standing without the triggers that make it
+            # immutable. The verification below is what makes that
+            # detectable instead of silent.
+            try:
+                connection.executescript(_SNAPSHOT_SCHEMA_SCRIPT)
+            except sqlite3.Error as exc:
+                # A pre-existing object carrying one of these names but a
+                # different shape makes CREATE ... IF NOT EXISTS a no-op and
+                # the dependent statements fail. Surface it as a typed schema
+                # error rather than a bare sqlite3 error, and never report a
+                # successful initialisation.
+                raise MarketDataStoreError(
+                    "market data store schema could not be created"
+                ) from exc
+            self._verify_snapshot_schema(connection)
+
+    def _verify_snapshot_schema(self, connection: sqlite3.Connection) -> None:
+        """Fail-closed structural check of the Phase 1C-C objects.
+
+        Deliberately does NOT trust names. CREATE ... IF NOT EXISTS silently
+        does nothing when an object with the same name already exists, so a
+        database carrying a manifest table with the wrong columns, an index
+        on the wrong column, or a trigger that raises nothing would pass
+        every name-based check while offering none of the guarantees. Each
+        object's stored definition is compared, normalized, to the exact
+        statement this module would have written, and the structure is
+        re-read through PRAGMAs as independent corroboration.
+        """
+        stored = {
+            row[0]: (row[1], row[2])
+            for row in connection.execute(
+                "SELECT name, type, sql FROM sqlite_master WHERE name IN "
+                "(" + ", ".join("?" for _ in _SNAPSHOT_SCHEMA_OBJECTS) + ")",
+                tuple(name for _, name, _ in _SNAPSHOT_SCHEMA_OBJECTS),
+            )
+        }
+        for object_type, name, sql in _SNAPSHOT_SCHEMA_OBJECTS:
+            if name not in stored:
+                raise MarketDataStoreError(
+                    f"market data store schema is incomplete: {object_type} {name!r} is missing"
+                )
+            actual_type, actual_sql = stored[name]
+            if actual_type != object_type:
+                raise MarketDataStoreError(
+                    f"market data store schema is invalid: {name!r} is a "
+                    f"{actual_type!r}, expected a {object_type!r}"
+                )
+            if actual_sql is None or _normalized_ddl(actual_sql) != _normalized_ddl(sql):
+                raise MarketDataStoreError(
+                    f"market data store schema is invalid: {object_type} {name!r} "
+                    "does not match the definition this store requires"
+                )
+
+        for table, expected_columns in _SNAPSHOT_TABLE_COLUMNS.items():
+            actual_columns = tuple(
+                (row[1], row[2], row[3], row[5])
+                for row in connection.execute(f"PRAGMA table_info({table})")
+            )
+            if actual_columns != expected_columns:
+                raise MarketDataStoreError(
+                    f"market data store schema is invalid: table {table!r} columns "
+                    f"are {actual_columns!r}, expected {expected_columns!r}"
+                )
+            actual_foreign_keys = {
+                (row[2], row[3], row[4])
+                for row in connection.execute(f"PRAGMA foreign_key_list({table})")
+            }
+            if actual_foreign_keys != _SNAPSHOT_FOREIGN_KEYS[table]:
+                raise MarketDataStoreError(
+                    f"market data store schema is invalid: table {table!r} foreign keys "
+                    f"are {actual_foreign_keys!r}, expected {_SNAPSHOT_FOREIGN_KEYS[table]!r}"
+                )
+
+        # WITHOUT ROWID leaves no rowid at all, so nothing downstream can come
+        # to depend on one. Probe it behaviorally rather than by parsing SQL.
+        try:
+            connection.execute("SELECT rowid FROM market_snapshot_entries LIMIT 0")
+        except sqlite3.OperationalError:
+            pass
+        else:
+            raise MarketDataStoreError(
+                "market data store schema is invalid: market_snapshot_entries must be "
+                "WITHOUT ROWID"
+            )
+
+        explicit_indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(market_snapshot_manifests)")
+            if not row[1].startswith("sqlite_autoindex")
+        } | {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(market_snapshot_entries)")
+            if not row[1].startswith("sqlite_autoindex")
+        }
+        if explicit_indexes != set(_SNAPSHOT_INDEX_COLUMNS):
+            raise MarketDataStoreError(
+                f"market data store schema is invalid: snapshot indexes are "
+                f"{sorted(explicit_indexes)!r}, expected {sorted(_SNAPSHOT_INDEX_COLUMNS)!r}"
+            )
+        for index_name, expected_index_columns in _SNAPSHOT_INDEX_COLUMNS.items():
+            actual_index_columns = tuple(
+                row[2] for row in connection.execute(f"PRAGMA index_info({index_name})")
+            )
+            if actual_index_columns != expected_index_columns:
+                raise MarketDataStoreError(
+                    f"market data store schema is invalid: index {index_name!r} covers "
+                    f"{actual_index_columns!r}, expected {expected_index_columns!r}"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30.0)
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA foreign_keys = ON")
+        # recursive_triggers is NOT optional here. With it OFF (SQLite's
+        # default), INSERT OR REPLACE resolves a conflict by DELETING the
+        # existing row WITHOUT firing the BEFORE DELETE trigger -- silently
+        # rewriting a row this schema calls immutable. The append-only
+        # guarantee of every table below depends on this PRAGMA.
+        connection.execute("PRAGMA recursive_triggers = ON")
+        for pragma in ("foreign_keys", "recursive_triggers"):
+            # Never assume a PRAGMA took effect: they are per-connection and
+            # silently become no-ops inside a transaction.
+            if connection.execute(f"PRAGMA {pragma}").fetchone()[0] != 1:
+                connection.close()
+                raise MarketDataStoreError(
+                    f"market data store connection could not enable PRAGMA {pragma}"
+                )
         return connection
 
     def ingest_coinbase_response(

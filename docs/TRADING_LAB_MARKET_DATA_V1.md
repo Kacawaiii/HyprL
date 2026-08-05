@@ -367,6 +367,64 @@ Migration : `CREATE INDEX IF NOT EXISTS` s'exécute à chaque `MarketDataStore._
 
 Aucune table `market_snapshot_*`, aucune matérialisation, aucune API `create_snapshot` / `load_snapshot` / `list_snapshot_bars`. Une entrée absente d'un snapshot n'est **jamais** un gap fournisseur confirmé : c'est l'absence d'un receipt éligible à cet `as_of`. Les gaps confirmés ont leur propre mécanisme persisté (`market_data_gap_events`), décrit plus haut.
 
+## Persistance des snapshots causaux (Phase 1C-C)
+
+Deux tables append-only stockent un snapshot **immuable et reproductible**. Elles ne contiennent **aucune donnée de marché** : ni OHLCV, ni `payload_json`, ni `bar_id`, ni `bar_version_id`, ni `ingested_at`, ni `available_at`. `content_sha256` — clé primaire de `market_bar_receipts` — est **l'unique référence persistée** vers le receipt Phase 1B ; tout le reste s'obtient par jointure.
+
+### `market_snapshot_manifests`
+
+`snapshot_id` (PK) · `snapshot_request_id` · `entries_content_hash` · `snapshot_schema_version` · `selection_policy_version` · `provider` · `product_id` · `timeframe` · `range_start` · `range_end` · `as_of` · `entry_count` (`CHECK 0 ≤ n ≤ 10 000`, plus `CHECK range_end > range_start`).
+
+**Aucun `created_at`, aucun `materialized_at`, aucune séquence locale.** Aucune logique n'en dépend, et en introduire un recréerait l'ambiguïté de `first_stored_at` décrite plus haut. Un seul index : `market_snapshot_manifests_request_lookup (snapshot_request_id, snapshot_id)`.
+
+### `market_snapshot_entries`
+
+`snapshot_id` · `bar_open_at` · `content_sha256`, `PRIMARY KEY (snapshot_id, bar_open_at)`, `WITHOUT ROWID`. La PK rend deux entries pour la même ouverture structurellement impossibles ; `WITHOUT ROWID` supprime le rowid, donc toute dépendance accidentelle à celui-ci. Deux clés étrangères : vers le manifest (**`DEFERRABLE INITIALLY DEFERRED`**) et vers `market_bar_receipts(content_sha256)`.
+
+### Identités
+
+`snapshot_request_id` = hash des paramètres canoniques (la **demande**) · `entries_content_hash` = hash versionné des couples ordonnés `[bar_open_at, content_sha256]` (le **contenu**) · `snapshot_id` = hash des deux (la **combinaison**). Aucun champ local non déterministe n'y participe. Le `selection_policy_version` persisté est exactement celui qui a servi à construire `snapshot_request_id`.
+
+### Scellement : entries d'abord, manifest en dernier
+
+L'ordre d'écriture est imposé par le schéma. La FK vers le manifest est **différée**, ce qui autorise les entries avant leur parent dans la même transaction ; un trigger `market_snapshot_entries_no_late_insert` refuse toute entry dont le manifest **existe déjà**. L'insertion du manifest **scelle** donc le snapshot définitivement : il ne peut plus jamais être enrichi. Une transaction qui n'insérerait jamais le manifest voit ses entries orphelines refusées **au `COMMIT`** par la FK différée.
+
+S'ajoutent quatre triggers `<table>_no_update` / `<table>_no_delete` selon la convention Phase 1B.
+
+### PRAGMAs obligatoires
+
+`MarketDataStore._connect()` active **et vérifie** `foreign_keys` et `recursive_triggers`, puis échoue si l'un des deux ne vaut pas 1.
+
+`recursive_triggers` n'est pas un détail : sans lui (valeur SQLite par défaut), **`INSERT OR REPLACE` supprime la ligne en conflit sans déclencher le trigger `BEFORE DELETE`**, réécrivant silencieusement une ligne que le schéma déclare immuable. Ce vecteur touchait **toutes** les tables append-only Phase 1B et n'était couvert par aucun test ; il l'est désormais pour chacune d'elles.
+
+La primitive d'écriture vérifie les deux PRAGMAs **avant `BEGIN` et avant toute lecture** : ils sont par connexion, et SQLite les transforme en no-op silencieux à l'intérieur d'une transaction. Une connexion nue reste utilisable pour les primitives read-only, jamais pour l'écriture.
+
+### Transaction
+
+`_materialize_snapshot` est l'**unique propriétaire** de sa transaction. `BEGIN IMMEDIATE` est pris **avant la sélection causale** : sans cela, un backfill concurrent survenant entre la sélection et l'écriture produirait un manifest attestant un état qui n'a jamais existé. Une connexion déjà en transaction est **refusée** (`SnapshotWriteContextError`) — ni savepoint, ni participation à la transaction appelante en V1.
+
+Toute exception provoque un `ROLLBACK` complet : un manifest sans ses entries, ou des entries sans leur manifest, sont des états que cette primitive ne laisse jamais derrière elle. `SnapshotSelectionConflict` et `SnapshotEligibilityLimitExceeded` remontent **inchangées** après le rollback ; les erreurs SQLite sont enveloppées dans `SnapshotPersistenceError` avec chaînage, sans jamais exposer de payload ni la liste des entries.
+
+### Idempotence
+
+Si le `snapshot_id` calculé existe déjà, **aucun `INSERT OR IGNORE`, aucune présomption de succès**. L'état persisté est vérifié intégralement : les onze champs du manifest, `entry_count`, l'ensemble ordonné exact des couples `(bar_open_at, content_sha256)` rechargés par la PK, et le `entries_content_hash` **recalculé depuis les entries réellement stockées**. Tout correspond → no-op, `created=False`, même `snapshot_id`, aucun doublon. Toute divergence → `SnapshotStateCorruption`, rollback, **aucune réparation silencieuse**.
+
+### Backfill
+
+Même demande, contenu différent → `entries_content_hash` différent → `snapshot_id` différent → **nouveau** manifest immuable. L'ancien reste strictement intact et chargeable. Deux manifests coexistent alors sous le même `snapshot_request_id`.
+
+⚠️ **Aucun ordre chronologique n'est récupérable entre plusieurs versions d'une même demande** : il n'existe aucune horloge locale, et `as_of` est identique par définition. Le listage est déterministe (par `snapshot_id`), pas chronologique. Si un tel ordre devient nécessaire, ce sera une décision explicite, pas un effet de bord.
+
+### Snapshot vide
+
+Une plage valide sans receipt éligible produit un manifest avec `entry_count = 0` et le hash de l'enveloppe vide — un état précis et vérifiable, distinct d'une corruption. Il signifie **uniquement** « aucun receipt éligible à cet `as_of` », et **jamais** « gap fournisseur confirmé » : les gaps confirmés ont leur propre mécanisme persisté (`market_data_gap_events`).
+
+### Vérification structurelle du schéma
+
+`CREATE TABLE/INDEX/TRIGGER IF NOT EXISTS` **ne remplace pas** un objet incorrect portant déjà le même nom. Une vérification fail-closed s'exécute donc après la création : définition stockée comparée (normalisée) à celle que ce module aurait écrite, plus contrôle indépendant par `PRAGMA table_info` (colonnes, types, `NOT NULL`, PK), `PRAGMA foreign_key_list`, `PRAGMA index_list`/`index_info`, et sonde comportementale du `WITHOUT ROWID`. Une table mal formée, un index sur la mauvaise colonne ou un trigger inopérant portant le bon nom font **échouer explicitement l'initialisation** — jamais de réparation silencieuse. Une base Phase 1B antérieure, elle, est migrée normalement à la réouverture.
+
+**F2 reste reporté** dans sa forme générale : `executescript` peut committer des tables avant l'échec ultérieur d'un trigger. 1C-C n'y touche pas, mais ajoute cette assertion locale, qui rend la conséquence détectable pour ses propres objets — une table de snapshot debout sans ses triggers d'immutabilité serait bien pire qu'en Phase 1B.
+
 ## Gate commercial
 
 Avant affichage dans un cockpit accessible à des tiers :

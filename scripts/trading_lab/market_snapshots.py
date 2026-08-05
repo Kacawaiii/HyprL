@@ -1,16 +1,19 @@
-"""Phase 1C-A/1C-B: causal eligibility, deterministic revision selection,
-bounded cardinality and a bounded streaming read.
+"""Phase 1C-A/1C-B/1C-C: causal eligibility, deterministic revision
+selection, bounded cardinality, a bounded streaming read, and atomic
+immutable persistence.
 
 Historical causal snapshots based on declared ingestion time (Contract A,
 see scripts/trading_lab/market_data_store.py): `as_of` is a cutoff over the
 DECLARED historical `ingested_at` of already-persisted receipts, never a
 live wall-clock, never a promise of lookahead-free real-time knowledge.
 
-This module only *selects*, deterministically and without side effects,
-which already-persisted MarketBar receipt represents the state of declared
-knowledge as of `as_of` for each bar_open_at in a requested range. It never
-persists a snapshot manifest, never touches market_bar_receipts' rows, and
-never imports network or broker code.
+This module *selects*, deterministically, which already-persisted MarketBar
+receipt represents the state of declared knowledge as of `as_of` for each
+bar_open_at in a requested range, and (Phase 1C-C) persists that selection
+as an immutable snapshot. It never modifies market_bar_receipts' rows,
+never copies market data into a snapshot, and never imports network or
+broker code. No public create/load/list API exists yet: the write path is
+the internal primitive _materialize_snapshot.
 
 Phase 1C-B adds three bounds, all fail-closed and all enforced before or
 during the read rather than after it:
@@ -23,6 +26,12 @@ during the read rather than after it:
 * rows are consumed in bounded chunks and folded into a per-opening
   aggregate, so memory follows the number of openings, not the number of
   revisions behind them.
+
+Phase 1C-C persists the result. The write path owns its transaction, takes
+BEGIN IMMEDIATE *before* the selection so the attested rows cannot move
+underneath it, writes entries before the manifest whose insertion seals
+them, and proves rather than assumes idempotence: an existing snapshot_id
+is verified field by field and entry by entry, never trusted.
 """
 
 from __future__ import annotations
@@ -143,6 +152,47 @@ class SnapshotEligibilityLimitExceeded(MarketSnapshotError):
             f"as_of={as_of!r}; split the range and compute the snapshot in "
             "several parts"
         )
+
+
+class SnapshotPersistenceError(MarketSnapshotError):
+    """Raised when persisting a snapshot fails for a storage-level reason.
+
+    Wraps the underlying sqlite3 error (chained) so a caller never has to
+    catch sqlite3 directly, while the business exceptions above keep
+    propagating unchanged.
+    """
+
+
+class SnapshotStateCorruption(MarketSnapshotError):
+    """Raised when a snapshot_id already exists but its persisted state does
+    not match what the same request and content must produce.
+
+    Never repaired silently: a manifest whose entries drifted is evidence of
+    a real problem, and rewriting it would destroy that evidence -- and is
+    impossible anyway, the rows being immutable.
+    """
+
+
+class SnapshotWriteContextError(MarketSnapshotError):
+    """Raised when the connection handed to the write path cannot uphold the
+    guarantees the snapshot tables depend on.
+
+    Both required PRAGMAs are per-connection and become silent no-ops inside
+    a transaction, so they are verified before anything else happens --
+    before BEGIN, and before a single row is read.
+    """
+
+
+@dataclass(frozen=True)
+class MaterializedSnapshot:
+    """Outcome of one materialization. `created` distinguishes a snapshot
+    this call persisted from an identical one that already existed."""
+
+    snapshot_id: str
+    snapshot_request_id: str
+    entries_content_hash: str
+    entry_count: int
+    created: bool
 
 
 @dataclass(frozen=True)
@@ -464,6 +514,279 @@ def _select_snapshot_receipts(
         )
 
     return tuple(selected)
+
+
+_REQUIRED_WRITE_PRAGMAS = ("foreign_keys", "recursive_triggers")
+
+_INSERT_ENTRY_SQL = """
+        INSERT INTO market_snapshot_entries (snapshot_id, bar_open_at, content_sha256)
+        VALUES (?, ?, ?)
+        """
+
+_INSERT_MANIFEST_SQL = """
+        INSERT INTO market_snapshot_manifests (
+            snapshot_id, snapshot_request_id, entries_content_hash,
+            snapshot_schema_version, selection_policy_version,
+            provider, product_id, timeframe, range_start, range_end, as_of,
+            entry_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+_SELECT_MANIFEST_SQL = """
+        SELECT snapshot_request_id, entries_content_hash, snapshot_schema_version,
+               selection_policy_version, provider, product_id, timeframe,
+               range_start, range_end, as_of, entry_count
+        FROM market_snapshot_manifests
+        WHERE snapshot_id = ?
+        """
+
+_SELECT_ENTRIES_SQL = """
+        SELECT bar_open_at, content_sha256
+        FROM market_snapshot_entries
+        WHERE snapshot_id = ?
+        ORDER BY bar_open_at ASC
+        """
+
+# Confirms, for the rows just written, that every entry still points at a
+# receipt of the right domain, at the right opening, declared no later than
+# as_of. Bounded by the number of entries, and never a replay of the causal
+# selection: BEGIN IMMEDIATE already froze the view it ran against.
+_VALIDATE_ENTRIES_SQL = """
+        SELECT COUNT(*)
+        FROM market_snapshot_entries e
+        JOIN market_bar_receipts r ON r.content_sha256 = e.content_sha256
+        JOIN market_ingestions i ON i.ingestion_id = r.ingestion_id
+        WHERE e.snapshot_id = ?
+          AND r.bar_open_at = e.bar_open_at
+          AND i.provider = ? AND i.product_id = ? AND i.timeframe = ?
+          AND r.ingested_at <= ? AND r.available_at <= ?
+        """
+
+
+def _require_write_pragmas(connection: sqlite3.Connection) -> None:
+    """Fail closed unless the connection enforces foreign keys and recursive
+    triggers.
+
+    Both are per-connection and OFF by default on a bare sqlite3.connect().
+    Without foreign_keys the deferred manifest link stops rejecting orphan
+    entries; without recursive_triggers INSERT OR REPLACE silently rewrites
+    rows the schema calls immutable. Neither can be turned on from inside a
+    transaction (SQLite makes the PRAGMA a no-op there), so this refuses
+    rather than trying to fix the caller's connection.
+    """
+    for pragma in _REQUIRED_WRITE_PRAGMAS:
+        try:
+            enabled = connection.execute(f"PRAGMA {pragma}").fetchone()[0]
+        except sqlite3.Error as exc:
+            raise SnapshotWriteContextError(
+                f"snapshot write context could not be verified: PRAGMA {pragma}"
+            ) from exc
+        if enabled != 1:
+            raise SnapshotWriteContextError(
+                f"snapshot write context requires PRAGMA {pragma} = ON; "
+                "open the connection through MarketDataStore"
+            )
+
+
+def _verify_existing_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_id: str,
+    manifest_row: tuple,
+    expected_manifest: tuple,
+    expected_entries: tuple[tuple[str, str], ...],
+    expected_entries_content_hash: str,
+) -> None:
+    """Verify a persisted snapshot matches, exactly, what this request and
+    this content must produce.
+
+    Never `INSERT OR IGNORE` followed by an assumption of success: the whole
+    point of an idempotent path is that it proves the existing state is the
+    state it would have written. The entries are reloaded and their content
+    hash recomputed from what is actually stored, so a manifest whose hash
+    no longer describes its own entries is caught rather than trusted.
+    """
+    if manifest_row != expected_manifest:
+        raise SnapshotStateCorruption(
+            f"persisted snapshot {snapshot_id!r} does not match the request that "
+            "produced its identity"
+        )
+    persisted_entries = tuple(
+        (row[0], row[1]) for row in connection.execute(_SELECT_ENTRIES_SQL, (snapshot_id,))
+    )
+    if len(persisted_entries) != manifest_row[-1]:
+        raise SnapshotStateCorruption(
+            f"persisted snapshot {snapshot_id!r} declares {manifest_row[-1]} entries "
+            f"but stores {len(persisted_entries)}"
+        )
+    if persisted_entries != expected_entries:
+        raise SnapshotStateCorruption(
+            f"persisted snapshot {snapshot_id!r} entries differ from the selected content"
+        )
+    recomputed = build_entries_content_hash(
+        tuple(
+            SelectedSnapshotReceipt(
+                bar_open_at=bar_open_at,
+                content_sha256=content_sha256,
+                bar_id="",
+                bar_version_id="",
+                ingested_at="",
+                available_at="",
+            )
+            for bar_open_at, content_sha256 in persisted_entries
+        )
+    )
+    if recomputed != expected_entries_content_hash:
+        raise SnapshotStateCorruption(
+            f"persisted snapshot {snapshot_id!r} entries_content_hash does not "
+            "describe its own entries"
+        )
+
+
+def _materialize_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    provider: str,
+    product_id: str,
+    timeframe: str,
+    range_start: datetime | str,
+    range_end: datetime | str,
+    as_of: datetime | str,
+) -> MaterializedSnapshot:
+    """Persist, atomically and immutably, the causal selection for one
+    request -- or prove an identical snapshot already exists.
+
+    Owns its transaction, exclusively. BEGIN IMMEDIATE is taken BEFORE the
+    causal selection so that the rows the manifest attests to cannot change
+    between being selected and being referenced: a concurrent backfill
+    landing in that window would otherwise produce a manifest describing a
+    state that never existed. Entries are written before the manifest, whose
+    insertion seals the snapshot for good.
+
+    Any failure rolls the whole thing back: a manifest without its entries,
+    or entries without their manifest, are states this primitive never
+    leaves behind. SnapshotSelectionConflict and
+    SnapshotEligibilityLimitExceeded propagate unchanged after the rollback.
+    """
+    _require_write_pragmas(connection)
+    if connection.in_transaction:
+        raise SnapshotWriteContextError(
+            "snapshot materialization owns its transaction and cannot join an "
+            "open one; commit or roll back before calling it"
+        )
+
+    request = {
+        "provider": provider,
+        "product_id": product_id,
+        "timeframe": timeframe,
+        "range_start": range_start,
+        "range_end": range_end,
+        "as_of": as_of,
+    }
+    snapshot_request_id = ""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        selected = _select_snapshot_receipts(connection, **request)
+        snapshot_request_id = build_snapshot_request_id(**request)
+        entries_content_hash = build_entries_content_hash(selected)
+        snapshot_id = build_snapshot_id(
+            snapshot_request_id=snapshot_request_id,
+            entries_content_hash=entries_content_hash,
+        )
+        canonical_range_start, canonical_range_end = _canonical_range(
+            range_start, range_end, timeframe=timeframe
+        )
+        canonical_as_of = _canonical_timestamp(as_of, field="as_of")
+        expected_manifest = (
+            snapshot_request_id,
+            entries_content_hash,
+            SNAPSHOT_SCHEMA_VERSION,
+            SELECTION_POLICY_VERSION,
+            provider,
+            product_id,
+            timeframe,
+            canonical_range_start,
+            canonical_range_end,
+            canonical_as_of,
+            len(selected),
+        )
+        expected_entries = tuple(
+            (entry.bar_open_at, entry.content_sha256) for entry in selected
+        )
+
+        manifest_row = connection.execute(
+            _SELECT_MANIFEST_SQL, (snapshot_id,)
+        ).fetchone()
+        if manifest_row is not None:
+            _verify_existing_snapshot(
+                connection,
+                snapshot_id=snapshot_id,
+                manifest_row=tuple(manifest_row),
+                expected_manifest=expected_manifest,
+                expected_entries=expected_entries,
+                expected_entries_content_hash=entries_content_hash,
+            )
+            connection.rollback()
+            return MaterializedSnapshot(
+                snapshot_id=snapshot_id,
+                snapshot_request_id=snapshot_request_id,
+                entries_content_hash=entries_content_hash,
+                entry_count=len(selected),
+                created=False,
+            )
+
+        connection.executemany(
+            _INSERT_ENTRY_SQL,
+            [
+                (snapshot_id, bar_open_at, content_sha256)
+                for bar_open_at, content_sha256 in expected_entries
+            ],
+        )
+        connection.execute(_INSERT_MANIFEST_SQL, (snapshot_id, *expected_manifest))
+
+        validated = connection.execute(
+            _VALIDATE_ENTRIES_SQL,
+            (snapshot_id, provider, product_id, timeframe, canonical_as_of, canonical_as_of),
+        ).fetchone()[0]
+        if validated != len(selected):
+            raise SnapshotPersistenceError(
+                f"snapshot {snapshot_id!r} references {len(selected)} receipts but only "
+                f"{validated} satisfy the domain and causality checks"
+            )
+        _verify_existing_snapshot(
+            connection,
+            snapshot_id=snapshot_id,
+            manifest_row=tuple(
+                connection.execute(_SELECT_MANIFEST_SQL, (snapshot_id,)).fetchone()
+            ),
+            expected_manifest=expected_manifest,
+            expected_entries=expected_entries,
+            expected_entries_content_hash=entries_content_hash,
+        )
+        connection.commit()
+    except MarketSnapshotError:
+        connection.rollback()
+        raise
+    except sqlite3.Error as exc:
+        connection.rollback()
+        # Identifiers and parameters only: never a payload, never the entry
+        # list, however large it was.
+        raise SnapshotPersistenceError(
+            "snapshot persistence failed -- "
+            f"snapshot_request_id={snapshot_request_id!r} provider={provider!r} "
+            f"product_id={product_id!r} timeframe={timeframe!r}"
+        ) from exc
+    except Exception:
+        connection.rollback()
+        raise
+
+    return MaterializedSnapshot(
+        snapshot_id=snapshot_id,
+        snapshot_request_id=snapshot_request_id,
+        entries_content_hash=entries_content_hash,
+        entry_count=len(selected),
+        created=True,
+    )
 
 
 def build_snapshot_request_id(
