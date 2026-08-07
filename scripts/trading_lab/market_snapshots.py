@@ -45,6 +45,7 @@ trusting a stored hash.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -442,45 +443,54 @@ def _select_snapshot_receipts(
     # the query can never be allowed to return more rows than the counter is
     # willing to refuse, nor fewer than it is willing to accept.
     query_limit = SNAPSHOT_ELIGIBLE_RECEIPT_QUERY_LIMIT
-    cursor = connection.execute(
-        _ELIGIBLE_RECEIPTS_SQL,
-        (
-            provider,
-            product_id,
-            timeframe,
-            canonical_range_start,
-            canonical_range_end,
-            canonical_as_of,
-            query_limit,
-        ),
-    )
+    # Same close policy as every other cursor in this module: a secondary
+    # close failure must never displace the verdict the caller needs -- an
+    # eligibility overflow above all -- and no raw sqlite3 error may escape a
+    # function whose error surface is MarketSnapshotError.
     try:
-        while True:
-            chunk = cursor.fetchmany(SNAPSHOT_RECEIPT_FETCH_CHUNK_SIZE)
-            if not chunk:
-                break
-            eligible_row_count += len(chunk)
-            if eligible_row_count >= query_limit:
-                # Refuse the whole request here, before folding this chunk in
-                # and before any entry is built: a snapshot must never be
-                # derived from a prefix of a result set that was cut short.
-                raise SnapshotEligibilityLimitExceeded(
-                    provider=provider,
-                    product_id=product_id,
-                    timeframe=timeframe,
-                    range_start=canonical_range_start,
-                    range_end=canonical_range_end,
-                    as_of=canonical_as_of,
-                    limit=query_limit - 1,
-                )
-            for row in chunk:
-                aggregate = aggregates.get(row[0])
-                if aggregate is None:
-                    aggregates[row[0]] = _OpenAggregate(row)
-                else:
-                    aggregate.observe(row)
-    finally:
-        cursor.close()
+        with _closing_cursor(
+            connection.execute(
+                _ELIGIBLE_RECEIPTS_SQL,
+                (
+                    provider,
+                    product_id,
+                    timeframe,
+                    canonical_range_start,
+                    canonical_range_end,
+                    canonical_as_of,
+                    query_limit,
+                ),
+            )
+        ) as cursor:
+            while True:
+                chunk = cursor.fetchmany(SNAPSHOT_RECEIPT_FETCH_CHUNK_SIZE)
+                if not chunk:
+                    break
+                eligible_row_count += len(chunk)
+                if eligible_row_count >= query_limit:
+                    # Refuse the whole request here, before folding this chunk
+                    # in and before any entry is built: a snapshot must never
+                    # be derived from a prefix of a result set cut short.
+                    raise SnapshotEligibilityLimitExceeded(
+                        provider=provider,
+                        product_id=product_id,
+                        timeframe=timeframe,
+                        range_start=canonical_range_start,
+                        range_end=canonical_range_end,
+                        as_of=canonical_as_of,
+                        limit=query_limit - 1,
+                    )
+                for row in chunk:
+                    aggregate = aggregates.get(row[0])
+                    if aggregate is None:
+                        aggregates[row[0]] = _OpenAggregate(row)
+                    else:
+                        aggregate.observe(row)
+    except sqlite3.Error as exc:
+        raise SnapshotReadError(
+            f"snapshot selection failed for provider={provider!r} "
+            f"product_id={product_id!r} timeframe={timeframe!r}"
+        ) from exc
 
     selected: list[SelectedSnapshotReceipt] = []
     for bar_open_at in sorted(aggregates):
@@ -1136,18 +1146,75 @@ def _require_supported_versions(manifest_row: tuple, *, snapshot_id: str) -> Non
             )
 
 
-def _fetch_all_bounded(cursor) -> tuple[tuple, ...]:
-    """Drain a cursor in bounded chunks of SNAPSHOT_LOAD_FETCH_SIZE.
+@contextmanager
+def _closing_cursor(cursor):
+    """Close a cursor on every path, without ever masking a primary error.
 
-    The row count is already bounded by MAX_SNAPSHOT_RANGE_OPENS, but the
-    transfer is still paced rather than materialized in one implicit step --
-    and a guard test greps this module to keep it that way.
+    The read path must not rely on CPython's refcount, on __del__ or on the
+    connection being closed later: a cursor left open holds SQLite resources
+    for as long as the object survives. When the body already failed, a
+    failure from close() is dropped -- the original error is what the caller
+    needs to see. When the body succeeded, a failure from close() surfaces,
+    because a capture whose cursor could not be released has not succeeded.
     """
+    try:
+        yield cursor
+    except BaseException:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        raise
+    else:
+        cursor.close()
+
+
+def _fetch_all_bounded(cursor, *, fetch_size: int, max_rows: int) -> tuple[tuple, ...]:
+    """Drain a cursor in bounded chunks, refusing more than `max_rows` rows.
+
+    The bound is enforced DURING the drain, not after it: a cursor that keeps
+    producing rows -- a corrupted database, or a duck-typed object that never
+    empties -- is stopped instead of being allowed to fill memory before any
+    validation runs.
+
+    Requests shrink as the limit approaches: every `fetchmany` is sized so it
+    can never reach past the sentinel position `max_rows + 1`. A conforming
+    DB-API cursor therefore DELIVERS at most `max_rows + 1` rows before the
+    refusal, and no row past the sentinel is ever delivered or consumed. The
+    arithmetic sum of the requested sizes may still exceed `max_rows + 1`: a
+    cursor that runs out early answers short, and the following request is a
+    terminal probe that comes back empty. That probe delivers nothing, so the
+    memory bound is untouched. Detection is immediate -- the cursor is not
+    drained further once the overflow is seen.
+
+    A cursor may of course ignore the requested size and return a larger
+    chunk. That chunk is rejected on arrival and never accumulated, but this
+    helper cannot prevent a foreign object from having allocated it already;
+    it bounds its own accumulation, not someone else's.
+
+    `fetch_size` and `max_rows` are internal call-site constants: passing an
+    invalid one is a programming error (ValueError), never a data condition.
+    """
+    for name, value, minimum in (("fetch_size", fetch_size, 1), ("max_rows", max_rows, 0)):
+        # bool is an int subclass; True must not read as 1 here.
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"{name} must be an int >= {minimum}, got {value!r}")
+
     rows: list[tuple] = []
     while True:
-        chunk = cursor.fetchmany(SNAPSHOT_LOAD_FETCH_SIZE)
+        remaining_with_sentinel = max_rows + 1 - len(rows)
+        request_size = min(fetch_size, remaining_with_sentinel)
+        chunk = cursor.fetchmany(request_size)
         if not chunk:
             break
+        if len(chunk) > request_size:
+            raise SnapshotStateCorruption(
+                f"cursor returned {len(chunk)} rows for a request of {request_size}"
+            )
+        if len(rows) + len(chunk) > max_rows:
+            raise SnapshotStateCorruption(
+                f"read produced more than the {max_rows} rows it allows"
+            )
         rows.extend(chunk)
     return tuple(rows)
 
@@ -1169,15 +1236,25 @@ def _capture_snapshot(
     _require_read_context(connection)
     connection.execute("BEGIN")
     try:
-        manifest_rows = _fetch_all_bounded(
+        # One manifest per snapshot_id is the whole point of the primary key:
+        # a second row is a corrupted state to refuse, not rows to gather.
+        with _closing_cursor(
             connection.execute(_SELECT_SNAPSHOT_MANIFEST_SQL, (snapshot_id,))
-        )
-        if not manifest_rows:
-            raise SnapshotNotFound(f"no snapshot manifest for snapshot_id={snapshot_id!r}")
-        if len(manifest_rows) > 1:
-            raise SnapshotStateCorruption(
-                f"snapshot_id={snapshot_id!r} matches {len(manifest_rows)} manifests"
+        ) as manifest_cursor:
+            manifest_rows = _fetch_all_bounded(
+                manifest_cursor, fetch_size=SNAPSHOT_LOAD_FETCH_SIZE, max_rows=1
             )
+            # Decided while the cursor context is still open, on purpose: the
+            # verdict must become the active exception BEFORE the cursor is
+            # closed, so that a failing close() can never displace it.
+            if not manifest_rows:
+                raise SnapshotNotFound(
+                    f"no snapshot manifest for snapshot_id={snapshot_id!r}"
+                )
+            if len(manifest_rows) > 1:
+                raise SnapshotStateCorruption(
+                    f"snapshot_id={snapshot_id!r} matches {len(manifest_rows)} manifests"
+                )
         manifest_row = tuple(manifest_rows[0])
         _require_supported_versions(manifest_row, snapshot_id=snapshot_id)
 
@@ -1186,10 +1263,20 @@ def _capture_snapshot(
             if include_payloads
             else _SELECT_SNAPSHOT_METADATA_SQL
         )
-        metadata_rows = tuple(
-            tuple(row)
-            for row in _fetch_all_bounded(connection.execute(metadata_sql, (snapshot_id,)))
-        )
+        # Bounded independently of manifest.entry_count: that column is
+        # persisted data and may itself be corrupted, so deriving the bound
+        # from it could hide the very extra entry validation must catch.
+        with _closing_cursor(
+            connection.execute(metadata_sql, (snapshot_id,))
+        ) as metadata_cursor:
+            metadata_rows = tuple(
+                tuple(row)
+                for row in _fetch_all_bounded(
+                    metadata_cursor,
+                    fetch_size=SNAPSHOT_LOAD_FETCH_SIZE,
+                    max_rows=MAX_SNAPSHOT_RANGE_OPENS,
+                )
+            )
 
         payload_rows: tuple[tuple, ...] | None = None
         if include_payloads:
@@ -1209,12 +1296,17 @@ def _capture_snapshot(
                         f"snapshot {snapshot_id!r} stores at least {total_bytes} bytes, "
                         f"over the budget of {MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES}"
                     )
-            payload_rows = tuple(
-                tuple(row)
-                for row in _fetch_all_bounded(
-                    connection.execute(_SELECT_SNAPSHOT_PAYLOADS_SQL, (snapshot_id,))
+            with _closing_cursor(
+                connection.execute(_SELECT_SNAPSHOT_PAYLOADS_SQL, (snapshot_id,))
+            ) as payload_cursor:
+                payload_rows = tuple(
+                    tuple(row)
+                    for row in _fetch_all_bounded(
+                        payload_cursor,
+                        fetch_size=SNAPSHOT_LOAD_FETCH_SIZE,
+                        max_rows=MAX_SNAPSHOT_RANGE_OPENS,
+                    )
                 )
-            )
         connection.commit()
     except MarketSnapshotError:
         connection.rollback()
@@ -1455,15 +1547,19 @@ def list_snapshot_manifests(
             _LIST_MANIFESTS_AFTER_SQL,
             (snapshot_request_id, after_snapshot_id, bounded_limit + 1),
         )
-    cursor = connection.execute(sql, parameters)
+    # The listing drain obeys the same close policy as the capture path: a
+    # secondary close failure must never displace the primary verdict, and no
+    # raw sqlite3 error may escape a function whose error surface is
+    # MarketSnapshotError. A bare `finally: cursor.close()` would do both.
     try:
-        rows = _fetch_all_bounded(cursor)
+        with _closing_cursor(connection.execute(sql, parameters)) as cursor:
+            rows = _fetch_all_bounded(
+                cursor, fetch_size=SNAPSHOT_LOAD_FETCH_SIZE, max_rows=bounded_limit + 1
+            )
     except sqlite3.Error as exc:
         raise SnapshotReadError(
             f"snapshot listing failed for snapshot_request_id={snapshot_request_id!r}"
         ) from exc
-    finally:
-        cursor.close()
 
     has_more = len(rows) > bounded_limit
     page_rows = rows[:bounded_limit]

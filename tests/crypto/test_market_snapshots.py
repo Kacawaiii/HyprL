@@ -9,6 +9,7 @@ no snapshot manifest is created or persisted anywhere in this file.
 
 from __future__ import annotations
 
+import ast
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -4455,3 +4456,913 @@ def test_business_error_during_capture_releases_the_read_lock(
             writer.close()
     finally:
         reader.close()
+
+
+# =========================================================================
+# read-hardening: READ-HARDENING-F1 (bounded cursor drains) and
+# READ-HARDENING-F2 (explicit cursor closing). No public API change, no DDL,
+# no journal_mode change.
+# =========================================================================
+
+
+class _ScriptedCursor:
+    """A DB-API-shaped cursor whose behaviour is fully scripted, so drains and
+    closes can be observed and misbehaviour injected."""
+
+    def __init__(self, rows, log, name, *, close_error=None, fetch_error=None,
+                 fetch_error_after=0, oversize=False, endless=False, extra_rows=0):
+        self._rows = list(rows) + [tuple(rows[-1]) if rows else ("row",)] * extra_rows
+        self._offset = 0
+        self._log = log
+        self._name = name
+        self._close_error = close_error
+        self._fetch_error = fetch_error
+        self._fetch_error_after = fetch_error_after
+        self._oversize = oversize
+        self._endless = endless
+        self.requested_sizes: list[int] = []
+        self.close_count = 0
+        self._fetch_calls = 0
+
+    def fetchmany(self, size):
+        self._fetch_calls += 1
+        self.requested_sizes.append(size)
+        self._log.append((self._name, "fetchmany", size))
+        if self._fetch_error is not None and self._fetch_calls > self._fetch_error_after:
+            raise self._fetch_error
+        if self._endless:
+            return [("row",)] * size
+        if self._oversize:
+            return [("row",)] * (size + 5)
+        chunk = self._rows[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+    def close(self):
+        self.close_count += 1
+        self._log.append((self._name, "close"))
+        if self._close_error is not None:
+            raise self._close_error
+
+
+# --- READ-HARDENING-F1: the bounded drain contract ------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"fetch_size": 0, "max_rows": 5},
+        {"fetch_size": -1, "max_rows": 5},
+        {"fetch_size": True, "max_rows": 5},
+        {"fetch_size": 1.0, "max_rows": 5},
+        {"fetch_size": "5", "max_rows": 5},
+        {"fetch_size": 5, "max_rows": -1},
+        {"fetch_size": 5, "max_rows": True},
+        {"fetch_size": 5, "max_rows": 1.0},
+        {"fetch_size": 5, "max_rows": "5"},
+    ],
+)
+def test_bounded_drain_rejects_invalid_internal_arguments(snapshots_module, kwargs) -> None:
+    """These are programming errors, not public input: they must fail before
+    a single row is requested from the cursor."""
+    log: list = []
+    cursor = _ScriptedCursor([("a",)] * 3, log, "c")
+    with pytest.raises(ValueError):
+        snapshots_module._fetch_all_bounded(cursor, **kwargs)
+    assert log == [], log
+
+
+@pytest.mark.parametrize(
+    "row_count, max_rows, fetch_size",
+    [(0, 0, 10), (0, 5, 10), (1, 1, 10), (5, 5, 2), (5, 5, 1), (5, 5, 100), (7, 10, 3)],
+)
+def test_bounded_drain_returns_every_row_in_order(
+    snapshots_module, row_count, max_rows, fetch_size
+) -> None:
+    log: list = []
+    rows = [(f"r{index}",) for index in range(row_count)]
+    cursor = _ScriptedCursor(rows, log, "c")
+    assert snapshots_module._fetch_all_bounded(
+        cursor, fetch_size=fetch_size, max_rows=max_rows
+    ) == tuple(rows)
+
+
+def test_bounded_drain_accepts_exactly_max_rows_and_refuses_one_more(
+    snapshots_module,
+) -> None:
+    """The overflow is detected on the sentinel row, and a conforming cursor
+    is never asked for anything beyond it."""
+    limit = snapshots_module.MAX_SNAPSHOT_RANGE_OPENS
+    chunk_size = snapshots_module.SNAPSHOT_LOAD_FETCH_SIZE
+
+    exact = _ScriptedCursor([("r",)] * limit, [], "exact")
+    assert len(snapshots_module._fetch_all_bounded(
+        exact, fetch_size=chunk_size, max_rows=limit)) == limit
+
+    over = _ScriptedCursor([("r",)] * (limit + 1), [], "over")
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        snapshots_module._fetch_all_bounded(over, fetch_size=chunk_size, max_rows=limit)
+    assert sum(over.requested_sizes) == limit + 1
+    assert over.requested_sizes[-1] == 1
+
+
+def test_bounded_drain_never_requests_beyond_the_sentinel(snapshots_module) -> None:
+    """Near the limit the helper shrinks its request instead of asking for a
+    full chunk, so the 10 002nd row is never even requested."""
+    over = _ScriptedCursor([("r",)] * 500, [], "s")
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        snapshots_module._fetch_all_bounded(over, fetch_size=100, max_rows=250)
+    assert over.requested_sizes == [100, 100, 51]
+    assert sum(over.requested_sizes) == 251
+
+
+def test_bounded_drain_stops_a_cursor_that_never_runs_out(snapshots_module) -> None:
+    endless = _ScriptedCursor([], [], "endless", endless=True)
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        snapshots_module._fetch_all_bounded(endless, fetch_size=100, max_rows=250)
+    assert endless.requested_sizes == [100, 100, 51]
+
+
+def test_bounded_drain_refuses_a_cursor_returning_more_than_requested(
+    snapshots_module,
+) -> None:
+    """A duck-typed cursor may ignore the requested size. The helper bounds
+    its OWN accumulation and stops at once; it cannot prevent a foreign
+    object from having already allocated an oversized chunk itself."""
+    rogue = _ScriptedCursor([], [], "rogue", oversize=True)
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        snapshots_module._fetch_all_bounded(rogue, fetch_size=10, max_rows=1000)
+    assert len(rogue.requested_sizes) == 1, rogue.requested_sizes
+
+
+def test_bounded_drain_propagates_a_fetch_error_unchanged(snapshots_module) -> None:
+    failing = _ScriptedCursor(
+        [("r",)] * 50, [], "f",
+        fetch_error=sqlite3.OperationalError("disk I/O error"), fetch_error_after=2,
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        snapshots_module._fetch_all_bounded(failing, fetch_size=10, max_rows=1000)
+
+
+# --- capture-level instrumentation ---------------------------------------
+
+
+class _ScriptedConnection:
+    """Routes each capture query to a scripted cursor, recording the exact
+    call order across cursors, commits and rollbacks."""
+
+    def __init__(self, snapshots_module, inner, log, *, overrides=None):
+        self._ms = snapshots_module
+        self._inner = inner
+        self._log = log
+        self._overrides = overrides or {}
+        self.cursors: dict[str, _ScriptedCursor] = {}
+
+    def _name_for(self, sql):
+        if sql == self._ms._SELECT_SNAPSHOT_MANIFEST_SQL:
+            return "manifest"
+        if sql in (self._ms._SELECT_SNAPSHOT_METADATA_SQL,
+                   self._ms._SELECT_SNAPSHOT_METADATA_WITH_BYTES_SQL):
+            return "metadata"
+        if sql == self._ms._SELECT_SNAPSHOT_PAYLOADS_SQL:
+            return "payload"
+        if sql in (self._ms._LIST_MANIFESTS_SQL, self._ms._LIST_MANIFESTS_AFTER_SQL):
+            return "listing"
+        if sql == self._ms._ELIGIBLE_RECEIPTS_SQL:
+            return "selection"
+        return None
+
+    @property
+    def in_transaction(self):
+        return self._inner.in_transaction
+
+    def execute(self, sql, parameters=()):
+        name = self._name_for(sql)
+        if name is None:
+            stripped = sql.strip().upper()
+            if stripped.startswith("BEGIN"):
+                self._log.append(("connection", "BEGIN"))
+            return self._inner.execute(sql, parameters)
+        self._log.append((name, "execute"))
+        rows = list(self._inner.execute(sql, parameters))
+        cursor = _ScriptedCursor(rows, self._log, name, **self._overrides.get(name, {}))
+        self.cursors[name] = cursor
+        return cursor
+
+    def executemany(self, sql, seq):
+        return self._inner.executemany(sql, seq)
+
+    def commit(self):
+        self._log.append(("connection", "COMMIT"))
+        return self._inner.commit()
+
+    def rollback(self):
+        self._log.append(("connection", "ROLLBACK"))
+        return self._inner.rollback()
+
+
+def _capture_log(snapshots_module, store, snapshot_id, *, replay=False, overrides=None):
+    log: list = []
+    connection = store._connect()
+    scripted = _ScriptedConnection(snapshots_module, connection, log, overrides=overrides)
+    call = snapshots_module.replay_snapshot if replay else snapshots_module.load_snapshot
+    try:
+        result, error = call(scripted, snapshot_id=snapshot_id), None
+    except BaseException as exc:  # noqa: BLE001 -- the test inspects it
+        result, error = None, exc
+    return log, scripted, connection, result, error
+
+
+# --- READ-HARDENING-F2: every capture cursor is closed --------------------
+
+
+def test_load_closes_manifest_and_metadata_cursors_before_commit(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh1")
+    log, scripted, connection, result, error = _capture_log(
+        snapshots_module, store, res.snapshot_id)
+    try:
+        assert error is None, error
+        assert result is not None
+        assert [entry[0] for entry in log if entry[1] == "close"] == ["manifest", "metadata"]
+        assert "payload" not in scripted.cursors
+        assert all(cursor.close_count == 1 for cursor in scripted.cursors.values())
+        commit_at = log.index(("connection", "COMMIT"))
+        assert all(log.index((name, "close")) < commit_at for name in scripted.cursors)
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_replay_closes_all_three_cursors_exactly_once(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh2")
+    log, scripted, connection, result, error = _capture_log(
+        snapshots_module, store, res.snapshot_id, replay=True)
+    try:
+        assert error is None, error
+        assert len(result) == 3
+        assert [entry[0] for entry in log if entry[1] == "close"] == [
+            "manifest", "metadata", "payload"]
+        assert set(scripted.cursors) == {"manifest", "metadata", "payload"}
+        assert all(cursor.close_count == 1 for cursor in scripted.cursors.values())
+        commit_at = log.index(("connection", "COMMIT"))
+        assert all(log.index((name, "close")) < commit_at for name in scripted.cursors)
+    finally:
+        connection.close()
+
+
+def test_snapshot_not_found_still_closes_the_manifest_cursor(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="rh3")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, "hyprl-market-snapshot-" + "5" * 64)
+    try:
+        assert isinstance(error, snapshots_module.SnapshotNotFound)
+        assert set(scripted.cursors) == {"manifest"}
+        assert scripted.cursors["manifest"].close_count == 1
+        assert log.index(("manifest", "close")) < log.index(("connection", "ROLLBACK"))
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("failing, expected_open", [
+    ("manifest", ["manifest"]),
+    ("metadata", ["manifest", "metadata"]),
+    ("payload", ["manifest", "metadata", "payload"]),
+])
+def test_a_fetch_error_still_closes_every_opened_cursor(
+    tmp_path, store_module, snapshots_module, failing, expected_open
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3,
+                               name=f"rh4{failing}")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id, replay=True,
+        overrides={failing: {"fetch_error": sqlite3.OperationalError("disk I/O error")}},
+    )
+    try:
+        assert isinstance(error, snapshots_module.SnapshotReadError)
+        assert type(error.__cause__) is sqlite3.OperationalError
+        assert sorted(scripted.cursors) == sorted(expected_open), sorted(scripted.cursors)
+        assert all(cursor.close_count == 1 for cursor in scripted.cursors.values())
+        assert ("connection", "ROLLBACK") in log
+        assert ("connection", "COMMIT") not in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_a_generic_error_during_capture_still_closes_the_cursor(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh5")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id,
+        overrides={"metadata": {"fetch_error": RuntimeError("boom")}},
+    )
+    try:
+        assert type(error) is RuntimeError
+        assert not isinstance(error, snapshots_module.MarketSnapshotError)
+        assert scripted.cursors["metadata"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+# --- READ-HARDENING-F2: close() failures ----------------------------------
+
+
+def test_a_close_failure_alone_fails_closed(tmp_path, store_module, snapshots_module) -> None:
+    """No primary error: the close failure itself must surface through the
+    sqlite3 contract, and must not leave the capture looking successful."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh6")
+    log, scripted, connection, result, error = _capture_log(
+        snapshots_module, store, res.snapshot_id,
+        overrides={"metadata": {"close_error": sqlite3.OperationalError("close failed")}},
+    )
+    try:
+        assert result is None
+        assert isinstance(error, snapshots_module.SnapshotReadError)
+        assert type(error.__cause__) is sqlite3.OperationalError
+        assert ("connection", "ROLLBACK") in log
+        assert ("connection", "COMMIT") not in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_a_generic_close_failure_alone_is_not_disguised_as_corruption(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh7")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id,
+        overrides={"metadata": {"close_error": RuntimeError("close boom")}},
+    )
+    try:
+        assert type(error) is RuntimeError
+        assert not isinstance(error, snapshots_module.MarketSnapshotError)
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("primary_kind", ["sqlite", "generic"])
+def test_a_close_failure_never_masks_the_primary_error(
+    tmp_path, store_module, snapshots_module, primary_kind
+) -> None:
+    primary = (sqlite3.OperationalError("primary sqlite") if primary_kind == "sqlite"
+               else RuntimeError("primary generic"))
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3,
+                               name=f"rh8{primary_kind}")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id,
+        overrides={"metadata": {
+            "fetch_error": primary,
+            "close_error": sqlite3.OperationalError("secondary close"),
+        }},
+    )
+    try:
+        if primary_kind == "sqlite":
+            assert isinstance(error, snapshots_module.SnapshotReadError)
+            # Chained to the FETCH failure, never to the close failure.
+            assert error.__cause__ is primary
+        else:
+            assert error is primary
+        assert scripted.cursors["metadata"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_a_close_failure_never_masks_a_business_error(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="rh9")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, "hyprl-market-snapshot-" + "6" * 64,
+        overrides={"manifest": {"close_error": sqlite3.OperationalError("secondary close")}},
+    )
+    try:
+        assert isinstance(error, snapshots_module.SnapshotNotFound)
+        assert scripted.cursors["manifest"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+# --- READ-HARDENING-F1 at capture level, with real lock proofs ------------
+
+
+def test_metadata_overflow_is_refused_and_releases_the_write_lock(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """The bound is independent of the manifest's entry_count, so a corrupted
+    count can never hide an extra entry."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh10")
+    monkeypatch.setattr(snapshots_module, "MAX_SNAPSHOT_RANGE_OPENS", 2)
+    connection = store._connect()
+    outcome = "not-set"
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption):
+            outcome = snapshots_module.load_snapshot(connection, snapshot_id=res.snapshot_id)
+        assert outcome == "not-set"
+        assert connection.in_transaction is False
+        assert _write_lock_is_released(store.database_path)
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                ("9" * 64, "coinbase_exchange_rest", b"w", 1, _iso(GRID_BASE)),
+            )
+            writer.commit()
+        finally:
+            writer.close()
+    finally:
+        connection.close()
+
+
+def test_payload_query_is_never_reached_when_metadata_overflows(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh11")
+    monkeypatch.setattr(snapshots_module, "MAX_SNAPSHOT_RANGE_OPENS", 2)
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id, replay=True)
+    try:
+        assert isinstance(error, snapshots_module.SnapshotStateCorruption)
+        assert "payload" not in scripted.cursors
+        assert scripted.cursors["metadata"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+    finally:
+        connection.close()
+
+
+def test_close_failure_releases_the_write_lock_on_a_real_database(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rh12")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id,
+        overrides={"metadata": {"close_error": sqlite3.OperationalError("close failed")}},
+    )
+    try:
+        assert isinstance(error, snapshots_module.SnapshotReadError)
+        assert connection.in_transaction is False
+        assert _write_lock_is_released(store.database_path)
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                ("8" * 64, "coinbase_exchange_rest", b"w", 1, _iso(GRID_BASE)),
+            )
+            writer.commit()
+        finally:
+            writer.close()
+        assert len(snapshots_module.load_snapshot(
+            connection, snapshot_id=res.snapshot_id).entries) == 3
+    finally:
+        connection.close()
+
+
+def test_listing_drain_is_bounded_to_the_requested_page(snapshots_module) -> None:
+    """A rogue cursor must not make the listing accumulate more than the page
+    it asked for plus the look-ahead row."""
+    rogue = _ScriptedCursor([("r",)] * 50, [], "listing")
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        snapshots_module._fetch_all_bounded(
+            rogue, fetch_size=snapshots_module.SNAPSHOT_LOAD_FETCH_SIZE, max_rows=3)
+    assert sum(rogue.requested_sizes) == 4
+
+
+def test_manifest_drain_is_bounded_to_a_single_row(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Only one manifest can exist per snapshot_id; a second row is a
+    corrupted state, not something to accumulate."""
+    rogue = _ScriptedCursor([("a",), ("b",)], [], "manifest")
+    with pytest.raises(snapshots_module.SnapshotStateCorruption):
+        snapshots_module._fetch_all_bounded(
+            rogue, fetch_size=snapshots_module.SNAPSHOT_LOAD_FETCH_SIZE, max_rows=1)
+    assert sum(rogue.requested_sizes) == 2
+
+
+# --- READ-HARDENING-F1: the CALL SITES must pass the right bound -----------
+
+
+def test_capture_asks_the_manifest_cursor_for_at_most_two_rows(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """The helper's contract is tested elsewhere; this pins the bound the
+    capture actually passes. With max_rows=1 a rogue manifest cursor is asked
+    for exactly 2 rows; a looser bound would accumulate thousands before the
+    'more than one manifest' check ever ran."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhb1")
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id,
+        overrides={"manifest": {"extra_rows": 5000}},
+    )
+    try:
+        assert isinstance(error, snapshots_module.SnapshotStateCorruption)
+        assert scripted.cursors["manifest"].requested_sizes == [2]
+        assert scripted.cursors["manifest"].close_count == 1
+        assert set(scripted.cursors) == {"manifest"}
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_capture_bounds_the_payload_cursor_to_the_range_limit(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """Metadata passes, the payload pass overflows: the payload cursor must be
+    asked for at most MAX_SNAPSHOT_RANGE_OPENS + 1 rows and never drained."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rhb2")
+    monkeypatch.setattr(snapshots_module, "MAX_SNAPSHOT_RANGE_OPENS", 3)
+    log, scripted, connection, _, error = _capture_log(
+        snapshots_module, store, res.snapshot_id, replay=True,
+        overrides={"payload": {"extra_rows": 2}},
+    )
+    try:
+        assert isinstance(error, snapshots_module.SnapshotStateCorruption)
+        assert scripted.cursors["payload"].requested_sizes == [4]
+        assert scripted.cursors["payload"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_a_corrupted_low_entry_count_is_diagnosed_by_validation_not_by_the_bound(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """If the drain derived its bound from entry_count, a corrupted count
+    would truncate the read and disguise the extra entry as an overflow. The
+    bound is independent, so the count mismatch is what surfaces."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="rhb3")
+    _sabotage(store.database_path,
+              [("UPDATE market_snapshot_manifests SET entry_count = 1", ())])
+    connection = store._connect()
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption) as excinfo:
+            snapshots_module.load_snapshot(connection, snapshot_id=res.snapshot_id)
+        message = str(excinfo.value)
+        assert "declares 1 entries but stores 3" in message, message
+        assert "rows it allows" not in message, message
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_listing_asks_its_cursor_for_at_most_one_row_beyond_the_page(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhb4")
+    log: list = []
+    connection = store._connect()
+    scripted = _ScriptedConnection(snapshots_module, connection, log,
+                                   overrides={"listing": {"extra_rows": 500}})
+    try:
+        with pytest.raises(snapshots_module.SnapshotStateCorruption):
+            snapshots_module.list_snapshot_manifests(
+                scripted, snapshot_request_id=res.snapshot_request_id, limit=2)
+        # limit=2 allows limit+1=3 rows, so the sentinel sits at the 4th: the
+        # cursor is asked for exactly 4 rows, never a full chunk.
+        assert scripted.cursors["listing"].requested_sizes == [4]
+    finally:
+        connection.close()
+
+
+# --- RH-F1-MED: the listing cursor obeys the same close policy ------------
+
+
+def _listing_failure(snapshots_module, store, request_id, *, overrides, limit):
+    log: list = []
+    connection = store._connect()
+    scripted = _ScriptedConnection(snapshots_module, connection, log,
+                                   overrides={"listing": overrides})
+    try:
+        result, error = snapshots_module.list_snapshot_manifests(
+            scripted, snapshot_request_id=request_id, limit=limit), None
+    except BaseException as exc:  # noqa: BLE001 -- the test inspects it
+        result, error = None, exc
+    return log, scripted, connection, result, error
+
+
+def test_a_listing_close_failure_never_masks_the_primary_error(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """The listing cursor is the fourth drain site. A `finally: close()` there
+    would let a secondary close error DISPLACE the corruption verdict, which
+    is exactly what the capture path refuses to do."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhl1")
+    log, scripted, connection, result, error = _listing_failure(
+        snapshots_module, store, res.snapshot_request_id, limit=2,
+        overrides={"extra_rows": 500,
+                   "close_error": sqlite3.OperationalError("close listing")},
+    )
+    try:
+        assert type(error) is snapshots_module.SnapshotStateCorruption, error
+        assert not isinstance(error, sqlite3.Error), error
+        assert not isinstance(error, snapshots_module.SnapshotReadError), error
+        # The close error is dropped, not chained: the caller must not have to
+        # dig past a secondary failure to reach the verdict.
+        assert error.__cause__ is None
+        assert result is None
+        cursor = scripted.cursors["listing"]
+        assert cursor.close_count == 1
+        assert [entry for entry in log if entry == ("listing", "close")] == [
+            ("listing", "close")
+        ]
+        assert connection.in_transaction is False
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_a_listing_close_failure_alone_stays_inside_the_public_contract(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Nominal page, no fetch error, close alone fails: a raw sqlite3 error
+    must never escape a public function whose whole error surface is
+    MarketSnapshotError."""
+    store, res = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhl2")
+    close_error = sqlite3.OperationalError("close listing")
+    log, scripted, connection, result, error = _listing_failure(
+        snapshots_module, store, res.snapshot_request_id, limit=5,
+        overrides={"close_error": close_error},
+    )
+    try:
+        assert type(error) is snapshots_module.SnapshotReadError, error
+        assert isinstance(error, snapshots_module.MarketSnapshotError)
+        assert error.__cause__ is close_error
+        assert result is None
+        cursor = scripted.cursors["listing"]
+        assert cursor.close_count == 1
+        assert connection.in_transaction is False
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+        # The diagnosis names the request, never the rows it was carrying.
+        message = str(error)
+        assert res.snapshot_request_id in message
+        assert len(message) < 200, message
+    finally:
+        connection.close()
+
+
+def test_this_test_module_defines_every_name_exactly_once(snapshots_module) -> None:
+    """Structural guard against the duplicated-block incident: a second copy
+    of a helper or a test silently shadows the first, and pytest would run
+    only the survivor."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    names: list[str] = [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    assert duplicates == [], duplicates
+    assert names.count("_ScriptedCursor") == 1
+    assert names.count("_ScriptedConnection") == 1
+
+
+# --- RH-F5: the selection cursor obeys the same close policy --------------
+
+_SELECTION_RANGE = {
+    "provider": "coinbase_exchange_rest",
+    "product_id": "BTC-USD",
+    "timeframe": "1h",
+    "range_start": _iso(GRID_BASE),
+    "range_end": _iso(GRID_BASE + timedelta(hours=4)),
+    "as_of": _iso(INGEST_BASE + timedelta(days=1)),
+}
+
+
+def _selection_store(store_module, tmp_path, *, name, openings=4):
+    store = store_module.MarketDataStore(tmp_path / f"{name}.sqlite3")
+    _seed_grid(store.database_path, openings=openings, revisions=1, tag=name)
+    return store
+
+
+def _scripted_selection(snapshots_module, store, *, overrides, materialize=False):
+    log: list = []
+    connection = store._connect()
+    scripted = _ScriptedConnection(snapshots_module, connection, log,
+                                   overrides={"selection": overrides})
+    call = (snapshots_module._materialize_snapshot if materialize
+            else snapshots_module._select_snapshot_receipts)
+    try:
+        result, error = call(scripted, **_SELECTION_RANGE), None
+    except BaseException as exc:  # noqa: BLE001 -- the test inspects it
+        result, error = None, exc
+    return log, scripted, connection, result, error
+
+
+def test_an_eligibility_overflow_survives_a_failing_selection_close(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """The selection drain is the fifth cursor site. A `finally: close()`
+    there would let a secondary close error displace the business verdict."""
+    store = _selection_store(store_module, tmp_path, name="rhs1")
+    monkeypatch.setattr(snapshots_module, "SNAPSHOT_ELIGIBLE_RECEIPT_QUERY_LIMIT", 3)
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store,
+        overrides={"close_error": sqlite3.OperationalError("close selection")},
+    )
+    try:
+        assert type(error) is snapshots_module.SnapshotEligibilityLimitExceeded, error
+        assert not isinstance(error, sqlite3.Error), error
+        assert not isinstance(error, snapshots_module.SnapshotReadError), error
+        assert result is None
+        assert scripted.cursors["selection"].close_count == 1
+        assert connection.in_transaction is False
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_an_eligibility_overflow_reaches_the_caller_unchanged_through_materialization(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """_materialize_snapshot documents that SnapshotEligibilityLimitExceeded
+    propagates UNCHANGED after the rollback. A close failure re-typing it as
+    SnapshotPersistenceError would tell the caller persistence failed when
+    the real reason is an eligibility overflow."""
+    store = _selection_store(store_module, tmp_path, name="rhs2")
+    monkeypatch.setattr(snapshots_module, "SNAPSHOT_ELIGIBLE_RECEIPT_QUERY_LIMIT", 3)
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store, materialize=True,
+        overrides={"close_error": sqlite3.OperationalError("close selection")},
+    )
+    try:
+        assert type(error) is snapshots_module.SnapshotEligibilityLimitExceeded, error
+        assert not isinstance(error, snapshots_module.SnapshotPersistenceError), error
+        assert error.limit == 2  # query_limit - 1, the business attribute
+        assert result is None
+        assert scripted.cursors["selection"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+        assert _manifests(store.database_path) == []
+        assert connection.execute(
+            "SELECT COUNT(*) FROM market_snapshot_entries"
+        ).fetchone() == (0,)
+        # The write lock is genuinely gone: a second connection writes and commits.
+        writer = store._connect()
+        try:
+            writer.execute("PRAGMA busy_timeout = 300")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                ("f" * 64, "coinbase_exchange_rest", b"z", 1, _iso(GRID_BASE)),
+            )
+            writer.commit()
+        finally:
+            writer.close()
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_a_selection_close_failure_alone_stays_inside_the_public_contract(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Nominal selection, no fetch error, close alone fails: a raw sqlite3
+    error must never escape a function whose error surface is
+    MarketSnapshotError."""
+    store = _selection_store(store_module, tmp_path, name="rhs3")
+    close_error = sqlite3.OperationalError("close selection")
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store, overrides={"close_error": close_error},
+    )
+    try:
+        assert type(error) is snapshots_module.SnapshotReadError, error
+        assert isinstance(error, snapshots_module.MarketSnapshotError)
+        assert not isinstance(error, sqlite3.Error), error
+        assert error.__cause__ is close_error
+        assert result is None
+        assert scripted.cursors["selection"].close_count == 1
+        assert connection.in_transaction is False
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+        message = str(error)
+        assert "BTC-USD" in message
+        assert len(message) < 300, message
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "fetch_error, expected",
+    [
+        (sqlite3.OperationalError("fetch boom"), "wrapped"),
+        (RuntimeError("fetch generic"), RuntimeError),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+)
+def test_a_selection_fetch_error_is_never_displaced_by_a_close_failure(
+    tmp_path, store_module, snapshots_module, fetch_error, expected
+) -> None:
+    store = _selection_store(store_module, tmp_path, name="rhs4")
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store,
+        overrides={"fetch_error": fetch_error,
+                   "close_error": sqlite3.OperationalError("close selection")},
+    )
+    try:
+        if expected == "wrapped":
+            assert type(error) is snapshots_module.SnapshotReadError, error
+            assert error.__cause__ is fetch_error
+        else:
+            assert type(error) is expected, error
+            assert error is fetch_error
+        assert result is None
+        assert scripted.cursors["selection"].close_count == 1
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_a_generic_selection_close_failure_is_not_disguised(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store = _selection_store(store_module, tmp_path, name="rhs5")
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store, overrides={"close_error": RuntimeError("close generic")},
+    )
+    try:
+        assert type(error) is RuntimeError, error
+        assert not isinstance(error, snapshots_module.MarketSnapshotError), error
+        assert result is None
+        assert scripted.cursors["selection"].close_count == 1
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_the_selection_itself_is_untouched_when_nothing_fails(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """Guard on the fix's blast radius: same receipts, same order, same
+    aggregation as a plain connection, and exactly one SELECT."""
+    store = _selection_store(store_module, tmp_path, name="rhs6", openings=4)
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store, overrides={},
+    )
+    try:
+        assert error is None, error
+        reference = _select_on(
+            snapshots_module, store.database_path,
+            range_start=_SELECTION_RANGE["range_start"],
+            range_end=_SELECTION_RANGE["range_end"],
+            as_of=_SELECTION_RANGE["as_of"],
+        )
+        assert result == reference
+        assert len(result) == 4
+        assert [item.bar_open_at for item in result] == sorted(
+            item.bar_open_at for item in result
+        )
+        assert scripted.cursors["selection"].close_count == 1
+        assert [entry for entry in log if entry[0] == "selection"
+                and entry[1] == "execute"] == [("selection", "execute")]
+    finally:
+        connection.close()
+
+
+def test_a_selection_read_error_traverses_materialization_as_a_read_error(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """A close failure during a nominal selection is a READ failure. It must
+    reach the caller as SnapshotReadError through the `except
+    MarketSnapshotError` branch -- never re-labelled as a persistence problem
+    and never announced as state corruption."""
+    store = _selection_store(store_module, tmp_path, name="rhs7")
+    close_error = sqlite3.OperationalError("close selection")
+    log, scripted, connection, result, error = _scripted_selection(
+        snapshots_module, store, materialize=True,
+        overrides={"close_error": close_error},
+    )
+    try:
+        assert type(error) is snapshots_module.SnapshotReadError, error
+        assert not isinstance(error, snapshots_module.SnapshotPersistenceError), error
+        assert not isinstance(error, snapshots_module.SnapshotStateCorruption), error
+        assert error.__cause__ is close_error
+        assert result is None
+        assert scripted.cursors["selection"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+        assert _manifests(store.database_path) == []
+        assert connection.execute(
+            "SELECT COUNT(*) FROM market_snapshot_entries"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()

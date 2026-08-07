@@ -474,7 +474,7 @@ Observé à 10 000 barres, **sans instrumentation mémoire** : capture ≈ **50 
 
 ⚠️ **Ce sont des observations de benchmark sur une machine donnée, pas un SLA.** Sous `tracemalloc` — nécessaire pour mesurer le pic mémoire mais qui perturbe fortement le temps — les mêmes appels donnent ≈ 130 ms de capture pour ≈ 4 432 ms de total, soit une **inflation d'environ ×5,8 du temps total**. Les deux jeux de chiffres ne sont pas comparables entre eux, et une mesure de latence ne doit jamais être prise sous `tracemalloc`.
 
-⚠️ **Ceci ne résout pas complètement la limitation** : la capture bloque encore brièvement un writer. La gate `journal_mode`/WAL reste **séparée et non traitée ici**.
+⚠️ **Ceci ne résout pas complètement la limitation** : la capture bloque encore brièvement un writer. La gate `journal-mode-hardening` (WAL) reste **séparée — NOT STARTED** : sa conception et son POC ont été réalisés, mais rien n'en est implémenté et `journal_mode` reste `delete`.
 
 ### Aucun résultat partiel
 
@@ -485,6 +485,22 @@ Observé à 10 000 barres, **sans instrumentation mémoire** : capture ≈ **50 
 `MAX_SNAPSHOT_REPLAY_PAYLOAD_BYTES = 32 000 000`, compté en **octets UTF-8**, jamais en `len(str)`. Préflighté via `length(CAST(payload_json AS BLOB))` : SQLite compte les octets **sans transférer les payloads**, et un dépassement lève `SnapshotReplayLimitExceeded` avant que la requête de payload ne soit exécutée.
 
 ⚠️ **Ce budget n'est pas une limite de RAM** : les objets Python décodés coûtent plusieurs fois la taille de leur JSON. C'est une **défense en profondeur contre une base sabotée**, pas une protection contre des données légitimes : un `payload_json` légitime est structurellement borné à **1 417 octets** (jeu de champs MarketBar figé, décimales bornées), soit ~14 Mo au pire cas légal absolu de 10 000 entries.
+
+### Endurcissement des lectures (read-hardening)
+
+**READ-HARDENING-F1 — drains bornés.** Tous les drains de curseur de capture sont bornés **pendant** `fetchmany`, jamais après : manifest **1 ligne au maximum**, metadata et payload **10 000** (`MAX_SNAPSHOT_RANGE_OPENS`), listing **`limit + 1`**. La ligne surnuméraire échoue fail-closed (`SnapshotStateCorruption`) et **le curseur n'est pas drainé au-delà**.
+
+La borne est **indépendante de `manifest.entry_count`** : cette colonne est une donnée persistée qui peut elle-même être corrompue, et en dériver la borne masquerait précisément l'entry supplémentaire que la validation doit détecter.
+
+Les requêtes rétrécissent à l'approche de la limite : chaque appel `fetchmany` est dimensionné pour **ne jamais porter au-delà de la position sentinelle `max_rows + 1`**. Un curseur DB-API conforme **livre donc au plus `max_rows + 1` lignes** avant le refus, et **aucune ligne située après la sentinelle n'est livrée ni consommée**. La **somme arithmétique** des tailles passées à `fetchmany` peut en revanche dépasser `max_rows + 1` lorsque le curseur s'épuise avant la borne : il répond alors court, et la demande suivante est une **sonde terminale qui revient vide** — par exemple `max_rows = 300`, `fetch_size = 100`, curseur de 250 lignes → tailles demandées `[100, 100, 100, 51]`, somme 351, mais **250 lignes livrées**. Cette sonde ne livre rien : la borne mémoire et la sûreté du drain sont inchangées. Un curseur qui ignorerait la taille demandée et renverrait un chunk surdimensionné est rejeté **à l'arrivée** et jamais accumulé ; le helper borne sa propre accumulation, il ne peut pas empêcher un objet étranger d'avoir déjà alloué ce chunk lui-même.
+
+**READ-HARDENING-F2 — fermeture explicite des curseurs.** Chaque curseur de capture (manifest, metadata, payload) est fermé explicitement, sur succès **comme** sur erreur, **sans aucune dépendance au refcount CPython, à `__del__`, au ramasse-miettes ni à la fermeture ultérieure de la connexion**.
+
+Une erreur secondaire de `close()` **ne masque jamais** l'erreur principale : quand la lecture a déjà échoué, l'échec de fermeture est supprimé et l'exception d'origine est propagée telle quelle — `SnapshotNotFound`, `SnapshotStateCorruption`, `SnapshotReplayLimitExceeded`, `sqlite3.Error` enveloppée en `SnapshotReadError`, ou une exception Python inattendue. À l'inverse, une erreur de `close()` **seule** fait échouer la capture fail-closed avec rollback : une capture dont le curseur n'a pas pu être libéré n'a pas réussi.
+
+Le verdict « manifest absent » est rendu **à l'intérieur** du contexte du curseur, de sorte qu'il devienne l'exception active avant la fermeture et ne puisse jamais être déplacé par un échec de `close()`.
+
+**Le curseur du listing suit la même politique** : il passe par le même gestionnaire de contexte, à l'intérieur du `try/except sqlite3.Error` qui enveloppe la lecture. Une `SnapshotStateCorruption` de dépassement reste donc intacte même si `close()` échoue ensuite, et une erreur de `close()` seule ressort en `SnapshotReadError` avec l'erreur de fermeture en `__cause__` — **aucune `sqlite3.Error` brute ne s'échappe d'une fonction publique**, dont toute la surface d'erreur est `MarketSnapshotError`.
 
 ### Pagination
 
