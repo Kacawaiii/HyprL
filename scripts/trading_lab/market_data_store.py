@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import os
 import json
 from pathlib import Path
 import re
@@ -55,8 +56,28 @@ _MARKET_BAR_FIELDS = frozenset(
 )
 
 
+# journal-mode-hardening: WAL is a persistent property of the FILE, not of a
+# connection, so it is migrated once under control and only ever VERIFIED
+# afterwards. synchronous stays FULL: WAL changes when the write lock is held,
+# not how durable a commit is.
+REQUIRED_JOURNAL_MODE = "wal"
+REQUIRED_SYNCHRONOUS = 2  # FULL
+MARKET_DATA_BUSY_TIMEOUT_MS = 30_000
+
+
 class MarketDataStoreError(RuntimeError):
     """Raised when a market-data artifact cannot be safely persisted."""
+
+
+class MarketDataStoreBusy(MarketDataStoreError):
+    """The journal-mode migration lost a race with another connection.
+
+    Retryable, and deliberately typed apart from every other store failure so
+    an operator can tell "come back when the database is quiescent" from "this
+    database is in a state this build refuses to run on". Nothing here retries
+    on its own: a hidden sleep/backoff loop inside a constructor turns a
+    contention signal into an unexplained stall.
+    """
 
 
 class MarketDataConflict(MarketDataStoreError):
@@ -72,6 +93,25 @@ class MarketIngestionResult:
     exact_replays: int
     gap_events_detected: int = 0
     gap_events_resolved: int = 0
+
+
+def _is_memory_database(database_path) -> bool:
+    """True for the in-memory backends SQLite can be asked for.
+
+    `PRAGMA journal_mode=WAL` answers "memory" on those, never "wal": an
+    in-memory database has no file to keep a journal mode in. A store whose
+    contract IS persistent WAL cannot honestly run there, so it says so
+    instead of degrading to whatever the backend felt like.
+    """
+    text = os.fspath(database_path)
+    if text == ":memory:":
+        return True
+    if not text.startswith("file:"):
+        return False
+    head, _, query = text.partition("?")
+    if head == "file::memory:":
+        return True
+    return any(parameter == "mode=memory" for parameter in query.split("&"))
 
 
 def _canonical_json(payload: dict[str, object]) -> str:
@@ -678,167 +718,185 @@ class MarketDataStore:
     """
 
     def __init__(self, database_path: Path) -> None:
+        if _is_memory_database(database_path):
+            raise MarketDataStoreError(
+                "market data store requires a file-backed SQLite database: "
+                f"{os.fspath(database_path)!r} is an in-memory backend, where "
+                "journal_mode can only ever be 'memory'"
+            )
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
-            # Schema note on historical-timestamp columns (Contract A, V1):
-            # raw_market_payloads.first_stored_at and every ingested_at
-            # column below are populated from the CALLER-declared
-            # ingested_at (see ingest_coinbase_response), never from a real
-            # wall-clock capture by this store.
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS raw_market_payloads (
-                    payload_sha256 TEXT PRIMARY KEY,
-                    provider TEXT NOT NULL,
-                    payload_bytes BLOB NOT NULL,
-                    byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
-                    -- Despite its name, this is the caller-DECLARED historical
-                    -- ingested_at (Contract A), not a real measurement of when
-                    -- this store physically persisted the row. Historical/
-                    -- legacy name, kept as-is; see MarketDataStore docstring.
-                    first_stored_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS market_ingestions (
-                    ingestion_id TEXT PRIMARY KEY,
-                    schema_version TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    product_id TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    available_at TEXT NOT NULL,
-                    ingested_at TEXT NOT NULL,
-                    raw_payload_sha256 TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    bar_count INTEGER NOT NULL CHECK (bar_count >= 0),
-                    FOREIGN KEY (raw_payload_sha256)
-                        REFERENCES raw_market_payloads(payload_sha256)
-                );
-
-                CREATE TABLE IF NOT EXISTS market_bar_receipts (
-                    content_sha256 TEXT PRIMARY KEY,
-                    ingestion_id TEXT NOT NULL,
-                    bar_id TEXT NOT NULL,
-                    bar_version_id TEXT NOT NULL,
-                    bar_open_at TEXT NOT NULL,
-                    bar_close_at TEXT NOT NULL,
-                    available_at TEXT NOT NULL,
-                    ingested_at TEXT NOT NULL,
-                    raw_payload_sha256 TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    UNIQUE (ingestion_id, bar_id),
-                    FOREIGN KEY (ingestion_id)
-                        REFERENCES market_ingestions(ingestion_id),
-                    FOREIGN KEY (raw_payload_sha256)
-                        REFERENCES raw_market_payloads(payload_sha256)
-                );
-
-                CREATE INDEX IF NOT EXISTS market_bar_receipts_lookup
-                    ON market_bar_receipts (bar_id, bar_open_at, ingested_at);
-
-                CREATE INDEX IF NOT EXISTS market_bar_receipts_open_lookup
-                    ON market_bar_receipts (bar_open_at, ingested_at);
-
-                -- Serves the Phase 1C snapshot selection, which filters by
-                -- domain first (provider/product_id/timeframe resolve to a
-                -- set of ingestion_id) and only then by range. Leading with
-                -- ingestion_id is what keeps that read independent of how
-                -- many OTHER domains happen to share the same bar_open_at
-                -- values; leading with bar_open_at instead would make the
-                -- cost grow with every colocated domain, and would also
-                -- divert the two lookups above onto a different index.
-                -- Covering on purpose: it carries every column the snapshot
-                -- selection projects, so that read never touches the table.
-                CREATE INDEX IF NOT EXISTS market_bar_receipts_snapshot_domain_lookup
-                    ON market_bar_receipts (
-                        ingestion_id,
-                        bar_open_at,
-                        ingested_at,
-                        content_sha256,
-                        bar_version_id,
-                        bar_id,
-                        available_at
+        # Migrating the journal mode is the ONE moment this store is allowed
+        # to change a persistent property of the file, and it happens on its
+        # own connection before any schema statement runs.
+        self._migrate_journal_mode()
+        # Closed explicitly, not left to the refcount: under WAL a surviving
+        # connection keeps the -wal/-shm sidecars live and blocks any later
+        # journal-mode change, so a constructed store must leave its file
+        # quiescent.
+        connection = self._connect()
+        try:
+            with connection:
+                # Schema note on historical-timestamp columns (Contract A, V1):
+                # raw_market_payloads.first_stored_at and every ingested_at
+                # column below are populated from the CALLER-declared
+                # ingested_at (see ingest_coinbase_response), never from a real
+                # wall-clock capture by this store.
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS raw_market_payloads (
+                        payload_sha256 TEXT PRIMARY KEY,
+                        provider TEXT NOT NULL,
+                        payload_bytes BLOB NOT NULL,
+                        byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+                        -- Despite its name, this is the caller-DECLARED historical
+                        -- ingested_at (Contract A), not a real measurement of when
+                        -- this store physically persisted the row. Historical/
+                        -- legacy name, kept as-is; see MarketDataStore docstring.
+                        first_stored_at TEXT NOT NULL
                     );
 
-                CREATE TABLE IF NOT EXISTS market_data_gap_events (
-                    event_id TEXT PRIMARY KEY,
-                    schema_version TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    product_id TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    expected_bar_open_at TEXT NOT NULL,
-                    event_type TEXT NOT NULL CHECK (event_type IN ('DETECTED', 'RESOLVED')),
-                    cause TEXT NOT NULL,
-                    observed_by_ingestion_id TEXT NOT NULL,
-                    available_at TEXT NOT NULL,
-                    ingested_at TEXT NOT NULL,
-                    FOREIGN KEY (observed_by_ingestion_id)
-                        REFERENCES market_ingestions(ingestion_id)
-                );
+                    CREATE TABLE IF NOT EXISTS market_ingestions (
+                        ingestion_id TEXT PRIMARY KEY,
+                        schema_version TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        product_id TEXT NOT NULL,
+                        timeframe TEXT NOT NULL,
+                        available_at TEXT NOT NULL,
+                        ingested_at TEXT NOT NULL,
+                        raw_payload_sha256 TEXT NOT NULL,
+                        metadata_json TEXT NOT NULL,
+                        bar_count INTEGER NOT NULL CHECK (bar_count >= 0),
+                        FOREIGN KEY (raw_payload_sha256)
+                            REFERENCES raw_market_payloads(payload_sha256)
+                    );
 
-                CREATE INDEX IF NOT EXISTS market_data_gap_events_lookup
-                    ON market_data_gap_events (provider, product_id, timeframe, expected_bar_open_at);
+                    CREATE TABLE IF NOT EXISTS market_bar_receipts (
+                        content_sha256 TEXT PRIMARY KEY,
+                        ingestion_id TEXT NOT NULL,
+                        bar_id TEXT NOT NULL,
+                        bar_version_id TEXT NOT NULL,
+                        bar_open_at TEXT NOT NULL,
+                        bar_close_at TEXT NOT NULL,
+                        available_at TEXT NOT NULL,
+                        ingested_at TEXT NOT NULL,
+                        raw_payload_sha256 TEXT NOT NULL,
+                        payload_json TEXT NOT NULL,
+                        UNIQUE (ingestion_id, bar_id),
+                        FOREIGN KEY (ingestion_id)
+                            REFERENCES market_ingestions(ingestion_id),
+                        FOREIGN KEY (raw_payload_sha256)
+                            REFERENCES raw_market_payloads(payload_sha256)
+                    );
 
-                CREATE TRIGGER IF NOT EXISTS raw_market_payloads_no_update
-                BEFORE UPDATE ON raw_market_payloads
-                BEGIN
-                    SELECT RAISE(ABORT, 'raw_market_payloads is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS raw_market_payloads_no_delete
-                BEFORE DELETE ON raw_market_payloads
-                BEGIN
-                    SELECT RAISE(ABORT, 'raw_market_payloads is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS market_ingestions_no_update
-                BEFORE UPDATE ON market_ingestions
-                BEGIN
-                    SELECT RAISE(ABORT, 'market_ingestions is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS market_ingestions_no_delete
-                BEFORE DELETE ON market_ingestions
-                BEGIN
-                    SELECT RAISE(ABORT, 'market_ingestions is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS market_bar_receipts_no_update
-                BEFORE UPDATE ON market_bar_receipts
-                BEGIN
-                    SELECT RAISE(ABORT, 'market_bar_receipts is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS market_bar_receipts_no_delete
-                BEFORE DELETE ON market_bar_receipts
-                BEGIN
-                    SELECT RAISE(ABORT, 'market_bar_receipts is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS market_data_gap_events_no_update
-                BEFORE UPDATE ON market_data_gap_events
-                BEGIN
-                    SELECT RAISE(ABORT, 'market_data_gap_events is insert-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS market_data_gap_events_no_delete
-                BEFORE DELETE ON market_data_gap_events
-                BEGIN
-                    SELECT RAISE(ABORT, 'market_data_gap_events is insert-only');
-                END;
-                """
-            )
-            # Phase 1C-C objects are created as their own script and then
-            # structurally verified: executescript commits statement by
-            # statement, so a failure part-way through must never leave a
-            # snapshot table standing without the triggers that make it
-            # immutable. The verification below is what makes that
-            # detectable instead of silent.
-            try:
-                connection.executescript(_SNAPSHOT_SCHEMA_SCRIPT)
-            except sqlite3.Error as exc:
-                # A pre-existing object carrying one of these names but a
-                # different shape makes CREATE ... IF NOT EXISTS a no-op and
-                # the dependent statements fail. Surface it as a typed schema
-                # error rather than a bare sqlite3 error, and never report a
-                # successful initialisation.
-                raise MarketDataStoreError(
-                    "market data store schema could not be created"
-                ) from exc
-            self._verify_snapshot_schema(connection)
+                    CREATE INDEX IF NOT EXISTS market_bar_receipts_lookup
+                        ON market_bar_receipts (bar_id, bar_open_at, ingested_at);
+
+                    CREATE INDEX IF NOT EXISTS market_bar_receipts_open_lookup
+                        ON market_bar_receipts (bar_open_at, ingested_at);
+
+                    -- Serves the Phase 1C snapshot selection, which filters by
+                    -- domain first (provider/product_id/timeframe resolve to a
+                    -- set of ingestion_id) and only then by range. Leading with
+                    -- ingestion_id is what keeps that read independent of how
+                    -- many OTHER domains happen to share the same bar_open_at
+                    -- values; leading with bar_open_at instead would make the
+                    -- cost grow with every colocated domain, and would also
+                    -- divert the two lookups above onto a different index.
+                    -- Covering on purpose: it carries every column the snapshot
+                    -- selection projects, so that read never touches the table.
+                    CREATE INDEX IF NOT EXISTS market_bar_receipts_snapshot_domain_lookup
+                        ON market_bar_receipts (
+                            ingestion_id,
+                            bar_open_at,
+                            ingested_at,
+                            content_sha256,
+                            bar_version_id,
+                            bar_id,
+                            available_at
+                        );
+
+                    CREATE TABLE IF NOT EXISTS market_data_gap_events (
+                        event_id TEXT PRIMARY KEY,
+                        schema_version TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        product_id TEXT NOT NULL,
+                        timeframe TEXT NOT NULL,
+                        expected_bar_open_at TEXT NOT NULL,
+                        event_type TEXT NOT NULL CHECK (event_type IN ('DETECTED', 'RESOLVED')),
+                        cause TEXT NOT NULL,
+                        observed_by_ingestion_id TEXT NOT NULL,
+                        available_at TEXT NOT NULL,
+                        ingested_at TEXT NOT NULL,
+                        FOREIGN KEY (observed_by_ingestion_id)
+                            REFERENCES market_ingestions(ingestion_id)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS market_data_gap_events_lookup
+                        ON market_data_gap_events (provider, product_id, timeframe, expected_bar_open_at);
+
+                    CREATE TRIGGER IF NOT EXISTS raw_market_payloads_no_update
+                    BEFORE UPDATE ON raw_market_payloads
+                    BEGIN
+                        SELECT RAISE(ABORT, 'raw_market_payloads is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS raw_market_payloads_no_delete
+                    BEFORE DELETE ON raw_market_payloads
+                    BEGIN
+                        SELECT RAISE(ABORT, 'raw_market_payloads is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS market_ingestions_no_update
+                    BEFORE UPDATE ON market_ingestions
+                    BEGIN
+                        SELECT RAISE(ABORT, 'market_ingestions is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS market_ingestions_no_delete
+                    BEFORE DELETE ON market_ingestions
+                    BEGIN
+                        SELECT RAISE(ABORT, 'market_ingestions is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS market_bar_receipts_no_update
+                    BEFORE UPDATE ON market_bar_receipts
+                    BEGIN
+                        SELECT RAISE(ABORT, 'market_bar_receipts is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS market_bar_receipts_no_delete
+                    BEFORE DELETE ON market_bar_receipts
+                    BEGIN
+                        SELECT RAISE(ABORT, 'market_bar_receipts is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS market_data_gap_events_no_update
+                    BEFORE UPDATE ON market_data_gap_events
+                    BEGIN
+                        SELECT RAISE(ABORT, 'market_data_gap_events is insert-only');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS market_data_gap_events_no_delete
+                    BEFORE DELETE ON market_data_gap_events
+                    BEGIN
+                        SELECT RAISE(ABORT, 'market_data_gap_events is insert-only');
+                    END;
+                    """
+                )
+                # Phase 1C-C objects are created as their own script and then
+                # structurally verified: executescript commits statement by
+                # statement, so a failure part-way through must never leave a
+                # snapshot table standing without the triggers that make it
+                # immutable. The verification below is what makes that
+                # detectable instead of silent.
+                try:
+                    connection.executescript(_SNAPSHOT_SCHEMA_SCRIPT)
+                except sqlite3.Error as exc:
+                    # A pre-existing object carrying one of these names but a
+                    # different shape makes CREATE ... IF NOT EXISTS a no-op and
+                    # the dependent statements fail. Surface it as a typed schema
+                    # error rather than a bare sqlite3 error, and never report a
+                    # successful initialisation.
+                    raise MarketDataStoreError(
+                        "market data store schema could not be created"
+                    ) from exc
+                self._verify_snapshot_schema(connection)
+        finally:
+            connection.close()
 
     def _verify_snapshot_schema(self, connection: sqlite3.Connection) -> None:
         """Fail-closed structural check of the Phase 1C-C objects.
@@ -933,24 +991,113 @@ class MarketDataStore:
                     f"{actual_index_columns!r}, expected {expected_index_columns!r}"
                 )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30.0)
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA foreign_keys = ON")
-        # recursive_triggers is NOT optional here. With it OFF (SQLite's
-        # default), INSERT OR REPLACE resolves a conflict by DELETING the
-        # existing row WITHOUT firing the BEFORE DELETE trigger -- silently
-        # rewriting a row this schema calls immutable. The append-only
-        # guarantee of every table below depends on this PRAGMA.
-        connection.execute("PRAGMA recursive_triggers = ON")
-        for pragma in ("foreign_keys", "recursive_triggers"):
-            # Never assume a PRAGMA took effect: they are per-connection and
-            # silently become no-ops inside a transaction.
-            if connection.execute(f"PRAGMA {pragma}").fetchone()[0] != 1:
-                connection.close()
+    def _open(self) -> sqlite3.Connection:
+        """A raw connection carrying only the per-connection PRAGMAs."""
+        connection = sqlite3.connect(
+            self.database_path, timeout=MARKET_DATA_BUSY_TIMEOUT_MS / 1000
+        )
+        try:
+            connection.execute(f"PRAGMA busy_timeout = {MARKET_DATA_BUSY_TIMEOUT_MS}")
+            connection.execute("PRAGMA foreign_keys = ON")
+            # recursive_triggers is NOT optional here. With it OFF (SQLite's
+            # default), INSERT OR REPLACE resolves a conflict by DELETING the
+            # existing row WITHOUT firing the BEFORE DELETE trigger -- silently
+            # rewriting a row this schema calls immutable. The append-only
+            # guarantee of every table below depends on this PRAGMA.
+            connection.execute("PRAGMA recursive_triggers = ON")
+            for pragma in ("foreign_keys", "recursive_triggers"):
+                # Never assume a PRAGMA took effect: they are per-connection and
+                # silently become no-ops inside a transaction.
+                if connection.execute(f"PRAGMA {pragma}").fetchone()[0] != 1:
+                    raise MarketDataStoreError(
+                        f"market data store connection could not enable PRAGMA {pragma}"
+                    )
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    def _require_persistent_contract(self, connection: sqlite3.Connection) -> None:
+        """Re-read and demand the properties this store refuses to run without.
+
+        Verification only, deliberately: a reader that quietly repaired the
+        file it just found in the wrong state would hide the deployment that
+        broke it, and would take the write lock to do it.
+        """
+        mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(mode).lower() != REQUIRED_JOURNAL_MODE:
+            raise MarketDataStoreError(
+                f"market data store requires journal_mode={REQUIRED_JOURNAL_MODE!r}, "
+                f"database {str(self.database_path)!r} reports {mode!r}; migrate it "
+                "while the database is quiescent instead of running degraded"
+            )
+        synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
+        if synchronous != REQUIRED_SYNCHRONOUS:
+            raise MarketDataStoreError(
+                f"market data store requires synchronous={REQUIRED_SYNCHRONOUS} (FULL), "
+                f"connection reports {synchronous!r}"
+            )
+        busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+        if busy_timeout != MARKET_DATA_BUSY_TIMEOUT_MS:
+            raise MarketDataStoreError(
+                f"market data store requires busy_timeout={MARKET_DATA_BUSY_TIMEOUT_MS}, "
+                f"connection reports {busy_timeout!r}"
+            )
+
+    def _migrate_journal_mode(self) -> None:
+        """Bring the FILE to WAL once, or refuse to open the store.
+
+        Never inside a transaction: `PRAGMA journal_mode` is a silent no-op
+        there. A concurrent reader or writer makes the change fail with
+        SQLITE_BUSY, which is a contention signal for the caller, not a
+        reason to fall back to a mode this store does not support.
+        """
+        connection = self._open()
+        try:
+            if connection.in_transaction:
                 raise MarketDataStoreError(
-                    f"market data store connection could not enable PRAGMA {pragma}"
+                    "market data store cannot migrate journal_mode inside an "
+                    "open transaction"
                 )
+            current = connection.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(current).lower() != REQUIRED_JOURNAL_MODE:
+                try:
+                    answered = connection.execute(
+                        f"PRAGMA journal_mode = {REQUIRED_JOURNAL_MODE}"
+                    ).fetchone()
+                except sqlite3.Error as exc:
+                    if getattr(exc, "sqlite_errorname", None) == "SQLITE_BUSY":
+                        # Structured code, never the message text: "database is
+                        # locked" is prose SQLite is free to reword.
+                        raise MarketDataStoreBusy(
+                            "market data store could not migrate "
+                            f"{str(self.database_path)!r} to journal_mode="
+                            f"{REQUIRED_JOURNAL_MODE}: another connection holds it. "
+                            "Retry when the database is quiescent."
+                        ) from exc
+                    raise MarketDataStoreError(
+                        "market data store could not migrate "
+                        f"{str(self.database_path)!r} to journal_mode="
+                        f"{REQUIRED_JOURNAL_MODE}"
+                    ) from exc
+                reported = None if not answered else str(answered[0]).lower()
+                if reported != REQUIRED_JOURNAL_MODE:
+                    raise MarketDataStoreError(
+                        "market data store refused a journal-mode fallback: asked "
+                        f"for {REQUIRED_JOURNAL_MODE!r}, SQLite answered {reported!r}"
+                    )
+            self._require_persistent_contract(connection)
+        finally:
+            connection.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = self._open()
+        try:
+            # Verify, never repair: migration belongs to _migrate_journal_mode.
+            self._require_persistent_contract(connection)
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def ingest_coinbase_response(

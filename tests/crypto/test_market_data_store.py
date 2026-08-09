@@ -2147,3 +2147,561 @@ def test_an_inoperative_trigger_with_the_right_name_is_refused(
 
     with pytest.raises(store_module.MarketDataStoreError, match="schema"):
         store_module.MarketDataStore(store.database_path)
+
+
+# --- journal-mode-hardening: WAL is a persistent, verified property ------
+
+
+import os
+import shutil
+import subprocess
+import sys
+import textwrap
+import time
+
+
+def _pragma(connection, name):
+    return connection.execute(f"PRAGMA {name}").fetchone()[0]
+
+
+def _raw(database, *, busy_ms=250):
+    connection = sqlite3.connect(database, timeout=busy_ms / 1000)
+    connection.execute(f"PRAGMA busy_timeout = {busy_ms}")
+    return connection
+
+
+def _delete_mode_database(path):
+    """A real file database left in SQLite's default journal_mode."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE probe (x INTEGER)")
+        connection.execute("INSERT INTO probe VALUES (1)")
+        connection.commit()
+        assert _pragma(connection, "journal_mode") == "delete"
+    finally:
+        connection.close()
+    return path
+
+
+def test_a_delete_database_is_migrated_to_wal_and_the_mode_persists(
+    tmp_path, store_module
+) -> None:
+    """journal_mode is a property of the FILE, not of a connection. Opening
+    the store must migrate it once, and a completely independent connection
+    opened afterwards must still see wal."""
+    database = _delete_mode_database(tmp_path / "market-data.sqlite3")
+    store = store_module.MarketDataStore(database)
+
+    connection = store._connect()
+    try:
+        assert _pragma(connection, "journal_mode") == "wal"
+    finally:
+        connection.close()
+
+    # Nothing of ours is open any more: read the mode back from the file.
+    independent = sqlite3.connect(database)
+    try:
+        assert _pragma(independent, "journal_mode") == "wal"
+    finally:
+        independent.close()
+
+
+def test_every_store_connection_carries_the_full_pragma_contract(
+    tmp_path, store_module
+) -> None:
+    store = _store(store_module, tmp_path)
+    for _ in range(2):  # the contract holds on later connections too
+        connection = store._connect()
+        try:
+            assert _pragma(connection, "journal_mode") == "wal"
+            assert _pragma(connection, "synchronous") == 2  # FULL, never lowered
+            assert _pragma(connection, "busy_timeout") == 30_000
+            assert _pragma(connection, "foreign_keys") == 1
+            assert _pragma(connection, "recursive_triggers") == 1
+            assert _pragma(connection, "wal_autocheckpoint") == 1_000
+        finally:
+            connection.close()
+
+
+def test_connect_refuses_a_database_whose_journal_mode_was_downgraded(
+    tmp_path, store_module
+) -> None:
+    """_connect verifies; it never repairs. A store whose file was taken back
+    to DELETE behind our back is a broken deployment, not something to
+    silently migrate mid-flight."""
+    store = _store(store_module, tmp_path)
+    saboteur = sqlite3.connect(store.database_path)
+    try:
+        assert saboteur.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
+    finally:
+        saboteur.close()
+
+    with pytest.raises(store_module.MarketDataStoreError) as excinfo:
+        store._connect()
+    assert "journal_mode" in str(excinfo.value)
+    assert not isinstance(excinfo.value, store_module.MarketDataStoreBusy)
+
+    # The failed verification must not have migrated anything.
+    after = sqlite3.connect(store.database_path)
+    try:
+        assert _pragma(after, "journal_mode") == "delete"
+    finally:
+        after.close()
+
+
+def test_connect_contains_no_journal_mode_migration_statement(store_module) -> None:
+    """Guard on the split: __init__ may migrate, _connect may not. A grep is
+    the cheapest way to keep a future edit from quietly re-adding it."""
+    import inspect
+
+    store = store_module.MarketDataStore
+    read_path = "".join(
+        inspect.getsource(member)
+        for member in (store._connect, store._open, store._require_persistent_contract)
+    )
+    # The read path must READ the mode...
+    assert re.search(r"PRAGMA\s+journal_mode(?!\s*=)", read_path), read_path
+    # ...and must never issue the PRAGMA that ASSIGNS it.
+    assert not re.search(r"PRAGMA\s+journal_mode\s*=", read_path), read_path
+    # Exactly one place is allowed to, and it is the migration.
+    migration = inspect.getsource(store._migrate_journal_mode)
+    assert re.search(r"PRAGMA\s+journal_mode\s*=", migration), migration
+    # Across the whole store class, exactly one statement assigns the mode.
+    class_source = inspect.getsource(store)
+    assert len(re.findall(r"PRAGMA\s+journal_mode\s*=", class_source)) == 1, class_source
+
+
+@pytest.mark.parametrize("answer", ["delete", "memory", "truncate", "", None])
+def test_a_refused_wal_migration_fails_closed(
+    tmp_path, store_module, monkeypatch, answer
+) -> None:
+    """If SQLite answers anything but wal, there is no fallback: the store
+    refuses to exist rather than run on a mode it did not ask for."""
+    database = _delete_mode_database(tmp_path / "refused.sqlite3")
+    real_connect = sqlite3.connect
+
+    class _LyingConnection:
+        def __init__(self, inner):
+            self._inner = inner
+            self.statements: list[str] = []
+
+        def execute(self, sql, parameters=()):
+            self.statements.append(sql)
+            if re.match(r"\s*PRAGMA\s+journal_mode\s*=", sql, re.IGNORECASE):
+                class _Answer:
+                    def fetchone(self_inner):
+                        return None if answer is None else (answer,)
+                return _Answer()
+            return self._inner.execute(sql, parameters)
+
+        def executescript(self, sql):
+            return self._inner.executescript(sql)
+
+        def close(self):
+            return self._inner.close()
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    made: list = []
+
+    def _fake_connect(*args, **kwargs):
+        wrapper = _LyingConnection(real_connect(*args, **kwargs))
+        made.append(wrapper)
+        return wrapper
+
+    monkeypatch.setattr(store_module.sqlite3, "connect", _fake_connect)
+    with pytest.raises(store_module.MarketDataStoreError) as excinfo:
+        store_module.MarketDataStore(database)
+    monkeypatch.undo()
+
+    assert not isinstance(excinfo.value, store_module.MarketDataStoreBusy)
+    # No business schema may have run after the verdict.
+    joined = " ".join(s for wrapper in made for s in wrapper.statements)
+    assert "CREATE TABLE" not in joined.upper()
+    survivor = sqlite3.connect(database)
+    try:
+        tables = {
+            row[0]
+            for row in survivor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert "raw_market_payloads" not in tables
+    finally:
+        survivor.close()
+
+
+def test_a_locked_database_reports_a_retryable_busy_error(
+    tmp_path, store_module
+) -> None:
+    """A real SQLITE_BUSY, not a simulation: a held RESERVED lock makes the
+    journal-mode change fail immediately. The caller -- not this store --
+    decides whether to retry."""
+    database = _delete_mode_database(tmp_path / "busy.sqlite3")
+    blocker = _raw(database)
+    blocker.execute("BEGIN IMMEDIATE")
+    blocker.execute("INSERT INTO probe VALUES (2)")
+    try:
+        with pytest.raises(store_module.MarketDataStoreBusy) as excinfo:
+            store_module.MarketDataStore(database)
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, sqlite3.Error)
+        assert cause.sqlite_errorname == "SQLITE_BUSY"
+        assert isinstance(excinfo.value, store_module.MarketDataStoreError)
+
+        # Nothing may have been half-initialised.
+        inspector = _raw(database)
+        try:
+            tables = {
+                row[0]
+                for row in inspector.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            assert "raw_market_payloads" not in tables
+            assert _pragma(inspector, "journal_mode") == "delete"
+        finally:
+            inspector.close()
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    # The caller retries explicitly, and now it works.
+    store = store_module.MarketDataStore(database)
+    connection = store._connect()
+    try:
+        assert _pragma(connection, "journal_mode") == "wal"
+    finally:
+        connection.close()
+
+
+def test_busy_is_recognised_by_sqlite_errorname_not_by_message_text(
+    tmp_path, store_module, monkeypatch
+) -> None:
+    """An error that merely READS like a lock must not be called retryable."""
+    database = _delete_mode_database(tmp_path / "impostor.sqlite3")
+    impostor = sqlite3.OperationalError("database is locked")
+    impostor.sqlite_errorname = "SQLITE_ERROR"
+    real_connect = sqlite3.connect
+
+    class _RaisingConnection:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, parameters=()):
+            if re.match(r"\s*PRAGMA\s+journal_mode\s*=", sql, re.IGNORECASE):
+                raise impostor
+            return self._inner.execute(sql, parameters)
+
+        def close(self):
+            return self._inner.close()
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(
+        store_module.sqlite3, "connect",
+        lambda *a, **k: _RaisingConnection(real_connect(*a, **k)),
+    )
+    with pytest.raises(store_module.MarketDataStoreError) as excinfo:
+        store_module.MarketDataStore(database)
+    assert not isinstance(excinfo.value, store_module.MarketDataStoreBusy), excinfo.value
+    assert excinfo.value.__cause__ is impostor
+
+
+@pytest.mark.parametrize(
+    "target",
+    [":memory:", "file::memory:", "file::memory:?cache=shared", "file:tmp?mode=memory"],
+)
+def test_in_memory_databases_are_refused_instead_of_silently_degraded(
+    store_module, target
+) -> None:
+    """PRAGMA journal_mode=WAL answers 'memory' on an in-memory database.
+    A store whose whole contract is persistent WAL must say so, not pretend."""
+    with pytest.raises(store_module.MarketDataStoreError) as excinfo:
+        store_module.MarketDataStore(target)
+    message = str(excinfo.value)
+    assert "memory" in message.lower()
+    assert "file" in message.lower()
+
+
+def test_a_writer_commits_while_a_reader_holds_an_open_transaction(
+    tmp_path, store_module
+) -> None:
+    """The point of the whole gate. In DELETE a reader's open transaction
+    blocks every writer's COMMIT; in WAL the writer commits, and the reader
+    keeps the coherent snapshot it started with."""
+    store = _store(store_module, tmp_path)
+    seed = store._connect()
+    try:
+        seed.execute("BEGIN IMMEDIATE")
+        seed.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("a" * 64, "coinbase_exchange_rest", b"one", 3, "2026-08-05T00:00:00Z"),
+        )
+        seed.commit()
+    finally:
+        seed.close()
+
+    reader = store._connect()
+    writer = store._connect()
+    try:
+        reader.execute("BEGIN")
+        assert reader.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone() == (1,)
+
+        started = time.perf_counter()
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("b" * 64, "coinbase_exchange_rest", b"two", 3, "2026-08-05T01:00:00Z"),
+        )
+        writer.commit()
+        elapsed = time.perf_counter() - started
+        # It committed, and it did not have to wait out a busy_timeout to do it.
+        assert elapsed < 5.0, elapsed
+        assert writer.in_transaction is False
+
+        # The reader still sees its own consistent snapshot, not a hybrid.
+        assert reader.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone() == (1,)
+        reader.commit()
+
+        # A NEW transaction sees the committed state.
+        assert reader.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone() == (2,)
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_the_same_reader_writer_scenario_blocks_in_delete_mode(tmp_path) -> None:
+    """Control: without WAL the identical sequence fails. This is what the
+    gate removes."""
+    database = _delete_mode_database(tmp_path / "control.sqlite3")
+    reader = _raw(database)
+    writer = _raw(database)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM probe").fetchone()
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("INSERT INTO probe VALUES (2)")
+        with pytest.raises(sqlite3.OperationalError) as excinfo:
+            writer.commit()
+        assert excinfo.value.sqlite_errorname == "SQLITE_BUSY"
+    finally:
+        writer.rollback()
+        reader.rollback()
+        writer.close()
+        reader.close()
+
+
+def test_writers_are_still_serialized_under_wal(tmp_path, store_module) -> None:
+    """WAL removes the reader->writer block. It does NOT make SQLite
+    multi-writer, and this gate must not be read as claiming that."""
+    store = _store(store_module, tmp_path)
+    first = _raw(store.database_path)
+    second = _raw(store.database_path)
+    try:
+        assert _pragma(first, "journal_mode") == "wal"
+        first.execute("BEGIN IMMEDIATE")
+        first.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("c" * 64, "coinbase_exchange_rest", b"x", 1, "2026-08-05T00:00:00Z"),
+        )
+        with pytest.raises(sqlite3.OperationalError) as excinfo:
+            second.execute("BEGIN IMMEDIATE")
+        assert excinfo.value.sqlite_errorname == "SQLITE_BUSY"
+        first.commit()
+        # Once the first writer is done, the second gets its turn.
+        second.execute("BEGIN IMMEDIATE")
+        second.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("d" * 64, "coinbase_exchange_rest", b"y", 1, "2026-08-05T01:00:00Z"),
+        )
+        second.commit()
+        assert second.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone() == (2,)
+    finally:
+        first.close()
+        second.close()
+
+
+def test_a_killed_process_leaves_a_consistent_usable_wal_database(
+    tmp_path, store_module
+) -> None:
+    """Process kill only -- this proves nothing about power loss, fsync or
+    hardware, and the documentation says so."""
+    database = tmp_path / "crash.sqlite3"
+    store_module.MarketDataStore(database)
+    script = textwrap.dedent(
+        f"""
+        import sqlite3, sys, time
+        sys.path.insert(0, {str(ROOT)!r})
+        from scripts.trading_lab.market_data_store import MarketDataStore
+        store = MarketDataStore({str(database)!r})
+        connection = store._connect()
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("e" * 64, "coinbase_exchange_rest", b"killed", 6, "2026-08-05T00:00:00Z"),
+        )
+        print("READY", flush=True)
+        time.sleep(30)
+        """
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert child.stdout.readline().strip() == "READY"
+        child.kill()
+    finally:
+        child.wait(timeout=30)
+
+    survivor = sqlite3.connect(database, timeout=10.0)
+    try:
+        assert survivor.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert _pragma(survivor, "journal_mode") == "wal"
+        # The uncommitted transaction is gone, and the database still works.
+        assert survivor.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone() == (0,)
+        survivor.execute("PRAGMA busy_timeout = 5000")
+        survivor.execute("BEGIN IMMEDIATE")
+        survivor.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("f" * 64, "coinbase_exchange_rest", b"after", 5, "2026-08-05T02:00:00Z"),
+        )
+        survivor.commit()
+        assert survivor.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone() == (1,)
+    finally:
+        survivor.close()
+
+
+def test_wal_sidecars_are_part_of_the_live_database(tmp_path, store_module) -> None:
+    """Copying the main file alone while WAL is live is NOT a backup: the
+    recent commits live in the -wal until a checkpoint folds them in."""
+    store = _store(store_module, tmp_path)
+    connection = store._connect()
+    try:
+        for index in range(50):
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+                (f"{index:064d}", "coinbase_exchange_rest", b"x", 1, "2026-08-05T00:00:00Z"),
+            )
+            connection.commit()
+
+        wal = Path(f"{store.database_path}-wal")
+        shm = Path(f"{store.database_path}-shm")
+        assert wal.exists() and wal.stat().st_size > 0, "the -wal holds live committed data"
+        assert shm.exists(), "the -shm is live shared state"
+
+        # A naive "backup" of the main file alone, taken hot.
+        naive = tmp_path / "naive-copy.sqlite3"
+        shutil.copyfile(store.database_path, naive)
+        copy = sqlite3.connect(naive)
+        try:
+            copied = copy.execute("SELECT COUNT(*) FROM raw_market_payloads").fetchone()[0]
+        finally:
+            copy.close()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM raw_market_payloads"
+        ).fetchone()[0] == 50
+        assert copied < 50, (
+            "a hot copy of the main file alone silently loses the -wal contents; "
+            f"it showed {copied} of 50 rows"
+        )
+    finally:
+        connection.close()
+
+    # A clean close checkpoints and removes the sidecars: the file alone is
+    # then a coherent offline copy.
+    assert not Path(f"{store.database_path}-wal").exists()
+    assert not Path(f"{store.database_path}-shm").exists()
+    offline = tmp_path / "offline-copy.sqlite3"
+    shutil.copyfile(store.database_path, offline)
+    verified = sqlite3.connect(offline)
+    try:
+        assert verified.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert verified.execute(
+            "SELECT COUNT(*) FROM raw_market_payloads"
+        ).fetchone()[0] == 50
+    finally:
+        verified.close()
+
+
+class _PragmaScriptedConnection:
+    """A connection whose PRAGMA answers are scripted, so each guard can be
+    isolated from the ones that would otherwise dominate it."""
+
+    def __init__(self, inner, *, journal_reads=None, journal_assignment=None,
+                 synchronous=None):
+        self._inner = inner
+        self._journal_reads = list(journal_reads or [])
+        self._journal_assignment = journal_assignment
+        self._synchronous = synchronous
+
+    def execute(self, sql, parameters=()):
+        stripped = sql.strip()
+        if re.fullmatch(r"PRAGMA\s+journal_mode\s*=\s*\w+", stripped, re.IGNORECASE):
+            if self._journal_assignment is not None:
+                return _FixedAnswer(self._journal_assignment)
+        elif re.fullmatch(r"PRAGMA\s+journal_mode", stripped, re.IGNORECASE):
+            if self._journal_reads:
+                return _FixedAnswer(self._journal_reads.pop(0))
+        elif re.fullmatch(r"PRAGMA\s+synchronous", stripped, re.IGNORECASE):
+            if self._synchronous is not None:
+                return _FixedAnswer(self._synchronous)
+        return self._inner.execute(sql, parameters)
+
+    def close(self):
+        return self._inner.close()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _FixedAnswer:
+    def __init__(self, value):
+        self._value = value
+
+    def fetchone(self):
+        return None if self._value is None else (self._value,)
+
+
+def _scripted_store(store_module, monkeypatch, database, **script):
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        store_module.sqlite3, "connect",
+        lambda *a, **k: _PragmaScriptedConnection(real_connect(*a, **k), **script),
+    )
+    try:
+        with pytest.raises(store_module.MarketDataStoreError) as excinfo:
+            store_module.MarketDataStore(database)
+    finally:
+        monkeypatch.undo()
+    return excinfo.value
+
+
+def test_a_migration_answer_other_than_wal_is_refused_even_if_a_later_read_agrees(
+    tmp_path, store_module, monkeypatch
+) -> None:
+    """The migration's OWN answer is the verdict. A build that trusted a
+    later re-read instead would accept a driver that quietly refused the
+    change and then reported success -- exactly the fallback this store
+    forbids."""
+    database = _delete_mode_database(tmp_path / "liar.sqlite3")
+    error = _scripted_store(
+        store_module, monkeypatch, database,
+        journal_reads=["delete", "wal", "wal", "wal"],  # first read: needs migrating
+        journal_assignment="delete",                     # ...which then refuses
+    )
+    assert "fallback" in str(error).lower(), error
+    assert "'delete'" in str(error), error
+    assert not isinstance(error, store_module.MarketDataStoreBusy)
+
+
+def test_a_connection_reporting_degraded_synchronous_is_refused(
+    tmp_path, store_module, monkeypatch
+) -> None:
+    """synchronous=NORMAL is the classic WAL "optimisation". This store does
+    not take it, and does not accept a connection that arrives with it."""
+    database = _delete_mode_database(tmp_path / "sync.sqlite3")
+    error = _scripted_store(store_module, monkeypatch, database, synchronous=1)
+    assert "synchronous" in str(error), error
+    assert str(store_module.REQUIRED_SYNCHRONOUS) in str(error), error

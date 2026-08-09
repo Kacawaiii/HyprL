@@ -4202,9 +4202,13 @@ def test_capture_reads_manifest_and_entries_in_one_view(
 ) -> None:
     """Without an explicit BEGIN every SELECT is its own view, so a writer
     landing between the manifest and the entries would be half-seen. Proven
-    on a real file database with two connections: while the reader holds its
-    capture, the writer cannot commit, and the reader sees the old state
-    whole."""
+    on a real file database with two connections: the writer COMMITS a fourth
+    entry mid-capture -- journal_mode=wal no longer blocks it -- and the
+    reader still returns the three-entry state whole, never a torn view.
+
+    Under journal_mode=delete this held only because the writer was blocked.
+    Snapshot isolation is the stronger guarantee: the concurrent commit really
+    happens and is still invisible to the capture that started before it."""
     import threading
 
     store, result = _one_snapshot(store_module, snapshots_module, tmp_path, openings=3, name="f3")
@@ -4266,8 +4270,15 @@ def test_capture_reads_manifest_and_entries_in_one_view(
     # The reader saw the pre-existing state in full, never a torn view.
     assert loaded.manifest.entry_count == 3
     assert len(loaded.entries) == 3
-    # And it held a real transaction: the writer could not commit through it.
-    assert observed.get("writer_committed") is False, observed
+    # The concurrent writer really committed -- that is the whole point of
+    # journal-mode-hardening -- and the capture still did not see it.
+    assert observed.get("writer_committed") is True, observed
+    with sqlite3.connect(store.database_path) as after:
+        persisted = after.execute(
+            "SELECT COUNT(*) FROM market_snapshot_entries WHERE snapshot_id = ?",
+            (result.snapshot_id,),
+        ).fetchone()[0]
+    assert persisted == 4, "the writer's fourth entry must really be on disk"
 
 
 # --- F4: the sqlite3.Error handler must release the read lock -------------

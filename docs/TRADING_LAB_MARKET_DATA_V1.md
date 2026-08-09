@@ -474,7 +474,27 @@ Observé à 10 000 barres, **sans instrumentation mémoire** : capture ≈ **50 
 
 ⚠️ **Ce sont des observations de benchmark sur une machine donnée, pas un SLA.** Sous `tracemalloc` — nécessaire pour mesurer le pic mémoire mais qui perturbe fortement le temps — les mêmes appels donnent ≈ 130 ms de capture pour ≈ 4 432 ms de total, soit une **inflation d'environ ×5,8 du temps total**. Les deux jeux de chiffres ne sont pas comparables entre eux, et une mesure de latence ne doit jamais être prise sous `tracemalloc`.
 
-⚠️ **Ceci ne résout pas complètement la limitation** : la capture bloque encore brièvement un writer. La gate `journal-mode-hardening` (WAL) reste **séparée — NOT STARTED** : sa conception et son POC ont été réalisés, mais rien n'en est implémenté et `journal_mode` reste `delete`.
+✅ **La gate `journal-mode-hardening` lève cette limitation** : `journal_mode` est désormais `wal`, et un writer nominal n'est plus bloqué par la transaction de lecture d'un reader (voir ci-dessous).
+
+### journal_mode = WAL (journal-mode-hardening)
+
+**WAL est obligatoire, persistant et vérifié.** `journal_mode` est une propriété du **fichier**, pas d'une connexion. `MarketDataStore` la migre **une seule fois**, dans `__init__`, sur une connexion dédiée, hors de toute transaction — un `PRAGMA journal_mode` exécuté dans une transaction est un no-op silencieux. Toutes les connexions ultérieures (`_connect`) **vérifient sans jamais réparer** : une base retrouvée en `delete` est un déploiement cassé qu'il faut voir, pas un état à migrer en vol — et migrer en vol prendrait le verrou d'écriture au milieu d'une lecture. Un seul `PRAGMA journal_mode = …` existe dans toute la classe, et un test de garde le vérifie.
+
+**La migration doit être faite en période quiescente.** Une autre connexion active fait échouer le changement de mode avec `SQLITE_BUSY`. Ce cas est signalé par `MarketDataStoreBusy`, sous-classe de `MarketDataStoreError`, identifiée **exclusivement** par `exc.sqlite_errorname == "SQLITE_BUSY"` — jamais par le texte du message, que SQLite est libre de reformuler. **Aucun retry automatique, aucun `sleep`, aucun backoff** : la décision de réessayer appartient à l'appelant. Trois situations restent distinguables : contention temporaire (`MarketDataStoreBusy`), état `journal_mode` invalide (`MarketDataStoreError`), autre erreur SQLite non retryable (`MarketDataStoreError` avec `__cause__`).
+
+**Aucune fallback.** Si SQLite répond autre chose que `wal`, le store refuse d'exister ; aucun schéma métier n'est exécuté après le verdict.
+
+**`:memory:` n'est pas supporté.** `PRAGMA journal_mode=WAL` y répond `memory` : une base en mémoire n'a pas de fichier où retenir un mode. Les formes `:memory:`, `file::memory:`, `file::memory:?cache=shared` et `file:…?mode=memory` sont refusées explicitement avec un message demandant une base fichier.
+
+**Contrat PRAGMA vérifié sur chaque connexion** : `journal_mode=wal`, `synchronous=2` (**FULL, jamais abaissé** — WAL change *quand* le verrou d'écriture est pris, pas la durabilité d'un commit), `busy_timeout=30000`, `foreign_keys=1`, `recursive_triggers=1`. `wal_autocheckpoint` est laissé au défaut SQLite (**1000 pages**) et n'est pas reconfiguré. Aucun `PRAGMA wal_checkpoint(TRUNCATE)` sur le chemin nominal ; `PASSIVE` reste admissible en diagnostic.
+
+**Concurrence obtenue.** Un reader qui tient une transaction ouverte ne bloque plus le `COMMIT` d'un writer, et conserve son propre instantané cohérent : il ne voit pas l'écriture concurrente tant que sa transaction dure, puis la voit dans la suivante. **Aucune lecture hybride.** En revanche **WAL ne rend pas SQLite multi-writer** : deux `BEGIN IMMEDIATE` restent sérialisés, le second recevant `SQLITE_BUSY`. La gate supprime le blocage reader→writer, pas la sérialisation writer→writer.
+
+**Sidecars.** Une base WAL active s'accompagne de `…-wal` et `…-shm`, qui **font partie de l'état de la base**. Il est donc **interdit de copier le seul fichier principal à chaud et d'appeler cela une sauvegarde** : les commits récents vivent dans le `-wal` tant qu'aucun checkpoint ne les a repliés — une copie naïve prise à chaud peut même ne pas contenir les tables. Deux contrats de sauvegarde sont acceptés : **(A)** SQLite Backup API pendant le fonctionnement, ou **(B)** fermeture complète de toutes les connexions (SQLite checkpointe et supprime alors les sidecars) puis copie offline du fichier seul. **Ne pas** bricoler une sauvegarde en copiant `db` + `-wal` + `-shm` à chaud. Corollaire appliqué : `__init__` **ferme explicitement** sa connexion, pour qu'un store construit laisse son fichier quiescent au lieu de dépendre du ramasse-miettes.
+
+**Portée et limites prouvées.** Stockage **local, même hôte** — les systèmes de fichiers réseau ne sont **pas** déclarés universellement sûrs pour WAL (le `-shm` suppose une mémoire partagée entre processus du même hôte). Résilience testée : **kill de processus** (`integrity_check` = `ok`, transaction non committée absente, base réutilisable). **Coupure d'alimentation NON testée** ; fsync matériel, corruption disque et garanties OS/filesystem universelles sont **hors périmètre**.
+
+Environnement de référence des mesures : SQLite 3.45.1, Python 3.12.3, ext4 sous WSL.
 
 ### Aucun résultat partiel
 
