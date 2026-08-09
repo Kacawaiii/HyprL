@@ -496,6 +496,23 @@ Observé à 10 000 barres, **sans instrumentation mémoire** : capture ≈ **50 
 
 Environnement de référence des mesures : SQLite 3.45.1, Python 3.12.3, ext4 sous WSL.
 
+### Phase 1C-E — intégration finale du socle causal
+
+Le socle Phase 1 est prouvé **comme un seul système**, de bout en bout sur base fichier réelle et via les surfaces publiques : `ingest_coinbase_response` → persistance → sélection causale as-of → matérialisation → `load_snapshot` / `list_snapshot_manifests` / `replay_snapshot`.
+
+Invariants d'intégration démontrés :
+
+- **Causalité et anti-future-leakage** — l'invariant central. Une lecture `as_of=T` ne peut utiliser aucune connaissance publiée après T : deux versions successives des mêmes barres, une lecture strictement entre les deux, et la révision postérieure reste invisible. La borne est **inclusive** (`as_of == ingested_at` voit la publication), et une microseconde plus tôt ne la voit pas. Rien ne dépend d'un « dernier enregistrement », d'un `MAX()`, du dernier `ingestion_id` ni de l'ordre physique SQLite.
+- **Snapshots immuables et idempotents** — un snapshot existant n'absorbe jamais une donnée publiée après lui ; répéter la requête causale identique rend le même `snapshot_id` sans rien recréer ; une requête causale ultérieure voit les nouvelles données **sans modifier** le snapshot antérieur.
+- **Replay déterministe** — le rejeu reproduit exactement le contenu attesté, dans le même ordre, avec les mêmes `content_sha256`, jamais le contenu courant.
+- **Redémarrage** — un processus Python neuf rouvrant la même base reproduit manifest, entries et barres à l'identique : la vérité est dans le fichier, pas dans un état Python.
+- **Concurrence WAL intégrée** — une publication réelle committe pendant qu'une lecture causale tient sa vue ; la vue ouverte ne bouge pas, et la transaction suivante voit le nouvel état. Aucune lecture hybride.
+- **Fail-closed** — hash de manifeste incohérent, cardinalité d'entries impossible et payload altéré produisent une erreur typée, jamais un snapshot ou un replay partiel ; la connexion reste réutilisable.
+- **Bornes et volume** — un intervalle de 1 200 ouvertures traverse réellement plusieurs `fetchmany` avec un nombre de `SELECT` constant (aucun N+1) ; un intervalle au-delà de `MAX_SNAPSHOT_RANGE_OPENS` est refusé **sur la requête elle-même**, avant tout accès aux receipts.
+- **Déterminisme** — à état persistant identique, la même requête causale rend le même `snapshot_id`, le même manifeste, les mêmes entries ordonnées et le même replay, y compris après reconnexion et sur une base construite indépendamment.
+
+**Statut : Phase 1C-E implementation complete / closure candidate.** La clôture de la Phase 1 reste subordonnée à la contre-revue indépendante, au commit exact et à la validation depuis `git archive`.
+
 ### Aucun résultat partiel
 
 `replay_snapshot` ne retourne qu'après validation de la **dernière** barre. Aucun générateur, aucun `yield`, aucun callback ne voit une barre non vérifiée. **Aucune API de streaming en V1** — un futur itérateur devra être une fonction distincte, pas une modification de celle-ci.
@@ -516,11 +533,11 @@ Les requêtes rétrécissent à l'approche de la limite : chaque appel `fetchman
 
 **READ-HARDENING-F2 — fermeture explicite des curseurs.** Chaque curseur de capture (manifest, metadata, payload) est fermé explicitement, sur succès **comme** sur erreur, **sans aucune dépendance au refcount CPython, à `__del__`, au ramasse-miettes ni à la fermeture ultérieure de la connexion**.
 
-Une erreur secondaire de `close()` **ne masque jamais** l'erreur principale : quand la lecture a déjà échoué, l'échec de fermeture est supprimé et l'exception d'origine est propagée telle quelle — `SnapshotNotFound`, `SnapshotStateCorruption`, `SnapshotReplayLimitExceeded`, `sqlite3.Error` enveloppée en `SnapshotReadError`, ou une exception Python inattendue. À l'inverse, une erreur de `close()` **seule** fait échouer la capture fail-closed avec rollback : une capture dont le curseur n'a pas pu être libéré n'a pas réussi.
+Une erreur secondaire de `close()` **ne masque jamais** l'erreur principale (la garantie porte sur les défaillances de nettoyage de classe `Exception` — `sqlite3` n'en lève pas d'autres ; un `KeyboardInterrupt`/`SystemExit` survenant pendant le nettoyage se propage délibérément plutôt que d'être avalé) : quand la lecture a déjà échoué, l'échec de fermeture est supprimé et l'exception d'origine est propagée telle quelle — `SnapshotNotFound`, `SnapshotStateCorruption`, `SnapshotReplayLimitExceeded`, `sqlite3.Error` enveloppée en `SnapshotReadError`, ou une exception Python inattendue. À l'inverse, une erreur de `close()` **seule** fait échouer la capture fail-closed avec rollback : une capture dont le curseur n'a pas pu être libéré n'a pas réussi.
 
 Le verdict « manifest absent » est rendu **à l'intérieur** du contexte du curseur, de sorte qu'il devienne l'exception active avant la fermeture et ne puisse jamais être déplacé par un échec de `close()`.
 
-**Le curseur du listing suit la même politique** : il passe par le même gestionnaire de contexte, à l'intérieur du `try/except sqlite3.Error` qui enveloppe la lecture. Une `SnapshotStateCorruption` de dépassement reste donc intacte même si `close()` échoue ensuite, et une erreur de `close()` seule ressort en `SnapshotReadError` avec l'erreur de fermeture en `__cause__` — **aucune `sqlite3.Error` brute ne s'échappe d'une fonction publique**, dont toute la surface d'erreur est `MarketSnapshotError`.
+**Tous les curseurs du module suivent la même politique** — sélection, entries, manifest, metadata, payload et listing passent par le même gestionnaire de contexte, chacun à l'intérieur du `try/except sqlite3.Error` qui enveloppe sa lecture. Une `SnapshotStateCorruption` de dépassement reste donc intacte même si `close()` échoue ensuite, et une erreur de `close()` seule ressort en `SnapshotReadError` avec l'erreur de fermeture en `__cause__` — **aucune `sqlite3.Error` brute ne s'échappe d'une fonction publique**, dont toute la surface d'erreur est `MarketSnapshotError`.
 
 ### Pagination
 
