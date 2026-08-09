@@ -635,9 +635,22 @@ def _verify_existing_snapshot(
             f"persisted snapshot {snapshot_id!r} does not match the request that "
             "produced its identity"
         )
-    persisted_entries = tuple(
-        (row[0], row[1]) for row in connection.execute(_SELECT_ENTRIES_SQL, (snapshot_id,))
-    )
+    # Bounded and explicitly closed like every other snapshot-range read:
+    # iterating the cursor would materialize whatever a sabotaged database
+    # holds before the cardinality check below ever gets to refuse it. The
+    # bound is deliberately NOT derived from manifest_row[-1] -- that column
+    # is the very persisted value this function exists to distrust.
+    with _closing_cursor(
+        connection.execute(_SELECT_ENTRIES_SQL, (snapshot_id,))
+    ) as entries_cursor:
+        persisted_entries = tuple(
+            (row[0], row[1])
+            for row in _fetch_all_bounded(
+                entries_cursor,
+                fetch_size=SNAPSHOT_LOAD_FETCH_SIZE,
+                max_rows=MAX_SNAPSHOT_RANGE_OPENS,
+            )
+        )
     if len(persisted_entries) != manifest_row[-1]:
         raise SnapshotStateCorruption(
             f"persisted snapshot {snapshot_id!r} declares {manifest_row[-1]} entries "
@@ -789,10 +802,10 @@ def _materialize_snapshot(
         )
         connection.commit()
     except MarketSnapshotError:
-        connection.rollback()
+        _rollback_quietly(connection)
         raise
     except sqlite3.Error as exc:
-        connection.rollback()
+        _rollback_quietly(connection)
         # Identifiers and parameters only: never a payload, never the entry
         # list, however large it was.
         raise SnapshotPersistenceError(
@@ -800,8 +813,12 @@ def _materialize_snapshot(
             f"snapshot_request_id={snapshot_request_id!r} provider={provider!r} "
             f"product_id={product_id!r} timeframe={timeframe!r}"
         ) from exc
-    except Exception:
-        connection.rollback()
+    except BaseException:
+        # BEGIN IMMEDIATE holds the write lock outright, so leaking it on a
+        # KeyboardInterrupt or SystemExit is strictly worse than leaking a
+        # read view: every other writer is locked out until this connection
+        # dies. `except Exception` never sees either of them.
+        _rollback_quietly(connection)
         raise
 
     return MaterializedSnapshot(
@@ -1169,6 +1186,21 @@ def _closing_cursor(cursor):
         cursor.close()
 
 
+def _rollback_quietly(connection) -> None:
+    """Roll back without ever displacing the error being propagated.
+
+    Same policy as `_closing_cursor`: cleanup runs on the way out of a
+    failure, so a failure OF the cleanup must not become the verdict the
+    caller sees -- the original error is what explains what happened. A
+    rollback that cannot run means the connection is already broken, and
+    hiding the real cause behind that fact helps nobody.
+    """
+    try:
+        connection.rollback()
+    except Exception:
+        pass
+
+
 def _fetch_all_bounded(cursor, *, fetch_size: int, max_rows: int) -> tuple[tuple, ...]:
     """Drain a cursor in bounded chunks, refusing more than `max_rows` rows.
 
@@ -1309,15 +1341,19 @@ def _capture_snapshot(
                 )
         connection.commit()
     except MarketSnapshotError:
-        connection.rollback()
+        _rollback_quietly(connection)
         raise
     except sqlite3.Error as exc:
-        connection.rollback()
+        _rollback_quietly(connection)
         raise SnapshotReadError(
             f"snapshot capture failed for snapshot_id={snapshot_id!r}"
         ) from exc
-    except Exception:
-        connection.rollback()
+    except BaseException:
+        # BaseException, not Exception: a KeyboardInterrupt or SystemExit
+        # would otherwise skip the rollback and leave this BEGIN open, and in
+        # journal_mode=delete an open read view blocks every writer's COMMIT
+        # for as long as the connection lives.
+        _rollback_quietly(connection)
         raise
 
     return _CapturedSnapshot(

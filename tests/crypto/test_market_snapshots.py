@@ -4498,6 +4498,16 @@ class _ScriptedCursor:
         self._offset += len(chunk)
         return chunk
 
+    def __iter__(self):
+        """A real DB-API cursor is iterable, and iterating it drains the whole
+        result set in one unbounded step. The probe must offer that door too,
+        otherwise a production path that takes it looks like a probe defect
+        instead of the unbounded read it is."""
+        self._log.append((self._name, "iterate"))
+        rows = self._rows[self._offset :]
+        self._offset = len(self._rows)
+        return iter(rows)
+
     def close(self):
         self.close_count += 1
         self._log.append((self._name, "close"))
@@ -4630,6 +4640,8 @@ class _ScriptedConnection:
             return "listing"
         if sql == self._ms._ELIGIBLE_RECEIPTS_SQL:
             return "selection"
+        if sql == self._ms._SELECT_ENTRIES_SQL:
+            return "entries"
         return None
 
     @property
@@ -5364,5 +5376,286 @@ def test_a_selection_read_error_traverses_materialization_as_a_read_error(
         assert connection.execute(
             "SELECT COUNT(*) FROM market_snapshot_entries"
         ).fetchone() == (0,)
+    finally:
+        connection.close()
+
+
+# --- RH-F7: the idempotence check drains a bounded, closed cursor --------
+
+
+def _verification_range(store_module, snapshots_module, tmp_path, *, name, openings=3):
+    """A store already holding one snapshot, so re-materializing the same
+    request takes the idempotent path through _verify_existing_snapshot."""
+    store = store_module.MarketDataStore(tmp_path / f"{name}.sqlite3")
+    _seed_grid(store.database_path, openings=openings, revisions=1, tag=name)
+    values = {
+        "provider": "coinbase_exchange_rest", "product_id": "BTC-USD", "timeframe": "1h",
+        "range_start": _iso(GRID_BASE),
+        "range_end": _iso(GRID_BASE + timedelta(hours=openings)),
+        "as_of": _iso(INGEST_BASE + timedelta(days=1)),
+    }
+    connection = store._connect()
+    try:
+        first = snapshots_module._materialize_snapshot(connection, **values)
+    finally:
+        connection.close()
+    return store, values, first
+
+
+def _scripted_rematerialize(snapshots_module, store, values, *, overrides):
+    log: list = []
+    connection = store._connect()
+    scripted = _ScriptedConnection(snapshots_module, connection, log, overrides=overrides)
+    try:
+        result, error = snapshots_module._materialize_snapshot(scripted, **values), None
+    except BaseException as exc:  # noqa: BLE001 -- the test inspects it
+        result, error = None, exc
+    return log, scripted, connection, result, error
+
+
+def test_snapshot_verification_drains_its_entries_cursor_bounded_and_closed(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """The idempotent re-materialization reloads the persisted entries. That
+    read is a snapshot-range read like any other: bounded during fetchmany,
+    and its cursor closed explicitly rather than left to the refcount."""
+    store, values, first = _verification_range(
+        store_module, snapshots_module, tmp_path, name="rhv1", openings=3)
+    log, scripted, connection, result, error = _scripted_rematerialize(
+        snapshots_module, store, values, overrides={})
+    try:
+        assert error is None, error
+        assert result.snapshot_id == first.snapshot_id
+        assert result.created is False
+        cursor = scripted.cursors["entries"]
+        assert cursor.close_count == 1
+        # Bounded to MAX_SNAPSHOT_RANGE_OPENS: one full chunk request, then
+        # the terminal probe. Never an unbounded materialization.
+        assert cursor.requested_sizes == [
+            snapshots_module.SNAPSHOT_LOAD_FETCH_SIZE,
+            snapshots_module.SNAPSHOT_LOAD_FETCH_SIZE,
+        ]
+        assert ("connection", "ROLLBACK") in log
+    finally:
+        connection.close()
+
+
+def test_snapshot_verification_refuses_an_oversized_entries_read(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    """A sabotaged database holding more entries than the range allows must
+    be refused DURING the drain, not materialized first and judged after."""
+    store, values, _ = _verification_range(
+        store_module, snapshots_module, tmp_path, name="rhv2", openings=3)
+    monkeypatch.setattr(snapshots_module, "MAX_SNAPSHOT_RANGE_OPENS", 3)
+    log, scripted, connection, result, error = _scripted_rematerialize(
+        snapshots_module, store, values, overrides={"entries": {"extra_rows": 2}})
+    try:
+        assert type(error) is snapshots_module.SnapshotStateCorruption, error
+        assert "rows it allows" in str(error), error
+        assert result is None
+        cursor = scripted.cursors["entries"]
+        assert cursor.close_count == 1
+        assert cursor.requested_sizes == [4]
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_snapshot_verification_closes_its_entries_cursor_when_the_read_fails(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, values, _ = _verification_range(
+        store_module, snapshots_module, tmp_path, name="rhv3", openings=3)
+    fetch_error = sqlite3.OperationalError("entries fetch boom")
+    log, scripted, connection, result, error = _scripted_rematerialize(
+        snapshots_module, store, values, overrides={"entries": {"fetch_error": fetch_error}})
+    try:
+        assert type(error) is snapshots_module.SnapshotPersistenceError, error
+        assert error.__cause__ is fetch_error
+        assert result is None
+        assert scripted.cursors["entries"].close_count == 1
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_an_entries_close_failure_never_masks_the_verification_verdict(
+    tmp_path, store_module, snapshots_module, monkeypatch
+) -> None:
+    store, values, _ = _verification_range(
+        store_module, snapshots_module, tmp_path, name="rhv4", openings=3)
+    monkeypatch.setattr(snapshots_module, "MAX_SNAPSHOT_RANGE_OPENS", 3)
+    log, scripted, connection, result, error = _scripted_rematerialize(
+        snapshots_module, store, values,
+        overrides={"entries": {"extra_rows": 2,
+                               "close_error": sqlite3.OperationalError("close entries")}})
+    try:
+        assert type(error) is snapshots_module.SnapshotStateCorruption, error
+        assert not isinstance(error, sqlite3.Error), error
+        assert scripted.cursors["entries"].close_count == 1
+    finally:
+        connection.close()
+
+
+# --- RH-F8: a BaseException never leaves a transaction behind -------------
+
+
+class _RollbackFailingConnection:
+    """Wraps a real connection and makes rollback() fail, to prove a cleanup
+    failure can never displace the error the caller must see."""
+
+    def __init__(self, inner, error):
+        self._inner = inner
+        self._error = error
+        self.rollback_count = 0
+
+    def execute(self, sql, parameters=()):
+        return self._inner.execute(sql, parameters)
+
+    def executemany(self, sql, seq):
+        return self._inner.executemany(sql, seq)
+
+    def commit(self):
+        return self._inner.commit()
+
+    def rollback(self):
+        self.rollback_count += 1
+        self._inner.rollback()
+        raise self._error
+
+    @property
+    def in_transaction(self):
+        return self._inner.in_transaction
+
+
+def _writer_can_take_the_lock(store):
+    """A real proof, not a flag: a second connection takes the write lock,
+    writes, and commits while the first connection is still open."""
+    writer = store._connect()
+    try:
+        writer.execute("PRAGMA busy_timeout = 300")
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "INSERT INTO raw_market_payloads VALUES (?, ?, ?, ?, ?)",
+            ("e" * 64, "coinbase_exchange_rest", b"lock-probe", 10, _iso(GRID_BASE)),
+        )
+        writer.commit()
+        return True
+    except sqlite3.OperationalError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    finally:
+        writer.close()
+
+
+def test_a_base_exception_during_capture_releases_the_read_transaction(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """KeyboardInterrupt is a BaseException, so `except Exception` never sees
+    it. Without a BaseException handler the BEGIN stays open and, in
+    journal_mode=delete, blocks every writer's COMMIT for as long as the
+    connection lives."""
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhk1")
+    interrupt = KeyboardInterrupt()
+    log, scripted, connection, out, error = _capture_log(
+        snapshots_module, store, result.snapshot_id,
+        overrides={"metadata": {"fetch_error": interrupt}},
+    )
+    try:
+        assert error is interrupt, error
+        assert out is None
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+        assert scripted.cursors["metadata"].close_count == 1
+        # The lock is genuinely gone, with the reader connection still open.
+        assert _writer_can_take_the_lock(store) is True
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_a_base_exception_during_materialization_releases_the_write_lock(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    """BEGIN IMMEDIATE holds the write lock outright: leaking it on a
+    BaseException is strictly worse than leaking a read view."""
+    store, values, _ = _verification_range(
+        store_module, snapshots_module, tmp_path, name="rhk2", openings=3)
+    interrupt = KeyboardInterrupt()
+    log, scripted, connection, result, error = _scripted_rematerialize(
+        snapshots_module, store, values, overrides={"entries": {"fetch_error": interrupt}})
+    try:
+        assert error is interrupt, error
+        assert result is None
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+        assert scripted.cursors["entries"].close_count == 1
+        assert _writer_can_take_the_lock(store) is True
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "interrupt", [KeyboardInterrupt(), SystemExit(2)], ids=["keyboard", "systemexit"]
+)
+def test_every_base_exception_flavour_rolls_the_capture_back(
+    tmp_path, store_module, snapshots_module, interrupt
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhk3")
+    log, scripted, connection, out, error = _capture_log(
+        snapshots_module, store, result.snapshot_id,
+        overrides={"manifest": {"fetch_error": interrupt}},
+    )
+    try:
+        assert error is interrupt, error
+        assert ("connection", "ROLLBACK") in log
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "rollback_error",
+    [sqlite3.OperationalError("rollback boom"), RuntimeError("rollback generic")],
+    ids=["sqlite", "generic"],
+)
+def test_a_rollback_failure_never_masks_the_primary_error(
+    tmp_path, store_module, snapshots_module, rollback_error
+) -> None:
+    """Cleanup is not allowed to become the verdict: the caller must still
+    see why the read failed, exactly as with a failing cursor close."""
+    store, _ = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhk4")
+    connection = store._connect()
+    failing = _RollbackFailingConnection(connection, rollback_error)
+    try:
+        with pytest.raises(snapshots_module.SnapshotNotFound) as excinfo:
+            snapshots_module.load_snapshot(
+                failing, snapshot_id="hyprl-market-snapshot-" + "7" * 64)
+        assert type(excinfo.value) is snapshots_module.SnapshotNotFound
+        assert failing.rollback_count == 1
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
+def test_a_rollback_failure_never_masks_a_base_exception(
+    tmp_path, store_module, snapshots_module
+) -> None:
+    store, result = _one_snapshot(store_module, snapshots_module, tmp_path, name="rhk5")
+    interrupt = KeyboardInterrupt()
+    connection = store._connect()
+    log: list = []
+    scripted = _ScriptedConnection(
+        snapshots_module, connection, log,
+        overrides={"metadata": {"fetch_error": interrupt}})
+    failing = _RollbackFailingConnection(
+        scripted, sqlite3.OperationalError("rollback boom"))
+    try:
+        with pytest.raises(BaseException) as excinfo:
+            snapshots_module.load_snapshot(failing, snapshot_id=result.snapshot_id)
+        assert excinfo.value is interrupt
+        assert failing.rollback_count == 1
     finally:
         connection.close()
