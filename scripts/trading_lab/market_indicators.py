@@ -167,6 +167,35 @@ def exponential_moving_average(series: MarketSeries, *, period: int) -> Indicato
     return _result(_spec("ema", period=period), values)
 
 
+def simple_return(series: MarketSeries) -> IndicatorResult:
+    """One-bar causal return, as an indicator the dataset layer can name.
+
+    This is not a second definition of "return". `market_series.causal_features`
+    already established the semantics for `FeaturePoint.simple_return`, and the
+    expression below is deliberately the identical one -- subtracting then
+    dividing, not `close_i / close_{i-1} - 1`, because at a fixed Decimal
+    precision those two are not guaranteed to agree in the last digits. A test
+    pins the two implementations together on a gapped series.
+
+    The first bar of every contiguous segment yields None: it has no
+    predecessor on this side of the hole, and borrowing the close from the
+    other side would invent a return across time the market never traded. A
+    zero previous close also yields None rather than a division blow-up.
+    """
+    values: list[Decimal | None] = [None] * len(series.points)
+    with localcontext() as context:
+        context.prec = INDICATOR_PRECISION
+        for start, end in contiguous_segments(series):
+            for index in range(start + 1, end):
+                previous_close = series.points[index - 1].close
+                if previous_close == 0:
+                    continue
+                values[index] = (
+                    series.points[index].close - previous_close
+                ) / previous_close
+    return _result(_spec("simple_return"), values)
+
+
 def true_range(series: MarketSeries) -> IndicatorResult:
     """TR, with `previous_close` never reaching across a gap.
 

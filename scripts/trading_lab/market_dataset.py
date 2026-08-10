@@ -41,6 +41,7 @@ from scripts.trading_lab.market_indicators import (
     exponential_moving_average,
     relative_strength_index,
     simple_moving_average,
+    simple_return,
     true_range,
 )
 from scripts.trading_lab.market_series import MarketSeries
@@ -58,8 +59,9 @@ INDICATOR_REGISTRY = {
     "rsi": relative_strength_index,
     "atr": average_true_range,
     "true_range": true_range,
+    "simple_return": simple_return,
 }
-_PARAMETERLESS = frozenset({"true_range"})
+_PARAMETERLESS = frozenset({"true_range", "simple_return"})
 
 
 class MarketDatasetError(RuntimeError):

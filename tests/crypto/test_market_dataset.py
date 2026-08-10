@@ -347,3 +347,69 @@ def test_building_a_dataset_never_mutates_the_series(
     before = replace(series)
     dataset_module.build_dataset(series, config=_config(dataset_module))
     assert series == before
+
+
+# --- one-bar causal return through the dataset layer (Phase 4B) ------------
+
+
+def test_the_return_indicator_is_resolvable_as_a_dataset_feature(
+    tmp_path, store_module, snapshots_module, series_module, dataset_module
+) -> None:
+    """The whole point of the extension: `return_1` can be NAMED in a config."""
+    assert "simple_return" in dataset_module.INDICATOR_REGISTRY
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ds-ret", closes=_ramp(12))
+    config = dataset_module.DatasetConfig(
+        features=(dataset_module.FeatureDefinition("return_1", "simple_return"),),
+        label=dataset_module.LabelSpec(horizon=HORIZON),
+    )
+    dataset = dataset_module.build_dataset(series, config=config)
+    assert [column for column, _ in dataset.rows[0].features] == ["return_1"]
+    assert dataset.rows[0].features[0][1] is None          # no predecessor
+    assert dataset.rows[0].usable is False
+    indicators = importlib.import_module("scripts.trading_lab.market_indicators")
+    expected = indicators.simple_return(series).values
+    assert [row.features[0][1] for row in dataset.rows] == list(expected)
+    assert dict(dataset.indicator_spec_hashes)["return_1"] == \
+        indicators.simple_return(series).spec_hash
+
+
+def test_the_return_feature_takes_no_parameters(
+    tmp_path, store_module, snapshots_module, series_module, dataset_module
+) -> None:
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ds-ret-param", closes=_ramp(8))
+    config = dataset_module.DatasetConfig(
+        features=(dataset_module.FeatureDefinition("return_1", "simple_return",
+                                                   (("period", 1),)),),
+        label=dataset_module.LabelSpec(horizon=HORIZON),
+    )
+    with pytest.raises(dataset_module.MarketDatasetError):
+        dataset_module.build_dataset(series, config=config)
+
+
+def test_a_correction_published_later_cannot_change_an_earlier_return(
+    tmp_path, store_module, snapshots_module, series_module, dataset_module
+) -> None:
+    """Anti-future-leakage for the new primitive, through the real snapshot path.
+
+    A read at as_of=T must not see a value the venue only published after T,
+    even when that value overwrites a bar T already covered.
+    """
+    store = store_module.MarketDataStore(tmp_path / "ret-asof.sqlite3")
+    opens = [GRID + timedelta(hours=index) for index in range(6)]
+    _publish(store, opens, ["100", "110", "121", "133", "146", "160"], at=T1)
+    before = _series_at(store, snapshots_module, series_module, T2, opens)
+
+    indicators = importlib.import_module("scripts.trading_lab.market_indicators")
+    early = indicators.simple_return(before).values
+
+    # the venue restates one bar, and only publishes the restatement afterwards
+    _publish(store, [opens[3]], ["999"], at=T3)
+    unchanged = _series_at(store, snapshots_module, series_module, T2, opens)
+    later = _series_at(store, snapshots_module, series_module, T4, opens)
+
+    assert indicators.simple_return(unchanged).values == early
+    assert indicators.simple_return(later).values != early     # the restatement is real
+    assert later.points[3].close == Decimal("999")
+    assert unchanged.points[3].close == Decimal("133")

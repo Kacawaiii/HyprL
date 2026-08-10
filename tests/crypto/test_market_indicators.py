@@ -343,3 +343,121 @@ def test_true_range_does_not_reach_across_a_gap(
     values = indicators.true_range(series).values
     assert values[3] == Decimal(2)           # high - low, segment restart
     assert values[3] != Decimal(41)          # what crossing the gap would give
+
+
+# --- one-bar causal return (Phase 4B) -------------------------------------
+
+
+def test_the_one_bar_return_matches_hand_computed_values(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret", closes=["100", "110", "99"])
+    result = indicators.simple_return(series)
+    assert result.values[0] is None                    # nothing precedes the first bar
+    with localcontext() as context:
+        context.prec = indicators.INDICATOR_PRECISION
+        assert result.values[1] == (Decimal("110") - Decimal("100")) / Decimal("100")
+        assert result.values[2] == (Decimal("99") - Decimal("110")) / Decimal("110")
+    assert result.values[1] == Decimal("0.1")
+    assert result.values[2] == Decimal("-0.1")
+
+
+def test_the_one_bar_return_never_reaches_across_a_gap(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    """The first bar after a hole has no predecessor it may legitimately use."""
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-gap", closes=["100", "110", "0", "99"], skip={2})
+    assert len(series.points) == 3
+    result = indicators.simple_return(series)
+    assert result.values[0] is None
+    assert result.values[1] == Decimal("0.1")
+    assert result.values[2] is None                    # 99 follows the gap
+    # a naive implementation would have produced 99/110 - 1 here
+    assert Decimal("-0.1") not in [v for v in result.values if v is not None]
+
+
+def test_the_indicator_agrees_exactly_with_the_established_feature_point(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    """One definition of "return", not two that drift apart.
+
+    `causal_features` runs at the CALLER's Decimal precision while indicators
+    pin themselves to INDICATOR_PRECISION, so the reference has to be taken at
+    the module's precision or the comparison would fail for arithmetic reasons
+    that say nothing about the semantics.
+    """
+    closes = [str(100 + (index * 7) % 23) for index in range(20)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-equiv", closes=closes, skip={6, 13})
+    assert len(series.missing_openings) == 2
+    result = indicators.simple_return(series)
+    with localcontext() as context:
+        context.prec = indicators.INDICATOR_PRECISION
+        reference = series_module.causal_features(series, window=3)
+    assert len(reference) == len(result.values)
+    assert [point.simple_return for point in reference] == list(result.values)
+    # and the agreement is not vacuous: real values on both sides, Nones at the seams
+    assert sum(1 for value in result.values if value is not None) >= 14
+    assert sum(1 for value in result.values if value is None) == 3
+
+
+def test_the_one_bar_return_is_invariant_under_truncation(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    """Structural anti-lookahead: later bars cannot change earlier returns."""
+    closes = [str(100 + (index * 11) % 29) for index in range(18)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-trunc", closes=closes)
+    full = indicators.simple_return(series).values
+    for cut in (3, 7, 12, 17):
+        truncated = replace(series, points=series.points[: cut + 1])
+        assert indicators.simple_return(truncated).values == full[: cut + 1]
+
+
+def test_the_one_bar_return_ignores_the_callers_decimal_context(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = ["100", "103", "107", "102"]     # produces repeating decimals
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-prec", closes=closes)
+    original = getcontext().prec
+    seen = set()
+    try:
+        for precision in (6, 28, 34, 60):
+            getcontext().prec = precision
+            seen.add(tuple(str(value) for value in
+                           indicators.simple_return(series).values))
+    finally:
+        getcontext().prec = original
+    assert len(seen) == 1
+
+
+def test_the_one_bar_return_does_not_mutate_its_source(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-immutable", closes=["100", "110", "99", "105"])
+    snapshot = tuple(series.points)
+    indicators.simple_return(series)
+    assert series.points == snapshot
+
+
+def test_the_return_spec_hash_describes_the_definition(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-spec", closes=["100", "110", "99"])
+    first = indicators.simple_return(series)
+    assert first.spec.name == "simple_return"
+    assert first.spec.parameters == ()
+    assert first.spec_hash == indicators.simple_return(series).spec_hash
+    assert len(first.spec_hash) == 64
+    # a different definition is a different hash; market values never enter it
+    other = replace(first.spec, version="trading-lab.market-indicator.v2")
+    assert other.spec_hash != first.spec_hash
+    assert first.spec_hash != indicators.true_range(series).spec_hash
+    moved = _build(store_module, snapshots_module, series_module, tmp_path,
+                   name="ret-spec2", closes=["500", "550", "495"])[2]
+    assert indicators.simple_return(moved).spec_hash == first.spec_hash
