@@ -139,3 +139,10 @@ apps/web/node_modules/
 apps/web/dist/
 apps/web/.vite/
 apps/web/coverage/
+apps/web/tsconfig.tsbuildinfo
+
+# The `*.json` rule above also swallows the frontend manifest and lockfile,
+# which would leave the cockpit uninstallable from a clean clone. Re-include
+# them explicitly: the lockfile is what makes `npm ci` reproducible.
+!apps/web/package.json
+!apps/web/package-lock.json
