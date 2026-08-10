@@ -130,14 +130,56 @@ def test_the_phase_three_layer_names_the_missing_extra_at_import_time() -> None:
     assert "NameError" not in result.stderr and "AttributeError" not in result.stderr
 
 
-def test_only_one_trading_lab_module_touches_the_ml_stack() -> None:
-    """The boundary is a single file, and that is what keeps the core clean."""
-    coupled = sorted(
-        path.name
-        for path in (REPO_ROOT / "scripts" / "trading_lab").glob("*.py")
-        if "sklearn" in path.read_text() or "xgboost" in path.read_text()
-    )
-    assert coupled == ["models.py"], coupled
+def _ml_importers() -> list[str]:
+    """Modules that actually IMPORT the ML stack, found by parsing, not grepping.
+
+    A substring scan was the original check and it was wrong: the string
+    "xgboost" also appears as a candidate identifier in ordinary code, which
+    made an innocent module look coupled. Only real import statements count.
+    """
+    import ast
+
+    found = []
+    for path in sorted((REPO_ROOT / "scripts" / "trading_lab").glob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            roots = []
+            if isinstance(node, ast.Import):
+                roots = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                roots = [node.module.split(".")[0]]
+            if any(root in {"sklearn", "xgboost"} for root in roots):
+                found.append(path.name)
+                break
+    return found
+
+
+def test_exactly_one_trading_lab_module_imports_the_ml_stack() -> None:
+    """The direct boundary is a single file, and that is what keeps the core clean."""
+    assert _ml_importers() == ["models.py"], _ml_importers()
+
+
+def test_modules_built_on_top_of_models_are_declared_ml_coupled() -> None:
+    """Importing `models` is transitive ML coupling, and must be acknowledged.
+
+    These modules do not import sklearn or xgboost themselves, but importing
+    them pulls the stack in anyway, so their tests carry the `ml` marker. The
+    list is explicit: a new module joining it is a deliberate decision, not an
+    accident nobody noticed.
+    """
+    import ast
+
+    transitive = []
+    for path in sorted((REPO_ROOT / "scripts" / "trading_lab").glob("*.py")):
+        if path.name == "models.py":
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module \
+                    and node.module.endswith("trading_lab.models"):
+                transitive.append(path.name)
+                break
+    assert transitive == ["real_benchmark.py"], transitive
 
 
 @pytest.mark.parametrize("module", CORE_MODULES)
