@@ -7,6 +7,7 @@ crossing. A model that scores well because it peeked is worse than no model.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, getcontext, localcontext
@@ -481,3 +482,367 @@ def test_a_prediction_depends_on_its_own_row_and_nothing_else(models, dataset, t
     # and the same row keeps its prediction inside a differently-shaped block
     shuffled = (block[7], block[0], block[3])
     assert model.predict(shuffled) == (together[7], together[0], together[3])
+
+
+# ==========================================================================
+# Phase 3B -- gradient-boosted candidate on the same rails
+# ==========================================================================
+
+
+@pytest.fixture
+def xgb_columns(models, dataset):
+    return models.feature_columns_of(dataset)
+
+
+def _xgb(models, columns, **overrides):
+    config = models.XGBoostConfig(**overrides) if overrides else None
+    return models.XGBoostRegressionPredictor(feature_columns=columns, config=config)
+
+
+def test_the_boosted_model_fits_and_predicts_finite_decimals(models, xgb_columns, train_rows,
+                                                             walk_forward, dataset):
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    later = walk_forward.usable_rows(dataset)[30:40]
+    predictions = model.predict(later)
+    assert len(predictions) == len(later)
+    assert all(isinstance(value, Decimal) and value.is_finite() for value in predictions)
+    assert model.fitted.train_rows == len(train_rows)
+    assert model.fitted.booster_bytes > 0
+    assert len(model.fitted.booster_sha256) == 64
+    assert model.predict(()) == ()
+
+
+def test_what_is_hashed_is_what_the_backend_is_actually_given(models, xgb_columns, train_rows):
+    """A parameter that runs but is not hashed makes the identity a fiction."""
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    declared = dict(model.config.as_hyperparameters())
+    actual = model._booster.get_params()
+    for name, value in declared.items():
+        assert str(actual[name]) == value or float(actual[name]) == float(value), name
+    # every declared hyperparameter also reaches the spec
+    hashed = dict(model.spec.hyperparameters)
+    assert set(declared).issubset(hashed)
+    assert hashed["backend"] == "xgboost"
+    assert hashed["backend_version"] == importlib.import_module("xgboost").__version__
+
+
+def test_the_boosted_model_carries_no_scaler_at_all(models, xgb_columns, train_rows):
+    """Trees split on order, not on scale. A scaler here would be pure surface area."""
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    assert not hasattr(model.fitted, "feature_means")
+    assert not hasattr(model.fitted, "feature_stdevs")
+    assert not hasattr(model, "feature_means")
+
+
+@pytest.mark.parametrize("overrides,fragment", [
+    ({"n_estimators": 0}, "n_estimators"),
+    ({"max_depth": -2}, "max_depth"),
+    ({"n_estimators": True}, "n_estimators"),
+    ({"n_jobs": 4}, "n_jobs"),
+    ({"subsample": Decimal("0.8")}, "stochastic"),
+    ({"colsample_bytree": Decimal("0.5")}, "stochastic"),
+    ({"learning_rate": Decimal(0)}, "learning_rate"),
+    ({"learning_rate": 0.05}, "learning_rate"),
+    ({"gamma": Decimal("-1")}, "gamma"),
+    ({"tree_method": "gpu_hist"}, "tree_method"),
+    ({"objective": ""}, "objective"),
+    ({"random_state": -1}, "random_state"),
+])
+def test_a_configuration_that_breaks_reproducibility_is_refused(models, xgb_columns,
+                                                                overrides, fragment):
+    with pytest.raises(models.ModelError, match=fragment):
+        _xgb(models, xgb_columns, **overrides)
+
+
+def test_the_boosted_model_validates_the_feature_schema_like_the_ridge_one(models, dataset,
+                                                                          train_rows):
+    columns = models.feature_columns_of(dataset)
+    permuted = (columns[2], columns[0], columns[1])
+    with pytest.raises(models.ModelError, match="exact order"):
+        _xgb(models, permuted).fit(train_rows)
+    with pytest.raises(models.ModelError, match="expects"):
+        _xgb(models, columns[:2]).fit(train_rows)
+
+
+@pytest.mark.parametrize("bad", [Decimal("NaN"), Decimal("Infinity")])
+def test_a_missing_value_is_refused_instead_of_handed_to_the_backend(models, xgb_columns,
+                                                                     train_rows, bad):
+    """XGBoost treats NaN as 'missing' natively. V1 does not want that silence."""
+    poisoned = replace(train_rows[5], features=(("sma5", bad), *train_rows[5].features[1:]))
+    with pytest.raises(models.ModelError, match="finite"):
+        _xgb(models, xgb_columns).fit((*train_rows[:5], poisoned, *train_rows[6:]))
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    with pytest.raises(models.ModelError, match="finite"):
+        model.predict((poisoned,))
+
+
+def test_the_boosted_model_refuses_unusable_rows_and_premature_prediction(models, xgb_columns,
+                                                                         dataset, train_rows,
+                                                                         walk_forward):
+    unusable = [row for row in dataset.rows if not row.usable]
+    with pytest.raises(models.ModelError, match="not usable"):
+        _xgb(models, xgb_columns).fit(walk_forward.usable_rows(dataset)[:20] + (unusable[0],))
+    with pytest.raises(models.ModelError, match="before fit"):
+        _xgb(models, xgb_columns).predict(train_rows)
+    with pytest.raises(models.ModelError, match="at least two"):
+        _xgb(models, xgb_columns).fit(train_rows[:1])
+    with pytest.raises(models.ModelError, match="before fit"):
+        _xgb(models, xgb_columns).feature_importances()
+
+
+# --- boundaries -----------------------------------------------------------
+
+
+def test_the_boosted_model_never_reads_a_label_when_predicting(models, xgb_columns, train_rows,
+                                                               dataset, walk_forward):
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    later = walk_forward.usable_rows(dataset)[30:40]
+    assert model.predict([LabelTrap(row) for row in later]) == model.predict(later)
+
+
+def test_changing_test_labels_leaves_the_boosted_model_and_its_predictions_alone(
+    models, dataset, walk_forward, xgb_columns
+):
+    config = _config(walk_forward)
+    folds = walk_forward.build_folds(dataset, config=config)
+    fold_zero_test = {row.bar_open_at for row in folds[0][2]}
+    tampered = replace(dataset, rows=tuple(
+        replace(row, label=row.label * Decimal(-4) - Decimal("0.25"))
+        if row.bar_open_at in fold_zero_test else row
+        for row in dataset.rows
+    ))
+    first = walk_forward.evaluate(dataset, config=config, predictor=_xgb(models, xgb_columns))
+    second = walk_forward.evaluate(tampered, config=config, predictor=_xgb(models, xgb_columns))
+    assert [r.prediction for r in first.folds[0].records] == \
+           [r.prediction for r in second.folds[0].records]
+    assert first.folds[0].metrics != second.folds[0].metrics
+
+
+def test_a_boosted_prediction_depends_only_on_its_own_row(models, xgb_columns, train_rows,
+                                                          dataset, walk_forward):
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    block = walk_forward.usable_rows(dataset)[30:42]
+    together = model.predict(block)
+    assert together == tuple(model.predict([row])[0] for row in block)
+
+
+def test_rows_after_a_fold_cannot_reach_back_into_the_boosted_fold(models, dataset,
+                                                                   walk_forward, xgb_columns):
+    config = _config(walk_forward)
+    folds = walk_forward.build_folds(dataset, config=config)
+    boundary = folds[0][2][-1].bar_open_at
+    rewritten = replace(dataset, rows=tuple(
+        replace(row,
+                label=row.label * Decimal(5) if row.label is not None else None,
+                features=tuple((column, None if value is None else value - Decimal("500"))
+                               for column, value in row.features))
+        if row.bar_open_at > boundary else row
+        for row in dataset.rows
+    ))
+    before = walk_forward.evaluate(dataset, config=config, predictor=_xgb(models, xgb_columns))
+    after = walk_forward.evaluate(rewritten, config=config, predictor=_xgb(models, xgb_columns))
+    assert before.folds[0].records == after.folds[0].records
+    assert before.folds[0].metrics == after.folds[0].metrics
+    assert before.folds[-1].records != after.folds[-1].records
+
+
+def test_the_boosted_model_never_mutates_the_rows_it_is_given(models, dataset, walk_forward,
+                                                              xgb_columns):
+    snapshot = tuple(dataset.rows)
+    walk_forward.evaluate(dataset, config=_config(walk_forward),
+                          predictor=_xgb(models, xgb_columns))
+    assert dataset.rows == snapshot
+
+
+# --- determinism and identity ---------------------------------------------
+
+
+def test_three_identical_boosted_fits_produce_the_identical_model(models, xgb_columns,
+                                                                  train_rows, dataset,
+                                                                  walk_forward):
+    later = walk_forward.usable_rows(dataset)[30:40]
+    results = []
+    for _ in range(3):
+        model = _xgb(models, xgb_columns)
+        model.fit(train_rows)
+        results.append((model.fitted.booster_sha256, model.fitted.fitted_model_hash,
+                        model.predict(later)))
+    assert len({item[0] for item in results}) == 1
+    assert len({item[1] for item in results}) == 1
+    assert results[0][2] == results[1][2] == results[2][2]
+
+
+def test_the_boosted_model_is_indifferent_to_the_callers_decimal_context(models, xgb_columns,
+                                                                        train_rows, dataset,
+                                                                        walk_forward):
+    later = walk_forward.usable_rows(dataset)[30:40]
+    original = getcontext().prec
+    seen = set()
+    try:
+        for precision in (5, 7, 28, 34, 80):
+            getcontext().prec = precision
+            model = _xgb(models, xgb_columns)
+            model.fit(train_rows)
+            seen.add((model.fitted.fitted_model_hash,
+                      tuple(str(value) for value in model.predict(later))))
+    finally:
+        getcontext().prec = original
+    assert len(seen) == 1
+
+
+def test_every_boosted_hyperparameter_moves_the_spec_hash(models, xgb_columns):
+    baseline = _xgb(models, xgb_columns).model_spec_hash
+    assert len(baseline) == 64
+    assert _xgb(models, xgb_columns).model_spec_hash == baseline
+    for overrides in ({"n_estimators": 50}, {"max_depth": 5},
+                      {"learning_rate": Decimal("0.1")}, {"min_child_weight": 3},
+                      {"reg_alpha": Decimal("0.5")}, {"reg_lambda": Decimal("2.0")},
+                      {"gamma": Decimal("0.1")}, {"tree_method": "exact"},
+                      {"objective": "reg:absoluteerror"}, {"random_state": 7}):
+        assert _xgb(models, xgb_columns, **overrides).model_spec_hash != baseline, overrides
+    # and a different feature schema is a different model too
+    assert models.XGBoostRegressionPredictor(
+        feature_columns=xgb_columns[:2]).model_spec_hash != baseline
+    # the two candidates are never the same model
+    assert models.RidgeRegressionPredictor(
+        feature_columns=xgb_columns).model_spec_hash != baseline
+
+
+def test_the_fitted_hash_tracks_the_booster_not_just_the_configuration(models, xgb_columns,
+                                                                       train_rows):
+    """Hashing a handful of predictions would call two different trees equal."""
+    first = _xgb(models, xgb_columns)
+    first.fit(train_rows)
+    relabelled = tuple(replace(row, label=row.label * Decimal(3) + Decimal("0.01"))
+                       for row in train_rows)
+    second = _xgb(models, xgb_columns)
+    second.fit(relabelled)
+    assert second.model_spec_hash == first.model_spec_hash      # same definition
+    assert second.fitted.booster_sha256 != first.fitted.booster_sha256
+    assert second.fitted.fitted_model_hash != first.fitted.fitted_model_hash
+    # same data again reproduces the same learned state exactly
+    third = _xgb(models, xgb_columns)
+    third.fit(train_rows)
+    assert third.fitted.fitted_model_hash == first.fitted.fitted_model_hash
+    assert first.fitted.fitted_model_hash != first.model_spec_hash
+
+
+def test_feature_importances_are_read_only_introspection(models, xgb_columns, train_rows):
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    before = model.fitted.fitted_model_hash
+    importances = model.feature_importances()
+    assert [column for column, _ in importances] == list(xgb_columns)
+    assert all(isinstance(value, Decimal) and value >= 0 for _, value in importances)
+    # looking at the model does not change the model, and nothing selects on it
+    assert model.fitted.fitted_model_hash == before
+    assert model.feature_importances() == importances
+
+
+# --- the shared protocol --------------------------------------------------
+
+
+def test_the_boosted_model_runs_inside_the_walk_forward_protocol(models, dataset, walk_forward,
+                                                                 xgb_columns):
+    config = _config(walk_forward)
+    evaluation = walk_forward.evaluate(dataset, config=config,
+                                       predictor=_xgb(models, xgb_columns))
+    assert len(evaluation.folds) >= 3
+    assert evaluation.spec.predictor_name == "xgboost_regression"
+    assert evaluation.oos_metrics.observations == sum(f.metrics.observations
+                                                      for f in evaluation.folds)
+    again = walk_forward.evaluate(dataset, config=config, predictor=_xgb(models, xgb_columns))
+    assert again.results_hash == evaluation.results_hash
+
+
+def test_four_candidates_run_through_one_identical_protocol(models, dataset, walk_forward,
+                                                            xgb_columns):
+    """Phase 3B compares; it does not choose. Selection needs validation, later.
+
+    These numbers come from a synthetic fixture: they are a protocol check,
+    not evidence of a trading edge, and nothing here asserts a winner.
+    """
+    config = _config(walk_forward)
+
+    class Zero:
+        name, version = "zero", "1"
+        def fit(self, rows): pass
+        def predict(self, rows): return tuple(Decimal(0) for _ in rows)
+
+    evaluations = {
+        "zero": walk_forward.evaluate(dataset, config=config, predictor=Zero()),
+        "mean": walk_forward.evaluate(dataset, config=config,
+                                      predictor=models.MeanTrainPredictor()),
+        "ridge": walk_forward.evaluate(
+            dataset, config=config,
+            predictor=models.RidgeRegressionPredictor(feature_columns=xgb_columns)),
+        "xgboost": walk_forward.evaluate(dataset, config=config,
+                                         predictor=_xgb(models, xgb_columns)),
+    }
+    counts = {name: evaluation.oos_metrics.observations
+              for name, evaluation in evaluations.items()}
+    assert len(set(counts.values())) == 1        # identical out-of-sample set
+    timestamps = {name: tuple(r.bar_open_at for r in evaluation.oos_records)
+                  for name, evaluation in evaluations.items()}
+    assert len(set(timestamps.values())) == 1    # identical observations, not merely as many
+    for name, evaluation in evaluations.items():
+        assert evaluation.oos_metrics.mae is not None, name
+        assert evaluation.oos_metrics.rmse is not None, name
+    assert len({evaluation.spec_hash for evaluation in evaluations.values()}) == 4
+    assert len({record.prediction for record in evaluations["xgboost"].oos_records}) > 1
+
+
+def test_the_boosted_model_actually_learns_the_block_it_was_trained_on(models, xgb_columns,
+                                                                       train_rows, walk_forward):
+    """In-sample recall, the cheapest guard against a fit/predict mismatch.
+
+    A model whose feature order differs between fitting and predicting still
+    returns finite Decimals, still behaves deterministically, and still passes
+    every boundary test -- it is simply wrong. Only asking it to reproduce
+    what it was taught exposes that.
+
+    The comparison is deliberately threshold-free. An absolute bound like
+    "beat naive/10" is a fixture artefact: measured across two different
+    synthetic series the correct model landed at naive/20.6 on one and
+    naive/4.7 on the other, while the permuted variant landed at naive/4.8 and
+    naive/0.86 -- no single constant separates them everywhere. So instead of
+    guessing a constant, the test asks the model to rank the two orderings
+    itself: whatever the fixture, feeding it the columns as it learned them
+    must beat feeding it the same columns permuted.
+    """
+    model = _xgb(models, xgb_columns)
+    model.fit(train_rows)
+    labels = tuple(row.label for row in train_rows)
+    permuted = tuple(
+        replace(row, features=tuple(zip([column for column, _ in row.features],
+                                        [value for _, value in row.features][::-1])))
+        for row in train_rows
+    )
+    with localcontext() as context:
+        context.prec = models.MODEL_PRECISION
+        naive = tuple(sum(labels) / Decimal(len(labels)) for _ in labels)
+    fitted_error = walk_forward.mean_absolute_error(model.predict(train_rows), labels)
+    permuted_error = walk_forward.mean_absolute_error(model.predict(permuted), labels)
+    naive_error = walk_forward.mean_absolute_error(naive, labels)
+    assert fitted_error < naive_error          # it learned something at all
+    assert fitted_error < permuted_error       # and it learned THIS column order
+
+
+def test_no_configuration_field_can_escape_the_spec_hash(models, xgb_columns):
+    """A hyperparameter added later must not run silently unhashed."""
+    config = models.XGBoostConfig()
+    assert set(config.HASHED_FIELDS) == {field.name for field in dataclasses.fields(config)}
+    narrowed = type(config).HASHED_FIELDS
+    try:
+        type(config).HASHED_FIELDS = narrowed[:-1]
+        with pytest.raises(models.ModelError, match="not covered by the spec hash"):
+            config.as_hyperparameters()
+    finally:
+        type(config).HASHED_FIELDS = narrowed
+    assert dict(config.as_hyperparameters())["random_state"] == "0"

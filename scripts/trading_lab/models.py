@@ -22,16 +22,23 @@ Three boundaries matter more than the estimator:
 * **Label boundary.** `fit` reads labels. `predict` never touches `.label` at
   all -- not defensively, structurally: it only ever reads `.features`.
 
+Phase 3B adds a second candidate on the same rails: gradient-boosted trees.
+It is NOT a selection -- ridge and xgboost are two entries in the same
+protocol, and choosing between them belongs to a later milestone that is
+allowed to look at the validation block. Trees need no standardisation, so
+the xgboost path deliberately has one less moving part than the ridge one.
+
 Nothing here opens a store, a snapshot, or a clock.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 import hashlib
 import json
 
+import xgboost
 from sklearn.linear_model import Ridge
 
 MODEL_SCHEMA_VERSION = "trading-lab.model.v1"
@@ -40,6 +47,9 @@ MODEL_PRECISION = 34
 # Learned parameters are rounded to this exponent on the way back from
 # float64, so a fitted model has one exact textual form to hash.
 COEFFICIENT_EXPONENT = Decimal("1E-18")
+# Predictions come back from the backend as float32; the same fixed exponent
+# pins them down on the way home.
+PREDICTION_EXPONENT = Decimal("1E-18")
 DEFAULT_RIDGE_ALPHA = Decimal("1.0")
 RIDGE_SOLVER = "cholesky"  # closed form, no RNG, no iteration count
 MAX_FEATURES = 256
@@ -183,8 +193,8 @@ def _standardise(
         )
 
 
-def _to_decimal(value: float) -> Decimal:
-    """Cross back from float64 to Decimal at a fixed, caller-independent exponent.
+def _to_decimal(value: float, exponent: Decimal = COEFFICIENT_EXPONENT) -> Decimal:
+    """Cross back from float to Decimal at a fixed, caller-independent exponent.
 
     `quantize` obeys the *ambient* context precision, so this must run pinned
     to the module's own precision -- otherwise a caller working at prec=7
@@ -192,9 +202,7 @@ def _to_decimal(value: float) -> Decimal:
     """
     with localcontext() as context:
         context.prec = MODEL_PRECISION
-        return Decimal(repr(float(value))).quantize(
-            COEFFICIENT_EXPONENT, rounding=ROUND_HALF_EVEN
-        )
+        return Decimal(repr(float(value))).quantize(exponent, rounding=ROUND_HALF_EVEN)
 
 
 class RidgeRegressionPredictor:
@@ -319,3 +327,201 @@ class MeanTrainPredictor:
         if self.mean is None:
             raise ModelError("predict() called before fit()")
         return tuple(self.mean for _ in rows)
+
+
+@dataclass(frozen=True)
+class XGBoostConfig:
+    """The V1 gradient-boosting configuration. Fixed, conservative, untuned.
+
+    One object is the single source of truth for two things that must never
+    drift apart: what the backend is actually given, and what the spec hash
+    claims was given. `as_backend_kwargs` and `as_hyperparameters` are both
+    derived from these fields, so a parameter cannot be silently run without
+    being hashed.
+    """
+
+    objective: str = "reg:squarederror"
+    n_estimators: int = 100
+    max_depth: int = 3
+    learning_rate: Decimal = Decimal("0.05")
+    min_child_weight: int = 1
+    subsample: Decimal = Decimal("1.0")
+    colsample_bytree: Decimal = Decimal("1.0")
+    reg_alpha: Decimal = Decimal("0.0")
+    reg_lambda: Decimal = Decimal("1.0")
+    gamma: Decimal = Decimal("0.0")
+    tree_method: str = "hist"
+    n_jobs: int = 1
+    random_state: int = 0
+
+    def validate(self) -> None:
+        for name in ("n_estimators", "max_depth", "min_child_weight"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ModelError(f"{name} must be a positive int, got {value!r}")
+        for name in ("n_jobs", "random_state"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ModelError(f"{name} must be a non-negative int, got {value!r}")
+        for name in ("learning_rate", "subsample", "colsample_bytree",
+                     "reg_alpha", "reg_lambda", "gamma"):
+            value = getattr(self, name)
+            if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
+                raise ModelError(f"{name} must be a finite non-negative Decimal, got {value!r}")
+        if self.learning_rate <= 0:
+            raise ModelError("learning_rate must be strictly positive")
+        if self.n_jobs != 1:
+            # Thread count changes float summation order, and with it the model.
+            raise ModelError("V1 pins n_jobs=1 so that fitting is reproducible")
+        if self.subsample != 1 or self.colsample_bytree != 1:
+            raise ModelError(
+                "V1 refuses stochastic sampling: subsample and colsample_bytree must be 1"
+            )
+        if not isinstance(self.objective, str) or not self.objective:
+            raise ModelError("objective must be a non-empty string")
+        if self.tree_method not in {"hist", "exact", "approx"}:
+            raise ModelError(f"unsupported tree_method {self.tree_method!r}")
+
+    HASHED_FIELDS = (
+        "objective", "n_estimators", "max_depth", "learning_rate",
+        "min_child_weight", "subsample", "colsample_bytree", "reg_alpha",
+        "reg_lambda", "gamma", "tree_method", "n_jobs", "random_state",
+    )
+
+    def as_hyperparameters(self) -> tuple[tuple[str, str], ...]:
+        # A field added later but forgotten here would run unhashed. Refuse to
+        # produce an identity that does not cover the whole configuration.
+        declared = tuple(field.name for field in fields(self))
+        if set(declared) != set(self.HASHED_FIELDS):
+            missing = set(declared) ^ set(self.HASHED_FIELDS)
+            raise ModelError(f"configuration fields not covered by the spec hash: {sorted(missing)}")
+        return tuple((name, str(getattr(self, name))) for name in self.HASHED_FIELDS)
+
+    def as_backend_kwargs(self) -> dict[str, object]:
+        return {
+            "objective": self.objective,
+            "n_estimators": self.n_estimators,
+            "max_depth": self.max_depth,
+            "learning_rate": float(self.learning_rate),
+            "min_child_weight": self.min_child_weight,
+            "subsample": float(self.subsample),
+            "colsample_bytree": float(self.colsample_bytree),
+            "reg_alpha": float(self.reg_alpha),
+            "reg_lambda": float(self.reg_lambda),
+            "gamma": float(self.gamma),
+            "tree_method": self.tree_method,
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+        }
+
+
+@dataclass(frozen=True)
+class FittedBooster:
+    """Learned state of a boosted model: the booster's own bytes, hashed."""
+
+    spec: ModelSpec
+    model_spec_hash: str
+    booster_sha256: str
+    booster_bytes: int
+    train_rows: int
+
+    @property
+    def fitted_model_hash(self) -> str:
+        return _sha256_canonical(
+            {
+                "spec": self.spec.canonical(),
+                "booster_sha256": self.booster_sha256,
+                "booster_bytes": self.booster_bytes,
+                "train_rows": self.train_rows,
+            }
+        )
+
+
+class XGBoostRegressionPredictor:
+    """Gradient-boosted regression trees over the canonical feature columns.
+
+    No standardisation: trees split on order, not on scale, so the ridge
+    scaler would be ceremony -- and every preprocessing step removed is one
+    fewer place for train/test contamination to hide.
+
+    The backend version is part of the spec on purpose. A fitted booster is
+    only reproducible against the library that produced it, and pretending
+    otherwise would make the hash a lie the first time xgboost is upgraded.
+    """
+
+    name = "xgboost_regression"
+    version = "1"
+
+    def __init__(self, *, feature_columns, config: XGBoostConfig | None = None) -> None:
+        columns = tuple(feature_columns)
+        if not columns or len(columns) > MAX_FEATURES:
+            raise ModelError(f"feature_columns must hold 1..{MAX_FEATURES} names")
+        if len(set(columns)) != len(columns):
+            raise ModelError(f"feature_columns contains duplicates: {columns}")
+        if not all(isinstance(column, str) and column for column in columns):
+            raise ModelError("every feature column must be a non-empty string")
+        self.config = config if config is not None else XGBoostConfig()
+        self.config.validate()
+        self.feature_columns = columns
+        self.spec = ModelSpec(
+            name=self.name,
+            version=self.version,
+            hyperparameters=(
+                *self.config.as_hyperparameters(),
+                ("backend", "xgboost"),
+                ("backend_version", xgboost.__version__),
+            ),
+            feature_schema=FeatureSchema(columns=columns),
+        )
+        self.fitted: FittedBooster | None = None
+        self._booster = None
+
+    @property
+    def model_spec_hash(self) -> str:
+        return self.spec.model_spec_hash
+
+    def fit(self, train_rows) -> "XGBoostRegressionPredictor":
+        rows = tuple(train_rows)
+        if len(rows) < 2:
+            raise ModelError("gradient boosting needs at least two training rows")
+        design = [
+            [float(value) for value in feature_vector(row, self.feature_columns)]
+            for row in rows
+        ]
+        targets = [
+            float(_require_decimal(row.label, where=f"label of {row.bar_open_at}"))
+            for row in rows
+        ]
+        estimator = xgboost.XGBRegressor(**self.config.as_backend_kwargs())
+        estimator.fit(design, targets)
+        raw = bytes(estimator.get_booster().save_raw(raw_format="json"))
+        self._booster = estimator
+        self.fitted = FittedBooster(
+            spec=self.spec,
+            model_spec_hash=self.spec.model_spec_hash,
+            booster_sha256=hashlib.sha256(raw).hexdigest(),
+            booster_bytes=len(raw),
+            train_rows=len(rows),
+        )
+        return self
+
+    def predict(self, rows) -> tuple[Decimal, ...]:
+        if self._booster is None:
+            raise ModelError("predict() called before fit()")
+        block = [
+            [float(value) for value in feature_vector(row, self.feature_columns)]
+            for row in rows
+        ]
+        if not block:
+            return ()
+        raw = self._booster.predict(block)
+        return tuple(_to_decimal(value, PREDICTION_EXPONENT) for value in raw)
+
+    def feature_importances(self) -> tuple[tuple[str, Decimal], ...]:
+        """Read-only introspection. Nothing in this module consumes it."""
+        if self._booster is None:
+            raise ModelError("feature_importances() called before fit()")
+        return tuple(
+            (column, _to_decimal(value, PREDICTION_EXPONENT))
+            for column, value in zip(self.feature_columns, self._booster.feature_importances_)
+        )
