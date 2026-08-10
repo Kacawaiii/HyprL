@@ -38,8 +38,20 @@ from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 import hashlib
 import json
 
-import xgboost
-from sklearn.linear_model import Ridge
+ML_EXTRA_HINT = (
+    "the Phase 3 predictive engine needs the optional ML extra: "
+    "install it with `pip install hyprl[ml]` (scikit-learn and xgboost). "
+    "Phase 1 and Phase 2 -- market data, series, indicators, datasets and "
+    "walk-forward evaluation -- do not require it."
+)
+
+try:  # the ONLY ML coupling in trading_lab; nothing in Phase 1/2 imports this module
+    import xgboost
+    from sklearn.linear_model import Ridge
+except ImportError as _error:  # pragma: no cover - exercised in a subprocess probe
+    # A bare "No module named 'sklearn'" three frames into a fit is a puzzle.
+    # Say which extra is missing, at import time, where it is actionable.
+    raise ImportError(f"{_error}. {ML_EXTRA_HINT}") from _error
 
 MODEL_SCHEMA_VERSION = "trading-lab.model.v1"
 FEATURE_SCHEMA_VERSION = "trading-lab.model-features.v1"

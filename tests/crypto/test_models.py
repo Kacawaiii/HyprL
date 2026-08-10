@@ -16,6 +16,10 @@ import json
 
 import pytest
 
+# Phase 3 is the ML layer: every test here needs the optional [ml] extra.
+# Marked at module granularity -- see docs/TRADING_LAB_PHASE3.md.
+pytestmark = pytest.mark.ml
+
 
 GRID = datetime(2026, 4, 6, 0, 0, tzinfo=timezone.utc)
 HOUR = timedelta(hours=1)
