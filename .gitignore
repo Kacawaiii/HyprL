@@ -146,3 +146,4 @@ apps/web/tsconfig.tsbuildinfo
 # them explicitly: the lockfile is what makes `npm ci` reproducible.
 !apps/web/package.json
 !apps/web/package-lock.json
+!apps/web/tsconfig.json
