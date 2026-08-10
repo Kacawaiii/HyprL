@@ -124,3 +124,11 @@ scripts/paper_trading.py
 # these two files, never all JSON under tests/.
 !tests/fixtures/crypto/coinbase_btc_usd_1h.json
 !tests/fixtures/crypto/coinbase_eth_usd_1d.json
+
+# Phase 4A real-market corpus: captured once from the public Coinbase candles
+# endpoint, frozen, and verified offline by tests/crypto/test_capture_market_history.py.
+# The `data/*` and `*.json` rules above would otherwise hide it entirely, and an
+# ignored corpus cannot be replayed from a fresh clone. Re-include it explicitly,
+# following the same pattern as the paper-portfolio and crypto fixture entries.
+!data/crypto/
+!data/crypto/**
