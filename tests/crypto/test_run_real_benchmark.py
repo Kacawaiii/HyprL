@@ -79,14 +79,15 @@ def synthetic_corpus(capture, tmp_path):
     return tmp_path
 
 
-def _synthetic_geometry(runner, benchmark, corpus, product, tmp_path):
+def _synthetic_geometry(runner, benchmark, corpus, product, tmp_path, protocol="v1"):
     walk_forward = importlib.import_module("scripts.trading_lab.walk_forward")
     dataset_module = importlib.import_module("scripts.trading_lab.market_dataset")
+    frozen = runner.FROZEN_PROTOCOLS[protocol]
     series = runner.load_corpus_series(corpus, product=product,
-                                       database_path=tmp_path / f"geo-{product}.sqlite3")
-    dataset = dataset_module.build_dataset(series, config=benchmark.DATASET_CONFIG_V1)
+                                       database_path=tmp_path / f"geo-{protocol}-{product}.sqlite3")
+    dataset = dataset_module.build_dataset(series, config=frozen.dataset_config)
     rows = walk_forward.usable_rows(dataset)
-    folds = walk_forward.build_folds(dataset, config=benchmark.WALK_FORWARD_CONFIG_V1)
+    folds = walk_forward.build_folds(dataset, config=frozen.walk_forward_config)
     return {
         "series_points": len(series.points),
         "missing_openings": len(series.missing_openings),
@@ -97,11 +98,22 @@ def _synthetic_geometry(runner, benchmark, corpus, product, tmp_path):
     }
 
 
-def _run_synthetic(runner, benchmark, corpus, product, tmp_path, monkeypatch):
-    geometry = _synthetic_geometry(runner, benchmark, corpus, product, tmp_path)
-    monkeypatch.setattr(runner, "EXPECTED_GEOMETRY", geometry)
-    spec = benchmark.build_benchmark_spec(product, corpus_root=corpus)
-    return runner.run_product_benchmark(corpus, product, spec.benchmark_spec_hash)
+def _run_synthetic(runner, benchmark, corpus, product, tmp_path, monkeypatch,
+                   protocol="v1"):
+    """Run a committed protocol against a synthetic corpus.
+
+    Only the geometry ASSERTION is relaxed, and only in tests: the real
+    constant describes the real corpus. Everything else -- features, models,
+    selection, boundaries -- still comes from the committed contract.
+    """
+    from dataclasses import replace as _replace
+    geometry = _synthetic_geometry(runner, benchmark, corpus, product, tmp_path, protocol)
+    frozen = runner.FROZEN_PROTOCOLS[protocol]
+    monkeypatch.setitem(runner.FROZEN_PROTOCOLS, protocol,
+                        _replace(frozen, expected_geometry=geometry))
+    spec = frozen.build_spec(product, corpus_root=corpus)
+    return runner.run_product_benchmark(corpus, product, spec.benchmark_spec_hash,
+                                        protocol=protocol)
 
 
 # --- the runner defines nothing of its own --------------------------------
@@ -111,11 +123,15 @@ def test_the_runner_exposes_no_tuning_control(runner):
     """A knob a caller can turn after seeing a number will eventually be turned."""
     parameters = inspect.signature(runner.run_product_benchmark).parameters
     assert list(parameters) == ["corpus_dir", "product", "expected_benchmark_spec_hash",
-                                "database_path"]
+                                "protocol", "database_path"]
     forbidden = ("alpha", "max_depth", "learning_rate", "features", "horizon",
                  "train", "n_estimators", "purge", "window", "period")
     for name in parameters:
         assert not any(word in name.lower() for word in forbidden), name
+    # `protocol` selects among COMMITTED contracts; it cannot invent one
+    assert sorted(runner.FROZEN_PROTOCOLS) == ["v1", "v2"]
+    with pytest.raises(runner.RealBenchmarkRunError, match="unknown protocol"):
+        runner.run_product_benchmark("ignored", "BTC-USD", "0" * 64, protocol="v3")
 
 
 def test_the_runner_never_redefines_the_frozen_protocol(runner):
@@ -134,10 +150,11 @@ def test_the_runner_never_redefines_the_frozen_protocol(runner):
 
 
 def test_the_expected_geometry_constant_is_the_frozen_measurement(runner):
-    assert runner.EXPECTED_GEOMETRY == {
-        "series_points": 8750, "missing_openings": 10, "usable_rows": 8663,
-        "folds": 46, "min_effective_validation": 164, "oos_records": 7728,
-    }
+    frozen = {"series_points": 8750, "missing_openings": 10, "usable_rows": 8663,
+              "folds": 46, "min_effective_validation": 164, "oos_records": 7728}
+    assert runner.EXPECTED_GEOMETRY == frozen
+    for name in ("v1", "v2"):
+        assert runner.FROZEN_PROTOCOLS[name].expected_geometry == frozen
 
 
 # --- the three refusals, all before any fit -------------------------------
@@ -357,3 +374,178 @@ def test_the_real_corpus_matches_the_frozen_geometry_without_being_scored(
     monkeypatch.setattr(models.XGBoostRegressionPredictor, "fit", detonate)
     observed = _synthetic_geometry(runner, benchmark, REAL_CORPUS, product, tmp_path)
     assert observed == runner.EXPECTED_GEOMETRY
+
+
+# --- executing the committed V2 contract (synthetic corpora only) ---------
+
+
+@pytest.fixture
+def benchmark_v2():
+    return importlib.import_module("scripts.trading_lab.real_benchmark_v2")
+
+
+def test_the_runner_executes_the_committed_v2_contract(runner, benchmark_v2,
+                                                       synthetic_corpus, tmp_path,
+                                                       monkeypatch):
+    result = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                            tmp_path, monkeypatch, protocol="v2")
+    assert result.protocol_version == "trading-lab.real-benchmark.v2"
+    assert result.geometry["folds"] >= 3
+    assert result.oos_records
+    assert len(result.selection["folds"]) == result.geometry["folds"]
+    for fold in result.selection["folds"]:
+        assert [e["candidate_id"] for e in fold["candidates"]] == ["ridge", "xgboost"]
+        assert fold["selection_fit_hash"] != fold["final_fit_hash"]
+
+
+def test_the_v2_run_uses_the_v2_features_and_not_the_v1_ones(runner, benchmark,
+                                                             benchmark_v2,
+                                                             synthetic_corpus, tmp_path,
+                                                             monkeypatch):
+    """The clearest way a generalised runner could go wrong is silently running V1."""
+    dataset_module = importlib.import_module("scripts.trading_lab.market_dataset")
+    v1_dataset = dataset_module.build_dataset(
+        runner.load_corpus_series(synthetic_corpus, product="BTC-USD",
+                                  database_path=tmp_path / "cmp-v1.sqlite3"),
+        config=benchmark.DATASET_CONFIG_V1)
+    v2_dataset = dataset_module.build_dataset(
+        runner.load_corpus_series(synthetic_corpus, product="BTC-USD",
+                                  database_path=tmp_path / "cmp-v2.sqlite3"),
+        config=benchmark_v2.DATASET_CONFIG_V2)
+    assert v1_dataset.dataset_hash != v2_dataset.dataset_hash
+
+    result = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                            tmp_path, monkeypatch, protocol="v2")
+    assert result.dataset_hash == v2_dataset.dataset_hash
+    assert result.dataset_hash != v1_dataset.dataset_hash
+    spec = benchmark_v2.build_benchmark_v2_spec("BTC-USD", corpus_root=synthetic_corpus)
+    assert result.benchmark_spec_hash == spec.benchmark_spec_hash
+    assert spec.feature_columns == benchmark_v2.FEATURE_COLUMNS_V2
+    assert spec.feature_columns != benchmark.FEATURE_COLUMNS_V1
+
+
+def test_a_v2_spec_hash_mismatch_stops_the_run_before_fitting(runner, benchmark_v2,
+                                                              synthetic_corpus,
+                                                              monkeypatch):
+    models = importlib.import_module("scripts.trading_lab.models")
+
+    def detonate(*args, **kwargs):
+        raise AssertionError("a model was fitted despite a V2 contract mismatch")
+
+    monkeypatch.setattr(models.RidgeRegressionPredictor, "fit", detonate)
+    monkeypatch.setattr(models.XGBoostRegressionPredictor, "fit", detonate)
+    benchmark = importlib.import_module("scripts.trading_lab.real_benchmark")
+    with pytest.raises(benchmark.RealBenchmarkError, match="does not match the "
+                                                          "pre-registered"):
+        runner.run_product_benchmark(synthetic_corpus, "BTC-USD", "0" * 64, protocol="v2")
+    # a V1 hash is not a V2 hash either
+    v1_hash = benchmark.build_benchmark_spec(
+        "BTC-USD", corpus_root=synthetic_corpus).benchmark_spec_hash
+    with pytest.raises(benchmark.RealBenchmarkError):
+        runner.run_product_benchmark(synthetic_corpus, "BTC-USD", v1_hash, protocol="v2")
+
+
+def test_a_v2_geometry_mismatch_stops_the_run_before_fitting(runner, benchmark_v2,
+                                                             synthetic_corpus,
+                                                             monkeypatch):
+    models = importlib.import_module("scripts.trading_lab.models")
+
+    def detonate(*args, **kwargs):
+        raise AssertionError("a model was fitted despite a V2 geometry mismatch")
+
+    monkeypatch.setattr(models.RidgeRegressionPredictor, "fit", detonate)
+    monkeypatch.setattr(models.XGBoostRegressionPredictor, "fit", detonate)
+    spec = benchmark_v2.build_benchmark_v2_spec("BTC-USD", corpus_root=synthetic_corpus)
+    with pytest.raises(runner.RealBenchmarkRunError, match="does not match the frozen"):
+        runner.run_product_benchmark(synthetic_corpus, "BTC-USD",
+                                     spec.benchmark_spec_hash, protocol="v2")
+
+
+def test_the_runner_redefines_nothing_of_the_v2_contract(runner):
+    """Both protocols must be imported wholesale, never restated in the runner."""
+    source = pathlib.Path(runner.__file__).read_text()
+    tree = ast.parse(source)
+    constructed = {node.func.id for node in ast.walk(tree)
+                   if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    for forbidden in ("WalkForwardConfig", "FeatureDefinition", "DatasetConfig",
+                      "LabelSpec"):
+        assert forbidden not in constructed, forbidden
+    for expected in ("DATASET_CONFIG_V2", "WALK_FORWARD_CONFIG_V2", "FEATURE_COLUMNS_V2",
+                     "ROBUSTNESS_BOUNDARIES_V2", "SENSITIVITY_SCENARIOS_V2"):
+        assert expected in source, expected
+
+
+def test_the_v2_result_records_its_exploratory_status(runner, benchmark_v2,
+                                                      synthetic_corpus, tmp_path,
+                                                      monkeypatch):
+    """A number produced on an already-observed corpus must say so, in the payload."""
+    result = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                            tmp_path, monkeypatch, protocol="v2")
+    experiment = result.canonical()["experiment"]
+    assert experiment["experiment_type"] == "exploratory"
+    assert experiment["confirmatory_result"] is False
+    assert experiment["corpus_role"] == "development/exploratory"
+    holdout = experiment["future_holdout"]
+    assert holdout["range_start"] == "2026-09-01T00:00:00Z"
+    assert holdout["range_end"] == "2026-11-30T23:00:00Z"
+    assert holdout["captured"] is False
+
+
+def test_the_v1_payload_shape_is_untouched_by_the_generalisation(runner, benchmark,
+                                                                 synthetic_corpus,
+                                                                 tmp_path, monkeypatch):
+    """V1 predates `experiment`; adding the key would change a published hash."""
+    result = _run_synthetic(runner, benchmark, synthetic_corpus, "BTC-USD",
+                            tmp_path, monkeypatch, protocol="v1")
+    assert result.experiment is None
+    assert "experiment" not in result.canonical()
+    assert result.protocol_version == "trading-lab.real-benchmark.v1"
+
+
+def test_the_protocol_version_is_part_of_the_result_identity(runner, benchmark,
+                                                             benchmark_v2,
+                                                             synthetic_corpus, tmp_path,
+                                                             monkeypatch):
+    from dataclasses import replace
+    result = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                            tmp_path, monkeypatch, protocol="v2")
+    baseline = result.benchmark_results_hash
+    assert replace(result, protocol_version="trading-lab.real-benchmark.v1"
+                   ).benchmark_results_hash != baseline
+    assert replace(result, experiment=None).benchmark_results_hash != baseline
+    v1_result = _run_synthetic(runner, benchmark, synthetic_corpus, "BTC-USD",
+                               tmp_path, monkeypatch, protocol="v1")
+    assert v1_result.benchmark_results_hash != baseline
+
+
+def test_v1_and_v2_share_one_orchestration(runner):
+    """One engine, two contracts -- not two copies of the same logic."""
+    source = pathlib.Path(runner.__file__).read_text()
+    assert source.count("def run_product_benchmark") == 1
+    assert source.count("evaluate_selection(") == 1
+    assert source.count("analyse_robustness(") == 1
+    assert "def run_product_benchmark_v2" not in source
+
+
+def test_the_two_products_stay_separate_under_v2(runner, benchmark_v2, synthetic_corpus,
+                                                 tmp_path, monkeypatch):
+    btc = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                         tmp_path, monkeypatch, protocol="v2")
+    eth = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "ETH-USD",
+                         tmp_path, monkeypatch, protocol="v2")
+    assert btc.benchmark_spec_hash != eth.benchmark_spec_hash
+    assert btc.benchmark_results_hash != eth.benchmark_results_hash
+    assert btc.oos_records != eth.oos_records
+    combined = len(btc.oos_records) + len(eth.oos_records)
+    for result in (btc, eth):
+        assert result.selection["global_test_metrics"]["observations"] != combined
+
+
+def test_two_v2_runs_agree_exactly(runner, benchmark_v2, synthetic_corpus, tmp_path,
+                                   monkeypatch):
+    first = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                           tmp_path, monkeypatch, protocol="v2")
+    second = _run_synthetic(runner, benchmark_v2, synthetic_corpus, "BTC-USD",
+                            tmp_path, monkeypatch, protocol="v2")
+    assert first.benchmark_results_hash == second.benchmark_results_hash
+    assert first.oos_records == second.oos_records

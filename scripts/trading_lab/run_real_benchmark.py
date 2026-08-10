@@ -68,12 +68,24 @@ from scripts.trading_lab.real_benchmark import (
     RealBenchmarkError,
     build_benchmark_spec,
 )
+from scripts.trading_lab.real_benchmark_v2 import (
+    BENCHMARK_V2_PROTOCOL_VERSION,
+    CONFIRMATORY_HOLDOUT_V2,
+    DATASET_CONFIG_V2,
+    FEATURE_COLUMNS_V2,
+    RIDGE_ALPHA_V2,
+    ROBUSTNESS_BOUNDARIES_V2,
+    SENSITIVITY_SCENARIOS_V2,
+    V1_CORPUS_ROLE_FOR_V2,
+    WALK_FORWARD_CONFIG_V2,
+    build_benchmark_v2_spec,
+)
 from scripts.trading_lab.walk_forward import build_folds, usable_rows
 
 RUNNER_VERSION = "trading-lab.real-benchmark-runner.v1"
 RESULT_SCHEMA_VERSION = "trading-lab.real-benchmark-result.v1"
 
-# What the geometry measured when the contract was frozen, per product. These
+# What the geometry measured when each contract was frozen, per product. These
 # are an assertion, not a target: if the runner produces anything else it is
 # not executing the protocol that was pre-registered.
 EXPECTED_GEOMETRY = {
@@ -88,6 +100,63 @@ EXPECTED_GEOMETRY = {
 
 class RealBenchmarkRunError(RuntimeError):
     """Raised when the frozen protocol cannot be executed exactly as written."""
+
+
+@dataclass(frozen=True)
+class FrozenProtocol:
+    """One pre-registered experiment, as the runner is allowed to see it.
+
+    The runner selects among committed protocols by name; it never assembles
+    one. That is the whole difference between "execute contract v2" -- which is
+    auditable, because v2 was committed before its first score -- and
+    "--features a,b,c", which is tuning with extra steps.
+    """
+
+    protocol_version: str
+    build_spec: object
+    dataset_config: object
+    walk_forward_config: object
+    feature_columns: tuple[str, ...]
+    ridge_alpha: Decimal
+    scenarios: tuple
+    boundaries: tuple[str, ...]
+    expected_geometry: dict[str, int]
+    # Extra provenance carried only by experiments that need it. V1 predates
+    # the notion, and adding fields to its payload would silently change a
+    # recorded result hash, so it stays None and its serialisation is untouched.
+    experiment: dict[str, object] | None = None
+
+
+FROZEN_PROTOCOLS = {
+    "v1": FrozenProtocol(
+        protocol_version=BENCHMARK_PROTOCOL_VERSION,
+        build_spec=build_benchmark_spec,
+        dataset_config=DATASET_CONFIG_V1,
+        walk_forward_config=WALK_FORWARD_CONFIG_V1,
+        feature_columns=FEATURE_COLUMNS_V1,
+        ridge_alpha=RIDGE_ALPHA_V1,
+        scenarios=SENSITIVITY_SCENARIOS_V1,
+        boundaries=ROBUSTNESS_BOUNDARIES_V1,
+        expected_geometry=EXPECTED_GEOMETRY,
+    ),
+    "v2": FrozenProtocol(
+        protocol_version=BENCHMARK_V2_PROTOCOL_VERSION,
+        build_spec=build_benchmark_v2_spec,
+        dataset_config=DATASET_CONFIG_V2,
+        walk_forward_config=WALK_FORWARD_CONFIG_V2,
+        feature_columns=FEATURE_COLUMNS_V2,
+        ridge_alpha=RIDGE_ALPHA_V2,
+        scenarios=SENSITIVITY_SCENARIOS_V2,
+        boundaries=ROBUSTNESS_BOUNDARIES_V2,
+        expected_geometry=EXPECTED_GEOMETRY,
+        experiment={
+            "experiment_type": "exploratory",
+            "confirmatory_result": False,
+            "corpus_role": V1_CORPUS_ROLE_FOR_V2,
+            "future_holdout": dict(CONFIRMATORY_HOLDOUT_V2),
+        },
+    ),
+}
 
 
 def _canonical_json(payload: object) -> str:
@@ -114,20 +183,22 @@ def _metrics_payload(metrics) -> dict[str, object]:
 # --- the frozen candidate set --------------------------------------------
 
 
-def _candidates(alpha: Decimal = RIDGE_ALPHA_V1):
-    """Fresh, unfitted candidates in the contract's configuration."""
+def _candidates(protocol: FrozenProtocol, alpha: Decimal | None = None):
+    """Fresh, unfitted candidates in the selected contract's configuration."""
+    alpha = protocol.ridge_alpha if alpha is None else alpha
+    columns = protocol.feature_columns
     return (
         candidate("ridge", lambda: RidgeRegressionPredictor(
-            feature_columns=FEATURE_COLUMNS_V1, alpha=alpha)),
+            feature_columns=columns, alpha=alpha)),
         candidate("xgboost", lambda: XGBoostRegressionPredictor(
-            feature_columns=FEATURE_COLUMNS_V1, config=XGBoostConfig())),
+            feature_columns=columns, config=XGBoostConfig())),
     )
 
 
-def _scenarios():
+def _scenarios(protocol: FrozenProtocol):
     return tuple(
-        RobustnessScenario(scenario_id, _candidates(alpha))
-        for scenario_id, alpha in SENSITIVITY_SCENARIOS_V1
+        RobustnessScenario(scenario_id, _candidates(protocol, alpha))
+        for scenario_id, alpha in protocol.scenarios
     )
 
 
@@ -188,9 +259,10 @@ class RealBenchmarkResult:
     robustness: dict[str, object]
     scenarios: tuple[dict[str, object], ...]
     oos_records: tuple[dict[str, str], ...]
+    experiment: dict[str, object] | None = None
 
     def canonical(self) -> dict[str, object]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "runner_version": self.runner_version,
             "protocol_version": self.protocol_version,
@@ -205,6 +277,11 @@ class RealBenchmarkResult:
             "scenarios": [dict(entry) for entry in self.scenarios],
             "oos_records": [dict(record) for record in self.oos_records],
         }
+        if self.experiment is not None:
+            # Absent for V1: adding a key to a recorded payload would change a
+            # result hash that has already been published.
+            payload["experiment"] = dict(self.experiment)
+        return payload
 
     @property
     def benchmark_results_hash(self) -> str:
@@ -246,12 +323,23 @@ def _counts(values) -> dict[str, int]:
 
 
 def run_product_benchmark(corpus_dir, product: str, expected_benchmark_spec_hash: str,
-                          *, database_path=None) -> RealBenchmarkResult:
-    """Run the frozen contract for ONE product. Refuses before fitting if anything drifted."""
+                          *, protocol: str = "v1",
+                          database_path=None) -> RealBenchmarkResult:
+    """Run a frozen contract for ONE product. Refuses before fitting if anything drifted.
+
+    `protocol` names one of the committed contracts and nothing else. It cannot
+    introduce a feature, a horizon or a hyperparameter that was not registered
+    and hashed before any score existed.
+    """
+    if protocol not in FROZEN_PROTOCOLS:
+        raise RealBenchmarkRunError(
+            f"unknown protocol {protocol!r}; the committed contracts are "
+            f"{sorted(FROZEN_PROTOCOLS)}")
+    frozen = FROZEN_PROTOCOLS[protocol]
     corpus_root = pathlib.Path(corpus_dir)
 
     # 1. the contract must be exactly the pre-registered one
-    spec = build_benchmark_spec(product, corpus_root=corpus_root)
+    spec = frozen.build_spec(product, corpus_root=corpus_root)
     if spec.benchmark_spec_hash != expected_benchmark_spec_hash:
         raise RealBenchmarkError(
             f"{product}: benchmark spec hash {spec.benchmark_spec_hash} does not match the "
@@ -269,9 +357,9 @@ def run_product_benchmark(corpus_dir, product: str, expected_benchmark_spec_hash
     try:
         target = (workspace / f"{product}.sqlite3") if owned else pathlib.Path(database_path)
         series = load_corpus_series(corpus_root, product=product, database_path=target)
-        dataset = build_dataset(series, config=DATASET_CONFIG_V1)
+        dataset = build_dataset(series, config=frozen.dataset_config)
         rows = usable_rows(dataset)
-        folds = build_folds(dataset, config=WALK_FORWARD_CONFIG_V1)
+        folds = build_folds(dataset, config=frozen.walk_forward_config)
 
         # 3. the geometry must be the one measured when the contract was frozen
         observed = {
@@ -282,17 +370,17 @@ def run_product_benchmark(corpus_dir, product: str, expected_benchmark_spec_hash
             "min_effective_validation": min(len(v) for _, v, _ in folds) if folds else 0,
             "oos_records": sum(len(t) for _, _, t in folds),
         }
-        if observed != EXPECTED_GEOMETRY:
+        if observed != frozen.expected_geometry:
             raise RealBenchmarkRunError(
                 f"{product}: geometry {observed} does not match the frozen "
-                f"{EXPECTED_GEOMETRY}; the runner is not executing the registered contract")
+                f"{frozen.expected_geometry}; the runner is not executing the registered contract")
 
         # --- from here on, the first real fits happen ---
-        evaluation = evaluate_selection(dataset, config=WALK_FORWARD_CONFIG_V1,
-                                        candidates=_candidates())
+        evaluation = evaluate_selection(dataset, config=frozen.walk_forward_config,
+                                        candidates=_candidates(frozen))
         report_robustness = analyse_robustness(
-            evaluation, boundaries=ROBUSTNESS_BOUNDARIES_V1, scenarios=_scenarios(),
-            dataset=dataset, config=WALK_FORWARD_CONFIG_V1)
+            evaluation, boundaries=frozen.boundaries, scenarios=_scenarios(frozen),
+            dataset=dataset, config=frozen.walk_forward_config)
     finally:
         if owned:
             shutil.rmtree(workspace, ignore_errors=True)
@@ -301,7 +389,7 @@ def run_product_benchmark(corpus_dir, product: str, expected_benchmark_spec_hash
     return RealBenchmarkResult(
         schema_version=RESULT_SCHEMA_VERSION,
         runner_version=RUNNER_VERSION,
-        protocol_version=BENCHMARK_PROTOCOL_VERSION,
+        protocol_version=frozen.protocol_version,
         product=product,
         benchmark_spec_hash=spec.benchmark_spec_hash,
         corpus_spec_hash=spec.corpus_spec_hash,
@@ -360,6 +448,7 @@ def run_product_benchmark(corpus_dir, product: str, expected_benchmark_spec_hash
             }
             for record in evaluation.oos_records
         ),
+        experiment=frozen.experiment,
     )
 
 
