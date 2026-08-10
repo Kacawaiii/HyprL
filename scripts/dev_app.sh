@@ -9,10 +9,23 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_PORT="${HYPRL_API_PORT:-8787}"
 DATA_ROOT="${HYPRL_DATA_ROOT:-$ROOT/data/crypto}"
 
+# `npm run dev` spawns vite as a grandchild, so signalling only the PID we
+# hold is not guaranteed to reach the server that actually holds the port.
+# Each child therefore runs in its own process group and is signalled as a
+# group (negative PID).
+stop_group() {
+  local pid="${1:-}"
+  [[ -z "$pid" ]] && return 0
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   trap - INT TERM EXIT
-  [[ -n "${API_PID:-}" ]] && kill "$API_PID" 2>/dev/null || true
-  [[ -n "${WEB_PID:-}" ]] && kill "$WEB_PID" 2>/dev/null || true
+  stop_group "${API_PID:-}"
+  stop_group "${WEB_PID:-}"
+  sleep 1
+  kill -KILL -- "-${API_PID:-0}" 2>/dev/null || true
+  kill -KILL -- "-${WEB_PID:-0}" 2>/dev/null || true
   wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
@@ -23,12 +36,12 @@ if [[ ! -d "$ROOT/apps/web/node_modules" ]]; then
 fi
 
 echo "[hyprl] API    http://127.0.0.1:$API_PORT/api/v1/health"
-(cd "$ROOT" && python -m scripts.trading_lab.app_api.server \
-   --data-root "$DATA_ROOT" --port "$API_PORT") &
+setsid python -m scripts.trading_lab.app_api.server \
+  --data-root "$DATA_ROOT" --port "$API_PORT" &
 API_PID=$!
 
 echo "[hyprl] cockpit http://127.0.0.1:5173"
-(cd "$ROOT/apps/web" && npm run dev -- --port 5173) &
+(cd "$ROOT/apps/web" && setsid npm run dev -- --port 5173) &
 WEB_PID=$!
 
 wait -n "$API_PID" "$WEB_PID"
