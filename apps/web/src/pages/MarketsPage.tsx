@@ -1,0 +1,136 @@
+import { useMemo, useState } from 'react';
+import { apiClient } from '../api/client';
+import { useQuery } from '../state/useQuery';
+import { CandleChart } from '../components/CandleChart';
+import { DataTable, type Column } from '../components/DataTable';
+import { ErrorState, Hash, LoadingState } from '../components/States';
+import type { Candle } from '../api/types';
+
+/** Windows are chosen in the UI; the server decides how many points come back. */
+const WINDOWS = [
+  { id: '7d', label: '7 days', hours: 24 * 7 },
+  { id: '30d', label: '30 days', hours: 24 * 30 },
+  { id: '90d', label: '90 days', hours: 24 * 90 },
+  { id: 'all', label: 'Full corpus', hours: 0 },
+] as const;
+
+export function MarketsPage() {
+  const [product, setProduct] = useState('BTC-USD');
+  const [window, setWindow] = useState<(typeof WINDOWS)[number]['id']>('30d');
+
+  const markets = useQuery('markets', (signal) => apiClient.getMarkets(signal));
+  const entry = markets.data?.products.find((item) => item.product === product);
+
+  // The window is derived from the corpus end, not from the wall clock: this
+  // is historical data, and "now" has nothing to do with it.
+  const range = useMemo(() => {
+    if (!entry) return undefined;
+    const selected = WINDOWS.find((item) => item.id === window)!;
+    if (selected.hours === 0) return { start: undefined, end: undefined };
+    const end = new Date(entry.last_open);
+    const start = new Date(end.getTime() - selected.hours * 3600_000);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }, [entry, window]);
+
+  const chartKey = entry ? `chart:${product}:${window}` : null;
+  const chart = useQuery(chartKey, (signal) =>
+    apiClient.getChart(product, { start: range?.start, end: range?.end, maxPoints: 500 }, signal),
+  );
+
+  const tableKey = entry ? `candles:${product}:${window}` : null;
+  const candles = useQuery(tableKey, (signal) =>
+    apiClient.getCandles(product, { start: range?.start, end: range?.end, limit: 200 }, signal),
+  );
+
+  const columns: Column<Candle>[] = [
+    { key: 'time', header: 'Opening (UTC)', render: (row) => row.bar_open_at.replace('T', ' ').slice(0, 16) },
+    { key: 'open', header: 'Open', render: (row) => row.open },
+    { key: 'high', header: 'High', render: (row) => row.high },
+    { key: 'low', header: 'Low', render: (row) => row.low },
+    { key: 'close', header: 'Close', render: (row) => row.close },
+    { key: 'volume', header: 'Volume', render: (row) => Number(row.volume).toFixed(4) },
+  ];
+
+  if (markets.status === 'loading') return <LoadingState label="Loading markets" />;
+  if (markets.status === 'error' && markets.error) {
+    return <ErrorState error={markets.error} onRetry={markets.refetch} />;
+  }
+
+  return (
+    <div className="stack">
+      <div className="row">
+        <label htmlFor="product-select" className="muted">Product</label>
+        <select
+          id="product-select"
+          className="select"
+          value={product}
+          onChange={(event) => setProduct(event.target.value)}
+        >
+          {markets.data?.products.map((item) => (
+            <option key={item.product} value={item.product}>{item.product}</option>
+          ))}
+        </select>
+        <label htmlFor="window-select" className="muted">Window</label>
+        <select
+          id="window-select"
+          className="select"
+          value={window}
+          onChange={(event) => setWindow(event.target.value as typeof window)}
+        >
+          {WINDOWS.map((item) => (
+            <option key={item.id} value={item.id}>{item.label}</option>
+          ))}
+        </select>
+        <div className="topbar-spacer" />
+        {entry && (
+          <span className="metric-sub">
+            {entry.rows.toLocaleString()} bars · {entry.missing_openings} gaps
+          </span>
+        )}
+      </div>
+
+      <section className="card">
+        <h2 className="card-title">{product} · hourly</h2>
+        {chart.status === 'loading' && <LoadingState label="Loading chart" />}
+        {chart.status === 'error' && chart.error && (
+          <ErrorState error={chart.error} onRetry={chart.refetch} />
+        )}
+        {chart.data && (
+          <>
+            <CandleChart candles={chart.data.series} />
+            <p className="metric-sub" style={{ marginTop: 8 }}>
+              {chart.data.metadata.returned_count} points from{' '}
+              {chart.data.metadata.source_count.toLocaleString()} source bars
+              {chart.data.metadata.aggregated
+                ? ` · aggregated ${chart.data.metadata.bucket_size}×1h buckets (OHLC preserved, not native 1h candles)`
+                : ' · native 1h candles'}
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="card">
+        <h2 className="card-title">Candles</h2>
+        {candles.status === 'loading' && <LoadingState label="Loading candles" />}
+        {candles.status === 'error' && candles.error && (
+          <ErrorState error={candles.error} onRetry={candles.refetch} />
+        )}
+        {candles.data && (
+          <>
+            <DataTable rows={candles.data.candles} columns={columns} height={380} />
+            <p className="metric-sub" style={{ marginTop: 8 }}>
+              First {candles.data.page.returned} of the window
+              {candles.data.page.has_more ? ' · more available via cursor' : ''}
+            </p>
+          </>
+        )}
+      </section>
+
+      {markets.data?.corpus_content_hash && (
+        <p className="metric-sub">
+          Corpus {markets.data.corpus_id} · <Hash value={markets.data.corpus_content_hash} />
+        </p>
+      )}
+    </div>
+  );
+}

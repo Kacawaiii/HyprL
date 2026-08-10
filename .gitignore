@@ -132,3 +132,10 @@ scripts/paper_trading.py
 # following the same pattern as the paper-portfolio and crypto fixture entries.
 !data/crypto/
 !data/crypto/**
+
+# HyprL cockpit (Phase 5UI-A): build output and installed packages are derived
+# artefacts. The lockfile IS tracked, so an install is reproducible.
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
+apps/web/coverage/

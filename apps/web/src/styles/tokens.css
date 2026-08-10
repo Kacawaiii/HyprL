@@ -1,0 +1,47 @@
+/* Design tokens. Colours live here and nowhere else, so a theme change is one
+   file rather than a hunt through components. Dark-first: this is a cockpit
+   that people stare at for hours. */
+:root {
+  --bg: #0b0d10;
+  --surface: #121519;
+  --surface-raised: #171b21;
+  --surface-hover: #1c2128;
+  --border: #232a33;
+  --border-strong: #2f3945;
+  --text: #e6eaf0;
+  --text-muted: #8b95a5;
+  --text-dim: #5d6675;
+  --positive: #3fb950;
+  --negative: #f85149;
+  --warning: #d29922;
+  --accent: #4c8dff;
+  --accent-dim: #1f3a63;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --sidebar-w: 208px;
+  --topbar-h: 52px;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #eef1f5;
+  --border: #dfe3e9;
+  --border-strong: #c6ccd6;
+  --text: #12161c;
+  --text-muted: #5b6472;
+  --text-dim: #858e9c;
+  --accent-dim: #d6e4ff;
+}
