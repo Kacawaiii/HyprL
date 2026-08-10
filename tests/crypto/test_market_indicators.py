@@ -461,3 +461,219 @@ def test_the_return_spec_hash_describes_the_definition(
     moved = _build(store_module, snapshots_module, series_module, tmp_path,
                    name="ret-spec2", closes=["500", "550", "495"])[2]
     assert indicators.simple_return(moved).spec_hash == first.spec_hash
+
+
+# --- relative / dimensionless primitives (Phase 4D) ---
+
+# These fixtures run far longer series than the shared T1/T2 anchors cover,
+# so they declare a later availability instant. Contract A treats it as a
+# declared historical value, exactly as elsewhere.
+V2_AT = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+V2_ASOF = datetime(2026, 8, 14, 13, 0, tzinfo=timezone.utc)
+
+
+def test_the_multi_bar_return_matches_hand_computed_values(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-n", closes=["100", "110", "99", "121", "88"], at=V2_AT, as_of=V2_ASOF)
+    result = indicators.return_over_period(series, period=2)
+    assert result.values[0] is None and result.values[1] is None    # warm-up
+    with localcontext() as context:
+        context.prec = indicators.INDICATOR_PRECISION
+        assert result.values[2] == (Decimal("99") - Decimal("100")) / Decimal("100")
+        assert result.values[3] == (Decimal("121") - Decimal("110")) / Decimal("110")
+        assert result.values[4] == (Decimal("88") - Decimal("99")) / Decimal("99")
+
+
+def test_the_multi_bar_return_agrees_with_the_frozen_one_bar_primitive(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    """One definition of a 1-bar return, reachable through two names.
+
+    `simple_return` stays parameterless because Benchmark V1 committed to its
+    spec hash. The new primitive must nevertheless compute the same thing at
+    period=1, or the repository would hold two disagreeing definitions.
+    """
+    closes = [str(100 + (index * 13) % 31) for index in range(20)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ret-equiv-n", closes=closes, skip={5, 12}, at=V2_AT, as_of=V2_ASOF)
+    assert len(series.missing_openings) == 2
+    assert indicators.return_over_period(series, period=1).values == \
+        indicators.simple_return(series).values
+    # ... while remaining a DIFFERENT identity, so V1 keeps its own hash
+    assert indicators.return_over_period(series, period=1).spec_hash != \
+        indicators.simple_return(series).spec_hash
+
+
+@pytest.mark.parametrize("period", [1, 4, 12])
+def test_the_multi_bar_return_never_reaches_across_a_gap(
+    tmp_path, store_module, snapshots_module, series_module, indicators, period
+) -> None:
+    closes = [str(100 + index) for index in range(24)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name=f"ret-gap-{period}", closes=closes, skip={10}, at=V2_AT, as_of=V2_ASOF)
+    segments = indicators.contiguous_segments(series)
+    assert len(segments) == 2
+    values = indicators.return_over_period(series, period=period).values
+    for start, end in segments:
+        # the first `period` observations of every segment have no usable history
+        assert all(values[index] is None for index in range(start, min(start + period, end)))
+        assert all(values[index] is not None for index in range(start + period, end))
+
+
+@pytest.mark.parametrize("period", [1, 4, 12])
+def test_the_multi_bar_return_is_invariant_under_truncation(
+    tmp_path, store_module, snapshots_module, series_module, indicators, period
+) -> None:
+    closes = [str(100 + (index * 7) % 19) for index in range(30)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name=f"ret-trunc-{period}", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    full = indicators.return_over_period(series, period=period).values
+    for cut in (14, 21, 29):
+        truncated = replace(series, points=series.points[: cut + 1])
+        assert indicators.return_over_period(truncated, period=period).values == full[: cut + 1]
+
+
+def test_the_ema_spread_is_built_from_the_official_emas(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = [str(100 + (index * 11) % 37) for index in range(60)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="spread", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    fast = indicators.exponential_moving_average(series, period=12).values
+    slow = indicators.exponential_moving_average(series, period=26).values
+    spread = indicators.ema_spread(series, fast_period=12, slow_period=26).values
+    with localcontext() as context:
+        context.prec = indicators.INDICATOR_PRECISION
+        expected = [None if (a is None or b is None or b == 0) else (a - b) / b
+                    for a, b in zip(fast, slow)]
+    assert list(spread) == expected
+    # the warm-up is the SLOWER ema's, not the faster one's
+    assert spread[24] is None and slow[24] is None
+    assert spread[25] is not None and slow[25] is not None
+
+
+def test_the_ema_spread_restarts_after_a_gap_because_the_emas_do(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = [str(100 + (index * 5) % 23) for index in range(80)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="spread-gap", closes=closes, skip={40}, at=V2_AT, as_of=V2_ASOF)
+    segments = indicators.contiguous_segments(series)
+    assert len(segments) == 2
+    spread = indicators.ema_spread(series, fast_period=12, slow_period=26).values
+    second_start = segments[1][0]
+    # no value is borrowed across the hole: the second segment warms up again
+    assert all(spread[index] is None
+               for index in range(second_start, second_start + 25))
+    assert spread[second_start + 25] is not None
+
+
+def test_the_ema_spread_refuses_an_inverted_or_malformed_configuration(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="spread-bad", closes=[str(100 + i) for i in range(40)], at=V2_AT, as_of=V2_ASOF)
+    for kwargs in ({"fast_period": 26, "slow_period": 12},
+                   {"fast_period": 12, "slow_period": 12}):
+        with pytest.raises(indicators.MarketIndicatorError, match="shorter than"):
+            indicators.ema_spread(series, **kwargs)
+    for kwargs in ({"fast_period": 0, "slow_period": 26},
+                   {"fast_period": True, "slow_period": 26},
+                   {"fast_period": 12, "slow_period": 2.0}):
+        with pytest.raises(indicators.MarketIndicatorError, match="period"):
+            indicators.ema_spread(series, **kwargs)
+
+
+def test_the_percentage_atr_is_the_official_atr_over_the_same_close(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = [str(100 + (index * 9) % 29) for index in range(50)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="atrpct", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    atr = indicators.average_true_range(series, period=14).values
+    percent = indicators.atr_percent(series, period=14).values
+    with localcontext() as context:
+        context.prec = indicators.INDICATOR_PRECISION
+        expected = [None if value is None else value / point.close
+                    for value, point in zip(atr, series.points)]
+    assert list(percent) == expected
+    # identical warm-up and gap behaviour, by construction
+    assert [value is None for value in percent] == [value is None for value in atr]
+
+
+def test_the_percentage_atr_keeps_the_atr_gap_semantics(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = [str(100 + (index * 3) % 17) for index in range(70)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="atrpct-gap", closes=closes, skip={35}, at=V2_AT, as_of=V2_ASOF)
+    atr = indicators.average_true_range(series, period=14).values
+    percent = indicators.atr_percent(series, period=14).values
+    assert [value is None for value in percent] == [value is None for value in atr]
+    assert any(value is not None for value in percent)
+
+
+@pytest.mark.parametrize("builder", [
+    lambda m, s: m.return_over_period(s, period=4),
+    lambda m, s: m.return_over_period(s, period=12),
+    lambda m, s: m.ema_spread(s, fast_period=12, slow_period=26),
+    lambda m, s: m.atr_percent(s, period=14),
+])
+def test_the_new_primitives_ignore_the_callers_decimal_context(
+    tmp_path, store_module, snapshots_module, series_module, indicators, builder
+) -> None:
+    closes = [str(100 + (index * 7) % 23) for index in range(60)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="v2-prec", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    original = getcontext().prec
+    seen = set()
+    try:
+        for precision in (6, 28, 34, 60):
+            getcontext().prec = precision
+            seen.add(tuple(str(value) for value in builder(indicators, series).values))
+    finally:
+        getcontext().prec = original
+    assert len(seen) == 1
+
+
+def test_the_new_primitives_do_not_mutate_their_source(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = [str(100 + (index * 7) % 23) for index in range(60)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="v2-immutable", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    snapshot = tuple(series.points)
+    indicators.return_over_period(series, period=4)
+    indicators.ema_spread(series, fast_period=12, slow_period=26)
+    indicators.atr_percent(series, period=14)
+    assert series.points == snapshot
+
+
+def test_the_new_primitive_spec_hashes_describe_their_parameters(
+    tmp_path, store_module, snapshots_module, series_module, indicators
+) -> None:
+    closes = [str(100 + (index * 7) % 23) for index in range(60)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="v2-spec", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    four = indicators.return_over_period(series, period=4)
+    twelve = indicators.return_over_period(series, period=12)
+    assert four.spec.parameters == (("period", 4),)
+    assert four.spec_hash != twelve.spec_hash
+    assert four.spec_hash == indicators.return_over_period(series, period=4).spec_hash
+
+    spread = indicators.ema_spread(series, fast_period=12, slow_period=26)
+    assert spread.spec.parameters == (("fast_period", 12), ("slow_period", 26))
+    assert spread.spec_hash != indicators.ema_spread(
+        series, fast_period=8, slow_period=26).spec_hash
+    assert spread.spec_hash != indicators.ema_spread(
+        series, fast_period=12, slow_period=30).spec_hash
+
+    percent = indicators.atr_percent(series, period=14)
+    assert percent.spec.parameters == (("period", 14),)
+    assert percent.spec_hash != indicators.average_true_range(series, period=14).spec_hash
+    # market values never enter an indicator identity
+    moved = _build(store_module, snapshots_module, series_module, tmp_path,
+                   name="v2-spec2", closes=[str(9000 + (i * 7) % 23) for i in range(60)], at=V2_AT, as_of=V2_ASOF)[2]
+    assert indicators.atr_percent(moved, period=14).spec_hash == percent.spec_hash

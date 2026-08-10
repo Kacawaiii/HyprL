@@ -36,10 +36,13 @@ import json
 from scripts.trading_lab.market_indicators import (
     INDICATOR_PRECISION,
     IndicatorSpec,
+    atr_percent,
     average_true_range,
     contiguous_segments,
+    ema_spread,
     exponential_moving_average,
     relative_strength_index,
+    return_over_period,
     simple_moving_average,
     simple_return,
     true_range,
@@ -60,6 +63,9 @@ INDICATOR_REGISTRY = {
     "atr": average_true_range,
     "true_range": true_range,
     "simple_return": simple_return,
+    "return_over_period": return_over_period,
+    "ema_spread": ema_spread,
+    "atr_percent": atr_percent,
 }
 _PARAMETERLESS = frozenset({"true_range", "simple_return"})
 

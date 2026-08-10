@@ -413,3 +413,72 @@ def test_a_correction_published_later_cannot_change_an_earlier_return(
     assert indicators.simple_return(later).values != early     # the restatement is real
     assert later.points[3].close == Decimal("999")
     assert unchanged.points[3].close == Decimal("133")
+
+
+# --- relative primitives through the dataset layer (Phase 4D) -------------
+
+
+V2_AT = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+V2_ASOF = datetime(2026, 8, 14, 13, 0, tzinfo=timezone.utc)
+
+
+def test_the_relative_primitives_are_resolvable_as_dataset_features(
+    tmp_path, store_module, snapshots_module, series_module, dataset_module
+) -> None:
+    """The V2 feature set must be nameable in a config, exactly like V1's."""
+    for name in ("return_over_period", "ema_spread", "atr_percent"):
+        assert name in dataset_module.INDICATOR_REGISTRY, name
+    closes = [str(100 + (index * 11) % 37) for index in range(80)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ds-v2", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    config = dataset_module.DatasetConfig(
+        features=(
+            dataset_module.FeatureDefinition("return_1", "simple_return"),
+            dataset_module.FeatureDefinition("return_4", "return_over_period",
+                                             (("period", 4),)),
+            dataset_module.FeatureDefinition("return_12", "return_over_period",
+                                             (("period", 12),)),
+            dataset_module.FeatureDefinition("ema_spread_12_26", "ema_spread",
+                                             (("fast_period", 12), ("slow_period", 26))),
+            dataset_module.FeatureDefinition("rsi_14", "rsi", (("period", 14),)),
+            dataset_module.FeatureDefinition("atr_pct_14", "atr_percent",
+                                             (("period", 14),)),
+        ),
+        label=dataset_module.LabelSpec(horizon=HORIZON),
+    )
+    dataset = dataset_module.build_dataset(series, config=config)
+    assert [column for column, _ in dataset.rows[0].features] == [
+        "return_1", "return_4", "return_12", "ema_spread_12_26", "rsi_14", "atr_pct_14"]
+    indicators = importlib.import_module("scripts.trading_lab.market_indicators")
+    expected = {
+        "return_4": indicators.return_over_period(series, period=4),
+        "ema_spread_12_26": indicators.ema_spread(series, fast_period=12, slow_period=26),
+        "atr_pct_14": indicators.atr_percent(series, period=14),
+    }
+    for column, result in expected.items():
+        position = [c for c, _ in dataset.rows[0].features].index(column)
+        assert [row.features[position][1] for row in dataset.rows] == list(result.values)
+        assert dict(dataset.indicator_spec_hashes)[column] == result.spec_hash
+    assert any(row.usable for row in dataset.rows)
+
+
+def test_the_two_return_primitives_keep_separate_identities_in_a_dataset(
+    tmp_path, store_module, snapshots_module, series_module, dataset_module
+) -> None:
+    """V1's `simple_return` identity must survive the arrival of V2's family."""
+    closes = [str(100 + (index * 7) % 19) for index in range(40)]
+    _, _, series = _build(store_module, snapshots_module, series_module, tmp_path,
+                          name="ds-two-returns", closes=closes, at=V2_AT, as_of=V2_ASOF)
+    config = dataset_module.DatasetConfig(
+        features=(
+            dataset_module.FeatureDefinition("return_1", "simple_return"),
+            dataset_module.FeatureDefinition("also_1", "return_over_period",
+                                             (("period", 1),)),
+        ),
+        label=dataset_module.LabelSpec(horizon=HORIZON),
+    )
+    dataset = dataset_module.build_dataset(series, config=config)
+    hashes = dict(dataset.indicator_spec_hashes)
+    assert hashes["return_1"] != hashes["also_1"]          # different definitions
+    assert [row.features[0][1] for row in dataset.rows] == \
+           [row.features[1][1] for row in dataset.rows]    # ... same numbers

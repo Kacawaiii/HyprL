@@ -275,3 +275,91 @@ def _wilder_rsi(average_gain: Decimal, average_loss: Decimal) -> Decimal:
     if average_gain == _ZERO:
         return _ZERO
     return _HUNDRED - (_HUNDRED / (Decimal(1) + average_gain / average_loss))
+
+
+# --- relative / dimensionless primitives (Phase 4D, Benchmark V2) ---------
+#
+# The V1 feature set fed the models several NOMINAL LEVEL features (EMA12,
+# EMA26, ATR14). A level that means "expensive" in one price regime means
+# "cheap" in another, and a tree can happily learn a threshold on it that does
+# not survive the next regime. The primitives below express the same
+# information relative to price, so their scale does not drift with the asset.
+#
+# This is a hypothesis for a second experiment, not a diagnosed cause of the V1
+# outcome. None of these were chosen by measuring anything against the target.
+
+
+def return_over_period(series: MarketSeries, *, period: int) -> IndicatorResult:
+    """Return across `period` bars: (close_i - close_{i-period}) / close_{i-period}.
+
+    A separate primitive rather than a generalisation of `simple_return`,
+    which is parameterless and therefore carries a spec hash that Benchmark V1
+    already committed to. Adding a `period` parameter to it would silently
+    change that hash and break a frozen experiment's identity. The two agree
+    exactly at period=1, and a test pins that.
+
+    All `period + 1` observations must sit in the same contiguous segment; a
+    window straddling a gap yields None rather than a return across hours the
+    market never traded.
+    """
+    period = _require_period(period)
+    values: list[Decimal | None] = [None] * len(series.points)
+    with localcontext() as context:
+        context.prec = INDICATOR_PRECISION
+        for start, end in contiguous_segments(series):
+            for index in range(start + period, end):
+                previous_close = series.points[index - period].close
+                if previous_close == 0:
+                    continue
+                values[index] = (
+                    series.points[index].close - previous_close
+                ) / previous_close
+    return _result(_spec("return_over_period", period=period), values)
+
+
+def ema_spread(series: MarketSeries, *, fast_period: int,
+               slow_period: int) -> IndicatorResult:
+    """Normalised distance between two EMAs: (fast - slow) / slow.
+
+    Reuses the Phase 2B EMA verbatim -- including its per-segment seeding --
+    rather than recomputing a second, subtly different exponential average.
+    The value only exists once BOTH EMAs exist, so the warm-up is the slower
+    one's, and it restarts after every gap because the EMAs do.
+    """
+    fast_period = _require_period(fast_period)
+    slow_period = _require_period(slow_period)
+    if fast_period >= slow_period:
+        raise MarketIndicatorError(
+            f"fast_period ({fast_period}) must be shorter than slow_period ({slow_period})")
+    fast = exponential_moving_average(series, period=fast_period).values
+    slow = exponential_moving_average(series, period=slow_period).values
+    values: list[Decimal | None] = [None] * len(series.points)
+    with localcontext() as context:
+        context.prec = INDICATOR_PRECISION
+        for index, (quick, patient) in enumerate(zip(fast, slow)):
+            if quick is None or patient is None or patient == 0:
+                continue
+            values[index] = (quick - patient) / patient
+    return _result(
+        _spec("ema_spread", fast_period=fast_period, slow_period=slow_period), values)
+
+
+def atr_percent(series: MarketSeries, *, period: int) -> IndicatorResult:
+    """ATR expressed as a fraction of the close at the same bar.
+
+    Reuses the official Wilder ATR; there is no second implementation to drift
+    from it. Dividing by the close at the SAME index keeps the value causal --
+    no future price is consulted -- and makes it comparable across price
+    regimes, which is the whole reason it exists.
+    """
+    period = _require_period(period)
+    ranges = average_true_range(series, period=period).values
+    values: list[Decimal | None] = [None] * len(series.points)
+    with localcontext() as context:
+        context.prec = INDICATOR_PRECISION
+        for index, average in enumerate(ranges):
+            close = series.points[index].close
+            if average is None or close == 0:
+                continue
+            values[index] = average / close
+    return _result(_spec("atr_percent", period=period), values)
