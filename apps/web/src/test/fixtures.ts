@@ -74,7 +74,15 @@ export const markets: MarketsIndex = {
   products: [
     { product: 'BTC-USD', rows: 8750, first_open: '2025-08-01T00:00:00+00:00',
       last_open: '2026-07-31T23:00:00+00:00', missing_openings: 10 },
+    { product: 'ETH-USD', rows: 8750, first_open: '2025-08-01T00:00:00+00:00',
+      last_open: '2026-07-31T23:00:00+00:00', missing_openings: 10 },
   ],
+};
+
+/** A corpus missing one registered instrument, to prove the page says so. */
+export const marketsMissingEth: MarketsIndex = {
+  ...markets,
+  products: markets.products.filter((item) => item.product === 'BTC-USD'),
 };
 
 function candle(index: number) {
@@ -384,4 +392,72 @@ export const opsSettings = {
     default_chart_window: '30d', time_display: 'utc' as const,
     log_retention_preset: 'standard', launch_browser: true, paper_auto_start: false,
   },
+};
+
+/* --- instruments and providers (Phase 6A) ------------------------------- */
+
+const btcInstrument = {
+  metadata_version: 'trading-lab.instrument.v1',
+  instrument_id: 'coinbase:BTC-USD', venue: 'coinbase', symbol: 'BTC-USD',
+  asset_class: 'CRYPTO' as const, base_asset: 'BTC', quote_asset: 'USD',
+  price_currency: 'USD', timezone: 'UTC', trading_calendar: 'CRYPTO_24_7',
+  native_timeframes: ['1h', '1d'], quantity_precision: 8, price_precision: 2,
+  display_name: 'Bitcoin / US Dollar',
+  instrument_spec_hash:
+    '492c167c1e66a37a377cff8b4e135841c5a13a7c60324ec9b5c8b1976bf5701f',
+  providers: ['coinbase-public-v1'], legacy_product_id: 'BTC-USD',
+};
+
+const ethInstrument = {
+  ...btcInstrument,
+  instrument_id: 'coinbase:ETH-USD', symbol: 'ETH-USD', base_asset: 'ETH',
+  display_name: 'Ether / US Dollar',
+  instrument_spec_hash:
+    '2a9e1d1c922fbb9af68ad92f8f2638e951a2fef830afb6e514a29ebfab35d7f3',
+  legacy_product_id: 'ETH-USD',
+};
+
+export const instruments = {
+  api_version: 'trading-lab.app-api.v1',
+  count: 2,
+  asset_classes: [
+    { asset_class: 'CRYPTO' as const, instruments: [btcInstrument, ethInstrument] },
+  ],
+  instruments: [btcInstrument, ethInstrument],
+};
+
+export const providers = {
+  api_version: 'trading-lab.app-api.v1',
+  schema_version: 'trading-lab.instrument-registry.v1',
+  count: 1,
+  providers: [{
+    schema_version: 'trading-lab.market-provider.v1',
+    provider_id: 'coinbase-public-v1',
+    display_name: 'Coinbase (public market data)',
+    capabilities: {
+      historical_bars: true, latest_closed_bar: true, realtime_ticks: false,
+      order_book: false, corporate_actions: false,
+      market_calendar: 'CRYPTO_24_7', authenticated: false,
+      private_account_data: false,
+    },
+    instruments: ['coinbase:BTC-USD', 'coinbase:ETH-USD'],
+  }],
+};
+
+/** A registry that gained an asset class, to prove grouping is not hardcoded. */
+export const instrumentsWithEquity = {
+  ...instruments,
+  count: 3,
+  asset_classes: [
+    ...instruments.asset_classes,
+    {
+      asset_class: 'EQUITY' as const,
+      instruments: [{
+        ...btcInstrument, instrument_id: 'nasdaq:AAPL', venue: 'nasdaq',
+        symbol: 'AAPL', asset_class: 'EQUITY' as const, base_asset: 'AAPL',
+        display_name: 'Apple Inc.', legacy_product_id: 'AAPL',
+        trading_calendar: 'XNAS', providers: [],
+      }],
+    },
+  ],
 };

@@ -550,3 +550,82 @@ export interface OpsSettings {
   options: Record<string, string[]>;
   current: OperationalSettings;
 }
+
+/* --- instruments and providers (Phase 6A) ---------------------------------
+ *
+ * The registry is the single source of which markets exist. The frontend
+ * keeps no list of its own: a hardcoded ["BTC-USD", "ETH-USD"] is a second
+ * registry that drifts the day a third instrument is added, and it would
+ * still be offering a market the backend had removed. */
+
+export type AssetClass = 'CRYPTO' | 'EQUITY' | 'ETF' | 'INDEX' | 'FX';
+
+export interface Instrument {
+  metadata_version: string;
+  instrument_id: string;
+  venue: string;
+  symbol: string;
+  asset_class: AssetClass;
+  base_asset: string;
+  quote_asset: string;
+  price_currency: string;
+  timezone: string;
+  trading_calendar: string;
+  native_timeframes: string[];
+  quantity_precision: number;
+  price_precision: number;
+  display_name: string;
+  instrument_spec_hash: string;
+  providers: string[];
+  /** What the rest of the API and every committed artefact call it. */
+  legacy_product_id: string;
+}
+
+export interface InstrumentGroup {
+  asset_class: AssetClass;
+  instruments: Instrument[];
+}
+
+export interface InstrumentsIndex {
+  api_version: string;
+  count: number;
+  asset_classes: InstrumentGroup[];
+  instruments: Instrument[];
+}
+
+export interface ProviderCapabilities {
+  historical_bars: boolean;
+  latest_closed_bar: boolean;
+  realtime_ticks: boolean;
+  order_book: boolean;
+  corporate_actions: boolean;
+  market_calendar: string;
+  authenticated: boolean;
+  private_account_data: boolean;
+}
+
+export interface Provider {
+  schema_version: string;
+  provider_id: string;
+  display_name: string;
+  capabilities: ProviderCapabilities;
+  instruments: string[];
+}
+
+export interface ProvidersIndex {
+  api_version: string;
+  schema_version: string;
+  count: number;
+  providers: Provider[];
+}
+
+export interface InstrumentDetail extends Instrument {
+  calendar: {
+    schema_version: string;
+    calendar_id: string;
+    description: string;
+    bars_per_day: number;
+    annualization_periods: number;
+  };
+  provider_details: Provider[];
+}

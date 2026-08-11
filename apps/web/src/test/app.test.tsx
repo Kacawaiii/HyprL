@@ -39,6 +39,8 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/ops/storage': fixtures.opsStorage,
     '/api/v1/ops/health-history': fixtures.opsHealth,
     '/api/v1/ops/settings': fixtures.opsSettings,
+    '/api/v1/instruments': fixtures.instruments,
+    '/api/v1/providers': fixtures.providers,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -156,7 +158,7 @@ describe('markets', () => {
     const fetchMock = mockApi();
     vi.stubGlobal('fetch', fetchMock);
     renderAt('/markets');
-    await waitFor(() => expect(screen.getByLabelText('Product')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText('Instrument')).toBeInTheDocument());
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map((call) => String(call[0]));
       const chartCall = calls.find((path) => path.includes('/chart'));
@@ -486,5 +488,149 @@ describe('startup behaviour', () => {
     // navigation is available before any request resolves
     expect(screen.getByRole('link', { name: /Overview/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
+  });
+});
+
+describe('instruments', () => {
+  it('builds the market list from the registry, not from a literal', async () => {
+    renderAt('/markets');
+    const select = await screen.findByLabelText('Instrument');
+    const options = [...select.querySelectorAll('option')].map((node) => node.textContent);
+    expect(options).toEqual(['BTC-USD', 'ETH-USD']);
+  });
+
+  it('groups options by asset class', async () => {
+    const { container } = renderAt('/markets');
+    await screen.findByLabelText('Instrument');
+    const groups = [...container.querySelectorAll('optgroup')].map((node) =>
+      node.getAttribute('label'),
+    );
+    expect(groups).toEqual(['Crypto']);
+  });
+
+  it('shows a new asset class without a frontend change', async () => {
+    /* The registry is the source of truth: adding equities server-side must
+       reach the selector with no code edit here. */
+    renderAt('/markets', { '/api/v1/instruments': fixtures.instrumentsWithEquity });
+    const { container } = { container: document.body };
+    await screen.findByLabelText('Instrument');
+    await waitFor(() => {
+      const groups = [...container.querySelectorAll('optgroup')].map((node) =>
+        node.getAttribute('label'),
+      );
+      expect(groups).toEqual(['Crypto', 'Equities']);
+    });
+    expect(screen.getByText('AAPL')).toBeInTheDocument();
+  });
+
+  it('invents no product list when the registry cannot be read', async () => {
+    renderAt('/markets', { '/api/v1/instruments': new Error('registry down') });
+    expect(await screen.findByText('No instruments available')).toBeInTheDocument();
+    expect(screen.queryByText('BTC-USD')).toBeNull();
+    expect(screen.queryByText('ETH-USD')).toBeNull();
+  });
+
+  it('describes the selected instrument from backend metadata', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText('Bitcoin / US Dollar')).toBeInTheDocument();
+    expect(screen.getByText('coinbase:BTC-USD')).toBeInTheDocument();
+    expect(screen.getByText('Crypto')).toBeInTheDocument();
+    expect(screen.getByText('coinbase')).toBeInTheDocument();
+    expect(screen.getByText('CRYPTO_24_7')).toBeInTheDocument();
+    expect(screen.getByText('1h, 1d')).toBeInTheDocument();
+  });
+
+  it('labels the source as public market data, never as live trading', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText('PUBLIC MARKET DATA')).toBeInTheDocument();
+    // No badge claiming live trading. The shell's "No live trading"
+    // disclaimer is the opposite claim and must stay.
+    expect(screen.queryByText('LIVE TRADING')).toBeNull();
+    expect(screen.getByText('No live trading')).toBeInTheDocument();
+    expect(screen.getByText(/no ticks/)).toBeInTheDocument();
+    expect(screen.getByText(/no order book/)).toBeInTheDocument();
+  });
+
+  it('switches instrument and refetches only that instrument', async () => {
+    const fetchMock = mockApi();
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('/markets');
+    const select = await screen.findByLabelText('Instrument');
+    await userEvent.selectOptions(select, 'ETH-USD');
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((call) => String(call[0]));
+      expect(calls.some((path) => path.includes('ETH-USD'))).toBe(true);
+    });
+    expect(await screen.findByText('Ether / US Dollar')).toBeInTheDocument();
+  });
+
+  it('addresses instruments by the identifier the rest of the API uses', async () => {
+    const fetchMock = mockApi();
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('/markets');
+    await screen.findByLabelText('Instrument');
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((call) => String(call[0]));
+      expect(calls.some((path) => path.includes('/markets/BTC-USD'))).toBe(true);
+      // never the canonical form on the legacy endpoints
+      expect(calls.some((path) => path.includes('coinbase%3ABTC-USD'))).toBe(false);
+    });
+  });
+
+  it('requests the registry once and reuses it', async () => {
+    const fetchMock = mockApi();
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('/markets');
+    await screen.findByLabelText('Instrument');
+    await waitFor(() => {
+      const registryCalls = fetchMock.mock.calls
+        .map((call) => String(call[0]))
+        .filter((path) => path.endsWith('/api/v1/instruments'));
+      expect(registryCalls.length).toBe(1);
+    });
+  });
+});
+
+describe('no hardcoded market list', () => {
+  it('ships no product literal in any page or component', async () => {
+    /* The failure this prevents: a page keeps offering a market the registry
+       dropped, or misses one it gained, and nothing fails until a user
+       notices. */
+    const modules = import.meta.glob('../{pages,components,layouts,api}/**/*.tsx', {
+      query: '?raw', import: 'default', eager: true,
+    }) as Record<string, string>;
+    const offenders: string[] = [];
+    for (const [path, source] of Object.entries(modules)) {
+      // No exemption, including for the selector itself: it reads the
+      // registry and therefore needs no symbol literal anywhere.
+      if (/['"]BTC-USD['"]|['"]ETH-USD['"]/.test(source)) offenders.push(path);
+    }
+    expect(offenders).toEqual([]);
+  });
+    it('says so when a registered instrument has no captured history', async () => {
+    /* A registry entry with no corpus rows used to render an empty page with
+       no explanation. */
+    renderAt('/markets', { '/api/v1/markets': fixtures.marketsMissingEth });
+    const select = await screen.findByLabelText('Instrument');
+    await userEvent.selectOptions(select, 'ETH-USD');
+    expect(await screen.findByText('No market history')).toBeInTheDocument();
+    expect(screen.getByText(/no captured history|no bars for it/)).toBeInTheDocument();
+  });
+});
+
+describe('registry loading state', () => {
+  it('shows a loading state rather than a guessed default', async () => {
+    const pending = vi.fn((input: string) =>
+      String(input).includes('/instruments')
+        ? new Promise<Response>(() => undefined)
+        : jsonResponse(fixtures.markets),
+    );
+    vi.stubGlobal('fetch', pending);
+    render(
+      <MemoryRouter initialEntries={['/markets']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
   });
 });

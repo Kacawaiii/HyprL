@@ -4,6 +4,9 @@ import { useQuery } from '../state/useQuery';
 import { CandleChart } from '../components/CandleChart';
 import { DataTable, type Column } from '../components/DataTable';
 import { ErrorState, Hash, LoadingState } from '../components/States';
+import {
+  InstrumentDetails, InstrumentSelector, findInstrument, useInstruments,
+} from '../components/InstrumentSelector';
 import type { Candle } from '../api/types';
 
 /** Windows are chosen in the UI; the server decides how many points come back. */
@@ -15,8 +18,15 @@ const WINDOWS = [
 ] as const;
 
 export function MarketsPage() {
-  const [product, setProduct] = useState('BTC-USD');
+  // Empty until the registry answers. Seeding this with a literal symbol
+  // would be a hardcoded product list of length one, and it would be wrong
+  // the moment the registry no longer starts with that market.
+  const [selected, setSelected] = useState('');
   const [window, setWindow] = useState<(typeof WINDOWS)[number]['id']>('30d');
+
+  const instruments = useInstruments();
+  const product = selected || instruments.data?.instruments[0]?.legacy_product_id || '';
+  const instrument = findInstrument(instruments.data?.instruments, product);
 
   const markets = useQuery('markets', (signal) => apiClient.getMarkets(signal));
   const entry = markets.data?.products.find((item) => item.product === product);
@@ -32,12 +42,12 @@ export function MarketsPage() {
     return { start: start.toISOString(), end: end.toISOString() };
   }, [entry, window]);
 
-  const chartKey = entry ? `chart:${product}:${window}` : null;
+  const chartKey = entry && product ? `chart:${product}:${window}` : null;
   const chart = useQuery(chartKey, (signal) =>
     apiClient.getChart(product, { start: range?.start, end: range?.end, maxPoints: 500 }, signal),
   );
 
-  const tableKey = entry ? `candles:${product}:${window}` : null;
+  const tableKey = entry && product ? `candles:${product}:${window}` : null;
   const candles = useQuery(tableKey, (signal) =>
     apiClient.getCandles(product, { start: range?.start, end: range?.end, limit: 200 }, signal),
   );
@@ -59,17 +69,12 @@ export function MarketsPage() {
   return (
     <div className="stack">
       <div className="row">
-        <label htmlFor="product-select" className="muted">Product</label>
-        <select
+        <InstrumentSelector
           id="product-select"
-          className="select"
+          label="Instrument"
           value={product}
-          onChange={(event) => setProduct(event.target.value)}
-        >
-          {markets.data?.products.map((item) => (
-            <option key={item.product} value={item.product}>{item.product}</option>
-          ))}
-        </select>
+          onChange={setSelected}
+        />
         <label htmlFor="window-select" className="muted">Window</label>
         <select
           id="window-select"
@@ -88,6 +93,24 @@ export function MarketsPage() {
           </span>
         )}
       </div>
+
+      {instrument && (
+        <section className="card">
+          <h2 className="card-title">Instrument</h2>
+          <InstrumentDetails instrument={instrument} />
+        </section>
+      )}
+
+      {instrument && !entry && markets.status === 'success' && (
+        <section className="card">
+          <h2 className="card-title">No market history</h2>
+          <p className="muted">
+            {instrument.symbol} is a registered instrument, but the committed
+            corpus holds no bars for it. Nothing is wrong with the app; there is
+            simply no captured history to show.
+          </p>
+        </section>
+      )}
 
       <section className="card">
         <h2 className="card-title">{product} · hourly</h2>
