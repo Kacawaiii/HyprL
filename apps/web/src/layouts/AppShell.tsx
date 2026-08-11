@@ -5,6 +5,8 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { PerfOverlay } from '../components/PerfOverlay';
+import { applyTheme, readTheme, writeTheme } from '../lib/theme';
+import type { ThemePreference } from '../lib/theme';
 
 const NAV = [
   { to: '/', label: 'Overview', icon: '◫', end: true },
@@ -15,17 +17,21 @@ const NAV = [
   { to: '/backtests', label: 'Backtests', icon: '◷' },
   { to: '/research', label: 'Research', icon: '⌕' },
   { to: '/system', label: 'System', icon: '⚙' },
+  { to: '/settings', label: 'Settings', icon: '⚒' },
 ];
 
 export function AppShell() {
   const [open, setOpen] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  // Read once, synchronously: resolving the theme after a request would
+  // paint the wrong one first and flash.
+  const [theme, setTheme] = useState<ThemePreference>(() => readTheme());
   const health = useQuery('health', (signal) => apiClient.getHealth(signal), {
     staleMs: 10_000,
   });
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    applyTheme(theme);
+    writeTheme(theme);
   }, [theme]);
 
   const state =
@@ -75,10 +81,10 @@ export function AppShell() {
           </span>
           <button
             className="control"
-            onClick={() => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))}
+            onClick={() => setTheme((value) => (value === 'light' ? 'dark' : 'light'))}
             aria-label="Toggle colour theme"
           >
-            {theme === 'dark' ? '☾' : '☀'}
+            {theme === 'light' ? '☀' : '☾'}
           </button>
         </header>
         <main className="content">

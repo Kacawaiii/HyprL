@@ -11,7 +11,8 @@ import type {
   BacktestEquity, BacktestFillPage, BacktestSummary, BacktestsIndex,
   PaperEquity, PaperEventsPage, PaperProductState, PaperStatus,
   BenchmarkDetail, BenchmarkSummary, CandlePage, ChartSeries, Health,
-  MarketsIndex, Overview, RiskView, SignalsView,
+  HealthHistory, MarketsIndex, OpsRecovery, OpsRuntime, OpsSettings,
+  OpsStorage, Overview, RiskView, SignalsView,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -182,6 +183,17 @@ export const apiClient = {
       `/api/v1/research/benchmarks/${encodeURIComponent(version)}/${encodeURIComponent(product)}`,
       signal,
     ),
+  getHealthHistory: (component?: string, limit?: number, signal?: AbortSignal) =>
+    request<HealthHistory>(
+      `/api/v1/ops/health-history${query({ component, limit })}`, signal),
+  getOpsRuntime: (signal?: AbortSignal) =>
+    request<OpsRuntime>('/api/v1/ops/runtime', signal),
+  getOpsRecovery: (signal?: AbortSignal) =>
+    request<OpsRecovery>('/api/v1/ops/recovery', signal),
+  getOpsStorage: (signal?: AbortSignal) =>
+    request<OpsStorage>('/api/v1/ops/storage', signal),
+  getOpsSettings: (signal?: AbortSignal) =>
+    request<OpsSettings>('/api/v1/ops/settings', signal),
 };
 
 export type ApiClient = typeof apiClient;

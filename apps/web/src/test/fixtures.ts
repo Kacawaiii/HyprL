@@ -297,3 +297,91 @@ export const paperEquity = {
   ],
   metadata: { returned_count: 2, source_count: 2, max_points: 500 },
 };
+
+/* --- operations (Phase 5E) ---------------------------------------------- */
+
+export const opsRuntime = {
+  runtime_schema_version: 'trading-lab.runtime-layout.v1',
+  layout: {
+    runtime_schema_version: 'trading-lab.runtime-layout.v1',
+    directories: { runtime: true, logs: true, exports: true, support: true, tmp: true },
+    paper_database_present: true, ops_database_present: true, settings_present: true,
+  },
+  app: {
+    state: 'RUNNING', reason: 'running', pid: 4242, host: '127.0.0.1', port: 8787,
+    started_at: '2026-08-11T12:00:00Z', uptime_seconds: 5400, rss_bytes: 41943040,
+  },
+  paper_session: null,
+  snapshots: {
+    snapshot_every_events: 250, status: 'HEALTHY' as const,
+    products: {
+      'BTC-USD': { events_since_last_snapshot: 198, snapshot_due: false, has_snapshot: true },
+      'ETH-USD': { events_since_last_snapshot: 12, snapshot_due: false, has_snapshot: true },
+    },
+  },
+  real_money: false, broker_connected: false,
+};
+
+export const opsRecoveryClean = {
+  last_shutdown_clean: true, recovery_performed: false,
+  event_chain_verified: true, latest_snapshot_verified: true,
+  status: 'HEALTHY' as const, error_code: null, events: 2930, sessions: 2,
+};
+
+export const opsRecoveryUnclean = {
+  ...opsRecoveryClean, last_shutdown_clean: false, recovery_performed: true,
+};
+
+export const opsRecoveryBroken = {
+  ...opsRecoveryClean, event_chain_verified: false, status: 'ERROR' as const,
+  error_code: 'PAPER_EVENT_CHAIN_INVALID',
+};
+
+export const opsStorage = {
+  paper_database_bytes: 5124096, ops_database_bytes: 16384, log_bytes: 581,
+  export_bytes: 0, events: 5860, sessions: 2, snapshots: 4,
+  log_cap_bytes: 52428800,
+  paper_events_retention: 'append-only; never pruned automatically',
+  database_warning: null,
+};
+
+export const opsHealth = {
+  available: true,
+  components: ['app_api', 'paper_engine', 'event_store', 'market_ingestion', 'model', 'holdout_guard'],
+  states: ['HEALTHY', 'DEGRADED', 'ERROR', 'STOPPED', 'EMBARGOED'] as const,
+  retention: 10000,
+  latest: {
+    app_api: { status: 'HEALTHY' as const, observed_at: '2026-08-11T12:00:00Z', error_code: null },
+    market_ingestion: {
+      status: 'DEGRADED' as const, observed_at: '2026-08-11T11:00:00Z',
+      error_code: 'MARKET_NETWORK_UNAVAILABLE',
+    },
+    holdout_guard: { status: 'EMBARGOED' as const, observed_at: '2026-08-11T11:00:00Z', error_code: null },
+  },
+  records: [],
+};
+
+export const opsSettings = {
+  schema_version: 'trading-lab.settings.v1',
+  defaults: {
+    theme: 'dark' as const, sidebar_collapsed: false, default_product: 'BTC-USD',
+    default_chart_window: '30d', time_display: 'utc' as const,
+    log_retention_preset: 'standard', launch_browser: true, paper_auto_start: false,
+  },
+  allowed_fields: ['default_chart_window', 'default_product', 'launch_browser',
+    'log_retention_preset', 'paper_auto_start', 'sidebar_collapsed', 'theme', 'time_display'],
+  forbidden_trading_fields: ['fee_rate', 'holdout_end', 'model_alpha', 'risk_cap',
+    'signal_threshold', 'slippage_rate'],
+  trading_contracts_immutable: true,
+  options: {
+    theme: ['dark', 'light', 'system'], time_display: ['utc', 'local'],
+    default_chart_window: ['24h', '7d', '30d', '90d', 'all'],
+    default_product: ['BTC-USD', 'ETH-USD'],
+    log_retention_preset: ['small', 'standard', 'large'],
+  },
+  current: {
+    theme: 'dark' as const, sidebar_collapsed: false, default_product: 'BTC-USD',
+    default_chart_window: '30d', time_display: 'utc' as const,
+    log_retention_preset: 'standard', launch_browser: true, paper_auto_start: false,
+  },
+};

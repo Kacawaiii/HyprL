@@ -20,6 +20,8 @@ const ResearchPage = lazy(() =>
   import('./pages/ResearchPage').then((module) => ({ default: module.ResearchPage })));
 const SystemPage = lazy(() =>
   import('./pages/SystemPage').then((module) => ({ default: module.SystemPage })));
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 
 export function App() {
   return (
@@ -53,6 +55,10 @@ export function App() {
         <Route
           path="system"
           element={<Suspense fallback={<LoadingState />}><SystemPage /></Suspense>}
+        />
+        <Route
+          path="settings"
+          element={<Suspense fallback={<LoadingState />}><SettingsPage /></Suspense>}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

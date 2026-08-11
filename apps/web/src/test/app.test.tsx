@@ -34,6 +34,11 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/paper/status': fixtures.paperRunning,
     '/api/v1/paper/products': fixtures.paperProducts,
     '/api/v1/paper/events': fixtures.paperEvents,
+    '/api/v1/ops/runtime': fixtures.opsRuntime,
+    '/api/v1/ops/recovery': fixtures.opsRecoveryClean,
+    '/api/v1/ops/storage': fixtures.opsStorage,
+    '/api/v1/ops/health-history': fixtures.opsHealth,
+    '/api/v1/ops/settings': fixtures.opsSettings,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -65,7 +70,8 @@ function mockApi(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function renderAt(path: string) {
+function renderAt(path: string, overrides?: Record<string, unknown>) {
+  if (overrides) vi.stubGlobal('fetch', mockApi(overrides));
   return render(
     <MemoryRouter initialEntries={[path]}>
       <App />
@@ -218,7 +224,7 @@ describe('system', () => {
     expect(await screen.findByText('Market corpus')).toBeInTheDocument();
     expect(screen.getByText('coinbase_history_v1')).toBeInTheDocument();
     expect(screen.getByText('2026-09-01 → 2026-11-30')).toBeInTheDocument();
-    expect(screen.getByText('NOT OBSERVED')).toBeInTheDocument();
+    expect(screen.getByText('UNOBSERVED')).toBeInTheDocument();
   });
 
   it('never renders a filesystem path or hostname', async () => {
@@ -330,5 +336,155 @@ describe('Paper', () => {
       screen.getByText('recorded-when-the-fill-bar-closes-v1'),
     ).toBeInTheDocument();
     expect(screen.getByText(/never liquidates a terminal position/)).toBeInTheDocument();
+  });
+});
+
+describe('system operations', () => {
+  it('reports a healthy startup without alarming the user', async () => {
+    renderAt('/system');
+    expect(await screen.findByText('HEALTHY STARTUP')).toBeInTheDocument();
+    expect(screen.queryByText(/RECOVERED AFTER UNCLEAN SHUTDOWN/)).toBeNull();
+    expect(screen.getAllByText('VERIFIED').length).toBe(2);
+  });
+
+  it('states an unclean restart calmly once the chain still verifies', async () => {
+    renderAt('/system', {
+      '/api/v1/ops/recovery': fixtures.opsRecoveryUnclean,
+    });
+    expect(
+      await screen.findByText('RECOVERED AFTER UNCLEAN SHUTDOWN'),
+    ).toBeInTheDocument();
+    // recovery succeeded, so the chain is still reported as sound
+    expect(screen.getAllByText('VERIFIED').length).toBe(2);
+  });
+
+  it('surfaces a broken event chain as a product error with a next step', async () => {
+    renderAt('/system', { '/api/v1/ops/recovery': fixtures.opsRecoveryBroken });
+    expect(await screen.findByText('PAPER_EVENT_CHAIN_INVALID')).toBeInTheDocument();
+    expect(screen.getByText('INVALID')).toBeInTheDocument();
+    expect(screen.getByText(/Do not delete the log/)).toBeInTheDocument();
+    // a code and a sentence, never a stack trace
+    expect(screen.queryByText(/Traceback/)).toBeNull();
+  });
+
+  it('shows runtime storage in human units and states the retention rule', async () => {
+    renderAt('/system');
+    expect(await screen.findByText('Runtime storage')).toBeInTheDocument();
+    expect(screen.getByText('4.9 MiB')).toBeInTheDocument();
+    expect(
+      screen.getByText(/append-only; never pruned automatically/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows snapshot pressure per product', async () => {
+    renderAt('/system');
+    expect(await screen.findByText('Snapshots')).toBeInTheDocument();
+    expect(screen.getByText(/198 events since last/)).toBeInTheDocument();
+  });
+
+  it('paints an active embargo amber rather than red', async () => {
+    renderAt('/system');
+    expect(await screen.findByText('EMBARGOED')).toBeInTheDocument();
+    const badge = screen.getByText('EMBARGOED');
+    expect(badge.getAttribute('data-tone')).toBe('warn');
+    // a degraded ingestion is amber too; only integrity failures are 'off'
+    expect(screen.getByText('DEGRADED').getAttribute('data-tone')).toBe('warn');
+  });
+
+  it('keeps declaring the holdout unobserved and trading disabled', async () => {
+    renderAt('/system');
+    expect(await screen.findByText('UNOBSERVED')).toBeInTheDocument();
+    expect(screen.getByText('NOT CONNECTED')).toBeInTheDocument();
+    expect(screen.getByText('NO')).toBeInTheDocument();
+  });
+
+  it('never renders an absolute path or a process id-bearing path', async () => {
+    const { container } = renderAt('/system');
+    await screen.findByText('Runtime storage');
+    expect(container.textContent).not.toMatch(/\/home\//);
+    expect(container.textContent).not.toMatch(/\/var\/trading_lab/);
+  });
+});
+
+describe('settings', () => {
+  it('offers appearance and interface controls', async () => {
+    renderAt('/settings');
+    expect(await screen.findByLabelText('Theme')).toBeInTheDocument();
+    expect(screen.getByLabelText('Timestamps')).toBeInTheDocument();
+  });
+
+  it('declares the trading contracts immutable', async () => {
+    renderAt('/settings');
+    expect(await screen.findByText('IMMUTABLE IN THIS BUILD')).toBeInTheDocument();
+    expect(screen.getByText(/frozen/i)).toBeInTheDocument();
+  });
+
+  it('offers no control that could change a trading contract', async () => {
+    const { container } = renderAt('/settings');
+    await screen.findByText('IMMUTABLE IN THIS BUILD');
+    const controls = [...container.querySelectorAll('input, select, textarea')];
+    const names = controls
+      .map((node) => `${node.getAttribute('aria-label') ?? ''} ${node.getAttribute('name') ?? ''}`)
+      .join(' ')
+      .toLowerCase();
+    for (const forbidden of ['threshold', 'risk', 'fee', 'slippage', 'alpha', 'holdout', 'exposure']) {
+      expect(names).not.toContain(forbidden);
+    }
+  });
+
+  it('lists the fields the backend refuses, from the backend', async () => {
+    renderAt('/settings');
+    expect(await screen.findByText(/Fields the backend refuses/)).toBeInTheDocument();
+    expect(screen.getByText('signal_threshold')).toBeInTheDocument();
+    expect(screen.getByText('holdout_end')).toBeInTheDocument();
+  });
+
+  it('says operational settings are written from the command line', async () => {
+    renderAt('/settings');
+    expect(
+      await screen.findByText(/hyprl.sh settings --set field=value/),
+    ).toBeInTheDocument();
+  });
+
+  it('persists the theme choice for the next launch', async () => {
+    renderAt('/settings');
+    const select = await screen.findByLabelText('Theme');
+    await userEvent.selectOptions(select, 'light');
+    await waitFor(() => expect(localStorage.getItem('hyprl.theme')).toBe('light'));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+  });
+
+  it('is reachable from the sidebar', async () => {
+    renderAt('/');
+    expect(await screen.findByRole('link', { name: /Settings/ })).toBeInTheDocument();
+  });
+});
+
+describe('startup behaviour', () => {
+  it('stays usable when the operations endpoints fail', async () => {
+    renderAt('/system', {
+      '/api/v1/ops/runtime': new Error('ops unavailable'),
+      '/api/v1/ops/storage': new Error('ops unavailable'),
+      '/api/v1/ops/health-history': new Error('ops unavailable'),
+    });
+    // the research sections still render. A generous timeout: this page runs
+    // five independent queries and three of them are rejecting.
+    expect(
+      await screen.findByText('Market corpus', {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
+  });
+
+  it('renders the shell immediately even while the runtime is still loading', () => {
+    const pending = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal('fetch', pending);
+    render(
+      <MemoryRouter initialEntries={['/system']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // navigation is available before any request resolves
+    expect(screen.getByRole('link', { name: /Overview/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
   });
 });

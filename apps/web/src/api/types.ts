@@ -444,3 +444,109 @@ export interface PaperEquity {
                   cumulative_fees: string }>;
   metadata: { returned_count: number; source_count: number; max_points?: number };
 }
+
+/* --- operations (Phase 5E) ------------------------------------------------
+ *
+ * The ops surface reports on the machine, never on the market. No price, no
+ * prediction and no absolute path appears in any of these payloads. */
+
+export type HealthState = 'HEALTHY' | 'DEGRADED' | 'ERROR' | 'STOPPED' | 'EMBARGOED';
+
+export interface HealthRecord {
+  record_id: number;
+  observed_at: string;
+  component: string;
+  status: HealthState;
+  latency_ms: number | null;
+  error_code: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface HealthHistory {
+  available: boolean;
+  components: string[];
+  states: HealthState[];
+  retention: number;
+  latest?: Record<string, { status: HealthState; observed_at: string; error_code: string | null }>;
+  records: HealthRecord[];
+}
+
+export interface OpsRuntime {
+  runtime_schema_version: string;
+  layout: {
+    runtime_schema_version: string;
+    directories: Record<string, boolean>;
+    paper_database_present: boolean;
+    ops_database_present: boolean;
+    settings_present: boolean;
+  };
+  app: {
+    state: string;
+    reason: string;
+    pid?: number;
+    host?: string;
+    port?: number;
+    started_at?: string;
+    uptime_seconds?: number | null;
+    rss_bytes?: number | null;
+  };
+  paper_session: { session_id: string; products: string[]; started_at: string } | null;
+  snapshots: {
+    snapshot_every_events: number;
+    status: HealthState;
+    error_code?: string;
+    products: Record<string, {
+      events_since_last_snapshot: number;
+      snapshot_due: boolean;
+      has_snapshot: boolean;
+    }>;
+  };
+  real_money: boolean;
+  broker_connected: boolean;
+}
+
+export interface OpsRecovery {
+  last_shutdown_clean: boolean | null;
+  recovery_performed: boolean;
+  event_chain_verified: boolean | null;
+  latest_snapshot_verified: boolean | null;
+  status: HealthState;
+  error_code: string | null;
+  events: number;
+  sessions: number;
+}
+
+export interface OpsStorage {
+  paper_database_bytes: number;
+  ops_database_bytes: number;
+  log_bytes: number;
+  export_bytes: number;
+  events: number;
+  sessions: number;
+  snapshots: number;
+  log_cap_bytes: number;
+  paper_events_retention: string;
+  database_warning: string | null;
+}
+
+export interface OperationalSettings {
+  theme: 'dark' | 'light' | 'system';
+  sidebar_collapsed: boolean;
+  default_product: string;
+  default_chart_window: string;
+  time_display: 'utc' | 'local';
+  log_retention_preset: string;
+  launch_browser: boolean;
+  paper_auto_start: boolean;
+  schema_version?: string;
+}
+
+export interface OpsSettings {
+  schema_version: string;
+  defaults: OperationalSettings;
+  allowed_fields: string[];
+  forbidden_trading_fields: string[];
+  trading_contracts_immutable: boolean;
+  options: Record<string, string[]>;
+  current: OperationalSettings;
+}
