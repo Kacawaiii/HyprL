@@ -147,3 +147,9 @@ apps/web/tsconfig.tsbuildinfo
 !apps/web/package.json
 !apps/web/package-lock.json
 !apps/web/tsconfig.json
+
+# Phase 5D shadow-trading runtime: live candles, paper portfolio state and the
+# event log. This is operational state, not a research artefact — committing it
+# would turn every restart into a repository diff.
+var/
+!var/.gitkeep

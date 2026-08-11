@@ -33,6 +33,9 @@ from scripts.trading_lab.capture_market_history import (
     MarketHistoryCaptureError,
     load_manifest,
 )
+from scripts.trading_lab.research_holdout import (
+    CONFIRMATORY_HOLDOUT_V2 as REGISTERED_CONFIRMATORY_HOLDOUT_V2,
+)
 from scripts.trading_lab.market_dataset import (
     INDICATOR_REGISTRY,
     DatasetConfig,
@@ -92,23 +95,9 @@ RIDGE_ALPHA_V2 = RIDGE_ALPHA_V1
 V1_CORPUS_ROLE_FOR_V2 = "development/exploratory"
 
 # Registered now, before anyone can look at it. Nothing is captured here.
-CONFIRMATORY_HOLDOUT_V2 = {
-    "holdout_id": "coinbase_confirmatory_2026q4",
-    "provider": "coinbase_exchange_rest",
-    "products": list(BENCHMARK_PRODUCTS),
-    "timeframe": BENCHMARK_TIMEFRAME,
-    "range_start": "2026-09-01T00:00:00Z",
-    "range_end": "2026-11-30T23:00:00Z",
-    "role": "confirmatory",
-    "captured": False,
-    "single_use": True,
-    "note": (
-        "One evaluation only, of the V2 contract exactly as registered here. Once "
-        "observed this window is spent too, and any later hypothesis needs either a "
-        "fresh holdout or an explicit exploratory label. If V2 changes before this "
-        "window is evaluated, the holdout must point at the new version explicitly."
-    ),
-}
+# The definition lives in `research_holdout` so the guard that enforces it can
+# be imported without the ML stack; the value is unchanged.
+CONFIRMATORY_HOLDOUT_V2 = REGISTERED_CONFIRMATORY_HOLDOUT_V2
 
 
 def _sha256_canonical(payload: object) -> str:

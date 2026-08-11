@@ -306,6 +306,84 @@ class EconomicMetrics:
 # --- the simulator --------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class PortfolioState:
+    """Everything one fill needs to know, and nothing about time or schedule.
+
+    Extracted from the backtest loop in Phase 5D so that shadow trading can
+    reuse the *same* accounting instead of growing a second implementation of
+    it. Two economic engines that agree today will disagree eventually, and
+    the disagreement will be discovered in a number nobody can reproduce.
+    """
+
+    cash: Decimal
+    quantity: Decimal
+    cumulative_fees: Decimal = _ZERO
+    cumulative_slippage_cost: Decimal = _ZERO
+    turnover_sum: Decimal = _ZERO
+
+    def equity_at(self, mark_price: Decimal) -> Decimal:
+        with localcontext() as context:
+            context.prec = ECONOMIC_PRECISION
+            return self.cash + self.quantity * mark_price
+
+
+def initial_portfolio_state(execution_spec: ExecutionSpec) -> PortfolioState:
+    return PortfolioState(cash=execution_spec.initial_equity, quantity=_ZERO)
+
+
+def apply_position_target(state: PortfolioState, *, target_exposure: Decimal,
+                          reference_price: Decimal, timestamp: str,
+                          execution_spec: ExecutionSpec,
+                          source_position_target_hash: str):
+    """Move to `target_exposure` of pre-trade equity at an observable open.
+
+    Returns the new state and the fill, or the unchanged state and None when
+    the position already matches the target. This is the single place where
+    cash, fees and slippage are computed; both the backtest and the shadow
+    engine call it.
+    """
+    with localcontext() as context:
+        context.prec = ECONOMIC_PRECISION
+        pre_trade_equity = state.cash + state.quantity * reference_price
+        if pre_trade_equity <= 0:
+            raise EconomicBacktestError(
+                f"equity reached {pre_trade_equity} at {timestamp}; the synthetic "
+                "account is insolvent and the simulation cannot continue")
+        # Target quantity is priced at the OBSERVABLE open, so slippage stays a
+        # separable execution cost rather than silently reshaping the intended
+        # exposure.
+        target_quantity = (target_exposure * pre_trade_equity) / reference_price
+        delta = target_quantity - state.quantity
+        if delta == 0:
+            return state, None
+        if delta > 0:
+            fill_price = reference_price * (_ONE + execution_spec.slippage_rate)
+            side = "buy"
+        else:
+            fill_price = reference_price * (_ONE - execution_spec.slippage_rate)
+            side = "sell"
+        notional = abs(delta) * fill_price
+        fee = notional * execution_spec.fee_rate
+        slippage_cost = abs(delta) * abs(fill_price - reference_price)
+        cash = state.cash - delta * fill_price
+        cash -= fee
+        quantity = state.quantity + delta
+        moved = PortfolioState(
+            cash=cash, quantity=quantity,
+            cumulative_fees=state.cumulative_fees + fee,
+            cumulative_slippage_cost=state.cumulative_slippage_cost + slippage_cost,
+            turnover_sum=state.turnover_sum
+            + abs(delta * reference_price) / pre_trade_equity)
+        fill = SimulatedFill(
+            timestamp=timestamp, side=side, reference_price=reference_price,
+            fill_price=fill_price, quantity_delta=delta, notional=notional,
+            fee=fee, slippage_cost=slippage_cost, position_after=quantity,
+            cash_after=cash, equity_after=cash + quantity * reference_price,
+            source_position_target_hash=source_position_target_hash)
+        return moved, fill
+
+
 def _bar_index(bars, *, timeframe: str):
     """Index observable bars by opening, refusing anything unusable."""
     if timeframe not in TIMEFRAME_DURATIONS:
@@ -399,39 +477,22 @@ def simulate_targets(targets, bars, *, timeframe: str = "1h",
                 """Move to `exposure` of pre-trade equity at this bar's open."""
                 nonlocal cash, quantity, cumulative_fees, cumulative_slippage
                 nonlocal turnover_sum
-                pre_trade_equity = cash + quantity * reference
-                if pre_trade_equity <= 0:
-                    raise EconomicBacktestError(
-                        f"equity reached {pre_trade_equity} at {stamp}; the synthetic "
-                        "account is insolvent and the simulation cannot continue")
-                # Target quantity is priced at the OBSERVABLE open, so slippage
-                # stays a separable execution cost rather than silently
-                # reshaping the intended exposure.
-                target_quantity = (exposure * pre_trade_equity) / reference
-                delta = target_quantity - quantity
-                if delta == 0:
+                state, fill = apply_position_target(
+                    PortfolioState(cash=cash, quantity=quantity,
+                                   cumulative_fees=cumulative_fees,
+                                   cumulative_slippage_cost=cumulative_slippage,
+                                   turnover_sum=turnover_sum),
+                    target_exposure=exposure, reference_price=reference,
+                    timestamp=stamp, execution_spec=execution_spec,
+                    source_position_target_hash=source_hash)
+                if fill is None:
                     return
-                if delta > 0:
-                    fill_price = reference * (_ONE + execution_spec.slippage_rate)
-                    side = "buy"
-                else:
-                    fill_price = reference * (_ONE - execution_spec.slippage_rate)
-                    side = "sell"
-                notional = abs(delta) * fill_price
-                fee = notional * execution_spec.fee_rate
-                slippage_cost = abs(delta) * abs(fill_price - reference)
-                cash -= delta * fill_price
-                cash -= fee
-                quantity += delta
-                cumulative_fees += fee
-                cumulative_slippage += slippage_cost
-                turnover_sum += abs(delta * reference) / pre_trade_equity
-                fills.append(SimulatedFill(
-                    timestamp=stamp, side=side, reference_price=reference,
-                    fill_price=fill_price, quantity_delta=delta, notional=notional,
-                    fee=fee, slippage_cost=slippage_cost, position_after=quantity,
-                    cash_after=cash, equity_after=cash + quantity * reference,
-                    source_position_target_hash=source_hash))
+                cash = state.cash
+                quantity = state.quantity
+                cumulative_fees = state.cumulative_fees
+                cumulative_slippage = state.cumulative_slippage_cost
+                turnover_sum = state.turnover_sum
+                fills.append(fill)
 
             if stamp == liquidation_at:
                 current_target = _ZERO

@@ -179,8 +179,8 @@ def test_modules_built_on_top_of_models_are_declared_ml_coupled() -> None:
                     and node.module.endswith("trading_lab.models"):
                 transitive.append(path.name)
                 break
-    assert transitive == ["real_benchmark.py", "real_benchmark_v2.py",
-                          "run_real_benchmark.py"], transitive
+    assert transitive == ["paper_model.py", "real_benchmark.py",
+                          "real_benchmark_v2.py", "run_real_benchmark.py"], transitive
 
 
 @pytest.mark.parametrize("module", CORE_MODULES)
@@ -215,3 +215,52 @@ def test_the_core_only_selection_excludes_every_phase_three_test() -> None:
         assert not any(module in line for line in collected), module
     # and this very file must stay in the core selection
     assert any("test_ml_dependency_contract.py" in line for line in collected)
+
+
+SAFETY_CRITICAL_CORE = (
+    "research_holdout",
+    "protected_holdout",
+    "paper_event_store",
+    "live_market",
+)
+
+_GUARD_PROBE = """
+from scripts.trading_lab.protected_holdout import (
+    ProtectedHoldoutError, require_tradeable_now)
+try:
+    require_tradeable_now("BTC-USD", now="2026-10-01T00:00:00+00:00")
+    raise SystemExit("the embargo did not fire")
+except ProtectedHoldoutError:
+    pass
+import sys
+leaked = sorted(n for n in sys.modules if n.split(".")[0] in {"sklearn", "xgboost"})
+assert not leaked, leaked
+print("GUARD-OK")
+"""
+
+
+def test_the_holdout_guard_works_without_the_ml_stack() -> None:
+    """A safety check that cannot load in a core environment is not a safety check.
+
+    The confirmatory holdout must be enforceable whether or not scikit-learn is
+    installed, so the guard reads its window from a dependency-free module
+    rather than from the benchmark contract that imports the model classes.
+    """
+    imports = "\n".join(f"import scripts.trading_lab.{name}"
+                         for name in SAFETY_CRITICAL_CORE)
+    result = _run(imports + _GUARD_PROBE)
+    assert result.returncode == 0, result.stderr
+    assert "GUARD-OK" in result.stdout
+
+
+def test_the_holdout_window_has_exactly_one_definition() -> None:
+    """Two copies of these dates would eventually disagree by one hour."""
+    import importlib
+    contract = importlib.import_module("scripts.trading_lab.research_holdout")
+    benchmark = importlib.import_module("scripts.trading_lab.real_benchmark_v2")
+    guard = importlib.import_module("scripts.trading_lab.protected_holdout")
+    assert benchmark.CONFIRMATORY_HOLDOUT_V2 is contract.CONFIRMATORY_HOLDOUT_V2
+    window = guard.PROTECTED_WINDOW_V1
+    assert window.start == contract.CONFIRMATORY_HOLDOUT_V2["range_start"]
+    assert window.end == contract.CONFIRMATORY_HOLDOUT_V2["range_end"]
+    assert list(window.products) == contract.CONFIRMATORY_HOLDOUT_V2["products"]
