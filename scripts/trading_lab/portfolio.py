@@ -58,6 +58,15 @@ PORTFOLIO_LIMIT_V1_IS_NOT_OPTIMIZED = True
 # generous and twenty-five orders tighter than any mistake worth catching.
 ATTRIBUTION_RELATIVE_TOLERANCE = Decimal("1E-30")
 
+# The limit check recomputes exposure as quantity x price / equity, while the
+# quantity was derived as exposure x equity / price. That round trip is exact
+# in arithmetic and lands one unit in the last place away at 34 significant
+# digits, so an exposure allocated at exactly 0.25 can read back as
+# 0.2500000000000000000000000000000001. Refusing that would be reporting a
+# limit breach caused by division, not by a position. Anything a trader would
+# call a breach is at least 1E-6 of NAV, twenty-four orders larger.
+LIMIT_ROUNDING_TOLERANCE = Decimal("1E-30")
+
 
 class PortfolioError(RuntimeError):
     """Raised when a portfolio operation cannot proceed safely."""
@@ -504,7 +513,8 @@ def allocate(target_set: PortfolioTargetSet, spec: PortfolioSpec = PORTFOLIO_SPE
         requested = []
         for target in target_set.targets:
             exposure = target.target_exposure
-            if abs(exposure) > spec.max_instrument_abs_exposure:
+            if abs(exposure) > (spec.max_instrument_abs_exposure
+                            + LIMIT_ROUNDING_TOLERANCE):
                 raise PortfolioLimitBreached(
                     f"{target.instrument_id} requests {exposure} at "
                     f"{target_set.timestamp}, beyond the per-instrument cap of "
@@ -655,17 +665,18 @@ def _require_limits(state: PortfolioState, spec: PortfolioSpec, *,
                 _ZERO) / pre_trade_equity
     net = sum((position.market_value for position in state.positions),
               _ZERO) / pre_trade_equity
-    if gross > spec.max_gross_exposure:
+    if gross > spec.max_gross_exposure + LIMIT_ROUNDING_TOLERANCE:
         raise PortfolioLimitBreached(
             f"gross exposure {gross} at {state.timestamp} exceeds "
             f"{spec.max_gross_exposure} after rebalancing")
-    if abs(net) > spec.max_net_abs_exposure:
+    if abs(net) > spec.max_net_abs_exposure + LIMIT_ROUNDING_TOLERANCE:
         raise PortfolioLimitBreached(
             f"net exposure {net} at {state.timestamp} exceeds "
             f"{spec.max_net_abs_exposure} after rebalancing")
     for position in state.positions:
         exposure = position.market_value / pre_trade_equity
-        if abs(exposure) > spec.max_instrument_abs_exposure:
+        if abs(exposure) > (spec.max_instrument_abs_exposure
+                            + LIMIT_ROUNDING_TOLERANCE):
             raise PortfolioLimitBreached(
                 f"{position.instrument_id} holds {exposure} of NAV at "
                 f"{state.timestamp}, beyond {spec.max_instrument_abs_exposure}")
@@ -741,11 +752,15 @@ class InstrumentAttribution:
 
     @property
     def execution_cost(self) -> Decimal:
-        return self.fees + self.slippage_cost
+        with localcontext() as context:
+            context.prec = ECONOMIC_PRECISION
+            return self.fees + self.slippage_cost
 
     @property
     def net_pnl(self) -> Decimal:
-        return self.gross_pnl - self.execution_cost
+        with localcontext() as context:
+            context.prec = ECONOMIC_PRECISION
+            return self.gross_pnl - self.execution_cost
 
     def canonical(self) -> dict:
         return {

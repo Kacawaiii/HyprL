@@ -1,0 +1,55 @@
+{
+  "alignment": {
+    "expired_targets": {
+      "coinbase:BTC-USD": 0,
+      "coinbase:ETH-USD": 0
+    },
+    "first_fill_at": "2025-09-08T02:00:00+00:00",
+    "instruments": {
+      "coinbase:BTC-USD": 7728,
+      "coinbase:ETH-USD": 7728
+    },
+    "last_fill_at": "2026-07-29T21:00:00+00:00",
+    "scheduled_timestamps": 7728,
+    "shared_timestamps": 7728,
+    "single_instrument_timestamps": 0,
+    "valuation_timestamps": 7836
+  },
+  "commercial_edge_established": false,
+  "confirmatory": false,
+  "cost_model": "synthetic",
+  "equity_points": 7836,
+  "experiment_type": "exploratory",
+  "fills": 1636,
+  "instruments": [
+    "coinbase:BTC-USD",
+    "coinbase:ETH-USD"
+  ],
+  "live_execution": false,
+  "portfolio_backtest_spec_hash": "520b403bd44fa68036635407f1e171401494809559a3cae2936850721c678845",
+  "portfolio_spec_hash": "32ec6c9f5f62c24bd18077dda79eefb30a334edcf26b811175f9b93584cdcebf",
+  "protocol_version": "trading-lab.portfolio-backtest.v1",
+  "reconciliation": {
+    "attribution_reconciles": true,
+    "relative_residual": "3.644323059841009006591137389E-33",
+    "relative_tolerance": "1E-30",
+    "residual": "-3.35E-28"
+  },
+  "result_file": "portfolio-BTC-ETH.json",
+  "result_file_bytes": 4804769,
+  "result_file_sha256": "2ca15b7e9829516e0d358b91f25c0d89fbc10771706de11f89cbd345682c58bb",
+  "result_hash": "99d89956279a4aae20120fc05f7e11ea047cf9b5b53eccfdca54d93af1a62b79",
+  "scaled_batches": 0,
+  "schema_version": "trading-lab.portfolio-backtest.v1",
+  "source": {
+    "benchmark_protocol": "trading-lab.real-benchmark.v2",
+    "benchmark_results_hashes": {
+      "coinbase:BTC-USD": "e810c0e24ea979310cb987df0c6a22ec15d137b913e0d1a13379dead5ac03beb",
+      "coinbase:ETH-USD": "5421de013f27add40d2232da46f7ed371f850c2c66014884a5bf5e873816bd39"
+    },
+    "execution_spec_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+    "risk_spec_hash": "f3be4fc63f684cd27c496bdfa1ce22b96b465de5a41bc169d9921f2c8d4c8dad",
+    "signal_spec_hash": "7f8b57f892a9e05ce5d2bc60c9bb114ea7dbc029ece561b7f62e9ad2d58b2939"
+  },
+  "unavailable_valuations": 0
+}
