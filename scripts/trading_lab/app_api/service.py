@@ -22,9 +22,11 @@ from scripts.trading_lab.app_api.contracts import (
     DEFAULT_EQUITY_POINTS,
     DEFAULT_FILL_PAGE,
     DEFAULT_PAPER_EQUITY_POINTS,
+    DEFAULT_PAGE_SIZE,
     DEFAULT_PAPER_EVENTS,
     ECONOMIC_BACKTEST_VERSIONS,
     MAX_CHART_POINTS,
+    MAX_PAGE_SIZE,
     MAX_EQUITY_POINTS,
     MAX_FILL_PAGE,
     MAX_PAPER_EQUITY_POINTS,
@@ -825,3 +827,130 @@ class AppService:
                 for scenario in stored["scenarios"]
             ],
         }
+
+    # --- operations (read-only) -----------------------------------------
+
+    def _layout(self):
+        from scripts.trading_lab.ops.runtime_paths import RuntimeLayout
+        return RuntimeLayout(PAPER_RUNTIME_DIR)
+
+    def _health_history(self):
+        from scripts.trading_lab.ops.health import HealthHistory
+        layout = self._layout()
+        if not layout.ops_database.is_file():
+            return None
+        return HealthHistory(layout.ops_database)
+
+    def ops_health_history(self, *, component=None, limit=None) -> dict:
+        """Recent observations, newest first. Bounded like every other feed."""
+        from scripts.trading_lab.ops.health import (
+            COMPONENTS, HEALTH_STATES, MAX_HEALTH_RECORDS)
+
+        if component is not None and component not in COMPONENTS:
+            raise NotFoundError(
+                f"unknown component {component!r}; supported: {list(COMPONENTS)}")
+        size = DEFAULT_PAGE_SIZE if limit is None else int(limit)
+        if size < 1 or size > MAX_PAGE_SIZE:
+            raise AppApiError(f"limit must sit in 1..{MAX_PAGE_SIZE}")
+        history = self._health_history()
+        if history is None:
+            return {"records": [], "components": list(COMPONENTS),
+                    "states": list(HEALTH_STATES), "available": False,
+                    "retention": MAX_HEALTH_RECORDS}
+        return {
+            "available": True,
+            "components": list(COMPONENTS),
+            "states": list(HEALTH_STATES),
+            "retention": MAX_HEALTH_RECORDS,
+            "latest": history.latest_per_component(),
+            "records": list(history.recent(component=component, limit=size)),
+        }
+
+    def ops_runtime(self) -> dict:
+        """Lifecycle and layout. No absolute path leaves this method."""
+        from scripts.trading_lab.ops import recovery as recovery_module
+        from scripts.trading_lab.ops import supervisor
+        from scripts.trading_lab.ops.runtime_paths import RUNTIME_SCHEMA_VERSION
+
+        layout = self._layout()
+        store = self._paper_store()
+        payload = {
+            "runtime_schema_version": RUNTIME_SCHEMA_VERSION,
+            "layout": layout.describe(),
+            "app": supervisor.status(layout.pid_file),
+            "paper_session": self._paper_session(),
+            "snapshots": recovery_module.snapshot_pressure(store),
+            "real_money": False,
+            "broker_connected": False,
+        }
+        return payload
+
+    def ops_recovery(self) -> dict:
+        """What happened at the last shutdown, and is the log still sound."""
+        from scripts.trading_lab.ops import recovery as recovery_module
+
+        from scripts.trading_lab.ops import supervisor
+
+        layout = self._layout()
+        store = self._paper_store()
+        # Whether a process is live decides how a RUNNING lifecycle marker is
+        # read: a live app's "last shutdown" is the one before it started.
+        live = supervisor.inspect(layout.pid_file)["state"] == supervisor.RUNNING
+        clean = recovery_module.last_shutdown_clean(layout.lifecycle_file,
+                                                    running=live)
+        report = recovery_module.verify_runtime(store)
+        return {
+            "last_shutdown_clean": clean,
+            # Recovery only counts as "performed" when there was something to
+            # recover from: a first run is not a recovery.
+            "recovery_performed": clean is False,
+            "event_chain_verified": report["event_chain_verified"],
+            "latest_snapshot_verified": report["latest_snapshot_verified"],
+            "status": report["status"],
+            "error_code": report["error_code"],
+            "events": report["events"],
+            "sessions": report["sessions"],
+        }
+
+    def ops_storage(self) -> dict:
+        """Sizes and counts. Never a path, never a filesystem listing."""
+        from scripts.trading_lab.ops.structured_log import (
+            MAX_LOG_FILE_SIZE, MAX_LOG_FILES)
+        from scripts.trading_lab.ops.support_bundle import storage_report
+
+        layout = self._layout()
+        store = self._paper_store()
+        payload = storage_report(layout)
+        payload.update({
+            "events": store.count() if store is not None else 0,
+            "sessions": len(store.sessions()) if store is not None else 0,
+            "log_cap_bytes": MAX_LOG_FILE_SIZE * MAX_LOG_FILES,
+            "paper_events_retention": "append-only; never pruned automatically",
+        })
+        snapshots = 0
+        if store is not None:
+            for session in store.sessions():
+                for product in SUPPORTED_PRODUCTS:
+                    try:
+                        if store.latest_snapshot(session_id=session,
+                                                 product=product):
+                            snapshots += 1
+                    except Exception:
+                        continue
+        payload["snapshots"] = snapshots
+        # An audit trail is not pruned to save space, so the honest response to
+        # a large database is to say so, not to delete evidence.
+        payload["database_warning"] = (
+            "the paper event log is large; export and archive it rather than "
+            "deleting events" if payload["paper_database_bytes"] > 512 * 1024 * 1024
+            else None)
+        return payload
+
+    def ops_settings(self) -> dict:
+        """Current operational settings and the fields that are refused."""
+        from scripts.trading_lab.ops import settings as settings_module
+
+        layout = self._layout()
+        payload = settings_module.describe()
+        payload["current"] = settings_module.load(layout.settings_file)
+        return payload

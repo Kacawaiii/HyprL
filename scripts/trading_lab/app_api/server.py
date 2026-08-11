@@ -13,6 +13,14 @@ Three boundaries are deliberate:
   be visiting read this API.
 * **GET only.** Every mutating verb is refused at the router, so no endpoint
   can grow a write path by accident.
+
+In production the same server also serves the built frontend, so the cockpit
+and its API share one origin and cross-origin rules stop applying to the app
+itself. The dev split (Vite on 5173, API on 8787) is unchanged; that is what
+the CORS allowlist above still exists for. API paths are matched before the
+static layer and never fall through to index.html -- a mistyped endpoint that
+returned a page of HTML with a 200 would send every caller looking for the
+bug in the wrong place.
 """
 
 from __future__ import annotations
@@ -111,11 +119,21 @@ def build_routes(service: AppService):
         "/api/v1/paper/products": lambda query: service.paper_products(),
         "/api/v1/paper/events": lambda query: service.paper_events(
             limit=_first(query, "limit"), after_event_id=_first(query, "after")),
+        # Operations views. Read-only like everything else: lifecycle lives on
+        # the command line, where starting a trading process takes a
+        # deliberate act rather than a cross-site request.
+        "/api/v1/ops/health-history": lambda query: service.ops_health_history(
+            component=_first(query, "component"), limit=_first(query, "limit")),
+        "/api/v1/ops/runtime": lambda query: service.ops_runtime(),
+        "/api/v1/ops/recovery": lambda query: service.ops_recovery(),
+        "/api/v1/ops/storage": lambda query: service.ops_storage(),
+        "/api/v1/ops/settings": lambda query: service.ops_settings(),
     }, markets_detail, chart, backtest_sub, paper_sub
 
 
 class AppApiHandler(BaseHTTPRequestHandler):
     service: AppService = None          # injected by make_server
+    site = None                         # StaticSite in production, None in dev
     server_version = "HyprLAppAPI/1.0"
     sys_version = ""                    # do not advertise the Python build
 
@@ -240,6 +258,52 @@ class AppApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(chunk.encode("utf-8"))
         self.wfile.flush()
 
+    # --- static site (production single-origin mode) ----------------------
+
+    def _serve_static(self, path: str, *, body: bool) -> bool:
+        """Serve the built frontend. Returns False if there is no build.
+
+        Order matters: containment is checked first (a 403 must not depend on
+        whether the file happens to exist), then existence, then SPA fallback
+        for anything that looks like a route rather than an asset.
+        """
+        from scripts.trading_lab.ops.static_assets import ForbiddenPathError
+
+        site = self.site
+        if site is None or not site.available:
+            return False
+        try:
+            served = site.serve(path)
+        except ForbiddenPathError:
+            self._respond(403, {"error": "forbidden"}, body=body)
+            return True
+        except FileNotFoundError:
+            if site.looks_like_asset(path):
+                # A missing script must not be answered with HTML: the browser
+                # would report a syntax error instead of a 404.
+                self._respond(404, {"error": "not found"}, body=body)
+                return True
+            served = site.spa_fallback(path)
+        except OSError:                              # pragma: no cover
+            self._respond(500, {"error": "internal error"}, body=body)
+            return True
+
+        try:
+            payload = served["path"].read_bytes()
+        except OSError:                              # pragma: no cover
+            self._respond(500, {"error": "internal error"}, body=body)
+            return True
+        self.send_response(served["status"])
+        self.send_header("Content-Type", served["content_type"])
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", served["cache_control"])
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        if body:
+            self.wfile.write(payload)
+        return True
+
     def do_GET(self, *, body: bool = True):  # noqa: N802 - stdlib signature
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
@@ -248,6 +312,10 @@ class AppApiHandler(BaseHTTPRequestHandler):
                 self._respond(200, {"stream": "text/event-stream"}, body=False)
                 return
             self._stream_events(query)
+            return
+        from scripts.trading_lab.ops.static_assets import is_api_path
+
+        if not is_api_path(parsed.path) and self._serve_static(parsed.path, body=body):
             return
         try:
             payload = self._dispatch(parsed.path, query)
@@ -279,23 +347,53 @@ class AppApiHandler(BaseHTTPRequestHandler):
     do_POST = do_PUT = do_PATCH = do_DELETE = _refuse
 
 
-def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
-    """Build a loopback-bound read-only server over a fixed data root."""
+def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
+                dist_root=None):
+    """Build a loopback-bound read-only server over a fixed data root.
+
+    ``dist_root`` turns on single-origin production mode. It is resolved once,
+    here, so no request can influence which directory is served.
+    """
     service = AppService(pathlib.Path(data_root))
-    handler = type("BoundAppApiHandler", (AppApiHandler,), {"service": service})
+    site = None
+    if dist_root is not None:
+        from scripts.trading_lab.ops.static_assets import StaticSite
+        site = StaticSite(dist_root)
+    handler = type("BoundAppApiHandler", (AppApiHandler,),
+                   {"service": service, "site": site})
     return ThreadingHTTPServer((host, port), handler)
 
 
 def main(argv=None):  # pragma: no cover - entry point
     import argparse
+    import signal as signal_module
 
     parser = argparse.ArgumentParser(description="HyprL read-only application API")
     parser.add_argument("--data-root", default="data/crypto")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--dist-root", default=None,
+                        help="serve a frontend build from the same origin")
+    # Present so the supervisor can prove a pid belongs to this application
+    # before signalling it. Parsed and ignored.
+    parser.add_argument("--marker", default=None, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
-    server = make_server(arguments.data_root, host=arguments.host, port=arguments.port)
-    print(f"HyprL app API on http://{arguments.host}:{arguments.port}/api/v1/health")
+    if arguments.host not in ("127.0.0.1", "localhost", "::1"):
+        # Not a default that can drift: an explicit non-loopback bind has to be
+        # stated, and it is stated loudly.
+        print(f"[hyprl] WARNING: binding {arguments.host} exposes this runtime "
+              "beyond the local machine")
+    server = make_server(arguments.data_root, host=arguments.host,
+                         port=arguments.port, dist_root=arguments.dist_root)
+    if arguments.dist_root:
+        print(f"HyprL on http://{arguments.host}:{arguments.port}/")
+    else:
+        print(f"HyprL app API on http://{arguments.host}:{arguments.port}/api/v1/health")
+
+    def _shutdown(signum, frame):
+        raise KeyboardInterrupt
+
+    signal_module.signal(signal_module.SIGTERM, _shutdown)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

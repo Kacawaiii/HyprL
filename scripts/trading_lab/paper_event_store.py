@@ -282,6 +282,32 @@ class PaperEventStore:
 
     # --- integrity -------------------------------------------------------
 
+    def count_after(self, *, session_id: str, product: str | None = None,
+                    after_event_id: int = 0) -> int:
+        """How many events a product has appended since a given event.
+
+        Read-only, and covered by the (session_id, product, event_id) index.
+        Snapshot monitoring needs a per-product measure: with two products
+        polled one after the other, a global event-id difference makes the
+        product that finished first look thousands of events behind when it
+        is simply no longer receiving candles.
+        """
+        connection = self._connect()
+        try:
+            if product is None:
+                row = connection.execute(
+                    "SELECT COUNT(*) AS n FROM paper_events "
+                    "WHERE session_id = ? AND event_id > ?",
+                    (session_id, int(after_event_id))).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT COUNT(*) AS n FROM paper_events "
+                    "WHERE session_id = ? AND product = ? AND event_id > ?",
+                    (session_id, product, int(after_event_id))).fetchone()
+        finally:
+            connection.close()
+        return int(row["n"])
+
     def verify_chain(self, *, session_id: str) -> dict:
         """Recompute every link. A single altered byte breaks the chain."""
         connection = self._connect()
