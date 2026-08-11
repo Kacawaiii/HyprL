@@ -207,7 +207,154 @@ def test_the_guard_has_no_environment_or_config_switch():
     from scripts.trading_lab import protected_holdout
 
     source = inspect.getsource(protected_holdout)
-    for escape in ("os.environ", "getenv", "HYPRL_DISABLE", "if not enabled",
-                   "skip_holdout", "bypass"):
+    # Mechanisms, not vocabulary: the guard's docstrings discuss the bypass
+    # they close, and a substring ban on the word would forbid the
+    # explanation rather than the behaviour.
+    for escape in ("os.environ", "getenv", "os.getenv", "HYPRL_DISABLE",
+                   "if not enabled", "skip_holdout", "settings.get",
+                   "config.get", "argparse", "input("):
         assert escape not in source, f"the guard exposes {escape!r}"
 
+
+
+# --- Phase 6A: canonical identity closes the alias bypass ------------------
+#
+# Before 6A the window matched with `product in self.products` -- a membership
+# test on raw text. Twelve of thirteen spellings of a protected instrument
+# reported UNPROTECTED and walked past the embargo. Nothing in the codebase
+# sent those spellings, so nothing noticed. These are the spellings.
+
+ALIAS_ATTEMPTS = (
+    "btc-usd", "BTC-usd", "bTc-UsD", "BTCUSD", "btcusd",
+    "BTC/USD", "btc/usd", "BTC_USD", "BTC.USD",
+    " BTC-USD", "BTC-USD ", "\tBTC-USD", "BTC-USD\n", "  btc / usd  ",
+    "coinbase:BTC-USD", "COINBASE:BTC-USD", "Coinbase:btc_usd",
+    "nasdaq:BTC-USD", "kraken:btcusd",
+    "eth-usd", "ETHUSD", "ETH/USD", "coinbase:eth-usd", "\tETH-USD\n",
+)
+
+
+@pytest.mark.parametrize("alias", ALIAS_ATTEMPTS)
+def test_no_alias_of_a_protected_instrument_evades_the_bar_guard(alias):
+    from scripts.trading_lab.protected_holdout import (
+        ProtectedHoldoutError, require_unprotected_bar)
+
+    with pytest.raises(ProtectedHoldoutError):
+        require_unprotected_bar(alias, "2026-10-01T00:00:00Z")
+
+
+@pytest.mark.parametrize("alias", ALIAS_ATTEMPTS)
+def test_no_alias_of_a_protected_instrument_evades_the_request_guard(alias):
+    from scripts.trading_lab.protected_holdout import (
+        ProtectedHoldoutError, require_unprotected_request)
+
+    with pytest.raises(ProtectedHoldoutError):
+        require_unprotected_request(alias, start="2026-09-15T00:00:00Z",
+                                    end="2026-09-16T00:00:00Z")
+
+
+@pytest.mark.parametrize("alias", ALIAS_ATTEMPTS)
+def test_no_alias_of_a_protected_instrument_can_trade_during_the_window(alias):
+    from scripts.trading_lab.protected_holdout import (
+        ProtectedHoldoutError, require_tradeable_now)
+
+    with pytest.raises(ProtectedHoldoutError):
+        require_tradeable_now(alias, now="2026-10-01T00:00:00Z")
+
+
+@pytest.mark.parametrize("alias", ALIAS_ATTEMPTS)
+def test_the_embargo_state_reports_an_alias_as_embargoed(alias):
+    from scripts.trading_lab.protected_holdout import embargo_state
+
+    state = embargo_state(alias, now="2026-10-01T00:00:00Z")
+    assert state["protected_product"] is True
+    assert state["embargoed"] is True
+
+
+def test_an_instrument_identity_object_is_matched_as_itself():
+    from scripts.trading_lab.instrument_registry import BTC_USD, ETH_USD
+    from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
+
+    for value in (BTC_USD, ETH_USD, BTC_USD.instrument_id, ETH_USD.instrument_id):
+        assert PROTECTED_WINDOW_V1.protects_product(value) is True
+
+
+@pytest.mark.parametrize("garbage", [
+    "", "   ", None, 42, b"BTC-USD", "---", "BTC–USD", "\x00BTC-USD",
+    "A" * 200, object(),
+])
+def test_an_unreadable_product_fails_closed(garbage):
+    """A guard handed something it cannot parse must not guess permissively."""
+    from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
+
+    assert PROTECTED_WINDOW_V1.protects_product(garbage) is True
+
+
+@pytest.mark.parametrize("unrelated", [
+    "SOL-USD", "sol/usd", "coinbase:XRP-USD", "AAPL", "nasdaq:AAPL", "DOGEUSD",
+])
+def test_an_unrelated_instrument_is_not_swept_up_by_the_guard(unrelated):
+    """Over-broad matching would embargo markets the protocol never reserved."""
+    from scripts.trading_lab.protected_holdout import (
+        PROTECTED_WINDOW_V1, require_unprotected_bar)
+
+    assert PROTECTED_WINDOW_V1.protects_product(unrelated) is False
+    require_unprotected_bar(unrelated, "2026-10-01T00:00:00Z")
+
+
+def test_the_window_hash_is_unchanged_by_the_identity_migration():
+    """The matching logic changed; the recorded protocol did not."""
+    from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
+
+    assert PROTECTED_WINDOW_V1.holdout_hash == (
+        "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85")
+    assert list(PROTECTED_WINDOW_V1.products) == ["BTC-USD", "ETH-USD"]
+
+
+def test_the_guard_still_loads_without_the_model_stack():
+    """Canonicalisation must not have dragged the ML stack into the guard."""
+    import subprocess
+    import sys
+
+    probe = '''
+import sys
+class _Blocked:
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in {"sklearn", "xgboost"}:
+            raise ImportError("blocked")
+        return None
+sys.meta_path.insert(0, _Blocked())
+from scripts.trading_lab.protected_holdout import (
+    ProtectedHoldoutError, require_unprotected_bar)
+for alias in ("btc-usd", "BTCUSD", "coinbase:BTC-USD"):
+    try:
+        require_unprotected_bar(alias, "2026-10-01T00:00:00Z")
+        raise SystemExit(f"{alias} bypassed the guard")
+    except ProtectedHoldoutError:
+        pass
+leaked = sorted(n for n in sys.modules if n.split(".")[0] in {"sklearn", "xgboost"})
+assert not leaked, leaked
+print("GUARD-OK")
+'''
+    result = subprocess.run([sys.executable, "-"], input=probe, capture_output=True,
+                            text=True, cwd=str(REPO_ROOT), timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert "GUARD-OK" in result.stdout
+
+
+def test_the_registry_cannot_re_register_a_protected_instrument_differently():
+    """Re-registering BTC under another identity would be a second name for a
+    reserved market -- exactly what canonical identity exists to prevent."""
+    from scripts.trading_lab.instrument_registry import (
+        BTC_USD, InstrumentRegistry, RegistryError)
+    from scripts.trading_lab.instruments import InstrumentId, InstrumentSpec
+
+    disguised = InstrumentSpec(
+        instrument_id=InstrumentId(venue="coinbase", symbol="BTCUSD"),
+        asset_class="CRYPTO", base_asset="BTC", quote_asset="USD",
+        price_currency="USD", timezone="UTC", trading_calendar="CRYPTO_24_7",
+        native_timeframes=("1h",), quantity_precision=8, price_precision=2)
+    # "BTCUSD" canonicalises to BTC-USD, so this IS the registered instrument
+    assert disguised.instrument_id == BTC_USD.instrument_id
+    with pytest.raises(RegistryError):
+        InstrumentRegistry((BTC_USD, disguised))

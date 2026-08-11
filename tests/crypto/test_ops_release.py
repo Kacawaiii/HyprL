@@ -295,5 +295,9 @@ def test_the_bundled_guard_cannot_be_disabled_by_editing_config(release):
     output, _ = release
     guard = (output / "scripts/trading_lab/protected_holdout.py").read_text()
     assert "2026-09-01T00:00:00Z" in guard
-    for escape in ("os.environ", "getenv", "HYPRL_DISABLE", "bypass"):
-        assert escape not in guard
+    # Mechanisms, not vocabulary. The word "bypass" appears in the guard's own
+    # explanation of why it is strict; banning the word would ban the comment
+    # that documents the hole it closes.
+    for escape in ("os.environ", "getenv", "os.getenv", "HYPRL_DISABLE",
+                   "settings.get", "config.get", "argparse"):
+        assert escape not in guard, escape

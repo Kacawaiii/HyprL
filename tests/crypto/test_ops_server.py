@@ -275,3 +275,107 @@ def test_the_api_serves_without_any_frontend_build(tmp_path):
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=10)
+
+
+# --- instruments and providers (Phase 6A) ---------------------------------
+
+
+def test_the_instrument_registry_is_served_grouped_by_asset_class(server):
+    status, _, body = _get(f"{server}/api/v1/instruments")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["count"] == 2
+    assert [group["asset_class"] for group in payload["asset_classes"]] == ["CRYPTO"]
+    ids = [item["instrument_id"] for item in payload["instruments"]]
+    assert ids == ["coinbase:BTC-USD", "coinbase:ETH-USD"]
+
+
+def test_an_instrument_carries_its_identity_and_metadata(server):
+    _, _, body = _get(f"{server}/api/v1/instruments")
+    btc = json.loads(body)["instruments"][0]
+    assert btc["venue"] == "coinbase" and btc["symbol"] == "BTC-USD"
+    assert btc["base_asset"] == "BTC" and btc["quote_asset"] == "USD"
+    assert btc["trading_calendar"] == "CRYPTO_24_7"
+    assert btc["native_timeframes"] == ["1h", "1d"]
+    assert len(btc["instrument_spec_hash"]) == 64
+    assert btc["providers"] == ["coinbase-public-v1"]
+    # the string every committed artefact uses, so the UI can address them
+    assert btc["legacy_product_id"] == "BTC-USD"
+
+
+@pytest.mark.parametrize("spelling", [
+    "coinbase:BTC-USD", "COINBASE:BTC-USD", "coinbase:btc-usd", "BTC-USD",
+    "btcusd",
+])
+def test_an_instrument_detail_resolves_every_spelling(server, spelling):
+    import urllib.parse
+
+    status, _, body = _get(
+        f"{server}/api/v1/instruments/{urllib.parse.quote(spelling, safe='')}")
+    assert status == 200, spelling
+    assert json.loads(body)["instrument_id"] == "coinbase:BTC-USD"
+
+
+def test_an_instrument_detail_carries_its_calendar(server):
+    _, _, body = _get(f"{server}/api/v1/instruments/coinbase:BTC-USD")
+    calendar = json.loads(body)["calendar"]
+    assert calendar["calendar_id"] == "CRYPTO_24_7"
+    assert calendar["bars_per_day"] == 24
+    assert calendar["annualization_periods"] == 8760
+
+
+@pytest.mark.parametrize("unknown", ["coinbase:SOL-USD", "AAPL", "nonsense",
+                                     "nasdaq:AAPL"])
+def test_an_unknown_instrument_is_a_404_not_a_guess(server, unknown):
+    import urllib.parse
+
+    status, headers, _ = _get(
+        f"{server}/api/v1/instruments/{urllib.parse.quote(unknown, safe='')}")
+    assert status == 404
+    assert headers["Content-Type"].startswith("application/json")
+
+
+def test_the_providers_endpoint_declares_capabilities_honestly(server):
+    status, _, body = _get(f"{server}/api/v1/providers")
+    assert status == 200
+    provider = json.loads(body)["providers"][0]
+    assert provider["provider_id"] == "coinbase-public-v1"
+    capabilities = provider["capabilities"]
+    assert capabilities["historical_bars"] is True
+    assert capabilities["latest_closed_bar"] is True
+    assert capabilities["realtime_ticks"] is False
+    assert capabilities["order_book"] is False
+    assert capabilities["authenticated"] is False
+    assert capabilities["private_account_data"] is False
+
+
+def test_a_provider_detail_lists_the_instruments_it_serves(server):
+    status, _, body = _get(f"{server}/api/v1/providers/coinbase-public-v1")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["instruments"] == ["coinbase:BTC-USD", "coinbase:ETH-USD"]
+    assert len(payload["instrument_details"]) == 2
+
+
+def test_an_unknown_provider_is_a_404(server):
+    status, _, _ = _get(f"{server}/api/v1/providers/some-broker")
+    assert status == 404
+
+
+def test_the_registry_endpoints_are_small_and_read_only(server):
+    for path in ("/api/v1/instruments", "/api/v1/providers",
+                 "/api/v1/instruments/coinbase:BTC-USD"):
+        status, headers, body = _get(f"{server}{path}")
+        assert status == 200
+        assert len(body) < 32 * 1024, f"{path} returned {len(body)} bytes"
+        assert headers["Cache-Control"] == "no-store"
+        assert _get(f"{server}{path}", method="POST")[0] == 405
+
+
+def test_no_registry_endpoint_exposes_a_key_or_an_account(server):
+    for path in ("/api/v1/instruments", "/api/v1/providers",
+                 "/api/v1/providers/coinbase-public-v1"):
+        rendered = _get(f"{server}{path}")[2].decode().lower()
+        for secret in ("api_key", "secret", "token", "authorization", "cookie",
+                       "balance", "wallet", "account_id"):
+            assert secret not in rendered, f"{path} mentions {secret}"

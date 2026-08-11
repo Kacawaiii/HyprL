@@ -60,6 +60,25 @@ def _parse(value: object, *, field: str) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
+def _symbol_of(value: object) -> object:
+    """Reduce any identity to its bare symbol, for comparison.
+
+    Handles an InstrumentSpec explicitly rather than letting it fall through
+    to the fail-closed branch. Failing closed would give the right answer for
+    a protected instrument and the *wrong* one for every other spec ever
+    registered -- a future SOL-USD would be reported as reserved.
+    """
+    identity = getattr(value, "instrument_id", None)     # InstrumentSpec
+    if identity is not None:
+        value = identity
+    symbol = getattr(value, "symbol", None)              # InstrumentId
+    if symbol is not None:
+        return symbol
+    if isinstance(value, str) and ":" in value:
+        return value.partition(":")[2]
+    return value
+
+
 @dataclass(frozen=True)
 class ProtectedResearchWindow:
     """A range of market data reserved for one future confirmatory test."""
@@ -112,8 +131,42 @@ class ProtectedResearchWindow:
         """
         return self.end_at + TIMEFRAME_DURATIONS[self.timeframe]
 
-    def protects_product(self, product: str) -> bool:
-        return product in self.products
+    def protects_product(self, product: object) -> bool:
+        """Is this instrument reserved -- however the caller spelled it?
+
+        This used to be ``product in self.products``: a membership test on raw
+        text. It meant every spelling but the exact one reported *unprotected*
+        and walked straight past the embargo -- ``btc-usd``, ``BTCUSD``,
+        ``BTC/USD``, ``" BTC-USD"``, ``coinbase:BTC-USD``, twelve of thirteen
+        variants tried. Nothing in the codebase happened to send those
+        spellings, so the hole stayed open and invisible.
+
+        Comparison now happens on the canonical symbol, and it is deliberately
+        venue-blind: a protected symbol quoted against some other venue is
+        still refused. Being over-broad costs nothing today -- there is one
+        venue -- while being narrow reopens the bypass.
+
+        A value too malformed to canonicalise is treated as protected rather
+        than waved through. If a caller cannot say what market it means, this
+        guard will not guess in the permissive direction.
+        """
+        from scripts.trading_lab.instruments import (
+            InstrumentError, normalize_symbol)
+
+        if isinstance(product, str) and product in self.products:
+            return True                              # fast path, same answer
+        try:
+            candidate = normalize_symbol(_symbol_of(product))
+        except InstrumentError:
+            # Unreadable input, and this is a safety guard: fail closed.
+            return True
+        for protected in self.products:
+            try:
+                if normalize_symbol(_symbol_of(protected)) == candidate:
+                    return True
+            except InstrumentError:                  # pragma: no cover
+                continue
+        return False
 
     def covers(self, product: str, bar_open_at: object) -> bool:
         """Is this specific candle inside the reserved window?"""

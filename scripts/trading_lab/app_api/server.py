@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import pathlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from scripts.trading_lab.app_api.contracts import (
     APP_API_VERSION,
@@ -128,6 +128,9 @@ def build_routes(service: AppService):
         "/api/v1/ops/recovery": lambda query: service.ops_recovery(),
         "/api/v1/ops/storage": lambda query: service.ops_storage(),
         "/api/v1/ops/settings": lambda query: service.ops_settings(),
+        # The registry of markets and where their bars come from.
+        "/api/v1/instruments": lambda query: service.instruments(),
+        "/api/v1/providers": lambda query: service.providers(),
     }, markets_detail, chart, backtest_sub, paper_sub
 
 
@@ -184,6 +187,16 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/backtests/{version}/{product}/{equity|fills}
         if len(parts) == 6 and parts[:3] == ["api", "v1", "backtests"]:
             return backtest_sub(parts[3], parts[4], parts[5], query)
+        # /api/v1/instruments/{instrument_id} -- a canonical id contains a
+        # colon, which a client may send raw or percent-encoded. Decoded here
+        # and nowhere else: these values are looked up in a closed registry
+        # and never reach the filesystem, unlike the static layer which
+        # deliberately decodes exactly once and then checks containment.
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "instruments"]:
+            return self.service.instrument_detail(unquote(parts[3]))
+        # /api/v1/providers/{provider_id}
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "providers"]:
+            return self.service.provider_detail(unquote(parts[3]))
         # /api/v1/paper/{product}
         if len(parts) == 4 and parts[:3] == ["api", "v1", "paper"]:
             return self.service.paper_product(parts[3])

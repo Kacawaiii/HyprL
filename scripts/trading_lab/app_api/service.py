@@ -954,3 +954,82 @@ class AppService:
         payload = settings_module.describe()
         payload["current"] = settings_module.load(layout.settings_file)
         return payload
+
+    # --- instruments and providers (read-only) ---------------------------
+
+    def instruments(self) -> dict:
+        """The registered markets, grouped by asset class.
+
+        Served from the registry rather than a list in this file: two lists of
+        products drift, and the frontend hardcoding its own would be a third.
+        """
+        from scripts.trading_lab.instrument_registry import (
+            INSTRUMENTS_V1, PROVIDERS_V1)
+
+        grouped = INSTRUMENTS_V1.by_asset_class()
+        return {
+            "api_version": APP_API_VERSION,
+            "count": len(INSTRUMENTS_V1),
+            "asset_classes": [
+                {
+                    "asset_class": asset_class,
+                    "instruments": [
+                        self._instrument_payload(spec, PROVIDERS_V1)
+                        for spec in specs
+                    ],
+                }
+                for asset_class, specs in sorted(grouped.items())
+            ],
+            "instruments": [self._instrument_payload(spec, PROVIDERS_V1)
+                            for spec in INSTRUMENTS_V1.all()],
+        }
+
+    def _instrument_payload(self, spec, providers) -> dict:
+        payload = dict(spec.payload())
+        payload["providers"] = [provider.provider_id
+                                for provider in providers.for_instrument(
+                                    spec.instrument_id)]
+        # What the rest of the API and every committed artefact call it.
+        payload["legacy_product_id"] = spec.legacy_product_id
+        return payload
+
+    def instrument_detail(self, instrument_id) -> dict:
+        from scripts.trading_lab.instrument_registry import (
+            INSTRUMENTS_V1, PROVIDERS_V1, RegistryError)
+        from scripts.trading_lab.trading_calendar import get_calendar
+
+        try:
+            spec = INSTRUMENTS_V1.resolve(instrument_id)
+        except RegistryError as error:
+            raise NotFoundError(str(error)) from error
+        payload = self._instrument_payload(spec, PROVIDERS_V1)
+        calendar = get_calendar(spec.trading_calendar)
+        payload["calendar"] = {
+            **calendar.payload(),
+            "bars_per_day": calendar.bars_per_day(SUPPORTED_TIMEFRAME),
+            "annualization_periods":
+                calendar.annualization_periods(SUPPORTED_TIMEFRAME),
+        }
+        payload["provider_details"] = [
+            provider.payload()
+            for provider in PROVIDERS_V1.for_instrument(spec.instrument_id)]
+        return payload
+
+    def providers(self) -> dict:
+        from scripts.trading_lab.instrument_registry import PROVIDERS_V1
+
+        return {"api_version": APP_API_VERSION, **PROVIDERS_V1.payload()}
+
+    def provider_detail(self, provider_id) -> dict:
+        from scripts.trading_lab.instrument_registry import (
+            INSTRUMENTS_V1, PROVIDERS_V1, RegistryError)
+
+        try:
+            provider = PROVIDERS_V1.resolve(provider_id)
+        except RegistryError as error:
+            raise NotFoundError(str(error)) from error
+        payload = dict(provider.payload())
+        payload["instrument_details"] = [
+            INSTRUMENTS_V1.resolve(item).payload()
+            for item in provider.supported_instruments]
+        return payload
