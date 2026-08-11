@@ -59,26 +59,10 @@ def _spec_hashes() -> dict:
 
 
 def _git_commit(root: pathlib.Path):
-    """The commit, read from .git without running a subprocess."""
-    head = root / ".git" / "HEAD"
-    if not head.is_file():
-        return None
-    try:
-        text = head.read_text(encoding="utf-8").strip()
-    except OSError:                                   # pragma: no cover
-        return None
-    if text.startswith("ref: "):
-        target = root / ".git" / text[5:].strip()
-        if target.is_file():
-            return target.read_text(encoding="utf-8").strip()[:40]
-        packed = root / ".git" / "packed-refs"
-        if packed.is_file():
-            reference = text[5:].strip()
-            for line in packed.read_text(encoding="utf-8").splitlines():
-                if line.endswith(f" {reference}"):
-                    return line.split(" ", 1)[0][:40]
-        return None
-    return text[:40]
+    """The commit, read from .git metadata. Worktree-aware."""
+    from scripts.trading_lab.ops.git_identity import head_commit
+
+    return head_commit(root)
 
 
 def build(*, layout, root=None, health=None, static_site=None,

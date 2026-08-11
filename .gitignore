@@ -160,3 +160,7 @@ var/
 !data/models/
 !data/models/paper_v1/
 !data/models/paper_v1/**
+
+# Local release bundles are build output, not source. They are reproducible
+# from a commit, so committing 18 MB of them would only bloat the history.
+/dist/

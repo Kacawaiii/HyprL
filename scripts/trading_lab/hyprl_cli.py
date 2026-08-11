@@ -90,6 +90,38 @@ def command_build(arguments) -> int:
     return 0
 
 
+def command_release(arguments) -> int:
+    """Assemble a local release bundle from the current build."""
+    from scripts.trading_lab.ops import release as release_module
+
+    root = _root()
+    if not (root / DIST_DIR / "index.html").is_file():
+        code = command_build(arguments)
+        if code:
+            return code
+    try:
+        report = release_module.build_release(
+            root=root, output=arguments.output or (root / "dist/hyprl-local"),
+            include_research_data=not arguments.without_research_data)
+    except release_module.ReleaseError as error:
+        print(f"[hyprl] {error}")
+        return 2
+    _emit(report)
+    return 0
+
+
+def command_verify_release(arguments) -> int:
+    from scripts.trading_lab.ops import release as release_module
+
+    try:
+        report = release_module.verify_release(arguments.path)
+    except release_module.ReleaseError as error:
+        print(f"[hyprl] {error}")
+        return 2
+    _emit(report)
+    return 0 if report["ok"] else 2
+
+
 def command_start(arguments) -> int:
     root, layout, stored, logger, health = _context(arguments)
     site = StaticSite(root / DIST_DIR)
@@ -390,6 +422,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     build = sub.add_parser("build", help="build the production frontend")
     build.set_defaults(handler=command_build)
+
+    release = sub.add_parser("release", help="assemble a local release bundle")
+    release.add_argument("--output", default=None)
+    release.add_argument("--without-research-data", action="store_true",
+                         help="omit the research corpus and committed results")
+    release.set_defaults(handler=command_release)
+
+    verify_release = sub.add_parser("verify-release",
+                                    help="re-check a release against its manifest")
+    verify_release.add_argument("path")
+    verify_release.set_defaults(handler=command_verify_release)
 
     logs = sub.add_parser("logs", help="recent structured log records")
     logs.add_argument("--limit", type=int, default=100)
