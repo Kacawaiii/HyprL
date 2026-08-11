@@ -629,3 +629,153 @@ export interface InstrumentDetail extends Instrument {
   };
   provider_details: Provider[];
 }
+
+/* --- portfolio (Phase 6B) --------------------------------------------------
+ *
+ * One shared cash ledger across instruments. Every figure is computed in
+ * Python and arrives as a Decimal string; the browser formats, never
+ * computes. */
+
+export interface PortfolioContract {
+  protocol: string;
+  portfolio_spec_hash: string;
+  frozen: boolean;
+  optimized: boolean;
+  base_currency: string;
+  initial_equity: string;
+  max_instrument_abs_exposure: string;
+  max_gross_exposure: string;
+  max_net_abs_exposure: string;
+  allocation_rule: string;
+  simultaneous_rebalance_rule: string;
+  cash_model: string;
+  short_model: string;
+  gross_cap_rationale: string;
+}
+
+export interface PortfolioStatus {
+  api_version: string;
+  available: boolean;
+  reason: string | null;
+  portfolio: PortfolioContract;
+  instruments: string[];
+  shared_capital: boolean;
+  real_money: boolean;
+  broker_connected: boolean;
+  commercial_edge_established: boolean;
+}
+
+export interface PortfolioMetrics {
+  initial_equity: string;
+  final_equity: string;
+  gross_pnl: string;
+  net_pnl: string;
+  gross_return: string;
+  net_return: string;
+  total_fees: string;
+  total_slippage_cost: string;
+  total_execution_cost: string;
+  portfolio_turnover: string;
+  max_drawdown: string;
+  annualized_sharpe: string;
+  average_gross_exposure: string;
+  average_abs_net_exposure: string;
+  max_observed_gross_exposure: string;
+  fill_count: number;
+  rebalance_count: number;
+}
+
+export interface PortfolioRun {
+  version: string;
+  protocol: string;
+  experiment_type: string;
+  confirmatory: boolean;
+  instruments: string[];
+  result_hash: string;
+  portfolio_backtest_spec_hash: string;
+}
+
+export interface PortfolioBacktestsIndex {
+  api_version: string;
+  available: boolean;
+  reason: string | null;
+  portfolio: PortfolioContract;
+  runs: PortfolioRun[];
+}
+
+export interface PortfolioDetail {
+  api_version: string;
+  version: string;
+  available: boolean;
+  portfolio: PortfolioContract;
+  instruments: string[];
+  experiment_type: string;
+  confirmatory: boolean;
+  live_execution: boolean;
+  cost_model: string;
+  commercial_edge_established: boolean;
+  metrics: PortfolioMetrics;
+  gross_metrics: PortfolioMetrics;
+  result_hash: string;
+  source: Record<string, unknown>;
+  alignment: Record<string, number>;
+  equity_points: number;
+  fill_count: number;
+}
+
+export interface PortfolioEquityPoint {
+  timestamp: string;
+  equity: string;
+  gross_exposure: string;
+  net_exposure: string;
+}
+
+export interface PortfolioEquity {
+  api_version: string;
+  version: string;
+  series: PortfolioEquityPoint[];
+  metadata: {
+    source_count: number; returned_count: number; max_points: number;
+    aggregation: string; aggregated: boolean; initial_equity: string;
+  };
+}
+
+export interface PortfolioFill {
+  timestamp: string;
+  instrument_id: string;
+  side: string;
+  reference_price: string;
+  fill_price: string;
+  quantity_delta: string;
+  notional: string;
+  fee: string;
+  slippage_cost: string;
+  position_after: string;
+}
+
+export interface PortfolioFillPage {
+  api_version: string;
+  version: string;
+  fills: PortfolioFill[];
+  page: { returned: number; total: number; has_more: boolean; next_cursor: string | null };
+}
+
+export interface InstrumentAttribution {
+  instrument_id: string;
+  gross_pnl: string;
+  fees: string;
+  slippage_cost: string;
+  execution_cost: string;
+  net_pnl: string;
+  turnover: string;
+  average_abs_exposure: string;
+  fill_count: number;
+}
+
+export interface PortfolioAttribution {
+  api_version: string;
+  version: string;
+  attribution: InstrumentAttribution[];
+  reconciliation: Record<string, string>;
+  metrics: { net_pnl: string; gross_pnl: string; total_execution_cost: string };
+}

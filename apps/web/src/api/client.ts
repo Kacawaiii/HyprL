@@ -13,6 +13,8 @@ import type {
   BenchmarkDetail, BenchmarkSummary, CandlePage, ChartSeries, Health,
   HealthHistory, InstrumentDetail, InstrumentsIndex, MarketsIndex,
   OpsRecovery, OpsRuntime, OpsSettings, OpsStorage, Overview,
+  PortfolioAttribution, PortfolioBacktestsIndex, PortfolioDetail,
+  PortfolioEquity, PortfolioFillPage, PortfolioStatus,
   ProvidersIndex, RiskView, SignalsView,
 } from './types';
 
@@ -202,6 +204,24 @@ export const apiClient = {
       `/api/v1/instruments/${encodeURIComponent(instrumentId)}`, signal),
   getProviders: (signal?: AbortSignal) =>
     request<ProvidersIndex>('/api/v1/providers', signal),
+  getPortfolio: (signal?: AbortSignal) =>
+    request<PortfolioStatus>('/api/v1/portfolio', signal),
+  getPortfolioBacktests: (signal?: AbortSignal) =>
+    request<PortfolioBacktestsIndex>('/api/v1/portfolio/backtests', signal),
+  getPortfolioDetail: (version: string, signal?: AbortSignal) =>
+    request<PortfolioDetail>(
+      `/api/v1/portfolio/backtests/${encodeURIComponent(version)}`, signal),
+  getPortfolioEquity: (version: string, maxPoints?: number, signal?: AbortSignal) =>
+    request<PortfolioEquity>(
+      `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/equity${query({ max_points: maxPoints })}`,
+      signal),
+  getPortfolioFills: (version: string, limit?: number, signal?: AbortSignal) =>
+    request<PortfolioFillPage>(
+      `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/fills${query({ limit })}`,
+      signal),
+  getPortfolioAttribution: (version: string, signal?: AbortSignal) =>
+    request<PortfolioAttribution>(
+      `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/attribution`, signal),
 };
 
 export type ApiClient = typeof apiClient;

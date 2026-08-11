@@ -461,3 +461,34 @@ export const instrumentsWithEquity = {
     },
   ],
 };
+
+/* --- portfolio (Phase 6B) ----------------------------------------------- */
+
+export const portfolioContract = {
+  protocol: 'trading-lab.portfolio.v1',
+  portfolio_spec_hash:
+    '32ec6c9f5f62c24bd18077dda79eefb30a334edcf26b811175f9b93584cdcebf',
+  frozen: true, optimized: false, base_currency: 'USD',
+  initial_equity: '100000', max_instrument_abs_exposure: '0.25',
+  max_gross_exposure: '0.50', max_net_abs_exposure: '0.50',
+  allocation_rule: 'proportional-gross-cap-v1',
+  simultaneous_rebalance_rule: 'single-pretrade-equity-batch-v1',
+  cash_model: 'shared-cash-v1', short_model: 'synthetic-linear-short-v1',
+  gross_cap_rationale:
+    "two instruments at RiskSpec V1's 25 % each; the structure the existing " +
+    'rules already permit, not a fitted optimum',
+};
+
+export const portfolioEmpty = {
+  api_version: 'trading-lab.app-api.v1', available: false,
+  reason: 'no portfolio backtest has been run',
+  portfolio: portfolioContract, instruments: ['BTC-USD', 'ETH-USD'],
+  shared_capital: true, real_money: false, broker_connected: false,
+  commercial_edge_established: false,
+};
+
+export const portfolioBacktestsEmpty = {
+  api_version: 'trading-lab.app-api.v1', available: false,
+  reason: 'no portfolio backtest has been run',
+  portfolio: portfolioContract, runs: [],
+};

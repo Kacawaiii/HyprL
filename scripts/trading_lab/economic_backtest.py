@@ -332,6 +332,52 @@ def initial_portfolio_state(execution_spec: ExecutionSpec) -> PortfolioState:
     return PortfolioState(cash=execution_spec.initial_equity, quantity=_ZERO)
 
 
+@dataclass(frozen=True)
+class FillEffect:
+    """What moving a quantity costs, independent of whose book it lands in.
+
+    Deliberately says nothing about equity, exposure or position size. Those
+    depend on the account doing the trading, and a single-product account and
+    a shared multi-instrument portfolio compute them differently -- while the
+    cost of moving N units at a price is the same in both. Splitting it here
+    is what lets the portfolio engine reuse this arithmetic instead of
+    growing a second copy that agrees today and drifts later.
+    """
+
+    side: str
+    fill_price: Decimal
+    notional: Decimal
+    fee: Decimal
+    slippage_cost: Decimal
+    cash_delta: Decimal
+
+
+def apply_quantity_delta(*, quantity_delta: Decimal, reference_price: Decimal,
+                         execution_spec: ExecutionSpec) -> FillEffect:
+    """Price a quantity change at an observable open, with costs against it.
+
+    Slippage always moves the fill price the wrong way for the trader, and the
+    fee is charged on the slipped notional -- the same convention the
+    single-product engine has used since Phase 5C, extracted verbatim so the
+    committed results still reproduce byte for byte.
+    """
+    with localcontext() as context:
+        context.prec = ECONOMIC_PRECISION
+        if quantity_delta > 0:
+            fill_price = reference_price * (_ONE + execution_spec.slippage_rate)
+            side = "buy"
+        else:
+            fill_price = reference_price * (_ONE - execution_spec.slippage_rate)
+            side = "sell"
+        notional = abs(quantity_delta) * fill_price
+        fee = notional * execution_spec.fee_rate
+        slippage_cost = abs(quantity_delta) * abs(fill_price - reference_price)
+        cash_delta = -(quantity_delta * fill_price) - fee
+        return FillEffect(side=side, fill_price=fill_price, notional=notional,
+                          fee=fee, slippage_cost=slippage_cost,
+                          cash_delta=cash_delta)
+
+
 def apply_position_target(state: PortfolioState, *, target_exposure: Decimal,
                           reference_price: Decimal, timestamp: str,
                           execution_spec: ExecutionSpec,
@@ -357,17 +403,15 @@ def apply_position_target(state: PortfolioState, *, target_exposure: Decimal,
         delta = target_quantity - state.quantity
         if delta == 0:
             return state, None
-        if delta > 0:
-            fill_price = reference_price * (_ONE + execution_spec.slippage_rate)
-            side = "buy"
-        else:
-            fill_price = reference_price * (_ONE - execution_spec.slippage_rate)
-            side = "sell"
-        notional = abs(delta) * fill_price
-        fee = notional * execution_spec.fee_rate
-        slippage_cost = abs(delta) * abs(fill_price - reference_price)
-        cash = state.cash - delta * fill_price
-        cash -= fee
+        effect = apply_quantity_delta(quantity_delta=delta,
+                                      reference_price=reference_price,
+                                      execution_spec=execution_spec)
+        fill_price = effect.fill_price
+        side = effect.side
+        notional = effect.notional
+        fee = effect.fee
+        slippage_cost = effect.slippage_cost
+        cash = state.cash + effect.cash_delta
         quantity = state.quantity + delta
         moved = PortfolioState(
             cash=cash, quantity=quantity,

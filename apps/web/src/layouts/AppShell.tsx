@@ -15,6 +15,7 @@ const NAV = [
   { to: '/risk', label: 'Risk', icon: '⚖' },
   { to: '/paper', label: 'Paper', icon: '◐' },
   { to: '/backtests', label: 'Backtests', icon: '◷' },
+  { to: '/portfolio', label: 'Portfolio', icon: '◈' },
   { to: '/research', label: 'Research', icon: '⌕' },
   { to: '/system', label: 'System', icon: '⚙' },
   { to: '/settings', label: 'Settings', icon: '⚒' },

@@ -41,6 +41,8 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/ops/settings': fixtures.opsSettings,
     '/api/v1/instruments': fixtures.instruments,
     '/api/v1/providers': fixtures.providers,
+    '/api/v1/portfolio': fixtures.portfolioEmpty,
+    '/api/v1/portfolio/backtests': fixtures.portfolioBacktestsEmpty,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -674,6 +676,61 @@ describe('identity boundaries', () => {
       // never a spelling the frontend invented
       expect(calls.some((path) => /markets\/(eth-usd|ETHUSD)/.test(path))).toBe(false);
     });
+  });
+});
+
+describe('portfolio', () => {
+  it('is reachable from the sidebar', async () => {
+    renderAt('/');
+    expect(await screen.findByRole('link', { name: /Portfolio/ })).toBeInTheDocument();
+  });
+
+  it('shows the frozen engine limits before any run exists', async () => {
+    renderAt('/portfolio');
+    expect(await screen.findByText('Portfolio engine')).toBeInTheDocument();
+    expect(screen.getByText('READY')).toBeInTheDocument();
+    expect(screen.getByText('proportional-gross-cap-v1')).toBeInTheDocument();
+    expect(screen.getByText('single-pretrade-equity-batch-v1')).toBeInTheDocument();
+    expect(screen.getByText('shared-cash-v1')).toBeInTheDocument();
+  });
+
+  it('states the caps as percentages of NAV', async () => {
+    renderAt('/portfolio');
+    await screen.findByText('Portfolio engine');
+    expect(screen.getByText('25.0000 %')).toBeInTheDocument();
+    expect(screen.getAllByText('50.0000 %').length).toBe(2);
+  });
+
+  it('invents no figures when nothing has been simulated', async () => {
+    const { container } = renderAt('/portfolio');
+    expect(
+      await screen.findByText('No persisted portfolio run available'),
+    ).toBeInTheDocument();
+    // no equity, return or drawdown may appear before a run exists
+    expect(screen.queryByText(/Final equity/)).toBeNull();
+    expect(screen.queryByText(/Max drawdown/)).toBeNull();
+    expect(container.textContent).not.toMatch(/Sharpe/);
+  });
+
+  it('declares shared capital and no confirmed edge', async () => {
+    renderAt('/portfolio');
+    await screen.findByText('Portfolio engine');
+    expect(screen.getByText('SHARED CAPITAL')).toBeInTheDocument();
+    expect(screen.getByText('SYNTHETIC EXECUTION COSTS')).toBeInTheDocument();
+    expect(screen.getByText('NO CONFIRMED EDGE')).toBeInTheDocument();
+  });
+
+  it('says the limits were not optimised', async () => {
+    renderAt('/portfolio');
+    await screen.findByText('Portfolio engine');
+    expect(screen.getByText('Optimized')).toBeInTheDocument();
+    expect(screen.getByText(/not a fitted optimum/)).toBeInTheDocument();
+  });
+
+  it('stays usable when the portfolio endpoints fail', async () => {
+    renderAt('/portfolio', { '/api/v1/portfolio': new Error('portfolio down') });
+    expect(await screen.findByText('Could not load')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Overview/ })).toBeInTheDocument();
   });
 });
 

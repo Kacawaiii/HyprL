@@ -60,6 +60,18 @@ _SSE_KINDS = {
 }
 
 
+def _query_first(query: dict, name: str, default=None):
+    """First value of a query parameter, for handlers outside build_routes.
+
+    build_routes keeps its own closure of the same shape; this one exists so
+    the path dispatcher does not reach into it. Calling that closure from here
+    raised NameError on every request, which the handler turned into a 500 --
+    including for perfectly valid paths.
+    """
+    values = query.get(name)
+    return values[0] if values else default
+
+
 def build_routes(service: AppService):
     """The complete route table. Read-only by construction."""
 
@@ -129,6 +141,8 @@ def build_routes(service: AppService):
         "/api/v1/ops/storage": lambda query: service.ops_storage(),
         "/api/v1/ops/settings": lambda query: service.ops_settings(),
         # The registry of markets and where their bars come from.
+        "/api/v1/portfolio": lambda query: service.portfolio(),
+        "/api/v1/portfolio/backtests": lambda query: service.portfolio_backtests(),
         "/api/v1/instruments": lambda query: service.instruments(),
         "/api/v1/providers": lambda query: service.providers(),
     }, markets_detail, chart, backtest_sub, paper_sub
@@ -187,6 +201,21 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/backtests/{version}/{product}/{equity|fills}
         if len(parts) == 6 and parts[:3] == ["api", "v1", "backtests"]:
             return backtest_sub(parts[3], parts[4], parts[5], query)
+        # /api/v1/portfolio/backtests/{version}[/{leaf}]
+        if len(parts) == 5 and parts[:4] == ["api", "v1", "portfolio", "backtests"]:
+            return self.service.portfolio_backtest_detail(parts[4])
+        if len(parts) == 6 and parts[:4] == ["api", "v1", "portfolio", "backtests"]:
+            leaf = parts[5]
+            if leaf == "equity":
+                return self.service.portfolio_equity(
+                    parts[4], max_points=_query_first(query, "max_points"))
+            if leaf == "fills":
+                return self.service.portfolio_fills(
+                    parts[4], limit=_query_first(query, "limit"),
+                    cursor=_query_first(query, "cursor"))
+            if leaf == "attribution":
+                return self.service.portfolio_attribution(parts[4])
+            raise AppApiError("no such endpoint")
         # /api/v1/instruments/{instrument_id} -- a canonical id contains a
         # colon, which a client may send raw or percent-encoded. Decoded here
         # and nowhere else: these values are looked up in a closed registry

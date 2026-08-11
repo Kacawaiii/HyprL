@@ -1056,3 +1056,188 @@ class AppService:
             INSTRUMENTS_V1.resolve(item).payload()
             for item in provider.supported_instruments]
         return payload
+
+    # --- portfolio (read-only) -------------------------------------------
+
+    PORTFOLIO_VERSIONS = ("v1",)
+
+    def _portfolio_manifest(self):
+        return self._read_json("portfolio_backtest_v1/manifest.json")
+
+    def _portfolio_result(self, version: str):
+        from scripts.trading_lab.app_api.contracts import NotFoundError
+
+        if version not in self.PORTFOLIO_VERSIONS:
+            raise NotFoundError(
+                f"unknown portfolio backtest version {version!r}; supported: "
+                f"{list(self.PORTFOLIO_VERSIONS)}")
+        manifest = self._portfolio_manifest()
+        if manifest is None:
+            raise NotFoundError("no portfolio backtest has been run")
+        return manifest, self._read_json(
+            f"portfolio_backtest_v1/{manifest['result_file']}")
+
+    def _portfolio_contract(self) -> dict:
+        """The frozen allocation rules, available with or without a result."""
+        from scripts.trading_lab.portfolio import (
+            PORTFOLIO_LIMIT_V1_IS_NOT_OPTIMIZED, PORTFOLIO_SPEC_V1)
+
+        spec = PORTFOLIO_SPEC_V1
+        return {
+            "protocol": spec.protocol_version,
+            "portfolio_spec_hash": spec.portfolio_spec_hash,
+            "frozen": True,
+            "optimized": not PORTFOLIO_LIMIT_V1_IS_NOT_OPTIMIZED,
+            "base_currency": spec.base_currency,
+            "initial_equity": str(spec.initial_equity),
+            "max_instrument_abs_exposure": str(spec.max_instrument_abs_exposure),
+            "max_gross_exposure": str(spec.max_gross_exposure),
+            "max_net_abs_exposure": str(spec.max_net_abs_exposure),
+            "allocation_rule": spec.allocation_rule,
+            "simultaneous_rebalance_rule": spec.simultaneous_rebalance_rule,
+            "cash_model": spec.cash_model,
+            "short_model": spec.short_model,
+            "gross_cap_rationale":
+                "two instruments at RiskSpec V1's 25 % each; the structure the "
+                "existing rules already permit, not a fitted optimum",
+        }
+
+    def portfolio(self) -> dict:
+        """The engine's contract, and whether any run exists yet."""
+        manifest = self._portfolio_manifest()
+        return {
+            "api_version": APP_API_VERSION,
+            "available": manifest is not None,
+            "reason": None if manifest else "no portfolio backtest has been run",
+            "portfolio": self._portfolio_contract(),
+            "instruments": list(SUPPORTED_PRODUCTS),
+            "shared_capital": True,
+            "real_money": False,
+            "broker_connected": False,
+            "commercial_edge_established": False,
+        }
+
+    def portfolio_backtests(self) -> dict:
+        manifest = self._portfolio_manifest()
+        if manifest is None:
+            return {"api_version": APP_API_VERSION, "available": False,
+                    "reason": "no portfolio backtest has been run",
+                    "portfolio": self._portfolio_contract(), "runs": []}
+        return {
+            "api_version": APP_API_VERSION,
+            "available": True,
+            "reason": None,
+            "portfolio": self._portfolio_contract(),
+            "runs": [{
+                "version": "v1",
+                "protocol": manifest["protocol_version"],
+                "experiment_type": manifest["experiment_type"],
+                "confirmatory": manifest["confirmatory"],
+                "instruments": manifest["instruments"],
+                "result_hash": manifest["result_hash"],
+                "portfolio_backtest_spec_hash":
+                    manifest["portfolio_backtest_spec_hash"],
+            }],
+        }
+
+    def portfolio_backtest_detail(self, version: str) -> dict:
+        manifest, result = self._portfolio_result(version)
+        return {
+            "api_version": APP_API_VERSION,
+            "version": version,
+            "available": True,
+            "portfolio": self._portfolio_contract(),
+            "instruments": manifest["instruments"],
+            "experiment_type": result["experiment_type"],
+            "confirmatory": result["confirmatory"],
+            "live_execution": result["live_execution"],
+            "cost_model": result["cost_model"],
+            "commercial_edge_established": False,
+            "metrics": result["metrics"],
+            "gross_metrics": result["gross_metrics"],
+            "result_hash": manifest["result_hash"],
+            "source": manifest.get("source", {}),
+            "alignment": manifest.get("alignment", {}),
+            "equity_points": len(result["equity_curve"]),
+            "fill_count": len(result["fills"]),
+        }
+
+    def portfolio_equity(self, version: str, *, max_points=None) -> dict:
+        """Downsampled by buckets that keep their own extrema, never averaged.
+
+        A mean would erase the trough of a drawdown, which is the one point on
+        an equity curve nobody may hide.
+        """
+        manifest, result = self._portfolio_result(version)
+        points = require_limit(max_points, default=DEFAULT_EQUITY_POINTS,
+                               maximum=MAX_EQUITY_POINTS)
+        curve = result["equity_curve"]
+        if len(curve) <= points:
+            kept, aggregation = curve, "none"
+        else:
+            # The same bucket-extrema rule the single-product curve uses: an
+            # average would smooth away the trough of a drawdown, which is the
+            # one point a reader is looking for.
+            buckets = max(1, len(curve) // max(1, points // 4))
+            kept, aggregation = [], "bucket-extrema"
+            for start in range(0, len(curve), buckets):
+                chunk = curve[start:start + buckets]
+                lowest = min(chunk, key=lambda row: Decimal(row["equity"]))
+                highest = max(chunk, key=lambda row: Decimal(row["equity"]))
+                keep = {id(chunk[0]): chunk[0], id(lowest): lowest,
+                        id(highest): highest, id(chunk[-1]): chunk[-1]}
+                kept.extend(sorted(keep.values(), key=lambda row: row["timestamp"]))
+        return {
+            "api_version": APP_API_VERSION,
+            "version": version,
+            "series": [{"timestamp": row["timestamp"], "equity": row["equity"],
+                        "gross_exposure": row["gross_exposure"],
+                        "net_exposure": row["net_exposure"]} for row in kept],
+            "metadata": {
+                "source_count": len(curve), "returned_count": len(kept),
+                "max_points": points, "aggregation": aggregation,
+                "aggregated": aggregation != "none",
+                "initial_equity": result["metrics"]["initial_equity"],
+            },
+        }
+
+    def portfolio_fills(self, version: str, *, limit=None, cursor=None) -> dict:
+        manifest, result = self._portfolio_result(version)
+        size = require_limit(limit, default=DEFAULT_FILL_PAGE, maximum=MAX_FILL_PAGE)
+        fills = result["fills"]
+        start = 0
+        query = {"limit": size}
+        if cursor:
+            after = decode_cursor(cursor, endpoint="portfolio_fills",
+                                  product=version, query=query)
+            start = next((index for index, fill in enumerate(fills)
+                          if fill["timestamp"] > after), len(fills))
+        page = fills[start:start + size]
+        has_more = start + size < len(fills)
+        return {
+            "api_version": APP_API_VERSION,
+            "version": version,
+            "fills": page,
+            "page": {
+                "returned": len(page), "total": len(fills), "has_more": has_more,
+                "next_cursor": encode_cursor(
+                    endpoint="portfolio_fills", product=version,
+                    last_timestamp=page[-1]["timestamp"], query=query)
+                if has_more and page else None,
+            },
+        }
+
+    def portfolio_attribution(self, version: str) -> dict:
+        """Per-instrument contribution. Bounded by the registered instruments."""
+        manifest, result = self._portfolio_result(version)
+        return {
+            "api_version": APP_API_VERSION,
+            "version": version,
+            "attribution": result["attribution"],
+            "reconciliation": manifest.get("reconciliation", {}),
+            "metrics": {
+                "net_pnl": result["metrics"]["net_pnl"],
+                "gross_pnl": result["metrics"]["gross_pnl"],
+                "total_execution_cost": result["metrics"]["total_execution_cost"],
+            },
+        }

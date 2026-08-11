@@ -403,3 +403,46 @@ def test_a_provider_route_identifier_is_decoded_exactly_once(server):
     assert _get(f"{server}/api/v1/providers/coinbase-public-v1")[0] == 200
     # "%2D" decodes once to "-", so a double decode would resolve this
     assert _get(f"{server}/api/v1/providers/coinbase%252Dpublic%252Dv1")[0] == 404
+
+
+# --- portfolio (Phase 6B) -------------------------------------------------
+
+
+def test_the_portfolio_contract_is_served_with_or_without_a_run(server):
+    status, _, body = _get(f"{server}/api/v1/portfolio")
+    assert status == 200
+    payload = json.loads(body)
+    contract = payload["portfolio"]
+    assert contract["allocation_rule"] == "proportional-gross-cap-v1"
+    assert contract["cash_model"] == "shared-cash-v1"
+    assert contract["optimized"] is False
+    assert contract["max_gross_exposure"] == "0.50"
+    assert payload["shared_capital"] is True
+    assert payload["real_money"] is False
+    assert payload["commercial_edge_established"] is False
+
+
+def test_the_portfolio_summary_stays_far_inside_its_budget(server):
+    """A summary a page renders first must not be a megabyte."""
+    for path in ("/api/v1/portfolio", "/api/v1/portfolio/backtests"):
+        status, headers, body = _get(f"{server}{path}")
+        assert status == 200, path
+        assert len(body) < 20 * 1024, f"{path} returned {len(body)} bytes"
+        assert headers["Cache-Control"] == "no-store"
+
+
+def test_an_unknown_portfolio_version_is_a_404(server):
+    for path in ("/api/v1/portfolio/backtests/v9",
+                 "/api/v1/portfolio/backtests/v9/equity",
+                 "/api/v1/portfolio/backtests/v9/attribution"):
+        assert _get(f"{server}{path}")[0] == 404, path
+
+
+def test_an_unknown_portfolio_leaf_is_refused(server):
+    status, _, _ = _get(f"{server}/api/v1/portfolio/backtests/v1/nonsense")
+    assert status in (400, 404)
+
+
+@pytest.mark.parametrize("verb", ["POST", "PUT", "PATCH", "DELETE"])
+def test_the_portfolio_surface_is_read_only(server, verb):
+    assert _get(f"{server}/api/v1/portfolio", method=verb)[0] == 405
