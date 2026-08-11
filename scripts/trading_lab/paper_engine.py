@@ -505,13 +505,18 @@ class PaperEngine:
                      "fill_count": state.fill_count})
 
     def _maybe_snapshot(self, product: str) -> None:
-        total = self.store.count(session_id=self.session_id)
-        if total % SNAPSHOT_EVERY_EVENTS:
-            return
+        # Measure the distance from this product's last snapshot rather than
+        # testing the running total for divisibility: a candle appends several
+        # events at once, so an exact multiple is never observed.
         events = self.store.latest_events(session_id=self.session_id, limit=1)
         if not events:
             return
         head = events[-1]
+        previous = self.store.latest_snapshot(
+            session_id=self.session_id, product=product)
+        since = head.event_id - (previous["last_event_id"] if previous else 0)
+        if since < SNAPSHOT_EVERY_EVENTS:
+            return
         self.store.write_snapshot(
             session_id=self.session_id, product=product, last_event_id=head.event_id,
             last_event_hash=head.event_hash, state=self._state[product].payload())

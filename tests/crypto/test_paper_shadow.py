@@ -377,6 +377,51 @@ def test_a_restart_restores_the_portfolio_exactly(trained, engine_module,
     assert restored.equity() == original.equity()
 
 
+def _calm_rows(count, *, start=GRID):
+    """A market too quiet to ever cross the signal threshold, so every candle
+    appends the same number of events."""
+    out = []
+    for index in range(count):
+        # enough movement to keep every feature alive, far too little to reach
+        # the signal threshold (25 bps of 20000 is 5 whole units)
+        close = (Decimal("20000") + Decimal(index) / 100
+                 + Decimal(index % 7) / 10 - Decimal(index % 3) / 10)
+        out.append({"bar_open_at": (start + HOUR * index).isoformat(),
+                    "open": str(close), "high": str(close + 1 + Decimal(index % 5) / 10),
+                    "low": str(close - 1 - Decimal(index % 4) / 10),
+                    "close": str(close), "volume": str(10 + index % 11)})
+    return out
+
+
+def test_a_long_session_without_fills_still_writes_snapshots(engine_module,
+                                                             model_module,
+                                                             store_module,
+                                                             tmp_path):
+    """A candle appends several events at once. When nothing fills, that stride
+    is constant, so a trigger testing the running total for divisibility can
+    step over every multiple and never snapshot at all."""
+    clock = FakeClock(datetime(2026, 8, 11, 3, tzinfo=timezone.utc))
+    every = engine_module.SNAPSHOT_EVERY_EVENTS
+    history = _calm_rows(400)
+    series = engine_module.series_from_rows(history, product="BTC-USD")
+    artifact = model_module.train_paper_model(series, product="BTC-USD")
+    model = model_module.load_paper_model(artifact)
+
+    store, engine = _engine(engine_module, store_module, tmp_path, model)
+    engine.seed_history("BTC-USD", history)
+    engine.start(now=clock.iso())
+    for row in _calm_rows(2 * every, start=GRID + HOUR * len(history)):
+        engine.ingest_candle("BTC-USD", row, now=clock.advance(HOUR))
+
+    types = [e.event_type for e in store.events(session_id="s1", limit=5000)]
+    assert "FILL_EXECUTED" not in types, "the calm market was supposed to stay flat"
+    assert store.count(session_id="s1") > 2 * every
+    snapshot = store.latest_snapshot(session_id="s1", product="BTC-USD")
+    assert snapshot is not None, "no snapshot after thousands of events"
+    head = store.latest_events(session_id="s1", limit=1)[-1]
+    assert head.event_id - snapshot["last_event_id"] < every
+
+
 # --- the embargo, inside the running engine --------------------------------
 
 

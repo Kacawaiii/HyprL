@@ -125,8 +125,11 @@ def command_start(arguments) -> int:
                          session_spec=session_spec)
 
     corpus = pathlib.Path(arguments.corpus)
+    seeded = {}
     for product in products:
-        engine.seed_history(product, _seed_history(corpus, product, arguments.warmup))
+        rows = _seed_history(corpus, product, arguments.warmup)
+        engine.seed_history(product, rows)
+        seeded[product] = rows[-1]["bar_open_at"] if rows else None
     engine.start(now=_iso(_now()))
     marker.write_text(json.dumps({
         "session_id": session_id, "products": list(products),
@@ -152,7 +155,11 @@ def command_start(arguments) -> int:
                 print(f"{product}: EMBARGOED — {state['reason']}")
                 continue
             try:
+                # Resume where the frozen corpus stops. Polling a fixed window
+                # back would either overlap the seeded history or leave a hole,
+                # and a hole restarts every indicator's warm-up.
                 rows = poll_closed_candles(product, now=_now(),
+                                           since=seeded.get(product),
                                            max_candles=arguments.max_candles)
             except ProtectedHoldoutError as error:
                 print(f"{product}: EMBARGOED — {error}")
