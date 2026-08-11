@@ -450,3 +450,51 @@ def test_doctor_survives_a_core_install_without_the_model_stack(layout,
     # and the checks that do not need the extra still ran
     assert degraded["signal_spec"]["status"] == doctor.PASS
     assert degraded["protected_holdout"]["status"] == doctor.PASS
+
+
+# --- the shared portfolio store (Phase 6C) ---------------------------------
+
+
+def test_an_export_carries_the_portfolio_store_and_verifies_its_chain(
+        seeded, tmp_path):
+    from scripts.trading_lab.ops import runtime_export
+    from scripts.trading_lab.paper_portfolio_store import PaperPortfolioStore
+
+    layout, _ = seeded
+    portfolio = PaperPortfolioStore(layout.paper_portfolio_database)
+    portfolio.register_session(session_id="p1", session_spec={"probe": True},
+                               session_spec_hash="a" * 64,
+                               started_at="2026-01-01T00:00:00Z")
+    for index in range(5):
+        portfolio.append(session_id="p1", event_type="PORTFOLIO_SNAPSHOT",
+                         event_at=f"2026-01-01T0{index}:00:00Z",
+                         natural_key=f"batch-{index}", payload={"i": index})
+
+    report = runtime_export.export_runtime(
+        layout=layout, destination=tmp_path / "both.zip",
+        model_dir=REPO_ROOT / "data/models/paper_v1")
+    content = report["manifest"]["content"]
+    assert content["portfolio_database"] == "paper_portfolio_v1.sqlite"
+    assert content["portfolio_session"]["event_chain_verified"] is True
+    assert content["portfolio_session"]["events"] == 5
+    assert content["store_type"] == "legacy_individual_accounts"
+    assert content["specs"]["portfolio_spec_hash"]
+
+    with zipfile.ZipFile(tmp_path / "both.zip") as archive:
+        names = set(archive.namelist())
+    assert "paper_portfolio_v1.sqlite" in names
+    assert "paper_v1.sqlite" in names, "the legacy log must still be exported"
+    assert runtime_export.verify_export(tmp_path / "both.zip")["ok"] is True
+
+
+def test_an_export_without_a_portfolio_store_still_works(seeded, tmp_path):
+    """The legacy runtime alone must remain exportable."""
+    from scripts.trading_lab.ops import runtime_export
+
+    layout, _ = seeded
+    assert not layout.paper_portfolio_database.is_file()
+    report = runtime_export.export_runtime(
+        layout=layout, destination=tmp_path / "legacy.zip",
+        model_dir=REPO_ROOT / "data/models/paper_v1")
+    assert "portfolio_database" not in report["manifest"]["content"]
+    assert runtime_export.verify_export(tmp_path / "legacy.zip")["ok"] is True

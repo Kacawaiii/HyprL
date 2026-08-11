@@ -188,6 +188,7 @@ def _integrity_checks(layout) -> list:
     else:
         checks.append(Check("latest_snapshot", PASS, "snapshot matches the log"))
 
+    checks.extend(_portfolio_runtime_checks(layout))
     pressure = recovery_module.snapshot_pressure(store)
     behind = [product for product, item in pressure.get("products", {}).items()
               if item["events_since_last_snapshot"]
@@ -196,6 +197,50 @@ def _integrity_checks(layout) -> list:
         "snapshot_cadence", not behind,
         "snapshots are keeping up",
         f"snapshots are overdue for {behind}", warn_only=True))
+    return checks
+
+
+def _portfolio_runtime_checks(layout) -> list:
+    """The shared portfolio's own log, separate from the legacy 5D one."""
+    from scripts.trading_lab.ops.health import ERROR
+
+    if not layout.paper_portfolio_database.is_file():
+        return [Check("paper_portfolio_runtime", WARN,
+                      "no shared portfolio session recorded yet")]
+    try:
+        from scripts.trading_lab.paper_portfolio_store import PaperPortfolioStore
+        store = PaperPortfolioStore(layout.paper_portfolio_database)
+        sessions = store.sessions()
+    except Exception as error:
+        return [Check("paper_portfolio_runtime", FAIL,
+                      f"the portfolio runtime cannot be opened: {error}")]
+    if not sessions:
+        return [Check("paper_portfolio_runtime", WARN,
+                      "portfolio database exists but holds no session")]
+    checks = [Check("paper_portfolio_runtime", PASS,
+                    f"{len(sessions)} portfolio session(s)")]
+    latest = sessions[-1]
+    try:
+        chain = store.verify_chain(session_id=latest)
+        checks.append(Check("paper_portfolio_chain", PASS,
+                            f"{chain['events']} events verified"))
+    except Exception as error:
+        checks.append(Check("paper_portfolio_chain", FAIL,
+                            f"the portfolio audit trail cannot be trusted: {error}"))
+        return checks
+    try:
+        snapshot = store.latest_snapshot(session_id=latest)
+    except Exception as error:
+        checks.append(Check("paper_portfolio_snapshot", FAIL, str(error)))
+        return checks
+    if snapshot is None:
+        checks.append(Check("paper_portfolio_snapshot", WARN,
+                            "no portfolio snapshot written yet"))
+    else:
+        head = store.latest_events(session_id=latest, limit=1)[-1]
+        checks.append(Check("paper_portfolio_snapshot", PASS,
+                            f"{head.event_id - snapshot['last_event_id']} events "
+                            "since the last snapshot"))
     return checks
 
 
@@ -221,6 +266,13 @@ def _contract_checks() -> list:
         checks.append(_check(name, bool(value) and len(value) == 64,
                              f"{value[:12]}…", f"{name} has no usable hash"))
 
+    from scripts.trading_lab.portfolio import PORTFOLIO_SPEC_V1
+
+    checks.append(_check(
+        "portfolio_spec", len(PORTFOLIO_SPEC_V1.portfolio_spec_hash) == 64,
+        f"{PORTFOLIO_SPEC_V1.portfolio_spec_hash[:12]}… "
+        f"gross cap {PORTFOLIO_SPEC_V1.max_gross_exposure}",
+        "the portfolio specification has no usable hash"))
     checks.append(_check(
         "protected_holdout",
         PROTECTED_WINDOW_V1.holdout_hash and not PROTECTED_WINDOW_V1.observed,

@@ -262,19 +262,21 @@ def command_doctor(arguments) -> int:
 
 
 def command_paper(arguments) -> int:
-    """Delegate to the Phase 5D control, unchanged.
+    """Shadow trading control. Since Phase 6C this is the shared portfolio.
 
-    Wrapping rather than reimplementing: the shadow CLI carries the embargo
-    behaviour, and a second copy of that logic is a second place for it to be
-    wrong.
+    Wrapping rather than reimplementing: the portfolio CLI carries the embargo
+    behaviour and the batching rules, and a second copy of either is a second
+    place for it to be wrong.
+
+    The Phase 5D per-product runtime is no longer started from here. Its
+    database stays readable and exportable -- two independent accounts are not
+    the history of a shared portfolio, so they are kept apart rather than
+    merged.
     """
-    from scripts.trading_lab import paper_shadow_cli
+    from scripts.trading_lab import paper_portfolio_cli
 
     forwarded = [arguments.paper_command, *arguments.rest]
-    if arguments.paper_command == "restart":
-        paper_shadow_cli.main(["stop"])
-        forwarded = ["start", *arguments.rest]
-    return paper_shadow_cli.main(forwarded)
+    return paper_portfolio_cli.main(forwarded)
 
 
 def _store(layout):
@@ -285,6 +287,32 @@ def _store(layout):
 
 
 def _paper_status(layout) -> dict:
+    """The shared portfolio, plus a pointer to the legacy per-product log."""
+    from scripts.trading_lab.portfolio import PORTFOLIO_SPEC_V1
+
+    marker = layout.paper_portfolio_session_marker
+    active = None
+    if marker.is_file():
+        try:
+            active = json.loads(marker.read_text())
+        except (OSError, ValueError):
+            active = None
+    payload = {"mode": "SHARED_PORTFOLIO", "active_session": active,
+               "portfolio_spec_hash": PORTFOLIO_SPEC_V1.portfolio_spec_hash,
+               "shared_capital": True, "shadow_mode": True,
+               "real_money": False, "broker_connected": False,
+               "legacy_individual_accounts_available":
+                   layout.paper_database.is_file()}
+    if layout.paper_portfolio_database.is_file():
+        from scripts.trading_lab.paper_portfolio_store import PaperPortfolioStore
+        store = PaperPortfolioStore(layout.paper_portfolio_database)
+        sessions = store.sessions()
+        payload["sessions"] = len(sessions)
+        payload["events"] = store.count(session_id=sessions[-1]) if sessions else 0
+    return payload
+
+
+def _legacy_paper_status(layout) -> dict:
     marker = layout.paper_session_marker
     active = None
     if marker.is_file():

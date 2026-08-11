@@ -30,6 +30,14 @@ DEFAULT_RUNTIME_ROOT = pathlib.Path("var/trading_lab")
 PAPER_DATABASE = "paper_v1.sqlite"
 PAPER_SESSION_MARKER = "paper_session.json"
 
+# Phase 6C's shared portfolio keeps its own database. The 5D log records two
+# independent single-product accounts and is hash-chained; migrating it in
+# place would mean rewriting payloads whose hashes exist so they cannot be
+# rewritten, and the result would verify while describing a history that never
+# happened -- BTC and ETH never shared a dollar in those sessions.
+PAPER_PORTFOLIO_DATABASE = "paper_portfolio_v1.sqlite"
+PAPER_PORTFOLIO_SESSION_MARKER = "paper_portfolio_session.json"
+
 DIRECTORY_MODE = 0o700
 FILE_MODE = 0o600
 
@@ -77,6 +85,14 @@ class RuntimeLayout:
         return self.root / PAPER_SESSION_MARKER
 
     @property
+    def paper_portfolio_database(self) -> pathlib.Path:
+        return self.root / PAPER_PORTFOLIO_DATABASE
+
+    @property
+    def paper_portfolio_session_marker(self) -> pathlib.Path:
+        return self.root / PAPER_PORTFOLIO_SESSION_MARKER
+
+    @property
     def ops_database(self) -> pathlib.Path:
         """Health history and lifecycle state.
 
@@ -122,6 +138,8 @@ class RuntimeLayout:
             "directories": {
                 name: (self.root / name).is_dir() for name in SUBDIRECTORIES},
             "paper_database_present": self.paper_database.is_file(),
+            "paper_portfolio_database_present":
+                self.paper_portfolio_database.is_file(),
             "ops_database_present": self.ops_database.is_file(),
             "settings_present": self.settings_file.is_file(),
         }

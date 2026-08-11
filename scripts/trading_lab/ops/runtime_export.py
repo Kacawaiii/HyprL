@@ -33,6 +33,7 @@ EXPORT_SCHEMA_VERSION = "trading-lab.runtime-export.v1"
 MANIFEST_NAME = "manifest.json"
 CHECKSUM_NAME = "SHA256SUMS"
 DATABASE_NAME = "paper_v1.sqlite"
+PORTFOLIO_DATABASE_NAME = "paper_portfolio_v1.sqlite"
 
 # A local audit export of hourly candles is a few megabytes. The cap is three
 # orders of magnitude above that: generous for real data, fatal to a bomb.
@@ -84,6 +85,30 @@ def consistent_database_copy(source, destination) -> pathlib.Path:
     return destination
 
 
+def _portfolio_metadata(database: pathlib.Path) -> dict:
+    """The shared portfolio log's own chain, verified rather than assumed."""
+    from scripts.trading_lab.paper_portfolio_store import PaperPortfolioStore
+
+    store = PaperPortfolioStore(database)
+    sessions = store.sessions()
+    payload = {"store_type": "shared_portfolio",
+               "sessions": list(sessions), "session_count": len(sessions)}
+    if not sessions:
+        return payload
+    latest = sessions[-1]
+    chain = store.verify_chain(session_id=latest)
+    session = store.session(latest) or {}
+    payload.update({
+        "latest_session_id": latest,
+        "session_spec_hash": session.get("session_spec_hash"),
+        "events": chain.get("events"),
+        "event_chain_tip": chain.get("head_hash"),
+        "event_chain_verified": bool(chain.get("verified")),
+        "snapshots": store.snapshot_count(session_id=latest),
+    })
+    return payload
+
+
 def _session_metadata(database: pathlib.Path) -> dict:
     from scripts.trading_lab.paper_event_store import PaperEventStore
 
@@ -107,11 +132,13 @@ def _spec_hashes() -> dict:
     from scripts.trading_lab.economic_backtest import EXECUTION_SPEC_V1
     from scripts.trading_lab.paper_engine import PAPER_EXECUTION_SPEC_V1
     from scripts.trading_lab.paper_model import PAPER_MODEL_SPEC_V1
+    from scripts.trading_lab.portfolio import PORTFOLIO_SPEC_V1
     from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
     from scripts.trading_lab.risk_engine import RISK_SPEC_V1
     from scripts.trading_lab.signal_engine import SIGNAL_SPEC_V1
 
     return {
+        "portfolio_spec_hash": PORTFOLIO_SPEC_V1.portfolio_spec_hash,
         "signal_spec_hash": SIGNAL_SPEC_V1.spec_hash,
         "risk_spec_hash": RISK_SPEC_V1.risk_spec_hash,
         "execution_spec_hash": EXECUTION_SPEC_V1.execution_spec_hash,
@@ -159,6 +186,7 @@ def build_manifest(*, database: pathlib.Path, layout, model_dir,
         "database_bytes": database.stat().st_size,
         "session": _session_metadata(database),
         "specs": _spec_hashes(),
+        "store_type": "legacy_individual_accounts",
         "models": _model_hashes(model_dir),
         "includes_logs": bool(include_logs),
         "real_money": False,
@@ -199,10 +227,24 @@ def export_runtime(*, layout, destination, model_dir="data/models/paper_v1",
     copy = staging / DATABASE_NAME
     try:
         consistent_database_copy(layout.paper_database, copy)
+        members = [(DATABASE_NAME, copy)]
+        portfolio_source = layout.paper_portfolio_database
+        portfolio_meta = None
+        if portfolio_source.is_file():
+            portfolio_copy = staging / PORTFOLIO_DATABASE_NAME
+            consistent_database_copy(portfolio_source, portfolio_copy)
+            portfolio_meta = _portfolio_metadata(portfolio_copy)
+            members.append((PORTFOLIO_DATABASE_NAME, portfolio_copy))
         manifest = build_manifest(database=copy, layout=layout,
                                   model_dir=model_dir, include_logs=include_logs)
-        members = [(DATABASE_NAME, copy),
-                   (MANIFEST_NAME,
+        if portfolio_meta is not None:
+            manifest["content"]["portfolio_session"] = portfolio_meta
+            manifest["content"]["portfolio_database"] = PORTFOLIO_DATABASE_NAME
+            manifest["content"]["portfolio_database_sha256"] = _sha256_file(
+                portfolio_copy)
+            manifest["content_hash"] = hashlib.sha256(
+                _canonical(manifest["content"]).encode("utf-8")).hexdigest()
+        members += [(MANIFEST_NAME,
                     (json.dumps(manifest, indent=2, sort_keys=True) + "\n")
                     .encode("utf-8"))]
         if include_logs:
