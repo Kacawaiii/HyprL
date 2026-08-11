@@ -153,3 +153,10 @@ apps/web/tsconfig.tsbuildinfo
 # would turn every restart into a repository diff.
 var/
 !var/.gitkeep
+
+# Phase 5D shadow models: two small canonical-JSON Ridge artifacts, frozen before
+# the first live observation. They are a versioned input to the shadow session,
+# not runtime state, so they are re-included explicitly like the market corpus.
+!data/models/
+!data/models/paper_v1/
+!data/models/paper_v1/**
