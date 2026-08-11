@@ -4,7 +4,7 @@ import type { BenchmarkSummary, CandlePage, ChartSeries, MarketsIndex, Overview,
 
 export const capabilities = {
   market_history: true, signal_engine: true, position_target: true,
-  economic_backtest: true, paper_trading: false, live_trading: false,
+  economic_backtest: true,  paper_trading: true, live_trading: false,
   realtime_stream: false,
 };
 
@@ -199,4 +199,101 @@ export const backtestFills = {
       equity_after: '99981.25' },
   ],
   page: { returned: 1, has_more: true, total: 412, next_cursor: 'abc' },
+};
+
+const embargo = (product: string, embargoed = false) => ({
+  product, protected_product: true, embargoed,
+  window_active: embargoed, window_elapsed: false,
+  start: '2026-09-01T00:00:00Z', end: '2026-11-30T23:00:00Z',
+  closes_at: '2026-12-01T00:00:00Z',
+  holdout_id: 'coinbase_confirmatory_2026q4', holdout_hash: 'h'.repeat(64),
+  observed: false,
+  reason: embargoed
+    ? 'paper trading for ' + product + ' is disabled to preserve the confirmatory research holdout 2026-09-01T00:00:00Z..2026-11-30T23:00:00Z'
+    : 'paper trading for ' + product + ' is allowed until the embargo boundary at 2026-09-01T00:00:00Z',
+});
+
+const paperExecution = {
+  spec_hash: 'x'.repeat(64), fee_rate: '0.0010', slippage_rate: '0.0005',
+  initial_equity: '100000', currency: 'USD',
+  fill_price_policy: 'next-contiguous-bar-open-after-decision-v1',
+  fill_observation_policy: 'recorded-when-the-fill-bar-closes-v1',
+  terminal_liquidation: false, cost_model: 'synthetic',
+  differs_from_backtest: ['a live session never liquidates a terminal position'],
+};
+
+export const paperStopped = {
+  available: false, reason: 'no shadow session is running',
+  shadow_mode: true, real_money: false, broker_connected: false,
+  paper_model_spec_hash: 'm'.repeat(64), paper_model_optimized: false,
+  signal_spec_hash: 's'.repeat(64), risk_spec_hash: 'r'.repeat(64),
+  paper_execution: paperExecution,
+  protected_holdout: { holdout_id: 'coinbase_confirmatory_2026q4',
+    products: ['BTC-USD', 'ETH-USD'], start: '2026-09-01T00:00:00Z',
+    end: '2026-11-30T23:00:00Z', holdout_hash: 'h'.repeat(64), observed: false },
+  session: null, products: ['BTC-USD', 'ETH-USD'],
+  embargo: { 'BTC-USD': embargo('BTC-USD'), 'ETH-USD': embargo('ETH-USD') },
+};
+
+export const paperRunning = {
+  ...paperStopped, available: true, reason: null, events: 42,
+  session: { session_id: 'paper-20260811T031900Z',
+             products: ['BTC-USD', 'ETH-USD'], started_at: '2026-08-11T03:19:00+00:00' },
+};
+
+export const paperEmbargoed = {
+  ...paperRunning,
+  embargo: { 'BTC-USD': embargo('BTC-USD', true), 'ETH-USD': embargo('ETH-USD', true) },
+};
+
+export const paperProducts = {
+  products: [
+    {
+      product: 'BTC-USD', available: true, reason: null, status: 'RUNNING',
+      embargo: embargo('BTC-USD'),
+      last_candle: { bar_open_at: '2026-08-11T02:00:00+00:00', open: '64000',
+                     high: '64200', low: '63900', close: '64100', volume: '12.5' },
+      last_prediction: { prediction: '0.0031', bar_open_at: '2026-08-11T02:00:00+00:00',
+                         decision_available_at: '2026-08-11T03:00:00+00:00' },
+      last_signal: { direction: 'LONG', strength: '0.24' },
+      last_target: { target_exposure: '0.06', side: 'LONG' },
+      last_fill: { side: 'buy', fill_price: '64032.00', quantity_delta: '0.09' },
+      portfolio: { equity: '99871.20', position_quantity: '0.09',
+                   cumulative_fees: '64.03', cumulative_slippage_cost: '32.02',
+                   fill_count: '2' },
+      last_event_at: '2026-08-11T03:00:05+00:00', gap_count: 0,
+    },
+    {
+      product: 'ETH-USD', available: false,
+      reason: 'the session has produced no event for this product yet',
+      status: 'STARTING', embargo: embargo('ETH-USD'),
+      last_candle: null, last_prediction: null, last_signal: null,
+      last_target: null, last_fill: null, portfolio: null,
+      last_event_at: null, gap_count: 0,
+    },
+  ],
+};
+
+export const paperEvents = {
+  available: true, reason: null,
+  events: [
+    { event_id: 1, event_type: 'CANDLE_INGESTED', event_at: '2026-08-11T03:00:01+00:00',
+      product: 'BTC-USD', natural_key: '2026-08-11T02:00:00+00:00', payload: {},
+      event_hash: 'e'.repeat(64) },
+    { event_id: 2, event_type: 'PREDICTION_CREATED',
+      event_at: '2026-08-11T03:00:02+00:00', product: 'BTC-USD',
+      natural_key: '2026-08-11T02:00:00+00:00', payload: {}, event_hash: 'f'.repeat(64) },
+  ],
+  page: { returned: 2, last_event_id: 2 },
+};
+
+export const paperEquity = {
+  available: true, reason: null, product: 'BTC-USD',
+  series: [
+    { timestamp: '2026-08-11T01:00:00+00:00', equity: '100000',
+      position_quantity: '0', cumulative_fees: '0' },
+    { timestamp: '2026-08-11T02:00:00+00:00', equity: '99871.20',
+      position_quantity: '0.09', cumulative_fees: '64.03' },
+  ],
+  metadata: { returned_count: 2, source_count: 2, max_points: 500 },
 };

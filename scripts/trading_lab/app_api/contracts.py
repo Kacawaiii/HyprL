@@ -36,6 +36,16 @@ DEFAULT_FILL_PAGE = 100
 MAX_FILL_PAGE = 1_000
 ECONOMIC_BACKTEST_VERSIONS = ("v1",)
 
+# Shadow-session views. The event feed is the one thing that can grow without
+# bound, so it is paged like everything else and replayed only in a tail.
+DEFAULT_PAPER_EVENTS = 100
+MAX_PAPER_EVENTS = 1_000
+DEFAULT_PAPER_EQUITY_POINTS = 500
+MAX_PAPER_EQUITY_POINTS = 2_000
+MAX_SSE_REPLAY_EVENTS = 1_000
+PAPER_RUNTIME_DIR = "var/trading_lab"
+PAPER_DATABASE = "paper_v1.sqlite"
+
 SUPPORTED_PRODUCTS = ("BTC-USD", "ETH-USD")
 SUPPORTED_TIMEFRAME = "1h"
 
@@ -46,7 +56,7 @@ CAPABILITIES = {
     "signal_engine": True,
     "position_target": True,
     "economic_backtest": True,
-    "paper_trading": False,
+    "paper_trading": True,
     "live_trading": False,
     "realtime_stream": False,
 }

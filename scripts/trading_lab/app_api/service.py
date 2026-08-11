@@ -21,10 +21,16 @@ from scripts.trading_lab.app_api.contracts import (
     DEFAULT_CHART_POINTS,
     DEFAULT_EQUITY_POINTS,
     DEFAULT_FILL_PAGE,
+    DEFAULT_PAPER_EQUITY_POINTS,
+    DEFAULT_PAPER_EVENTS,
     ECONOMIC_BACKTEST_VERSIONS,
     MAX_CHART_POINTS,
     MAX_EQUITY_POINTS,
     MAX_FILL_PAGE,
+    MAX_PAPER_EQUITY_POINTS,
+    MAX_PAPER_EVENTS,
+    PAPER_DATABASE,
+    PAPER_RUNTIME_DIR,
     SUPPORTED_PRODUCTS,
     SUPPORTED_TIMEFRAME,
     AppApiError,
@@ -522,6 +528,219 @@ class AppService:
                 if has_more and page else None,
             },
         }
+
+    # --- shadow trading ---------------------------------------------------
+
+    def _paper_store(self):
+        """The runtime log, if a session has ever written one. Read-only."""
+        from scripts.trading_lab.paper_event_store import PaperEventStore
+        path = pathlib.Path(PAPER_RUNTIME_DIR) / PAPER_DATABASE
+        if not path.is_file():
+            return None
+        return PaperEventStore(path)
+
+    def _paper_session(self):
+        marker = pathlib.Path(PAPER_RUNTIME_DIR) / "paper_session.json"
+        if not marker.is_file():
+            return None
+        try:
+            return json.loads(marker.read_text())
+        except (OSError, ValueError):
+            return None
+
+    def _paper_contract(self) -> dict:
+        from scripts.trading_lab.paper_engine import PAPER_EXECUTION_SPEC_V1
+        from scripts.trading_lab.paper_model import PAPER_MODEL_SPEC_V1
+        from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
+        execution = PAPER_EXECUTION_SPEC_V1
+        return {
+            "shadow_mode": True,
+            "real_money": False,
+            "broker_connected": False,
+            "paper_model_spec_hash": PAPER_MODEL_SPEC_V1.paper_model_spec_hash,
+            "paper_model_optimized": False,
+            "signal_spec_hash": SIGNAL_SPEC_V1.spec_hash,
+            "risk_spec_hash": RISK_SPEC_V1.risk_spec_hash,
+            "paper_execution": {
+                "spec_hash": execution.paper_execution_spec_hash,
+                "fee_rate": str(execution.fee_rate),
+                "slippage_rate": str(execution.slippage_rate),
+                "initial_equity": str(execution.initial_equity),
+                "currency": execution.currency,
+                "fill_price_policy": execution.fill_price_policy,
+                "fill_observation_policy": execution.fill_observation_policy,
+                "terminal_liquidation": execution.terminal_liquidation,
+                "cost_model": execution.cost_model,
+                "differs_from_backtest":
+                    execution.canonical()["differs_from_backtest"],
+            },
+            "protected_holdout": {
+                "holdout_id": PROTECTED_WINDOW_V1.holdout_id,
+                "products": list(PROTECTED_WINDOW_V1.products),
+                "start": PROTECTED_WINDOW_V1.start,
+                "end": PROTECTED_WINDOW_V1.end,
+                "holdout_hash": PROTECTED_WINDOW_V1.holdout_hash,
+                "observed": PROTECTED_WINDOW_V1.observed,
+            },
+        }
+
+    def paper_status(self, *, now=None) -> dict:
+        from scripts.trading_lab.protected_holdout import embargo_state
+        session = self._paper_session()
+        store = self._paper_store()
+        moment = now or _iso(datetime.now(timezone.utc))
+        payload = dict(self._paper_contract())
+        payload.update({
+            "available": session is not None,
+            "reason": None if session else "no shadow session is running",
+            "session": session,
+            "products": list(SUPPORTED_PRODUCTS),
+            "embargo": {product: embargo_state(product, now=moment)
+                        for product in SUPPORTED_PRODUCTS},
+        })
+        if store is not None and session:
+            payload["events"] = store.count(session_id=session["session_id"])
+        return payload
+
+    def paper_products(self, *, now=None) -> dict:
+        return {"products": [self.paper_product(product, now=now)
+                             for product in SUPPORTED_PRODUCTS]}
+
+    def paper_product(self, product, *, now=None) -> dict:
+        from scripts.trading_lab.protected_holdout import embargo_state
+        product = self._require_product(product)
+        moment = now or _iso(datetime.now(timezone.utc))
+        session = self._paper_session()
+        store = self._paper_store()
+        state = {
+            "product": product,
+            "available": False,
+            "reason": "no shadow session is running",
+            "embargo": embargo_state(product, now=moment),
+            "status": "STOPPED",
+            "last_candle": None, "last_prediction": None, "last_signal": None,
+            "last_target": None, "last_fill": None, "portfolio": None,
+            "last_event_at": None, "gap_count": 0,
+        }
+        if store is None or not session:
+            return state
+        latest = store.latest_events(session_id=session["session_id"],
+                                     product=product, limit=200)
+        if not latest:
+            state["reason"] = "the session has produced no event for this product yet"
+            state["status"] = "STARTING"
+            return state
+
+        def _last(kind):
+            for event in reversed(latest):
+                if event.event_type == kind:
+                    return event
+            return None
+
+        candle = _last("CANDLE_INGESTED")
+        prediction = _last("PREDICTION_CREATED")
+        signal = _last("SIGNAL_CREATED")
+        target = _last("POSITION_TARGET_CREATED")
+        fill = _last("SIMULATED_FILL")
+        portfolio = _last("PORTFOLIO_SNAPSHOT")
+        embargoed = _last("PROTECTED_HOLDOUT_BOUNDARY_REACHED")
+        state.update({
+            "available": True, "reason": None,
+            "status": "EMBARGOED" if embargoed else "RUNNING",
+            "last_candle": candle.payload.get("bar") if candle else None,
+            "last_prediction": prediction.payload if prediction else None,
+            "last_signal": signal.payload.get("signal") if signal else None,
+            "last_target": target.payload.get("target") if target else None,
+            "last_fill": fill.payload.get("fill") if fill else None,
+            "portfolio": portfolio.payload if portfolio else None,
+            "last_event_at": latest[-1].event_at,
+            "gap_count": sum(1 for e in latest if e.event_type == "GAP_DETECTED"),
+        })
+        if candle and prediction:
+            state["pipeline_latency"] = {
+                "bar_open_at": candle.natural_key,
+                "ingested_at": candle.event_at,
+                "prediction_ready_at": prediction.event_at,
+            }
+        return state
+
+    def paper_events(self, product=None, *, limit=None, after_event_id=None) -> dict:
+        product = self._require_product(product) if product else None
+        size = require_limit(limit, default=DEFAULT_PAPER_EVENTS,
+                             maximum=MAX_PAPER_EVENTS)
+        session = self._paper_session()
+        store = self._paper_store()
+        if store is None or not session:
+            return {"available": False, "reason": "no shadow session is running",
+                    "events": [], "page": {"returned": 0, "last_event_id": None}}
+        if after_event_id is None:
+            events = store.latest_events(session_id=session["session_id"],
+                                         product=product, limit=size)
+        else:
+            events = store.events(session_id=session["session_id"], product=product,
+                                  after_event_id=int(after_event_id), limit=size)
+        return {
+            "available": True, "reason": None,
+            "events": [{"event_id": e.event_id, "event_type": e.event_type,
+                        "event_at": e.event_at, "product": e.product,
+                        "natural_key": e.natural_key, "payload": e.payload,
+                        "event_hash": e.event_hash} for e in events],
+            "page": {"returned": len(events),
+                     "last_event_id": events[-1].event_id if events else None},
+        }
+
+    def paper_equity(self, product, *, max_points=None) -> dict:
+        product = self._require_product(product)
+        points = require_limit(max_points, default=DEFAULT_PAPER_EQUITY_POINTS,
+                               maximum=MAX_PAPER_EQUITY_POINTS)
+        session = self._paper_session()
+        store = self._paper_store()
+        if store is None or not session:
+            return {"available": False, "reason": "no shadow session is running",
+                    "product": product, "series": [],
+                    "metadata": {"returned_count": 0, "source_count": 0}}
+        events = store.latest_events(session_id=session["session_id"], product=product,
+                                     limit=MAX_PAPER_EQUITY_POINTS)
+        series = [{"timestamp": e.payload["timestamp"], "equity": e.payload["equity"],
+                   "position_quantity": e.payload["position_quantity"],
+                   "cumulative_fees": e.payload["cumulative_fees"]}
+                  for e in events if e.event_type == "PORTFOLIO_SNAPSHOT"]
+        trimmed = series[-points:]
+        return {"available": True, "reason": None, "product": product,
+                "series": trimmed,
+                "metadata": {"returned_count": len(trimmed),
+                             "source_count": len(series), "max_points": points}}
+
+    def paper_fills(self, product, *, limit=None) -> dict:
+        product = self._require_product(product)
+        size = require_limit(limit, default=DEFAULT_PAPER_EVENTS,
+                             maximum=MAX_PAPER_EVENTS)
+        session = self._paper_session()
+        store = self._paper_store()
+        if store is None or not session:
+            return {"available": False, "reason": "no shadow session is running",
+                    "product": product, "fills": []}
+        events = store.latest_events(session_id=session["session_id"], product=product,
+                                     limit=MAX_PAPER_EVENTS)
+        fills = [dict(e.payload["fill"], decided_at=e.payload.get("decided_at"))
+                 for e in events if e.event_type == "SIMULATED_FILL"]
+        return {"available": True, "reason": None, "product": product,
+                "fills": fills[-size:]}
+
+    def paper_predictions(self, product, *, limit=None) -> dict:
+        product = self._require_product(product)
+        size = require_limit(limit, default=DEFAULT_PAPER_EVENTS,
+                             maximum=MAX_PAPER_EVENTS)
+        session = self._paper_session()
+        store = self._paper_store()
+        if store is None or not session:
+            return {"available": False, "reason": "no shadow session is running",
+                    "product": product, "predictions": []}
+        events = store.latest_events(session_id=session["session_id"], product=product,
+                                     limit=MAX_PAPER_EVENTS)
+        rows = [e.payload for e in events if e.event_type == "PREDICTION_CREATED"]
+        return {"available": True, "reason": None, "product": product,
+                "predictions": rows[-size:]}
 
     # --- research --------------------------------------------------------
 

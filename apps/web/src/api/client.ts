@@ -9,6 +9,7 @@
 
 import type {
   BacktestEquity, BacktestFillPage, BacktestSummary, BacktestsIndex,
+  PaperEquity, PaperEventsPage, PaperProductState, PaperStatus,
   BenchmarkDetail, BenchmarkSummary, CandlePage, ChartSeries, Health,
   MarketsIndex, Overview, RiskView, SignalsView,
 } from './types';
@@ -156,6 +157,22 @@ export const apiClient = {
   ) =>
     request<BacktestFillPage>(
       `/api/v1/backtests/${encodeURIComponent(version)}/${encodeURIComponent(product)}/fills${query({ ...options })}`,
+      signal,
+    ),
+  getPaperStatus: (signal?: AbortSignal) =>
+    request<PaperStatus>('/api/v1/paper/status', signal),
+  getPaperProducts: (signal?: AbortSignal) =>
+    request<{ products: PaperProductState[] }>('/api/v1/paper/products', signal),
+  getPaperEvents: (product?: string, limit?: number, signal?: AbortSignal) =>
+    request<PaperEventsPage>(
+      product
+        ? `/api/v1/paper/${encodeURIComponent(product)}/events${query({ limit })}`
+        : `/api/v1/paper/events${query({ limit })}`,
+      signal,
+    ),
+  getPaperEquity: (product: string, maxPoints?: number, signal?: AbortSignal) =>
+    request<PaperEquity>(
+      `/api/v1/paper/${encodeURIComponent(product)}/equity${query({ max_points: maxPoints })}`,
       signal,
     ),
   getBenchmarks: (signal?: AbortSignal) =>

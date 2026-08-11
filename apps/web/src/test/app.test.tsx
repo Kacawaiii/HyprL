@@ -31,6 +31,9 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/risk/targets': fixtures.risk,
     '/api/v1/research/benchmarks': { benchmarks: fixtures.overview.benchmarks },
     '/api/v1/backtests': fixtures.backtests,
+    '/api/v1/paper/status': fixtures.paperRunning,
+    '/api/v1/paper/products': fixtures.paperProducts,
+    '/api/v1/paper/events': fixtures.paperEvents,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -39,6 +42,9 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     // `/api/v1/markets`, and matching the index route first would hand the
     // chart a candle page.
     if (path.includes('/chart')) return jsonResponse(fixtures.chart);
+    if (path.includes('/paper/') && path.includes('/equity')) {
+      return jsonResponse(fixtures.paperEquity);
+    }
     if (path.includes('/backtests/') && path.includes('/equity')) {
       return jsonResponse(fixtures.backtestEquity);
     }
@@ -123,11 +129,12 @@ describe('overview', () => {
   it('reports unavailable capabilities instead of promising them', async () => {
     renderAt('/');
     await screen.findByRole('heading', { name: 'BTC-USD' });
-    // Overview badges three capabilities. Since Phase 5C the backtest engine
-    // exists, so exactly the two trading capabilities remain unavailable.
-    expect(screen.getAllByText('NOT AVAILABLE')).toHaveLength(2);
-    expect(screen.getAllByText('AVAILABLE').length).toBeGreaterThanOrEqual(1);
-    expect(fixtures.overview.capabilities.paper_trading).toBe(false);
+    // Overview badges three capabilities. Since Phase 5D the backtest engine and
+    // shadow trading both exist, so only LIVE trading remains unavailable --
+    // and that one must never quietly flip to available.
+    expect(screen.getAllByText('NOT AVAILABLE')).toHaveLength(1);
+    expect(screen.getAllByText('AVAILABLE').length).toBeGreaterThanOrEqual(2);
+    expect(fixtures.overview.capabilities.paper_trading).toBe(true);
     expect(fixtures.overview.capabilities.live_trading).toBe(false);
   });
 
@@ -259,5 +266,69 @@ describe('Backtests', () => {
     const eth = await screen.findByRole('button', { name: 'ETH-USD' });
     await userEvent.click(eth);
     await waitFor(() => expect(eth).toHaveAttribute('aria-pressed', 'true'));
+  });
+});
+
+describe('Paper', () => {
+  it('says shadow mode and no real money before any number', async () => {
+    renderAt('/paper');
+    expect(await screen.findByText('SHADOW MODE')).toBeInTheDocument();
+    expect(screen.getByText('NO REAL MONEY')).toBeInTheDocument();
+    expect(screen.getByText('NO BROKER')).toBeInTheDocument();
+    expect(screen.getByText('NO EXCHANGE ACCOUNT')).toBeInTheDocument();
+  });
+
+  it('offers no way to place or override a trade', async () => {
+    renderAt('/paper');
+    await screen.findByText('SHADOW MODE');
+    const buttons = screen.queryAllByRole('button');
+    for (const button of buttons) {
+      const label = (button.textContent ?? '').toLowerCase();
+      for (const word of ['buy', 'sell', 'execute', 'start', 'stop', 'order']) {
+        expect(label).not.toContain(word);
+      }
+    }
+  });
+
+  it('shows the holdout window and its current state', async () => {
+    renderAt('/paper');
+    expect(await screen.findByText('Protected research holdout')).toBeInTheDocument();
+    expect(screen.getByText('UNOBSERVED')).toBeInTheDocument();
+    expect(screen.getByText(/allowed until the embargo boundary/)).toBeInTheDocument();
+  });
+
+  it('says the embargo is active during the window', async () => {
+    vi.stubGlobal('fetch', mockApi({ '/api/v1/paper/status': fixtures.paperEmbargoed }));
+    renderAt('/paper');
+    expect(await screen.findByText('EMBARGO ACTIVE')).toBeInTheDocument();
+    expect(
+      screen.getByText(/disabled to preserve the confirmatory research holdout/),
+    ).toBeInTheDocument();
+  });
+
+  it('tells the reader the cockpit cannot start a session', async () => {
+    vi.stubGlobal('fetch', mockApi({ '/api/v1/paper/status': fixtures.paperStopped }));
+    renderAt('/paper');
+    expect(await screen.findByText('No shadow session is running')).toBeInTheDocument();
+    expect(screen.getByText(/paper_shadow.sh start/)).toBeInTheDocument();
+  });
+
+  it('renders backend paper state verbatim', async () => {
+    renderAt('/paper');
+    await screen.findByText('SHADOW MODE');
+    expect((await screen.findAllByText('BTC-USD')).length).toBeGreaterThan(0);
+    expect(screen.getByText('LONG')).toBeInTheDocument();
+    expect(screen.getByText('0.0031')).toBeInTheDocument();   // prediction, unmodified
+    expect(screen.getByText('0.06')).toBeInTheDocument();     // target exposure
+    expect(screen.getByText('99,871.2')).toBeInTheDocument(); // paper equity
+  });
+
+  it('states the paper fill latency instead of hiding it', async () => {
+    renderAt('/paper');
+    await screen.findByText('SHADOW MODE');
+    expect(
+      screen.getByText('recorded-when-the-fill-bar-closes-v1'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/never liquidates a terminal position/)).toBeInTheDocument();
   });
 });

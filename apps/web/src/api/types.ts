@@ -354,3 +354,93 @@ export interface BacktestFillPage {
   fills: BacktestFill[];
   page: { returned: number; has_more: boolean; total: number; next_cursor: string | null };
 }
+
+export interface EmbargoState {
+  product: string;
+  protected_product: boolean;
+  embargoed: boolean;
+  window_active: boolean;
+  window_elapsed: boolean;
+  start: string;
+  end: string;
+  closes_at: string;
+  holdout_id: string;
+  holdout_hash: string;
+  observed: boolean;
+  reason: string;
+}
+
+export interface PaperStatus {
+  available: boolean;
+  reason: string | null;
+  shadow_mode: boolean;
+  real_money: boolean;
+  broker_connected: boolean;
+  paper_model_spec_hash: string;
+  paper_model_optimized: boolean;
+  signal_spec_hash: string;
+  risk_spec_hash: string;
+  paper_execution: {
+    spec_hash: string;
+    fee_rate: string;
+    slippage_rate: string;
+    initial_equity: string;
+    currency: string;
+    fill_price_policy: string;
+    fill_observation_policy: string;
+    terminal_liquidation: boolean;
+    cost_model: string;
+    differs_from_backtest: string[];
+  };
+  protected_holdout: {
+    holdout_id: string; products: string[]; start: string; end: string;
+    holdout_hash: string; observed: boolean;
+  };
+  session: { session_id: string; products: string[]; started_at: string } | null;
+  products: string[];
+  embargo: Record<string, EmbargoState>;
+  events?: number;
+}
+
+export interface PaperProductState {
+  product: string;
+  available: boolean;
+  reason: string | null;
+  status: string;
+  embargo: EmbargoState;
+  last_candle: Record<string, string> | null;
+  last_prediction: Record<string, string> | null;
+  last_signal: Record<string, string> | null;
+  last_target: Record<string, string> | null;
+  last_fill: Record<string, string> | null;
+  portfolio: Record<string, string> | null;
+  last_event_at: string | null;
+  gap_count: number;
+  pipeline_latency?: Record<string, string>;
+}
+
+export interface PaperEvent {
+  event_id: number;
+  event_type: string;
+  event_at: string;
+  product: string | null;
+  natural_key: string | null;
+  payload: Record<string, unknown>;
+  event_hash: string;
+}
+
+export interface PaperEventsPage {
+  available: boolean;
+  reason: string | null;
+  events: PaperEvent[];
+  page: { returned: number; last_event_id: number | null };
+}
+
+export interface PaperEquity {
+  available: boolean;
+  reason: string | null;
+  product: string;
+  series: Array<{ timestamp: string; equity: string; position_quantity: string;
+                  cumulative_fees: string }>;
+  metadata: { returned_count: number; source_count: number; max_points?: number };
+}

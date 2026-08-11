@@ -97,7 +97,9 @@ def test_the_capabilities_tell_the_truth_about_what_does_not_exist(service):
     # Phase 5C added the engine, so the capability is now true. What remains
     # false is what genuinely does not exist: no paper account, no broker.
     assert capabilities["economic_backtest"] is True
-    assert capabilities["paper_trading"] is False
+    # Phase 5D added shadow trading, so paper is now true. What stays false is
+    # the only one that involves money: live trading.
+    assert capabilities["paper_trading"] is True
     assert capabilities["live_trading"] is False
     assert capabilities["realtime_stream"] is False
 
@@ -429,7 +431,7 @@ def test_the_backtest_index_is_small_and_honest_when_nothing_has_been_run(servic
 
 def test_the_backtest_capability_reflects_the_engine_not_a_run(service, contracts):
     assert contracts.CAPABILITIES["economic_backtest"] is True
-    assert contracts.CAPABILITIES["paper_trading"] is False
+    assert contracts.CAPABILITIES["paper_trading"] is True
     assert contracts.CAPABILITIES["live_trading"] is False
 
 
@@ -462,3 +464,78 @@ def test_the_backtest_routes_are_served_and_remain_read_only(live_api):
     with pytest.raises(urllib.error.HTTPError) as raised:
         urllib.request.urlopen(request, timeout=15)
     assert raised.value.code in (405, 501)
+
+
+# --- shadow trading (read-only) --------------------------------------------
+
+
+def test_the_paper_view_is_honest_when_no_session_is_running(service):
+    payload = service.paper_status(now="2026-08-11T03:30:00+00:00")
+    assert payload["shadow_mode"] is True
+    assert payload["real_money"] is False
+    assert payload["broker_connected"] is False
+    assert payload["paper_model_optimized"] is False
+    assert payload["paper_execution"]["cost_model"] == "synthetic"
+    assert payload["paper_execution"]["terminal_liquidation"] is False
+    assert payload["paper_execution"]["fill_observation_policy"] == \
+        "recorded-when-the-fill-bar-closes-v1"
+    if not payload["available"]:
+        assert payload["session"] is None
+        assert "no shadow session" in payload["reason"]
+    assert len(json.dumps(payload)) < 20_000
+
+
+def test_the_paper_view_reports_the_holdout_and_never_a_protected_price(service):
+    payload = service.paper_status(now="2026-10-01T00:00:00+00:00")
+    holdout = payload["protected_holdout"]
+    assert holdout["start"] == "2026-09-01T00:00:00Z"
+    assert holdout["end"] == "2026-11-30T23:00:00Z"
+    assert holdout["observed"] is False
+    for product in ("BTC-USD", "ETH-USD"):
+        state = payload["embargo"][product]
+        assert state["embargoed"] is True
+        assert "confirmatory research holdout" in state["reason"]
+    text = json.dumps(payload["embargo"])
+    for forbidden in ("open", "high", "low", "close", "volume"):
+        assert f'"{forbidden}"' not in text
+
+
+def test_the_paper_endpoints_are_bounded(service, contracts):
+    with pytest.raises(contracts.AppApiError):
+        service.paper_events("BTC-USD", limit=contracts.MAX_PAPER_EVENTS + 1)
+    with pytest.raises(contracts.AppApiError):
+        service.paper_equity("BTC-USD",
+                             max_points=contracts.MAX_PAPER_EQUITY_POINTS + 1)
+    with pytest.raises(contracts.AppApiError):
+        service.paper_product("DOGE-USD")
+    assert contracts.DEFAULT_PAPER_EVENTS <= contracts.MAX_PAPER_EVENTS
+    assert contracts.MAX_SSE_REPLAY_EVENTS == 1_000
+
+
+def test_the_paper_capability_says_shadow_yes_and_live_no(service, contracts):
+    capabilities = service.system()["capabilities"]
+    assert capabilities["paper_trading"] is True
+    assert capabilities["live_trading"] is False
+    assert contracts.CAPABILITIES["live_trading"] is False
+
+
+def test_the_api_offers_no_way_to_control_the_shadow_session(live_api):
+    """Control stays on the command line; the cockpit is read-only."""
+    status, payload, _ = _get(live_api, "/api/v1/paper/status")
+    assert status == 200 and payload["real_money"] is False
+    for path in ("/api/v1/paper/start", "/api/v1/paper/stop", "/api/v1/paper/order"):
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            _get(live_api, path)
+        assert raised.value.code in (400, 404)
+    for verb in ("POST", "PUT", "DELETE", "PATCH"):
+        request = urllib.request.Request(f"{live_api}/api/v1/paper/status", method=verb)
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=15)
+        assert raised.value.code in (405, 501)
+
+
+def test_the_event_stream_is_advertised_without_a_control_channel(live_api):
+    request = urllib.request.Request(f"{live_api}/api/v1/paper/events/stream",
+                                     method="HEAD")
+    with urllib.request.urlopen(request, timeout=15) as response:
+        assert response.status == 200
