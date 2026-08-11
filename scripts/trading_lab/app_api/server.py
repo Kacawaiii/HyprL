@@ -51,6 +51,16 @@ def build_routes(service: AppService):
             start=_first(query, "start"), end=_first(query, "end"),
             max_points=_first(query, "max_points"))
 
+    def backtest_sub(version, product, leaf, query):
+        if leaf == "equity":
+            return service.backtest_equity(
+                version, product, max_points=_first(query, "max_points"))
+        if leaf == "fills":
+            return service.backtest_fills(
+                version, product, limit=_first(query, "limit"),
+                cursor=_first(query, "cursor"))
+        raise AppApiError("no such endpoint")
+
     return {
         "/api/v1/health": lambda query: service.health(),
         "/api/v1/system": lambda query: service.system(),
@@ -62,7 +72,8 @@ def build_routes(service: AppService):
             limit=_first(query, "limit")),
         "/api/v1/research/benchmarks": lambda query: {
             "benchmarks": service.benchmark_summaries()},
-    }, markets_detail, chart
+        "/api/v1/backtests": lambda query: service.backtests(),
+    }, markets_detail, chart, backtest_sub
 
 
 class AppApiHandler(BaseHTTPRequestHandler):
@@ -96,7 +107,7 @@ class AppApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
 
     def _dispatch(self, path: str, query: dict):
-        routes, markets_detail, chart = build_routes(self.service)
+        routes, markets_detail, chart, backtest_sub = build_routes(self.service)
         if path in routes:
             return routes[path](query)
         parts = [segment for segment in path.strip("/").split("/") if segment]
@@ -110,6 +121,12 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/research/benchmarks/{version}/{product}
         if len(parts) == 6 and parts[:4] == ["api", "v1", "research", "benchmarks"]:
             return self.service.benchmark_detail(parts[4], parts[5])
+        # /api/v1/backtests/{version}/{product}
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "backtests"]:
+            return self.service.backtest_detail(parts[3], parts[4])
+        # /api/v1/backtests/{version}/{product}/{equity|fills}
+        if len(parts) == 6 and parts[:3] == ["api", "v1", "backtests"]:
+            return backtest_sub(parts[3], parts[4], parts[5], query)
         raise AppApiError("no such endpoint")
 
     # --- verbs -----------------------------------------------------------

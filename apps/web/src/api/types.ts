@@ -252,3 +252,105 @@ export interface ApiErrorPayload {
   error: string;
   api_version?: string;
 }
+
+export interface ExecutionContract {
+  protocol: string;
+  execution_spec_hash: string;
+  fee_rate: string;
+  slippage_rate: string;
+  initial_equity: string;
+  currency: string;
+  fill_policy: string;
+  mark_policy: string;
+  instrument_model: string;
+  cost_model: string;
+  optimized: boolean;
+  exchange_account_specific: boolean;
+}
+
+export interface BacktestMetrics {
+  initial_equity: string;
+  final_equity: string;
+  net_return: string;
+  gross_return: string;
+  net_pnl: string;
+  gross_pnl: string;
+  total_fees: string;
+  total_slippage_cost: string;
+  total_execution_cost: string;
+  turnover_ratio: string;
+  max_drawdown: string;
+  annualized_sharpe: string | null;
+  periods_per_year: number;
+  fill_count: number;
+  rebalance_count: number;
+  expired_target_count: number;
+  average_abs_exposure: string;
+  exposure_time_fraction: string;
+}
+
+export interface BacktestSummary {
+  version: string;
+  product: string;
+  experiment_type: string;
+  confirmatory: boolean;
+  live_execution: boolean;
+  cost_model: string;
+  source_benchmark_protocol: string;
+  economic_backtest_spec_hash: string;
+  economic_results_hash: string;
+  window: Record<string, string>;
+  metrics: BacktestMetrics;
+}
+
+export interface BacktestsIndex {
+  available: boolean;
+  reason: string | null;
+  execution_spec: ExecutionContract;
+  signal_spec_hash: string;
+  risk_spec_hash: string;
+  runs: BacktestSummary[];
+}
+
+export interface BacktestEquityPoint {
+  timestamp: string;
+  equity: string;
+  position_quantity: string;
+  target_exposure: string;
+  realized_exposure: string;
+  cumulative_fees: string;
+}
+
+export interface BacktestEquity {
+  version: string;
+  product: string;
+  series: BacktestEquityPoint[];
+  metadata: {
+    source_count: number;
+    returned_count: number;
+    max_points: number;
+    aggregation: string;
+    aggregated: boolean;
+    initial_equity: string;
+  };
+}
+
+export interface BacktestFill {
+  timestamp: string;
+  side: string;
+  reference_price: string;
+  fill_price: string;
+  quantity_delta: string;
+  notional: string;
+  fee: string;
+  slippage_cost: string;
+  position_after: string;
+  equity_after: string;
+}
+
+export interface BacktestFillPage {
+  version: string;
+  product: string;
+  fills: BacktestFill[];
+  page: { returned: number; has_more: boolean; total: number; next_cursor: string | null };
+}

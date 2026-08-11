@@ -12,6 +12,8 @@ const SignalsPage = lazy(() =>
   import('./pages/SignalsPage').then((module) => ({ default: module.SignalsPage })));
 const RiskPage = lazy(() =>
   import('./pages/RiskPage').then((module) => ({ default: module.RiskPage })));
+const BacktestsPage = lazy(() =>
+  import('./pages/BacktestsPage').then((module) => ({ default: module.BacktestsPage })));
 const ResearchPage = lazy(() =>
   import('./pages/ResearchPage').then((module) => ({ default: module.ResearchPage })));
 const SystemPage = lazy(() =>
@@ -33,6 +35,10 @@ export function App() {
         <Route
           path="risk"
           element={<Suspense fallback={<LoadingState />}><RiskPage /></Suspense>}
+        />
+        <Route
+          path="backtests"
+          element={<Suspense fallback={<LoadingState />}><BacktestsPage /></Suspense>}
         />
         <Route
           path="research"

@@ -27,6 +27,15 @@ MAX_PAGE_SIZE = 1_000
 DEFAULT_CHART_POINTS = 500
 MAX_CHART_POINTS = 2_000
 
+# An equity curve is downsampled by BUCKETS that keep their own extrema, never
+# by averaging: a mean quietly erases the trough of a drawdown, which is the
+# one point on the chart nobody may hide.
+DEFAULT_EQUITY_POINTS = 500
+MAX_EQUITY_POINTS = 2_000
+DEFAULT_FILL_PAGE = 100
+MAX_FILL_PAGE = 1_000
+ECONOMIC_BACKTEST_VERSIONS = ("v1",)
+
 SUPPORTED_PRODUCTS = ("BTC-USD", "ETH-USD")
 SUPPORTED_TIMEFRAME = "1h"
 
@@ -36,7 +45,7 @@ CAPABILITIES = {
     "market_history": True,
     "signal_engine": True,
     "position_target": True,
-    "economic_backtest": False,
+    "economic_backtest": True,
     "paper_trading": False,
     "live_trading": False,
     "realtime_stream": False,

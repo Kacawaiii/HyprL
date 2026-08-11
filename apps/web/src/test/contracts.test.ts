@@ -67,11 +67,22 @@ describe('no trading logic in the browser', () => {
     }
   });
 
-  it('contains no order, fee, slippage or P&L concept', () => {
+  it('places no order and computes no cost of its own', () => {
     for (const { file, text } of sources) {
-      for (const word of ['placeOrder', 'submitOrder', 'slippage', 'commission', 'computePnl']) {
+      for (const word of ['placeOrder', 'submitOrder', 'commission', 'computePnl']) {
         expect(text, `${file} :: ${word}`).not.toContain(word);
       }
+    }
+  });
+
+  it('displays execution costs but never derives one', () => {
+    // Since Phase 5C the cockpit shows fees and slippage. Naming them is fine;
+    // arithmetic on the rates is not, so ban the operators rather than the word.
+    for (const { file, text } of sources) {
+      expect(text, file).not.toMatch(/slippage_rate\s*[*+/-]/);
+      expect(text, file).not.toMatch(/fee_rate\s*[*+/-]/);
+      expect(text, file).not.toMatch(/[*+/-]\s*slippage_rate/);
+      expect(text, file).not.toMatch(/notional\s*\*/);
     }
   });
 });

@@ -8,6 +8,7 @@
  */
 
 import type {
+  BacktestEquity, BacktestFillPage, BacktestSummary, BacktestsIndex,
   BenchmarkDetail, BenchmarkSummary, CandlePage, ChartSeries, Health,
   MarketsIndex, Overview, RiskView, SignalsView,
 } from './types';
@@ -17,6 +18,8 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 /** Mirrors the server ceilings so the UI cannot compose an illegal request. */
 export const MAX_PAGE_SIZE = 1000;
 export const MAX_CHART_POINTS = 2000;
+export const MAX_EQUITY_POINTS = 2000;
+export const MAX_FILL_PAGE = 1000;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -133,6 +136,28 @@ export const apiClient = {
     request<SignalsView>(`/api/v1/signals${query({ limit })}`, signal),
   getRiskTargets: (limit?: number, signal?: AbortSignal) =>
     request<RiskView>(`/api/v1/risk/targets${query({ limit })}`, signal),
+  getBacktests: (signal?: AbortSignal) =>
+    request<BacktestsIndex>('/api/v1/backtests', signal),
+  getBacktestDetail: (version: string, product: string, signal?: AbortSignal) =>
+    request<BacktestSummary & { equity_points: number; expired_targets: number }>(
+      `/api/v1/backtests/${encodeURIComponent(version)}/${encodeURIComponent(product)}`,
+      signal,
+    ),
+  getBacktestEquity: (
+    version: string, product: string, maxPoints?: number, signal?: AbortSignal,
+  ) =>
+    request<BacktestEquity>(
+      `/api/v1/backtests/${encodeURIComponent(version)}/${encodeURIComponent(product)}/equity${query({ max_points: maxPoints })}`,
+      signal,
+    ),
+  getBacktestFills: (
+    version: string, product: string,
+    options: { limit?: number; cursor?: string } = {}, signal?: AbortSignal,
+  ) =>
+    request<BacktestFillPage>(
+      `/api/v1/backtests/${encodeURIComponent(version)}/${encodeURIComponent(product)}/fills${query({ ...options })}`,
+      signal,
+    ),
   getBenchmarks: (signal?: AbortSignal) =>
     request<{ benchmarks: BenchmarkSummary[] }>('/api/v1/research/benchmarks', signal),
   getBenchmarkDetail: (version: string, product: string, signal?: AbortSignal) =>

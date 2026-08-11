@@ -94,7 +94,9 @@ def test_the_capabilities_tell_the_truth_about_what_does_not_exist(service):
     capabilities = service.system()["capabilities"]
     assert capabilities["signal_engine"] is True
     assert capabilities["position_target"] is True
-    assert capabilities["economic_backtest"] is False
+    # Phase 5C added the engine, so the capability is now true. What remains
+    # false is what genuinely does not exist: no paper account, no broker.
+    assert capabilities["economic_backtest"] is True
     assert capabilities["paper_trading"] is False
     assert capabilities["live_trading"] is False
     assert capabilities["realtime_stream"] is False
@@ -400,3 +402,63 @@ def test_decimals_travel_as_strings_and_timestamps_as_utc(live_api):
         for field in ("open", "high", "low", "close", "volume"):
             assert isinstance(candle[field], str), field
         assert candle["bar_open_at"].endswith("+00:00")
+
+
+# --- economic backtests ----------------------------------------------------
+
+
+def test_the_backtest_index_is_small_and_honest_when_nothing_has_been_run(service):
+    """An engine that exists with no persisted run says exactly that."""
+    payload = service.backtests()
+    assert isinstance(payload["available"], bool)
+    assert payload["execution_spec"]["fee_rate"] == "0.0010"
+    assert payload["execution_spec"]["slippage_rate"] == "0.0005"
+    assert payload["execution_spec"]["initial_equity"] == "100000"
+    assert payload["execution_spec"]["cost_model"] == "synthetic"
+    assert payload["execution_spec"]["optimized"] is False
+    assert payload["execution_spec"]["exchange_account_specific"] is False
+    assert len(payload["execution_spec"]["execution_spec_hash"]) == 64
+    if not payload["available"]:
+        assert payload["runs"] == []
+        assert "no persisted" in payload["reason"]
+    # the index never carries a curve or a fill
+    assert len(json.dumps(payload)) < 20_000
+    assert "equity_curve" not in json.dumps(payload)
+    assert "fills" not in json.dumps(payload)
+
+
+def test_the_backtest_capability_reflects_the_engine_not_a_run(service, contracts):
+    assert contracts.CAPABILITIES["economic_backtest"] is True
+    assert contracts.CAPABILITIES["paper_trading"] is False
+    assert contracts.CAPABILITIES["live_trading"] is False
+
+
+def test_an_unknown_backtest_version_or_product_is_refused(service, contracts):
+    with pytest.raises(contracts.NotFoundError):
+        service.backtest_detail("v9", "BTC-USD")
+    with pytest.raises(contracts.AppApiError):
+        service.backtest_detail("v1", "DOGE-USD")
+    with pytest.raises(contracts.NotFoundError):
+        service.backtest_equity("v9", "BTC-USD")
+    with pytest.raises(contracts.NotFoundError):
+        service.backtest_fills("v9", "BTC-USD")
+
+
+def test_the_backtest_endpoints_refuse_an_unbounded_request(service, contracts):
+    """Ceilings exist before there is any data big enough to need them."""
+    with pytest.raises(contracts.AppApiError):
+        service.backtest_equity("v1", "BTC-USD", max_points=contracts.MAX_EQUITY_POINTS + 1)
+    with pytest.raises(contracts.AppApiError):
+        service.backtest_fills("v1", "BTC-USD", limit=contracts.MAX_FILL_PAGE + 1)
+    assert contracts.DEFAULT_EQUITY_POINTS <= contracts.MAX_EQUITY_POINTS
+    assert contracts.DEFAULT_FILL_PAGE <= contracts.MAX_FILL_PAGE
+
+
+def test_the_backtest_routes_are_served_and_remain_read_only(live_api):
+    status, payload, _ = _get(live_api, "/api/v1/backtests")
+    assert status == 200
+    assert "execution_spec" in payload
+    request = urllib.request.Request(f"{live_api}/api/v1/backtests", method="POST")
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(request, timeout=15)
+    assert raised.value.code in (405, 501)

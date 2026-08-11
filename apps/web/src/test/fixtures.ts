@@ -4,7 +4,7 @@ import type { BenchmarkSummary, CandlePage, ChartSeries, MarketsIndex, Overview,
 
 export const capabilities = {
   market_history: true, signal_engine: true, position_target: true,
-  economic_backtest: false, paper_trading: false, live_trading: false,
+  economic_backtest: true, paper_trading: false, live_trading: false,
   realtime_stream: false,
 };
 
@@ -115,4 +115,88 @@ export const risk: RiskView = {
   risk_spec: { ...system.risk_engine, risk_scale_rule_version: 'constant-unit-scale-v1' },
   targets: [],
   page: { returned: 0, has_more: false, next_cursor: null },
+};
+
+export const backtestsEmpty = {
+  available: false,
+  reason: 'no persisted economic backtest available',
+  execution_spec: {
+    protocol: 'trading-lab.execution.v1',
+    execution_spec_hash: 'e'.repeat(64),
+    fee_rate: '0.0010', slippage_rate: '0.0005', initial_equity: '100000',
+    currency: 'USD',
+    fill_policy: 'next-contiguous-bar-open-after-decision-v1',
+    mark_policy: 'next-observable-open-v1',
+    instrument_model: 'synthetic-linear-usd-notional-v1',
+    cost_model: 'synthetic', optimized: false, exchange_account_specific: false,
+  },
+  signal_spec_hash: 's'.repeat(64),
+  risk_spec_hash: 'r'.repeat(64),
+  runs: [],
+};
+
+const metrics = {
+  initial_equity: '100000', final_equity: '98750.5', net_return: '-0.0124950',
+  gross_return: '-0.0031000', net_pnl: '-1249.5', gross_pnl: '-310.0',
+  total_fees: '740.25', total_slippage_cost: '370.10',
+  total_execution_cost: '1110.35', turnover_ratio: '7.4025',
+  max_drawdown: '-0.0412', annualized_sharpe: '-0.31', periods_per_year: 8760,
+  fill_count: 412, rebalance_count: 460, expired_target_count: 3,
+  average_abs_exposure: '0.1837', exposure_time_fraction: '0.87',
+};
+
+export const backtests = {
+  ...backtestsEmpty,
+  available: true,
+  reason: null,
+  runs: [
+    {
+      version: 'v1', product: 'BTC-USD', experiment_type: 'exploratory',
+      confirmatory: false, live_execution: false, cost_model: 'synthetic',
+      source_benchmark_protocol: 'trading-lab.real-benchmark.v2',
+      economic_backtest_spec_hash: 'a'.repeat(64),
+      economic_results_hash: 'b'.repeat(64),
+      window: { first_fill_at: '2025-09-08T02:00:00+00:00',
+                last_fill_at: '2026-07-29T21:00:00+00:00',
+                liquidation_at: '2026-07-29T22:00:00+00:00' },
+      metrics,
+    },
+    {
+      version: 'v1', product: 'ETH-USD', experiment_type: 'exploratory',
+      confirmatory: false, live_execution: false, cost_model: 'synthetic',
+      source_benchmark_protocol: 'trading-lab.real-benchmark.v2',
+      economic_backtest_spec_hash: 'c'.repeat(64),
+      economic_results_hash: 'd'.repeat(64),
+      window: { first_fill_at: '2025-09-08T02:00:00+00:00',
+                last_fill_at: '2026-07-29T21:00:00+00:00',
+                liquidation_at: '2026-07-29T22:00:00+00:00' },
+      metrics: { ...metrics, net_return: '0.0044', final_equity: '100440' },
+    },
+  ],
+};
+
+export const backtestEquity = {
+  version: 'v1', product: 'BTC-USD',
+  series: [
+    { timestamp: '2025-09-08T02:00:00+00:00', equity: '100000', position_quantity: '0.1',
+      target_exposure: '0.05', realized_exposure: '0.05', cumulative_fees: '5' },
+    { timestamp: '2025-10-08T02:00:00+00:00', equity: '99200', position_quantity: '0.1',
+      target_exposure: '0.05', realized_exposure: '0.04', cumulative_fees: '210' },
+    { timestamp: '2026-07-29T22:00:00+00:00', equity: '98750.5', position_quantity: '0',
+      target_exposure: '0', realized_exposure: '0', cumulative_fees: '740.25' },
+  ],
+  metadata: { source_count: 7728, returned_count: 3, max_points: 500,
+              aggregation: 'bucket-extrema', aggregated: true,
+              initial_equity: '100000' },
+};
+
+export const backtestFills = {
+  version: 'v1', product: 'BTC-USD',
+  fills: [
+    { timestamp: '2025-09-08T02:00:00+00:00', side: 'buy', reference_price: '60000',
+      fill_price: '60030', quantity_delta: '0.2083', notional: '12506',
+      fee: '12.5', slippage_cost: '6.25', position_after: '0.2083',
+      equity_after: '99981.25' },
+  ],
+  page: { returned: 1, has_more: true, total: 412, next_cursor: 'abc' },
 };

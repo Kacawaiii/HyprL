@@ -129,6 +129,10 @@ button {
 .badge[data-tone='off'] { color: var(--text-dim); }
 .badge[data-tone='warn'] { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
 
+.control[aria-pressed='true'] {
+  border-color: var(--accent); color: var(--accent);
+}
+
 .select, .control {
   background: var(--surface-raised); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--radius);

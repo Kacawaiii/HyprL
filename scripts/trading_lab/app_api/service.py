@@ -19,7 +19,12 @@ from scripts.trading_lab.app_api.contracts import (
     APP_API_VERSION,
     CAPABILITIES,
     DEFAULT_CHART_POINTS,
+    DEFAULT_EQUITY_POINTS,
+    DEFAULT_FILL_PAGE,
+    ECONOMIC_BACKTEST_VERSIONS,
     MAX_CHART_POINTS,
+    MAX_EQUITY_POINTS,
+    MAX_FILL_PAGE,
     SUPPORTED_PRODUCTS,
     SUPPORTED_TIMEFRAME,
     AppApiError,
@@ -31,6 +36,11 @@ from scripts.trading_lab.app_api.pagination import (
     require_limit,
 )
 from scripts.trading_lab.capture_market_history import CORPUS_ID, load_canonical_rows
+from scripts.trading_lab.economic_backtest import (
+    EXECUTION_COST_V1_IS_NOT_EXCHANGE_ACCOUNT_SPECIFIC,
+    EXECUTION_COST_V1_IS_NOT_OPTIMIZED,
+    EXECUTION_SPEC_V1,
+)
 from scripts.trading_lab.risk_engine import (
     RISK_LIMIT_V1_IS_NOT_OPTIMIZED,
     RISK_SCALE_V1,
@@ -339,6 +349,178 @@ class AppService:
             },
             "targets": [],
             "page": {"returned": 0, "has_more": False, "next_cursor": None},
+        }
+
+    # --- economic backtests ----------------------------------------------
+
+    ECONOMIC_ROOT = "economic_backtest_{version}"
+
+    def _economic(self, version: str, product: str | None = None):
+        if version not in ECONOMIC_BACKTEST_VERSIONS:
+            raise NotFoundError(f"unknown backtest version {version!r}")
+        if product is None:
+            return self._read_json(f"{self.ECONOMIC_ROOT.format(version=version)}"
+                                   "/manifest.json")
+        return self._read_json(
+            f"{self.ECONOMIC_ROOT.format(version=version)}/{product}.json")
+
+    def _backtest_summary(self, version: str, stored: dict) -> dict:
+        metrics = stored["metrics"]
+        gross = stored["gross_metrics"]
+        return {
+            "version": version,
+            "product": stored["spec"]["product"],
+            "experiment_type": stored["experiment_type"],
+            "confirmatory": stored["confirmatory"],
+            "live_execution": stored["live_execution"],
+            "cost_model": stored["cost_model"],
+            "source_benchmark_protocol": stored["spec"]["source_benchmark_protocol"],
+            "economic_backtest_spec_hash": stored["economic_backtest_spec_hash"],
+            "economic_results_hash": stored["economic_results_hash"],
+            "window": stored["window"],
+            "metrics": {
+                "initial_equity": metrics["initial_equity"],
+                "final_equity": metrics["final_equity"],
+                "net_return": metrics["net_return"],
+                "gross_return": metrics["gross_return"],
+                "net_pnl": metrics["net_pnl"],
+                "gross_pnl": gross["net_pnl"],
+                "total_fees": metrics["total_fees"],
+                "total_slippage_cost": metrics["total_slippage_cost"],
+                "total_execution_cost": metrics["total_execution_cost"],
+                "turnover_ratio": metrics["turnover_ratio"],
+                "max_drawdown": metrics["max_drawdown"],
+                "annualized_sharpe": metrics["annualized_sharpe"],
+                "periods_per_year": metrics["periods_per_year"],
+                "fill_count": metrics["fill_count"],
+                "rebalance_count": metrics["rebalance_count"],
+                "expired_target_count": metrics["expired_target_count"],
+                "average_abs_exposure": metrics["average_abs_exposure"],
+                "exposure_time_fraction": metrics["exposure_time_fraction"],
+            },
+        }
+
+    def _execution_contract(self) -> dict:
+        spec = EXECUTION_SPEC_V1
+        return {
+            "protocol": spec.protocol_version,
+            "execution_spec_hash": spec.execution_spec_hash,
+            "fee_rate": str(spec.fee_rate),
+            "slippage_rate": str(spec.slippage_rate),
+            "initial_equity": str(spec.initial_equity),
+            "currency": spec.currency,
+            "fill_policy": spec.fill_policy,
+            "mark_policy": spec.mark_policy,
+            "instrument_model": spec.instrument_model,
+            "cost_model": "synthetic",
+            "optimized": not EXECUTION_COST_V1_IS_NOT_OPTIMIZED,
+            "exchange_account_specific":
+                not EXECUTION_COST_V1_IS_NOT_EXCHANGE_ACCOUNT_SPECIFIC,
+        }
+
+    def backtests(self) -> dict:
+        """A small index. No equity curve and no fill ever travels here."""
+        runs = []
+        for version in ECONOMIC_BACKTEST_VERSIONS:
+            manifest = self._economic(version)
+            if manifest is None:
+                continue
+            for product in SUPPORTED_PRODUCTS:
+                stored = self._economic(version, product)
+                if stored is None:
+                    continue
+                runs.append(self._backtest_summary(version, stored))
+        return {
+            "available": bool(runs),
+            "reason": None if runs else "no persisted economic backtest available",
+            "execution_spec": self._execution_contract(),
+            "signal_spec_hash": SIGNAL_SPEC_V1.spec_hash,
+            "risk_spec_hash": RISK_SPEC_V1.risk_spec_hash,
+            "runs": runs,
+        }
+
+    def backtest_detail(self, version: str, product: str) -> dict:
+        product = self._require_product(product)
+        stored = self._economic(version, product)
+        if stored is None:
+            raise NotFoundError(f"no economic backtest for {version}/{product}")
+        summary = self._backtest_summary(version, stored)
+        summary["execution_spec"] = stored["execution_spec"]
+        summary["signal_spec_hash"] = stored["spec"]["signal_spec_hash"]
+        summary["risk_spec_hash"] = stored["spec"]["risk_spec_hash"]
+        summary["source_benchmark_spec_hash"] = \
+            stored["spec"]["source_benchmark_spec_hash"]
+        summary["source_benchmark_results_hash"] = \
+            stored["spec"]["source_benchmark_results_hash"]
+        summary["equity_points"] = len(stored["equity_curve"])
+        summary["expired_targets"] = len(stored["expired_targets"])
+        return summary
+
+    def backtest_equity(self, version: str, product: str, *, max_points=None) -> dict:
+        """Bounded equity curve, downsampled so the extrema survive."""
+        product = self._require_product(product)
+        stored = self._economic(version, product)
+        if stored is None:
+            raise NotFoundError(f"no economic backtest for {version}/{product}")
+        points = require_limit(max_points, default=DEFAULT_EQUITY_POINTS,
+                               maximum=MAX_EQUITY_POINTS)
+        curve = stored["equity_curve"]
+        if len(curve) <= points:
+            series, aggregation = curve, "none"
+        else:
+            buckets = max(1, len(curve) // max(1, points // 4))
+            series, aggregation = [], "bucket-extrema"
+            for start in range(0, len(curve), buckets):
+                chunk = curve[start:start + buckets]
+                lowest = min(chunk, key=lambda row: Decimal(row["equity"]))
+                highest = max(chunk, key=lambda row: Decimal(row["equity"]))
+                keep = {id(chunk[0]): chunk[0], id(lowest): lowest,
+                        id(highest): highest, id(chunk[-1]): chunk[-1]}
+                series.extend(sorted(keep.values(), key=lambda row: row["timestamp"]))
+        return {
+            "version": version, "product": product,
+            "series": [{
+                "timestamp": row["timestamp"], "equity": row["equity"],
+                "position_quantity": row["position_quantity"],
+                "target_exposure": row["target_exposure"],
+                "realized_exposure": row["realized_exposure"],
+                "cumulative_fees": row["cumulative_fees"],
+            } for row in series],
+            "metadata": {
+                "source_count": len(curve), "returned_count": len(series),
+                "max_points": points, "aggregation": aggregation,
+                "aggregated": aggregation != "none",
+                "initial_equity": stored["metrics"]["initial_equity"],
+            },
+        }
+
+    def backtest_fills(self, version: str, product: str, *, limit=None,
+                       cursor=None) -> dict:
+        """Cursor-paginated fills. The whole history never ships at once."""
+        product = self._require_product(product)
+        stored = self._economic(version, product)
+        if stored is None:
+            raise NotFoundError(f"no economic backtest for {version}/{product}")
+        size = require_limit(limit, default=DEFAULT_FILL_PAGE, maximum=MAX_FILL_PAGE)
+        rows = stored["fills"]
+        query = {"version": version}
+        if cursor:
+            after = decode_cursor(cursor, endpoint="backtest_fills", product=product,
+                                  query=query)
+            rows = [row for row in rows if row["timestamp"] > after]
+        page = rows[:size]
+        has_more = len(rows) > size
+        return {
+            "version": version, "product": product,
+            "fills": page,
+            "page": {
+                "returned": len(page), "has_more": has_more,
+                "total": len(stored["fills"]),
+                "next_cursor": encode_cursor(
+                    endpoint="backtest_fills", product=product,
+                    last_timestamp=page[-1]["timestamp"], query=query)
+                if has_more and page else None,
+            },
         }
 
     # --- research --------------------------------------------------------

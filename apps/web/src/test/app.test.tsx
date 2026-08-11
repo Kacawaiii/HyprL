@@ -30,6 +30,7 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/signals': fixtures.signals,
     '/api/v1/risk/targets': fixtures.risk,
     '/api/v1/research/benchmarks': { benchmarks: fixtures.overview.benchmarks },
+    '/api/v1/backtests': fixtures.backtests,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -38,6 +39,12 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     // `/api/v1/markets`, and matching the index route first would hand the
     // chart a candle page.
     if (path.includes('/chart')) return jsonResponse(fixtures.chart);
+    if (path.includes('/backtests/') && path.includes('/equity')) {
+      return jsonResponse(fixtures.backtestEquity);
+    }
+    if (path.includes('/backtests/') && path.includes('/fills')) {
+      return jsonResponse(fixtures.backtestFills);
+    }
     if (/\/api\/v1\/markets\/[^/?]+(\?|$)/.test(path)) {
       return jsonResponse(fixtures.candlePage);
     }
@@ -116,7 +123,12 @@ describe('overview', () => {
   it('reports unavailable capabilities instead of promising them', async () => {
     renderAt('/');
     await screen.findByRole('heading', { name: 'BTC-USD' });
-    expect(screen.getAllByText('NOT AVAILABLE').length).toBeGreaterThanOrEqual(3);
+    // Overview badges three capabilities. Since Phase 5C the backtest engine
+    // exists, so exactly the two trading capabilities remain unavailable.
+    expect(screen.getAllByText('NOT AVAILABLE')).toHaveLength(2);
+    expect(screen.getAllByText('AVAILABLE').length).toBeGreaterThanOrEqual(1);
+    expect(fixtures.overview.capabilities.paper_trading).toBe(false);
+    expect(fixtures.overview.capabilities.live_trading).toBe(false);
   });
 
   it('never invents a latest price', async () => {
@@ -207,5 +219,45 @@ describe('system', () => {
     await screen.findByText('Market corpus');
     expect(container.textContent).not.toMatch(/\/home\//);
     expect(container.textContent).not.toMatch(/localhost:\d/);
+  });
+});
+
+describe('Backtests', () => {
+  it('labels every economic result as exploratory and synthetic', async () => {
+    renderAt('/backtests');
+    expect(await screen.findByText('EXPLORATORY')).toBeInTheDocument();
+    expect(screen.getByText('SYNTHETIC EXECUTION COSTS')).toBeInTheDocument();
+    expect(screen.getByText('NOT LIVE TRADING')).toBeInTheDocument();
+    expect(screen.getByText('NO CONFIRMED EDGE')).toBeInTheDocument();
+  });
+
+  it('shows the backend metrics verbatim without recomputing them', async () => {
+    renderAt('/backtests');
+    // -0.0124950 formatted, never derived from equity in the browser
+    expect(await screen.findByText('-1.25 %')).toBeInTheDocument();
+    expect(screen.getByText('-4.12 %')).toBeInTheDocument();   // max drawdown
+    expect(screen.getByText('412')).toBeInTheDocument();        // fill count
+  });
+
+  it('says so plainly when no run has been persisted', async () => {
+    vi.stubGlobal('fetch', mockApi({ '/api/v1/backtests': fixtures.backtestsEmpty }));
+    renderAt('/backtests');
+    expect(
+      await screen.findByText(/Economic Backtest Engine ready/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/no persisted economic backtest available/)).toBeInTheDocument();
+  });
+
+  it('discloses that the equity curve was downsampled', async () => {
+    renderAt('/backtests');
+    expect(await screen.findByText(/3 of 7728 points/)).toBeInTheDocument();
+    expect(screen.getByText(/drawdowns survive/)).toBeInTheDocument();
+  });
+
+  it('lets the reader switch product without leaving the page', async () => {
+    renderAt('/backtests');
+    const eth = await screen.findByRole('button', { name: 'ETH-USD' });
+    await userEvent.click(eth);
+    await waitFor(() => expect(eth).toHaveAttribute('aria-pressed', 'true'));
   });
 });
