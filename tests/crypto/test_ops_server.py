@@ -379,3 +379,27 @@ def test_no_registry_endpoint_exposes_a_key_or_an_account(server):
         for secret in ("api_key", "secret", "token", "authorization", "cookie",
                        "balance", "wallet", "account_id"):
             assert secret not in rendered, f"{path} mentions {secret}"
+
+
+@pytest.mark.parametrize("encoded,expected", [
+    # decoded once -> "coinbase:BTC-USD", a registered id
+    ("coinbase%3ABTC-USD", 200),
+    # decoded once -> the literal "coinbase%3ABTC-USD", which is not an id.
+    # Decoding twice would turn it into one, and a route that decodes twice
+    # can be fed a payload that survives the first pass untouched.
+    ("coinbase%253ABTC-USD", 404),
+    ("coinbase%25253ABTC-USD", 404),
+    # a percent-encoded separator must not reopen a path segment either
+    ("coinbase%2FBTC-USD", 404),
+    ("coinbase%252FBTC-USD", 404),
+])
+def test_a_route_identifier_is_decoded_exactly_once(server, encoded, expected):
+    status, headers, _ = _get(f"{server}/api/v1/instruments/{encoded}")
+    assert status == expected, encoded
+    assert headers["Content-Type"].startswith("application/json")
+
+
+def test_a_provider_route_identifier_is_decoded_exactly_once(server):
+    assert _get(f"{server}/api/v1/providers/coinbase-public-v1")[0] == 200
+    # "%2D" decodes once to "-", so a double decode would resolve this
+    assert _get(f"{server}/api/v1/providers/coinbase%252Dpublic%252Dv1")[0] == 404

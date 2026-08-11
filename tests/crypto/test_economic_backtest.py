@@ -64,7 +64,7 @@ def _spec(engine, execution_spec=None):
         result_schema_version=engine.ECONOMIC_RESULT_SCHEMA_VERSION)
 
 
-def _run(engine, targets, bars, execution_spec=None):
+def _run(engine, targets, bars, execution_spec=None, bars_product="BTC-USD"):
     execution = execution_spec or engine.EXECUTION_SPEC_V1
     class _Series:
         def __init__(self, entries): self.targets = tuple(entries)
@@ -72,7 +72,7 @@ def _run(engine, targets, bars, execution_spec=None):
     return engine.run_economic_backtest(
         product="BTC-USD", targets=_Series(targets), bars=bars,
         spec=_spec(engine, execution), signal_series_hash="signal-hash",
-        execution_spec=execution)
+        execution_spec=execution, bars_product=bars_product)
 
 
 # --- A: doing nothing costs nothing ---------------------------------------
@@ -468,3 +468,25 @@ def test_malformed_inputs_are_refused(engine):
         engine.simulate_targets(_targets([(9, "0.1")]), bars)
     with pytest.raises(engine.EconomicBacktestError, match="ascending order"):
         engine.simulate_targets(_targets([(0, "0.1")]), list(reversed(_bars([1, 2, 3]))))
+
+
+def test_a_backtest_refuses_bars_from_another_instrument(engine):
+    """Targets carry spec hashes and timestamps but no instrument, and a bar is
+    six numbers. Nothing said which market either belonged to, so one target
+    stream ran against another instrument's prices and produced a complete,
+    plausible, differently-valued result labelled with the first product."""
+    from scripts.trading_lab.identity import InstrumentMismatchError
+
+    bars = _bars([100, 110, 90, 105, 100])
+    targets = _targets([(0, 1), (1, 0), (2, 0)])
+    with pytest.raises(InstrumentMismatchError):
+        _run(engine, targets, bars, bars_product="ETH-USD")
+
+
+def test_a_backtest_accepts_any_spelling_of_the_matching_instrument(engine):
+    bars = _bars([100, 110, 90, 105, 100])
+    targets = _targets([(0, 1), (1, 0), (2, 0)])
+    canonical = _run(engine, targets, bars, bars_product="BTC-USD")
+    for alias in ("btc-usd", "coinbase:BTC-USD", "BTCUSD"):
+        assert _run(engine, targets, bars, bars_product=alias).metrics.final_equity \
+            == canonical.metrics.final_equity

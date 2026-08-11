@@ -40,7 +40,8 @@ def _load_models(model_dir: pathlib.Path, products):
             raise SystemExit(
                 f"no shadow model for {product} at {path}; train and freeze the models "
                 "before starting a session")
-        models[product] = load_paper_model(read_artifact(path))
+        # The filename says which market this is for; the artefact must agree.
+        models[product] = load_paper_model(read_artifact(path), product=product)
     return models
 
 
@@ -168,7 +169,8 @@ def command_start(arguments) -> int:
                 print(f"{product}: {LiveMarketStatus.DEGRADED} — {error}")
                 continue
             for row in rows:
-                outcome = engine.ingest_candle(product, row, now=_iso(_now()))
+                outcome = engine.ingest_candle(product, row, now=_iso(_now()),
+                                               row_product=product)
                 print(json.dumps(outcome))
             if arguments.once:
                 continue

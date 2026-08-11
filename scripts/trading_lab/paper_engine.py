@@ -326,10 +326,33 @@ class PaperEngine:
 
     # --- the pipeline ----------------------------------------------------
 
-    def ingest_candle(self, product: str, row: dict, *, now) -> dict:
-        """Run one closed candle through the whole chain. Idempotent per candle."""
+    def ingest_candle(self, product: str, row: dict, *, now,
+                      row_product: object = None) -> dict:
+        """Run one closed candle through the whole chain. Idempotent per candle.
+
+        ``row_product``, when the caller knows it, states which market the row
+        actually came from. A candle is six numbers and a timestamp: a BTC row
+        and an ETH row are structurally identical, so passing one under the
+        other's name is caught by no schema and produces a plausible, wrong
+        portfolio. The caller usually does know -- the poller fetched it for a
+        specific instrument -- so it can say so.
+        """
         from scripts.trading_lab.live_market import LiveMarketStatus
         opening = row["bar_open_at"]
+
+        if row_product is not None:
+            from scripts.trading_lab.identity import require_same_instrument
+            require_same_instrument(product, row_product,
+                                    context="paper candle ingestion",
+                                    left_label="session product",
+                                    right_label="candle source")
+
+        # A product this session never registered has no state slot, and
+        # KeyError deep in the fill logic is a poor way to learn that.
+        if product not in self._state:
+            raise PaperEngineError(
+                f"{product!r} is not one of this session's products "
+                f"{list(self.session_spec.products)}")
 
         # Defence in depth: ingestion already refused, and so does this.
         try:

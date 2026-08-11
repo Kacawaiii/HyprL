@@ -57,8 +57,8 @@ ASSET_CLASSES = ("CRYPTO", "EQUITY", "ETF", "INDEX", "FX")
 # by way of BTCUS-DT.
 KNOWN_QUOTES = ("USDT", "USDC", "USD", "EUR", "GBP", "JPY", "BTC", "ETH")
 
-_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{1,16}(?:-[A-Z0-9]{1,16})?$")
-_VENUE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{1,16}(?:-[A-Z0-9]{1,16})?\Z")
+_VENUE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}\Z")
 _ALLOWED_SEPARATORS = str.maketrans({"/": "-", "_": "-", "\\": "-", ".": "-"})
 
 MAX_IDENTIFIER_CHARS = 64
@@ -218,6 +218,19 @@ class Timeframe:
                 f"{sorted(self._UNITS)}")
         if not isinstance(self.count, int) or self.count < 1 or self.count > 1000:
             raise InstrumentError("timeframe count must sit in 1..1000")
+        # "60m" and "1h" named one duration under two identities, so a
+        # registry lookup, a cache key and a label could all disagree about
+        # the same bar. Minutes fold into hours because that conversion is
+        # arithmetic and true on every calendar.
+        #
+        # Hours deliberately do NOT fold into days. "24h" and "1d" are equal
+        # only on a market that never closes; on a session-based calendar a
+        # trading day is about six and a half hours, and folding them here
+        # would bake a crypto assumption into the identity layer -- the exact
+        # mistake the trading calendar exists to prevent.
+        if self.unit == "m" and self.count % 60 == 0:
+            object.__setattr__(self, "count", self.count // 60)
+            object.__setattr__(self, "unit", "h")
 
     @property
     def duration(self) -> timedelta:

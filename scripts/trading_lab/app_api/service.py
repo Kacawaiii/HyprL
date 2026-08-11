@@ -95,10 +95,33 @@ class AppService:
         return payload
 
     def _require_product(self, product: object) -> str:
-        if product not in SUPPORTED_PRODUCTS:
+        """Resolve any accepted spelling to the one legacy product id.
+
+        This boundary deliberately chooses the STRICT option: the path segment
+        must already be the canonical legacy id. An alias like ``btc-usd`` is
+        refused rather than resolved.
+
+        That is the narrower of the two valid choices. Accepting aliases would
+        be safe here -- everything downstream would receive the resolved id --
+        but it widens a read-only API's input surface for no caller that needs
+        it, and one resource reachable under many URLs is a caching and
+        logging nuisance. The registry still does the deciding, so the rule is
+        stated once rather than inferred from a membership test, and an
+        unregistered value fails closed with no fallback to a default product.
+        """
+        from scripts.trading_lab.identity import IdentityError, resolve_legacy_product
+
+        try:
+            resolved = resolve_legacy_product(product, context="product")
+        except IdentityError as error:
             raise NotFoundError(
-                f"unknown product {product!r}; supported: {list(SUPPORTED_PRODUCTS)}")
-        return product
+                f"unknown product {product!r}; supported: "
+                f"{list(SUPPORTED_PRODUCTS)}") from error
+        if resolved not in SUPPORTED_PRODUCTS or product != resolved:
+            raise NotFoundError(
+                f"unknown product {product!r}; supported: {list(SUPPORTED_PRODUCTS)} "
+                "(this endpoint requires the canonical spelling)")
+        return resolved
 
     def _corpus_rows(self, product: str) -> tuple[dict[str, str], ...]:
         if product not in self._rows:

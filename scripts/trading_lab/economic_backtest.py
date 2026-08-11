@@ -722,10 +722,29 @@ def build_position_targets(records, *, model_spec_hash: str, fitted_hash: str,
 
 
 def run_economic_backtest(*, product: str, targets, bars, spec: EconomicBacktestSpec,
-                          signal_series_hash: str,
+                          signal_series_hash: str, bars_product,
                           execution_spec: ExecutionSpec = EXECUTION_SPEC_V1,
                           timeframe: str = "1h") -> EconomicBacktestResult:
-    """Simulate one target stream twice: with costs, and as if they were free."""
+    """Simulate one target stream twice: with costs, and as if they were free.
+
+    ``bars_product`` names the market the price series came from and is
+    required, not optional. A PositionTargetSeries carries spec hashes and
+    timestamps but no instrument, and a bar is six numbers and a timestamp, so
+    nothing in either argument said which market it belonged to. One target
+    stream labelled BTC-USD ran against ETH-priced bars and produced a
+    complete, plausible, entirely wrong result -- different final equity, same
+    confident label, no complaint anywhere.
+
+    A default of None would leave that hole open for every caller that forgot
+    the argument, which is the same shape of mistake as the one being fixed,
+    so there is no default.
+    """
+    from scripts.trading_lab.identity import require_same_instrument
+
+    require_same_instrument(product, bars_product,
+                            context="economic backtest",
+                            left_label="result product",
+                            right_label="market bars")
     net = simulate_targets(targets, bars, timeframe=timeframe,
                            execution_spec=execution_spec)
     gross = simulate_targets(targets, bars, timeframe=timeframe,

@@ -276,7 +276,7 @@ def _model_checks() -> list:
             continue
         try:
             artifact = read_artifact(path)
-            load_paper_model(artifact)
+            load_paper_model(artifact, product=product)
         except Exception as error:
             checks.append(Check(f"paper_model[{path.stem}]", FAIL,
                                 f"artifact rejected: {error}"))

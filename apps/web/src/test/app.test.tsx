@@ -618,6 +618,65 @@ describe('no hardcoded market list', () => {
   });
 });
 
+describe('identity boundaries', () => {
+  it('addresses instruments by an id the backend supplied, never a rebuilt one', async () => {
+    const fetchMock = mockApi();
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('/markets');
+    const select = await screen.findByLabelText('Instrument');
+    const values = [...select.querySelectorAll('option')].map((node) =>
+      node.getAttribute('value'),
+    );
+    // exactly the ids the registry returned, character for character
+    expect(values).toEqual(['BTC-USD', 'ETH-USD']);
+  });
+
+  it('shows the canonical identifier separately from the display label', async () => {
+    renderAt('/markets');
+    // label for humans, identifier for machines, not the same string
+    expect(await screen.findByText('Bitcoin / US Dollar')).toBeInTheDocument();
+    expect(screen.getByText('coinbase:BTC-USD')).toBeInTheDocument();
+  });
+
+  it('never reconstructs a business identity from a symbol', () => {
+    /* The frontend must not own canonicalisation: two implementations of one
+       rule disagree, and the browser's copy would be the wrong one. */
+    const modules = import.meta.glob('../{pages,components,layouts,api}/**/*.{ts,tsx}', {
+      query: '?raw', import: 'default', eager: true,
+    }) as Record<string, string>;
+    const offenders: string[] = [];
+    for (const [path, source] of Object.entries(modules)) {
+      // a symbol or instrument id being case-folded, stripped of separators,
+      // or split apart to rebuild an identity
+      if (/(symbol|instrument_id|product)\w*\s*\.\s*(toUpperCase|toLowerCase|replace|split|normalize)\(/.test(source)) {
+        offenders.push(path);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('treats an unknown instrument as unavailable rather than guessing', async () => {
+    renderAt('/markets', { '/api/v1/instruments': new Error('registry down') });
+    expect(await screen.findByText('No instruments available')).toBeInTheDocument();
+    const select = screen.getByLabelText('Instrument') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+  });
+
+  it('passes the selected id straight back to the API', async () => {
+    const fetchMock = mockApi();
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('/markets');
+    const select = await screen.findByLabelText('Instrument');
+    await userEvent.selectOptions(select, 'ETH-USD');
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((call) => String(call[0]));
+      expect(calls.some((path) => path.includes('/markets/ETH-USD'))).toBe(true);
+      // never a spelling the frontend invented
+      expect(calls.some((path) => /markets\/(eth-usd|ETHUSD)/.test(path))).toBe(false);
+    });
+  });
+});
+
 describe('registry loading state', () => {
   it('shows a loading state rather than a guessed default', async () => {
     const pending = vi.fn((input: string) =>

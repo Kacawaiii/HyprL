@@ -282,11 +282,29 @@ def verify_export(path) -> dict:
             content.get("export_schema_version") == EXPORT_SCHEMA_VERSION)
 
         digests = {}
+        malformed = []
         if CHECKSUM_NAME in names:
+            from scripts.trading_lab.identity import (
+                IdentityError, require_exact_digest)
+
             for line in archive.read(CHECKSUM_NAME).decode("utf-8").splitlines():
-                if "  " in line:
-                    digest, name = line.split("  ", 1)
-                    digests[name.strip()] = digest.strip()
+                if not line.strip():
+                    continue
+                if "  " not in line:
+                    malformed.append(line[:80])
+                    continue
+                digest, name = line.split("  ", 1)
+                # The digest is validated, not repaired. Stripping it would
+                # accept a checksum file the writer never produced, and a
+                # checksum that tolerates its own corruption checks nothing.
+                try:
+                    digests[name.strip()] = require_exact_digest(
+                        digest, field=f"{CHECKSUM_NAME} entry")
+                except IdentityError:
+                    malformed.append(line[:80])
+        report["checks"]["checksum_file_wellformed"] = not malformed
+        if malformed:
+            report["malformed_checksum_lines"] = malformed
         mismatched = [name for name in names
                       if name != CHECKSUM_NAME and name in digests
                       and hashlib.sha256(archive.read(name)).hexdigest()

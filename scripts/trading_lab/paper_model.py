@@ -150,12 +150,35 @@ def train_paper_model(series, *, product: str,
 
 
 def load_paper_model(artifact: dict,
-                     spec: PaperModelSpec = PAPER_MODEL_SPEC_V1
-                     ) -> RidgeRegressionPredictor:
-    """Rebuild a ready-to-predict model, refusing anything that has drifted."""
+                     spec: PaperModelSpec = PAPER_MODEL_SPEC_V1,
+                     *, product: object = None) -> RidgeRegressionPredictor:
+    """Rebuild a ready-to-predict model, refusing anything that has drifted.
+
+    ``product`` binds the artefact to the market it will be used for. Without
+    it this function verified five hashes -- artefact, spec, feature schema,
+    model spec, fitted state -- and never looked at ``artifact["product"]``,
+    so an ETH artefact dropped into a BTC slot passed every check and returned
+    a model that predicts confidently and wrongly. The features have the same
+    shape for both, so nothing downstream could notice.
+
+    The comparison goes through the instrument registry, so a legacy
+    ``BTC-USD``, a canonical ``coinbase:BTC-USD`` and an alias all resolve to
+    the same market before being compared -- and an unregistered value fails
+    closed rather than matching by accident.
+    """
     body = {key: value for key, value in artifact.items() if key != "artifact_hash"}
     if _sha256(body) != artifact.get("artifact_hash"):
         raise PaperModelError("paper model artifact does not match its own hash")
+    if product is not None:
+        from scripts.trading_lab.identity import (
+            InstrumentMismatchError, require_same_instrument)
+        try:
+            require_same_instrument(
+                artifact.get("product"), product,
+                context="paper model artefact",
+                left_label="artefact", right_label="requested")
+        except InstrumentMismatchError as error:
+            raise PaperModelError(str(error)) from error
     if artifact["paper_model_spec_hash"] != spec.paper_model_spec_hash:
         raise PaperModelError(
             "paper model artifact was produced under a different specification")
