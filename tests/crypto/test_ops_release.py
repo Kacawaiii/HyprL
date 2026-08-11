@@ -155,8 +155,16 @@ def test_a_modified_file_breaks_verification(release, tmp_path):
 
 
 def test_a_release_identifies_its_commit(release):
-    """A worktree keeps .git as a file, and a naive reader returns nothing."""
+    """A worktree keeps .git as a file, and a naive reader returns nothing.
+
+    Skipped when built from a source archive: `git archive` output carries no
+    git metadata at all, so a null commit there is the honest answer rather
+    than a defect. Asserting otherwise made the archive proof fail for
+    telling the truth.
+    """
     output, report = release
+    if not (REPO_ROOT / ".git").exists():
+        pytest.skip("no git metadata; this tree came from an archive")
     commit = report["git_commit"]
     assert commit and len(commit) == 40, f"no commit recorded: {commit!r}"
     assert all(character in "0123456789abcdef" for character in commit)
