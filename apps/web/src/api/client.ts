@@ -10,8 +10,9 @@
 import type {
   BacktestEquity, BacktestFillPage, BacktestSummary, BacktestsIndex,
   PaperEquity, PaperEventsPage, PaperProductState, PaperStatus,
-  BenchmarkDetail, BenchmarkSummary, CandlePage, ChartSeries, Health,
-  HealthHistory, InstrumentDetail, InstrumentsIndex, MarketsIndex,
+  BenchmarkDetail, BenchmarkSummary, CalendarsIndex, CandlePage, ChartSeries,
+  Health, HealthHistory, InstrumentDetail, InstrumentSessions,
+  InstrumentsIndex, MarketsIndex,
   OpsRecovery, OpsRuntime, OpsSettings, OpsStorage, Overview,
   PortfolioAttribution, PortfolioBacktestsIndex, PortfolioDetail,
   PaperLegacy, PaperPortfolioEquity, PaperPortfolioPending,
@@ -205,6 +206,25 @@ export const apiClient = {
       `/api/v1/instruments/${encodeURIComponent(instrumentId)}`, signal),
   getProviders: (signal?: AbortSignal) =>
     request<ProvidersIndex>('/api/v1/providers', signal),
+  getCalendars: (signal?: AbortSignal) =>
+    request<CalendarsIndex>('/api/v1/calendars', signal),
+  /** Real sessions over a bounded window. The server refuses anything wider
+   *  than a year, so the range is passed through rather than clamped here. */
+  getInstrumentSessions: (
+    instrumentId: string,
+    params: { start?: string; end?: string; timeframe?: string } = {},
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams();
+    if (params.start) query.set('start', params.start);
+    if (params.end) query.set('end', params.end);
+    if (params.timeframe) query.set('timeframe', params.timeframe);
+    const suffix = query.toString() ? `?${query}` : '';
+    return request<InstrumentSessions>(
+      `/api/v1/instruments/${encodeURIComponent(instrumentId)}/sessions${suffix}`,
+      signal,
+    );
+  },
   getPortfolio: (signal?: AbortSignal) =>
     request<PortfolioStatus>('/api/v1/portfolio', signal),
   getPortfolioBacktests: (signal?: AbortSignal) =>

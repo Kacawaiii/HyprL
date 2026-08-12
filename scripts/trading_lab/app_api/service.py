@@ -10,7 +10,7 @@ fabricated price is worse than a cockpit showing an empty panel.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
 import pathlib
@@ -68,6 +68,20 @@ def _iso(moment: datetime) -> str:
 
 def _parse(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _parse_day(value: object):
+    """A calendar date from a query string, or a 400.
+
+    Accepts a bare date and the first ten characters of a timestamp, because
+    both are what a client sending a range naturally has. Anything else is
+    refused rather than coerced.
+    """
+    text = str(value).strip()[:10]
+    try:
+        return date.fromisoformat(text)
+    except ValueError as error:
+        raise AppApiError(f"{value!r} is not a date (expected YYYY-MM-DD)") from error
 
 
 class AppService:
@@ -987,12 +1001,13 @@ class AppService:
         products drift, and the frontend hardcoding its own would be a third.
         """
         from scripts.trading_lab.instrument_registry import (
-            INSTRUMENTS_V1, PROVIDERS_V1)
+            CATALOGUE_V1, PROVIDERS_V1)
 
-        grouped = INSTRUMENTS_V1.by_asset_class()
+        grouped = CATALOGUE_V1.by_asset_class()
         return {
             "api_version": APP_API_VERSION,
-            "count": len(INSTRUMENTS_V1),
+            "count": len(CATALOGUE_V1),
+            "tradable_count": len(self._tradable_ids()),
             "asset_classes": [
                 {
                     "asset_class": asset_class,
@@ -1004,35 +1019,188 @@ class AppService:
                 for asset_class, specs in sorted(grouped.items())
             ],
             "instruments": [self._instrument_payload(spec, PROVIDERS_V1)
-                            for spec in INSTRUMENTS_V1.all()],
+                            for spec in CATALOGUE_V1.all()],
         }
+
+    def _tradable_ids(self) -> tuple:
+        from scripts.trading_lab.instrument_registry import INSTRUMENTS_V1
+
+        return INSTRUMENTS_V1.ids()
 
     def _instrument_payload(self, spec, providers) -> dict:
         payload = dict(spec.payload())
         payload["providers"] = [provider.provider_id
                                 for provider in providers.for_instrument(
                                     spec.instrument_id)]
-        # What the rest of the API and every committed artefact call it.
-        payload["legacy_product_id"] = spec.legacy_product_id
+        # Known is not tradable. The catalogue describes six markets and this
+        # build trades two of them; a client that ignored this flag would
+        # offer an equity for a backtest that cannot run.
+        tradable = spec.canonical_id in self._tradable_ids()
+        payload["tradable"] = tradable
+        # Only a tradable instrument has a legacy product id, because only a
+        # tradable instrument appears in the committed artefacts that use one.
+        payload["legacy_product_id"] = spec.legacy_product_id if tradable else None
+        return payload
+
+    def _calendar_payload(self, calendar_id: str, timeframe: str) -> dict:
+        """A calendar as the UI needs it: already computed, never re-derived.
+
+        Bar counts and annualisation are returned rather than left to the
+        client. A browser recomputing "13 bars a session" would be a second
+        implementation of the session rules, and the two would disagree the
+        first time a holiday moved.
+        """
+        from scripts.trading_lab.trading_calendar import (
+            TradingCalendarError, get_calendar)
+
+        try:
+            calendar = get_calendar(calendar_id)
+        except TradingCalendarError as error:
+            # A calendar that exists but whose extra is not installed is an
+            # operational fact, reported as such rather than as a 404.
+            return {"calendar_id": calendar_id, "available": False,
+                    "reason": str(error)}
+        payload = {**calendar.payload(), "available": True,
+                   "timeframe": timeframe}
+        try:
+            payload["bars_per_day"] = calendar.bars_per_day(timeframe)
+            payload["annualization_periods"] = \
+                calendar.annualization_periods(timeframe)
+        except TradingCalendarError as error:
+            # 6h30 holds no whole number of hourly bars. Saying so is more
+            # useful than rounding to a number nobody can reproduce.
+            payload["bars_per_day"] = None
+            payload["annualization_periods"] = None
+            payload["timeframe_note"] = str(error)
+        return payload
+
+    def calendars(self) -> dict:
+        """Every calendar this build can name, installed or not."""
+        from scripts.trading_lab.instrument_registry import CATALOGUE_V1
+        from scripts.trading_lab.trading_calendar import known_calendars
+
+        in_use: dict[str, list] = {}
+        for spec in CATALOGUE_V1.all():
+            in_use.setdefault(spec.trading_calendar, []).append(spec.canonical_id)
+        return {
+            "api_version": APP_API_VERSION,
+            "count": len(known_calendars()),
+            "calendars": [
+                {**self._calendar_payload(
+                    calendar_id, self._default_timeframe(calendar_id)),
+                 "instruments": in_use.get(calendar_id, [])}
+                for calendar_id in known_calendars()
+            ],
+        }
+
+    def _default_timeframe(self, calendar_id: str) -> str:
+        """The timeframe a calendar is normally described in.
+
+        1h for crypto, 30m for equities -- because an equity session does not
+        contain a whole number of hourly bars, so 1h would report nothing.
+        """
+        from scripts.trading_lab.trading_calendar import US_EQUITY_REGULAR
+
+        return "30m" if calendar_id == US_EQUITY_REGULAR else SUPPORTED_TIMEFRAME
+
+    def calendar_detail(self, calendar_id) -> dict:
+        from scripts.trading_lab.instrument_registry import CATALOGUE_V1
+        from scripts.trading_lab.trading_calendar import known_calendars
+
+        name = str(calendar_id)
+        if name not in known_calendars():
+            raise NotFoundError(
+                f"no calendar named {name!r}; known: {list(known_calendars())}")
+        payload = self._calendar_payload(name, self._default_timeframe(name))
+        payload["api_version"] = APP_API_VERSION
+        payload["instruments"] = [spec.canonical_id for spec in CATALOGUE_V1.all()
+                                  if spec.trading_calendar == name]
+        return payload
+
+    # A hard ceiling on a sessions request. The endpoint enumerates real
+    # sessions, so an unbounded range is an unbounded response; a year is more
+    # than any view needs and small enough to serve from memory.
+    MAX_SESSION_DAYS = 400
+    DEFAULT_SESSION_DAYS = 30
+
+    def instrument_sessions(self, instrument_id, *, start=None, end=None,
+                            timeframe=None) -> dict:
+        """The real sessions for one instrument over a bounded window."""
+        from scripts.trading_lab.instrument_registry import (
+            CATALOGUE_V1, RegistryError)
+        from scripts.trading_lab.trading_calendar import (
+            TradingCalendarError, get_calendar)
+
+        try:
+            spec = CATALOGUE_V1.resolve(instrument_id)
+        except RegistryError as error:
+            raise NotFoundError(str(error)) from error
+
+        frame = str(timeframe or spec.native_timeframes[0])
+        if frame not in spec.native_timeframes:
+            raise AppApiError(
+                f"{spec.canonical_id} does not publish a {frame} grid; it "
+                f"publishes {list(spec.native_timeframes)}")
+
+        first = _parse_day(start) if start else datetime.now(timezone.utc).date()
+        last = _parse_day(end) if end else first + timedelta(
+            days=self.DEFAULT_SESSION_DAYS)
+        if last < first:
+            raise AppApiError("end precedes start")
+        span = (last - first).days
+        if span > self.MAX_SESSION_DAYS:
+            raise AppApiError(
+                f"a sessions window may cover at most {self.MAX_SESSION_DAYS} "
+                f"days; {span} were requested")
+
+        try:
+            calendar = get_calendar(spec.trading_calendar)
+        except TradingCalendarError as error:
+            raise NotFoundError(
+                f"sessions for {spec.canonical_id} need a calendar that is not "
+                f"available here: {error}") from error
+
+        payload = {
+            "api_version": APP_API_VERSION,
+            "instrument_id": spec.canonical_id,
+            "timeframe": frame,
+            "tradable": spec.canonical_id in self._tradable_ids(),
+            "start": first.isoformat(),
+            "end": last.isoformat(),
+            "calendar": self._calendar_payload(spec.trading_calendar, frame),
+        }
+        sessions_between = getattr(calendar, "sessions_between", None)
+        if sessions_between is None:
+            # A continuous market has no sessions to enumerate, and inventing
+            # one row per day would be a fabrication, not a convenience.
+            payload["continuous"] = True
+            payload["sessions"] = []
+            payload["session_count"] = None
+            return payload
+        sessions = sessions_between(f"{first.isoformat()}T00:00:00Z",
+                                    f"{last.isoformat()}T23:59:59Z")
+        payload["continuous"] = False
+        payload["session_count"] = len(sessions)
+        payload["early_close_count"] = sum(1 for item in sessions
+                                           if item.early_close)
+        payload["sessions"] = [
+            {**item.payload(),
+             "expected_bars": len(calendar.expected_bar_opens(item, frame))}
+            for item in sessions]
         return payload
 
     def instrument_detail(self, instrument_id) -> dict:
         from scripts.trading_lab.instrument_registry import (
-            INSTRUMENTS_V1, PROVIDERS_V1, RegistryError)
-        from scripts.trading_lab.trading_calendar import get_calendar
+            CATALOGUE_V1, PROVIDERS_V1, RegistryError)
 
         try:
-            spec = INSTRUMENTS_V1.resolve(instrument_id)
+            spec = CATALOGUE_V1.resolve(instrument_id)
         except RegistryError as error:
             raise NotFoundError(str(error)) from error
         payload = self._instrument_payload(spec, PROVIDERS_V1)
-        calendar = get_calendar(spec.trading_calendar)
-        payload["calendar"] = {
-            **calendar.payload(),
-            "bars_per_day": calendar.bars_per_day(SUPPORTED_TIMEFRAME),
-            "annualization_periods":
-                calendar.annualization_periods(SUPPORTED_TIMEFRAME),
-        }
+        frame = (SUPPORTED_TIMEFRAME if SUPPORTED_TIMEFRAME
+                 in spec.native_timeframes else spec.native_timeframes[0])
+        payload["calendar"] = self._calendar_payload(spec.trading_calendar, frame)
         payload["provider_details"] = [
             provider.payload()
             for provider in PROVIDERS_V1.for_instrument(spec.instrument_id)]
@@ -1045,15 +1213,18 @@ class AppService:
 
     def provider_detail(self, provider_id) -> dict:
         from scripts.trading_lab.instrument_registry import (
-            INSTRUMENTS_V1, PROVIDERS_V1, RegistryError)
+            CATALOGUE_V1, PROVIDERS_V1, RegistryError)
 
         try:
             provider = PROVIDERS_V1.resolve(provider_id)
         except RegistryError as error:
             raise NotFoundError(str(error)) from error
         payload = dict(provider.payload())
+        # Resolved against the catalogue, not the tradable registry: a
+        # provider serves the markets it serves, and most of them are ones
+        # this build only describes.
         payload["instrument_details"] = [
-            INSTRUMENTS_V1.resolve(item).payload()
+            self._instrument_payload(CATALOGUE_V1.resolve(item), PROVIDERS_V1)
             for item in provider.supported_instruments]
         return payload
 

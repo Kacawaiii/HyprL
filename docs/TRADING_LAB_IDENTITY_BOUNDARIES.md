@@ -38,6 +38,10 @@ digest is what makes an integrity check meaningless.
 | **EventHash** | 64 lowercase hex | **no** | store recomputes | byte-exact | — | chain reports unverified |
 | **SessionId** | `paper-YYYYMMDDTHHMMSSZ` | **no** | `identity.require_session_id` | exact | — | `IdentityError` |
 | **Cursor** | opaque base64 | **no** | `pagination.decode_cursor` | exact, bound to endpoint + product + query digest | — | `AppApiError` |
+| **CalendarId** | `US_EQUITY_REGULAR` | **no** | registry lookup | exact, closed set | — | `TradingCalendarError` → 404, never a fallback calendar |
+| **CalendarSpecHash** | 64 lowercase hex | **no** | `identity.require_exact_digest` | byte-exact | — | `IdentityError` |
+| **AdjustmentPolicy** | `RAW`, `SPLIT_ADJUSTED` | **no** | `equity_market.require_adjustment_policy` | exact, closed set | — | `EquityMarketError`; `TOTAL_RETURN` refused, never substituted |
+| **ExchangeCode** (vendor) | `XNAS` → venue `xnas` | only the mapped codes | `massive_provider.parse_reference_ticker` | exact table lookup | — | `MassiveProviderError`; never guessed |
 
 ### Notes that matter
 
@@ -80,6 +84,11 @@ features. Nothing raises a type error. The result is plausible and wrong.
 | bar × series | `InstrumentBar.require_instrument`, `require_single_instrument` | `market_providers` |
 | cursor × product | endpoint + product + query digest | `app_api.pagination` |
 | any product × reserved window | canonical, venue-blind, fail-closed on unreadable input | `protected_holdout` |
+| equity bar × instrument | `EquityMarketBar.require_instrument` | `equity_market` |
+| series × adjustment policy | `require_single_policy` — one policy per series, no exceptions | `equity_market` |
+| split × instrument | a split for another instrument cannot adjust these bars | `equity_market.apply_splits` |
+| tradable × describable | `is_tradable()`, fail-closed; two registries, never merged | `instrument_registry` |
+| provider × venue | `xnas:AAPL` served by `massive-stocks-historical-v1`; `massive:AAPL` does not exist | `instrument_registry`, asserted in tests |
 
 ## Rules for new code
 

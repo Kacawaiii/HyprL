@@ -405,7 +405,8 @@ const btcInstrument = {
   display_name: 'Bitcoin / US Dollar',
   instrument_spec_hash:
     '492c167c1e66a37a377cff8b4e135841c5a13a7c60324ec9b5c8b1976bf5701f',
-  providers: ['coinbase-public-v1'], legacy_product_id: 'BTC-USD',
+  providers: ['coinbase-public-v1'], tradable: true,
+  legacy_product_id: 'BTC-USD' as string | null,
 };
 
 const ethInstrument = {
@@ -417,13 +418,144 @@ const ethInstrument = {
   legacy_product_id: 'ETH-USD',
 };
 
+/** The four US markets this build describes but does not trade.
+ *
+ *  Their venue is xnas because that is where they list; the provider that
+ *  serves them is a separate fact and never appears in the identity. Every
+ *  one carries `tradable: false` and a null legacy id, which is what stops
+ *  them reaching a picker that drives a backtest. */
+const aaplInstrument = {
+  metadata_version: 'trading-lab.instrument.v1',
+  instrument_id: 'xnas:AAPL', venue: 'xnas', symbol: 'AAPL',
+  asset_class: 'EQUITY' as const, base_asset: 'AAPL', quote_asset: 'USD',
+  price_currency: 'USD', timezone: 'America/New_York',
+  trading_calendar: 'US_EQUITY_REGULAR',
+  native_timeframes: ['30m', '1d'], quantity_precision: 0, price_precision: 2,
+  display_name: 'Apple Inc.',
+  instrument_spec_hash:
+    'b9bb3ddb9309e527a98dcaa8ee4704bbcb2068997cae2aff244cd21cb8f354fb',
+  providers: ['massive-stocks-historical-v1'], tradable: false,
+  legacy_product_id: null as string | null,
+};
+
+const qqqInstrument = {
+  ...aaplInstrument,
+  instrument_id: 'xnas:QQQ', symbol: 'QQQ', base_asset: 'QQQ',
+  asset_class: 'ETF' as const, display_name: 'Invesco QQQ Trust, Series 1',
+  instrument_spec_hash:
+    'adaf3edbc85da84eb695445a4ef3a1a44460883c070c5bd0e58c33fc85cd559b',
+};
+
 export const instruments = {
   api_version: 'trading-lab.app-api.v1',
+  count: 4,
+  tradable_count: 2,
+  asset_classes: [
+    { asset_class: 'CRYPTO' as const, instruments: [btcInstrument, ethInstrument] },
+    { asset_class: 'EQUITY' as const, instruments: [aaplInstrument] },
+    { asset_class: 'ETF' as const, instruments: [qqqInstrument] },
+  ],
+  instruments: [btcInstrument, ethInstrument, aaplInstrument, qqqInstrument],
+};
+
+/** Only the two crypto markets, for the tests about an all-tradable registry. */
+export const instrumentsTradableOnly = {
+  ...instruments,
   count: 2,
+  tradable_count: 2,
   asset_classes: [
     { asset_class: 'CRYPTO' as const, instruments: [btcInstrument, ethInstrument] },
   ],
   instruments: [btcInstrument, ethInstrument],
+};
+
+export const instrumentDetail = {
+  ...btcInstrument,
+  calendar: {
+    schema_version: 'trading-lab.trading-calendar.v1',
+    calendar_id: 'CRYPTO_24_7',
+    description: 'continuous trading, no session boundaries or holidays',
+    available: true, timeframe: '1h',
+    bars_per_day: 24, annualization_periods: 8760,
+  },
+  provider_details: [],
+};
+
+export const equityInstrumentDetail = {
+  ...aaplInstrument,
+  calendar: {
+    schema_version: 'trading-lab.equity-calendar.v1',
+    calendar_id: 'US_EQUITY_REGULAR',
+    description:
+      'US equity regular session (NYSE/NASDAQ), holidays and early closes',
+    available: true, timeframe: '30m',
+    bars_per_day: 13, annualization_periods: 3263,
+    spec: {
+      calendar_provider: 'pandas_market_calendars',
+      calendar_provider_version: '5.4.0',
+      calendar_name: 'XNYS',
+      timezone: 'America/New_York',
+      session_type: 'REGULAR',
+    },
+    spec_hash:
+      '1ef910eb3d4f5096ab2888ea6213df1f688870dfea02ba977bfc7faea9db6314',
+  },
+  provider_details: [],
+};
+
+export const calendars = {
+  api_version: 'trading-lab.app-api.v1',
+  count: 2,
+  calendars: [
+    { ...instrumentDetail.calendar,
+      instruments: ['coinbase:BTC-USD', 'coinbase:ETH-USD'] },
+    { ...equityInstrumentDetail.calendar,
+      instruments: ['xnas:AAPL', 'xnas:MSFT', 'xnas:NVDA', 'xnas:QQQ'] },
+  ],
+};
+
+/** A Thanksgiving week: the holiday absent, the day after short. */
+export const equitySessions = {
+  api_version: 'trading-lab.app-api.v1',
+  instrument_id: 'xnas:AAPL',
+  timeframe: '30m',
+  tradable: false,
+  start: '2026-11-23',
+  end: '2026-11-30',
+  calendar: equityInstrumentDetail.calendar,
+  continuous: false,
+  session_count: 5,
+  early_close_count: 1,
+  sessions: [
+    { session_date: '2026-11-23', open_at: '2026-11-23T14:30:00Z',
+      close_at: '2026-11-23T21:00:00Z', session_type: 'REGULAR',
+      duration_seconds: 23400, early_close: false, expected_bars: 13 },
+    { session_date: '2026-11-24', open_at: '2026-11-24T14:30:00Z',
+      close_at: '2026-11-24T21:00:00Z', session_type: 'REGULAR',
+      duration_seconds: 23400, early_close: false, expected_bars: 13 },
+    { session_date: '2026-11-25', open_at: '2026-11-25T14:30:00Z',
+      close_at: '2026-11-25T21:00:00Z', session_type: 'REGULAR',
+      duration_seconds: 23400, early_close: false, expected_bars: 13 },
+    { session_date: '2026-11-27', open_at: '2026-11-27T14:30:00Z',
+      close_at: '2026-11-27T18:00:00Z', session_type: 'REGULAR',
+      duration_seconds: 12600, early_close: true, expected_bars: 7 },
+    { session_date: '2026-11-30', open_at: '2026-11-30T14:30:00Z',
+      close_at: '2026-11-30T21:00:00Z', session_type: 'REGULAR',
+      duration_seconds: 23400, early_close: false, expected_bars: 13 },
+  ],
+};
+
+export const cryptoSessions = {
+  api_version: 'trading-lab.app-api.v1',
+  instrument_id: 'coinbase:BTC-USD',
+  timeframe: '1h',
+  tradable: true,
+  start: '2026-11-23',
+  end: '2026-11-30',
+  calendar: instrumentDetail.calendar,
+  continuous: true,
+  session_count: null,
+  sessions: [],
 };
 
 export const providers = {
@@ -437,30 +569,46 @@ export const providers = {
     capabilities: {
       historical_bars: true, latest_closed_bar: true, realtime_ticks: false,
       order_book: false, corporate_actions: false,
-      market_calendar: 'CRYPTO_24_7', authenticated: false,
-      private_account_data: false,
+      market_calendar: 'CRYPTO_24_7', data_freshness: 'LIVE',
+      authenticated: false, private_account_data: false,
     },
     instruments: ['coinbase:BTC-USD', 'coinbase:ETH-USD'],
+  }, {
+    schema_version: 'trading-lab.massive-provider.v1',
+    provider_id: 'massive-stocks-historical-v1',
+    display_name: 'Massive (US stocks, historical)',
+    capabilities: {
+      historical_bars: true, latest_closed_bar: false, realtime_ticks: false,
+      order_book: false, corporate_actions: true,
+      market_calendar: 'US_EQUITY_REGULAR', data_freshness: 'END_OF_DAY',
+      // A market-data key buys prices and nothing that belongs to an account.
+      authenticated: true, private_account_data: false,
+    },
+    instruments: ['xnas:AAPL', 'xnas:MSFT', 'xnas:NVDA', 'xnas:QQQ'],
   }],
 };
 
-/** A registry that gained an asset class, to prove grouping is not hardcoded. */
-export const instrumentsWithEquity = {
-  ...instruments,
-  count: 3,
-  asset_classes: [
-    ...instruments.asset_classes,
-    {
-      asset_class: 'EQUITY' as const,
-      instruments: [{
-        ...btcInstrument, instrument_id: 'nasdaq:AAPL', venue: 'nasdaq',
-        symbol: 'AAPL', asset_class: 'EQUITY' as const, base_asset: 'AAPL',
-        display_name: 'Apple Inc.', legacy_product_id: 'AAPL',
-        trading_calendar: 'XNAS', providers: [],
-      }],
-    },
-  ],
+/** A registry whose equity is tradable, to prove grouping is not hardcoded.
+ *
+ *  The real seed equities are all reference-only, so they would never reach an
+ *  <optgroup> in the picker. This variant makes one tradable purely to exercise
+ *  the grouping path -- it describes no market this build actually has. */
+const tradableAapl = {
+  ...aaplInstrument, tradable: true, legacy_product_id: 'AAPL' as string | null,
 };
+
+export const instrumentsWithEquity = {
+  api_version: 'trading-lab.app-api.v1',
+  count: 3,
+  tradable_count: 3,
+  asset_classes: [
+    { asset_class: 'CRYPTO' as const, instruments: [btcInstrument, ethInstrument] },
+    { asset_class: 'EQUITY' as const, instruments: [tradableAapl] },
+  ],
+  instruments: [btcInstrument, ethInstrument, tradableAapl],
+};
+
+export { aaplInstrument, qqqInstrument };
 
 /* --- portfolio (Phase 6B) ----------------------------------------------- */
 

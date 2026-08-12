@@ -174,6 +174,7 @@ def build_routes(service: AppService):
         "/api/v1/portfolio/backtests": lambda query: service.portfolio_backtests(),
         "/api/v1/instruments": lambda query: service.instruments(),
         "/api/v1/providers": lambda query: service.providers(),
+        "/api/v1/calendars": lambda query: service.calendars(),
     }, markets_detail, chart, backtest_sub, paper_sub
 
 
@@ -252,6 +253,18 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # deliberately decodes exactly once and then checks containment.
         if len(parts) == 4 and parts[:3] == ["api", "v1", "instruments"]:
             return self.service.instrument_detail(unquote(parts[3]))
+        # /api/v1/instruments/{instrument_id}/sessions -- bounded by the
+        # service, which refuses a window wider than a year rather than
+        # enumerating every session since 1885.
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "instruments"] \
+                and parts[4] == "sessions":
+            return self.service.instrument_sessions(
+                unquote(parts[3]), start=_query_first(query, "start"),
+                end=_query_first(query, "end"),
+                timeframe=_query_first(query, "timeframe"))
+        # /api/v1/calendars/{calendar_id}
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "calendars"]:
+            return self.service.calendar_detail(unquote(parts[3]))
         # /api/v1/providers/{provider_id}
         if len(parts) == 4 and parts[:3] == ["api", "v1", "providers"]:
             return self.service.provider_detail(unquote(parts[3]))

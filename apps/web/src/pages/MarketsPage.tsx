@@ -7,7 +7,8 @@ import { ErrorState, Hash, LoadingState } from '../components/States';
 import {
   InstrumentDetails, InstrumentSelector, findInstrument, useInstruments,
 } from '../components/InstrumentSelector';
-import type { Candle } from '../api/types';
+import { SessionCalendar } from '../components/SessionCalendar';
+import type { Candle, Instrument } from '../api/types';
 
 /** Windows are chosen in the UI; the server decides how many points come back. */
 const WINDOWS = [
@@ -25,7 +26,22 @@ export function MarketsPage() {
   const [window, setWindow] = useState<(typeof WINDOWS)[number]['id']>('30d');
 
   const instruments = useInstruments();
-  const product = selected || instruments.data?.instruments[0]?.legacy_product_id || '';
+  const tradable = useMemo(
+    () => (instruments.data?.instruments ?? []).filter((item) => item.tradable),
+    [instruments.data],
+  );
+  // The catalogue holds markets this build describes but does not trade. They
+  // get their own section rather than being mixed into the picker, which
+  // drives charts and backtests that cannot run for them.
+  const reference = useMemo(
+    () => (instruments.data?.instruments ?? []).filter((item) => !item.tradable),
+    [instruments.data],
+  );
+  const [referenceId, setReferenceId] = useState('');
+  const referenceInstrument =
+    reference.find((item) => item.instrument_id === referenceId) ?? reference[0];
+
+  const product = selected || tradable[0]?.legacy_product_id || '';
   const instrument = findInstrument(instruments.data?.instruments, product);
 
   const markets = useQuery('markets', (signal) => apiClient.getMarkets(signal));
@@ -131,6 +147,48 @@ export function MarketsPage() {
           </>
         )}
       </section>
+
+      {reference.length > 0 && (
+        <section className="card">
+          <h2 className="card-title">
+            Reference markets{' '}
+            <span className="badge" data-tone="off">NOT TRADED</span>
+          </h2>
+          <p className="muted">
+            {reference.length} markets this build can describe but does not
+            trade. They exist so their identity, their provider and their real
+            trading sessions can be inspected. There is no model, no signal, no
+            backtest and no paper session behind any of them, and none of them
+            appears in the picker above.
+          </p>
+          <div className="row">
+            <label htmlFor="reference-select" className="muted">Market</label>
+            <select
+              id="reference-select"
+              className="select"
+              value={referenceInstrument?.instrument_id ?? ''}
+              onChange={(event) => setReferenceId(event.target.value)}
+            >
+              {reference.map((item: Instrument) => (
+                <option key={item.instrument_id} value={item.instrument_id}>
+                  {item.symbol} — {item.display_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {referenceInstrument && (
+            <>
+              <div style={{ marginTop: 16 }}>
+                <InstrumentDetails instrument={referenceInstrument} />
+              </div>
+              <h3 className="card-title" style={{ marginTop: 24 }}>
+                Trading sessions
+              </h3>
+              <SessionCalendar instrumentId={referenceInstrument.instrument_id} />
+            </>
+          )}
+        </section>
+      )}
 
       <section className="card">
         <h2 className="card-title">Candles</h2>

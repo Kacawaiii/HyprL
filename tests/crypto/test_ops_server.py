@@ -284,10 +284,25 @@ def test_the_instrument_registry_is_served_grouped_by_asset_class(server):
     status, _, body = _get(f"{server}/api/v1/instruments")
     assert status == 200
     payload = json.loads(body)
-    assert payload["count"] == 2
-    assert [group["asset_class"] for group in payload["asset_classes"]] == ["CRYPTO"]
+    # The catalogue describes six markets; this build trades two of them, and
+    # every entry says which it is. A client that ignored the flag would offer
+    # an equity for a backtest that cannot run.
+    assert payload["count"] == 6
+    assert payload["tradable_count"] == 2
+    assert [group["asset_class"] for group in payload["asset_classes"]] == [
+        "CRYPTO", "EQUITY", "ETF"]
     ids = [item["instrument_id"] for item in payload["instruments"]]
-    assert ids == ["coinbase:BTC-USD", "coinbase:ETH-USD"]
+    assert ids == ["coinbase:BTC-USD", "coinbase:ETH-USD", "xnas:AAPL",
+                   "xnas:MSFT", "xnas:NVDA", "xnas:QQQ"]
+    tradable = {item["instrument_id"]: item["tradable"]
+                for item in payload["instruments"]}
+    assert tradable == {"coinbase:BTC-USD": True, "coinbase:ETH-USD": True,
+                        "xnas:AAPL": False, "xnas:MSFT": False,
+                        "xnas:NVDA": False, "xnas:QQQ": False}
+    # Only a tradable instrument has a legacy product id, because only a
+    # tradable one appears in the artefacts that use one.
+    for item in payload["instruments"]:
+        assert (item["legacy_product_id"] is not None) == item["tradable"]
 
 
 def test_an_instrument_carries_its_identity_and_metadata(server):
@@ -373,11 +388,17 @@ def test_the_registry_endpoints_are_small_and_read_only(server):
 
 
 def test_no_registry_endpoint_exposes_a_key_or_an_account(server):
+    # The Massive provider is the one that actually holds a credential, so it
+    # is the one this check exists for. Its detail endpoint may say whether a
+    # key is configured; it may not name it, echo it, or offer a field shaped
+    # like somewhere to put it.
     for path in ("/api/v1/instruments", "/api/v1/providers",
-                 "/api/v1/providers/coinbase-public-v1"):
+                 "/api/v1/providers/coinbase-public-v1",
+                 "/api/v1/providers/massive-stocks-historical-v1"):
         rendered = _get(f"{server}{path}")[2].decode().lower()
-        for secret in ("api_key", "secret", "token", "authorization", "cookie",
-                       "balance", "wallet", "account_id"):
+        for secret in ("api_key", "apikey", "secret", "token", "authorization",
+                       "bearer", "cookie", "balance", "wallet", "account_id",
+                       "hyprl_massive"):
             assert secret not in rendered, f"{path} mentions {secret}"
 
 

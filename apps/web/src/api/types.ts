@@ -577,8 +577,11 @@ export interface Instrument {
   display_name: string;
   instrument_spec_hash: string;
   providers: string[];
-  /** What the rest of the API and every committed artefact call it. */
-  legacy_product_id: string;
+  /** Whether this build trades the instrument or only describes it. */
+  tradable: boolean;
+  /** What the committed artefacts call it. Null for anything untradable,
+   *  because only a tradable instrument appears in an artefact that uses one. */
+  legacy_product_id: string | null;
 }
 
 export interface InstrumentGroup {
@@ -589,6 +592,7 @@ export interface InstrumentGroup {
 export interface InstrumentsIndex {
   api_version: string;
   count: number;
+  tradable_count: number;
   asset_classes: InstrumentGroup[];
   instruments: Instrument[];
 }
@@ -600,6 +604,8 @@ export interface ProviderCapabilities {
   order_book: boolean;
   corporate_actions: boolean;
   market_calendar: string;
+  /** How current the most recent row is. END_OF_DAY is never a live price. */
+  data_freshness: string;
   authenticated: boolean;
   private_account_data: boolean;
 }
@@ -619,14 +625,70 @@ export interface ProvidersIndex {
   providers: Provider[];
 }
 
-export interface InstrumentDetail extends Instrument {
-  calendar: {
-    schema_version: string;
-    calendar_id: string;
-    description: string;
-    bars_per_day: number;
-    annualization_periods: number;
+/** A calendar as the server computed it.
+ *
+ *  Every derived number arrives finished. The browser never counts bars in a
+ *  session or scales a Sharpe ratio: that would be a second implementation of
+ *  the session rules, and the two would disagree the first time a holiday
+ *  moved. `bars_per_day` is null when the timeframe does not divide the
+ *  session evenly -- a 6h30 session holds no whole number of hourly bars, and
+ *  saying so beats rounding. */
+export interface TradingCalendarView {
+  schema_version: string;
+  calendar_id: string;
+  description: string;
+  available: boolean;
+  reason?: string;
+  timeframe?: string;
+  bars_per_day: number | null;
+  annualization_periods: number | null;
+  timeframe_note?: string;
+  spec?: {
+    calendar_provider: string;
+    calendar_provider_version: string;
+    calendar_name: string;
+    timezone: string;
+    session_type: string;
   };
+  spec_hash?: string;
+  instruments?: string[];
+}
+
+export interface CalendarsIndex {
+  api_version: string;
+  count: number;
+  calendars: TradingCalendarView[];
+}
+
+/** One real session, already in UTC, already measured. */
+export interface TradingSessionView {
+  session_date: string;
+  open_at: string;
+  close_at: string;
+  session_type: string;
+  duration_seconds: number;
+  early_close: boolean;
+  expected_bars: number;
+}
+
+export interface InstrumentSessions {
+  api_version: string;
+  instrument_id: string;
+  timeframe: string;
+  tradable: boolean;
+  start: string;
+  end: string;
+  calendar: TradingCalendarView;
+  /** A market with no session boundaries has none to enumerate, and
+   *  `session_count` is null rather than a fabricated row per day. */
+  continuous: boolean;
+  session_count: number | null;
+  early_close_count?: number;
+  sessions: TradingSessionView[];
+}
+
+export interface InstrumentDetail extends Instrument {
+  calendar: TradingCalendarView;
   provider_details: Provider[];
 }
 

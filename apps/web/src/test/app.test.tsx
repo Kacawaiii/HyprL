@@ -41,6 +41,7 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/ops/settings': fixtures.opsSettings,
     '/api/v1/instruments': fixtures.instruments,
     '/api/v1/providers': fixtures.providers,
+    '/api/v1/calendars': fixtures.calendars,
     '/api/v1/portfolio': fixtures.portfolioEmpty,
     '/api/v1/portfolio/backtests': fixtures.portfolioBacktestsEmpty,
     '/api/v1/paper/portfolio': fixtures.paperPortfolioRunning,
@@ -66,6 +67,18 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     }
     if (/\/api\/v1\/markets\/[^/?]+(\?|$)/.test(path)) {
       return jsonResponse(fixtures.candlePage);
+    }
+    // Instrument sub-routes before the detail route, for the same reason the
+    // chart route comes before /markets: the prefixes overlap.
+    if (path.includes('/api/v1/instruments/') && path.includes('/sessions')) {
+      return jsonResponse(
+        path.includes('xnas') ? fixtures.equitySessions : fixtures.cryptoSessions);
+    }
+    if (/\/api\/v1\/instruments\/[^/?]+(\?|$)/.test(path)) {
+      return jsonResponse(
+        path.includes('xnas')
+          ? fixtures.equityInstrumentDetail
+          : fixtures.instrumentDetail);
     }
     for (const [route, payload] of Object.entries(routes)) {
       const [base] = path.split('?');
@@ -595,15 +608,21 @@ describe('instruments', () => {
     expect(screen.getByText('1h, 1d')).toBeInTheDocument();
   });
 
-  it('labels the source as public market data, never as live trading', async () => {
+  it('labels the source as market data, never as live trading', async () => {
     renderAt('/markets');
     expect(await screen.findByText('PUBLIC MARKET DATA')).toBeInTheDocument();
+    // The equity provider holds a key, so it is labelled differently -- and
+    // still labelled as market data, because that is all a market-data key
+    // buys. Both providers appear: one per instrument panel on the page.
+    expect(await screen.findByText('KEYED MARKET DATA')).toBeInTheDocument();
     // No badge claiming live trading. The shell's "No live trading"
     // disclaimer is the opposite claim and must stay.
     expect(screen.queryByText('LIVE TRADING')).toBeNull();
     expect(screen.getByText('No live trading')).toBeInTheDocument();
-    expect(screen.getByText(/no ticks/)).toBeInTheDocument();
-    expect(screen.getByText(/no order book/)).toBeInTheDocument();
+    expect(screen.getAllByText(/no ticks/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/no order book/).length).toBeGreaterThan(0);
+    // Every provider panel denies holding account data, keyed or not.
+    expect(screen.getAllByText(/no account data/).length).toBe(2);
   });
 
   it('switches instrument and refetches only that instrument', async () => {
@@ -627,8 +646,12 @@ describe('instruments', () => {
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map((call) => String(call[0]));
       expect(calls.some((path) => path.includes('/markets/BTC-USD'))).toBe(true);
-      // never the canonical form on the legacy endpoints
-      expect(calls.some((path) => path.includes('coinbase%3ABTC-USD'))).toBe(false);
+      // Never the canonical form on the legacy endpoints. The registry's own
+      // /instruments/{id} route is addressed canonically and is excluded here
+      // deliberately: that endpoint takes the canonical id and no other.
+      const legacy = calls.filter((path) => !path.includes('/api/v1/instruments/'));
+      expect(legacy.some((path) => path.includes('coinbase%3ABTC-USD'))).toBe(false);
+      expect(legacy.some((path) => path.includes('coinbase:BTC-USD'))).toBe(false);
     });
   });
 
@@ -784,6 +807,123 @@ describe('portfolio', () => {
     renderAt('/portfolio', { '/api/v1/portfolio': new Error('portfolio down') });
     expect(await screen.findByText('Could not load')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Overview/ })).toBeInTheDocument();
+  });
+});
+
+/* --- US equities and real trading sessions (Phase 6D) ---------------------
+ *
+ * The distinction under test is "described" versus "traded". Four US markets
+ * are registered so their identity, provider and sessions can be inspected;
+ * none of them has a model, a signal or a paper session, and none may appear
+ * anywhere that implies one. */
+
+describe('reference markets', () => {
+  it('keeps untradable markets out of the instrument picker', async () => {
+    renderAt('/markets');
+    const select = await screen.findByLabelText('Instrument');
+    const options = [...select.querySelectorAll('option')].map((node) => node.value);
+    expect(options).toEqual(['BTC-USD', 'ETH-USD']);
+    // An "Equities" heading with nothing under it would read as a failure.
+    const groups = [...document.body.querySelectorAll('optgroup')].map((node) =>
+      node.getAttribute('label'),
+    );
+    expect(groups).toEqual(['Crypto']);
+  });
+
+  it('lists them in their own section, labelled as not traded', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText(/Reference markets/)).toBeInTheDocument();
+    expect(screen.getByText('NOT TRADED')).toBeInTheDocument();
+    expect(screen.getAllByText('REFERENCE ONLY').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/no model, no signal, no paper session/),
+    ).toBeInTheDocument();
+  });
+
+  it('names the venue, not the provider, as the identity', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText('xnas:AAPL')).toBeInTheDocument();
+    // massive:AAPL is not a thing. The provider is named separately, as the
+    // source of the bars rather than as part of the instrument.
+    expect(screen.queryByText('massive:AAPL')).toBeNull();
+    expect(
+      await screen.findByText('Massive (US stocks, historical)'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows end-of-day freshness so nothing reads it as a live price', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText('END OF DAY')).toBeInTheDocument();
+  });
+});
+
+describe('trading sessions', () => {
+  it('shows real sessions with the holiday and the weekend absent', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText('2026-11-23')).toBeInTheDocument();
+    expect(await screen.findByText('2026-11-27')).toBeInTheDocument();
+    // Thanksgiving and the weekend after it are not rows, because no bar was
+    // ever expected on them.
+    expect(screen.queryByText('2026-11-26')).toBeNull();
+    expect(screen.queryByText('2026-11-28')).toBeNull();
+    expect(screen.queryByText('2026-11-29')).toBeNull();
+  });
+
+  it('marks the early close and gives it fewer bars', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText('EARLY CLOSE')).toBeInTheDocument();
+    const rows = [...document.body.querySelectorAll('tr')];
+    const short = rows.find((row) => row.textContent?.includes('2026-11-27'));
+    const full = rows.find((row) => row.textContent?.includes('2026-11-23'));
+    expect(short?.textContent).toContain('7');
+    expect(full?.textContent).toContain('13');
+    // Not padded to match a regular session.
+    expect(short?.textContent).not.toContain('13');
+  });
+
+  it('says a gap-free calendar is not the same as missing data', async () => {
+    renderAt('/markets');
+    expect(
+      await screen.findByText(/not gaps in the data/),
+    ).toBeInTheDocument();
+  });
+
+  it('computes no session arithmetic in the browser', async () => {
+    /* Every number rendered here came from the API. If the page ever starts
+       deriving bar counts itself, this fixture -- whose expected_bars are
+       supplied, not derivable from the timestamps by the browser -- is what
+       makes the divergence visible. */
+    renderAt('/markets');
+    await screen.findByText('2026-11-27');
+    const rows = [...document.body.querySelectorAll('tr')];
+    const short = rows.find((row) => row.textContent?.includes('2026-11-27'));
+    expect(short?.textContent).toContain('3h30');
+    expect(short?.textContent).toContain('14:30');
+    expect(short?.textContent).toContain('18:00');
+  });
+});
+
+describe('calendars', () => {
+  it('shows the equity annualisation from the server, never 8760', async () => {
+    renderAt('/markets');
+    // 13 bars a session, 3263 periods a year. A crypto constant here would
+    // inflate every equity Sharpe ratio by roughly 1.6x.
+    expect(await screen.findByText(/13 × 30m per session/)).toBeInTheDocument();
+    expect(await screen.findByText(/3,263 periods a year/)).toBeInTheDocument();
+  });
+
+  it('names the library and version that produced the schedule', async () => {
+    renderAt('/markets');
+    expect(
+      await screen.findByText(/pandas_market_calendars 5\.4\.0/),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/REGULAR session/)).toBeInTheDocument();
+  });
+
+  it('shows the crypto calendar as continuous, with its own factor', async () => {
+    renderAt('/markets');
+    expect(await screen.findByText(/24 × 1h per session/)).toBeInTheDocument();
+    expect(await screen.findByText(/8,760 periods a year/)).toBeInTheDocument();
   });
 });
 
