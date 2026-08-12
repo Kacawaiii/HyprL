@@ -55,7 +55,14 @@ dev = [
 rust = [
     "maturin>=1.0.0",
 ]
-all = ["hyprl[ml,dev,rust]"]
+# US equity/ETF sessions. Pinned to an exact version, not a floor: a newer
+# release can add or move a holiday, and every schedule, bar grid and
+# annualisation factor derived from it would change without a code change.
+# The calendar spec hash records this version, so a bump is a visible event.
+equities = [
+    "pandas_market_calendars==5.4.0",
+]
+all = ["hyprl[ml,dev,rust,equities]"]
 
 [project.urls]
 Homepage = "https://github.com/Kacawaiii/HyprL"

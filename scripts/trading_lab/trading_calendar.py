@@ -9,10 +9,13 @@ one with 8760 overstates it by more than twice.
 So the number moves out of the arithmetic and onto the calendar. A future
 equity calendar returns its own, and no formula has to be found and edited.
 
-Only ``Crypto247Calendar`` is implemented. There is no ``EquityCalendar``
-here, not even a stub returning 24/7 with a comment promising to fix it later:
-a wrong calendar that runs is far more dangerous than a missing one that
-raises, because it produces plausible numbers nobody re-derives.
+``Crypto247Calendar`` is implemented here in full because it needs nothing but
+the standard library. The US equity calendar is not, and never will be: real
+sessions need a real holiday database, so it lives in ``equity_calendar`` behind
+the optional ``[equities]`` extra and is imported only when someone asks for it
+by name. What is *not* here is a stub returning 24/7 with a comment promising to
+fix it later -- a wrong calendar that runs is far more dangerous than a missing
+one that raises, because it produces plausible numbers nobody re-derives.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from scripts.trading_lab.instruments import InstrumentError, Timeframe
 TRADING_CALENDAR_SCHEMA_VERSION = "trading-lab.trading-calendar.v1"
 
 CRYPTO_24_7 = "CRYPTO_24_7"
+US_EQUITY_REGULAR = "US_EQUITY_REGULAR"
 
 DAYS_PER_YEAR = 365
 
@@ -124,6 +128,24 @@ CRYPTO_247_CALENDAR = Crypto247Calendar()
 
 _CALENDARS = {CRYPTO_24_7: CRYPTO_247_CALENDAR}
 
+# Calendars that exist but cost a dependency to build. Named here so that
+# get_calendar() can tell "not implemented" apart from "implemented, extra not
+# installed" -- two very different answers -- without importing anything.
+_DEFERRED_CALENDARS = {US_EQUITY_REGULAR: "scripts.trading_lab.equity_calendar"}
+
+
+def _load_deferred(calendar_id: str) -> TradingCalendar:
+    """Import an optional calendar on demand.
+
+    Deliberately inside the function. At module scope this import would drag
+    pandas into every crypto process that ever asks what time it is, and the
+    core install would stop working.
+    """
+    import importlib
+
+    module = importlib.import_module(_DEFERRED_CALENDARS[calendar_id])
+    return module.get_us_equity_calendar()
+
 
 def get_calendar(calendar_id: str) -> TradingCalendar:
     """Resolve a calendar, or refuse. Never falls back to 24/7.
@@ -131,20 +153,36 @@ def get_calendar(calendar_id: str) -> TradingCalendar:
     An unknown calendar returning the crypto one "for now" is how an equity
     strategy ends up annualised by 8760 and looking twice as good as it is.
     """
-    if calendar_id not in _CALENDARS:
-        raise TradingCalendarError(
-            f"no calendar implemented for {calendar_id!r}; implemented: "
-            f"{sorted(_CALENDARS)}. A market whose sessions are unknown must not "
-            "borrow another market's.")
-    return _CALENDARS[calendar_id]
+    if calendar_id in _CALENDARS:
+        return _CALENDARS[calendar_id]
+    if calendar_id in _DEFERRED_CALENDARS:
+        return _load_deferred(calendar_id)
+    raise TradingCalendarError(
+        f"no calendar implemented for {calendar_id!r}; implemented: "
+        f"{known_calendars()}. A market whose sessions are unknown must not "
+        "borrow another market's.")
 
 
 def known_calendars() -> tuple[str, ...]:
-    return tuple(sorted(_CALENDARS))
+    """Every calendar that can be resolved, installed or not.
+
+    An optional extra that is missing is a deployment fact, not a reason to
+    pretend the calendar does not exist.
+    """
+    return tuple(sorted({*_CALENDARS, *_DEFERRED_CALENDARS}))
+
+
+def calendar_available(calendar_id: str) -> bool:
+    """Whether this process can actually build the calendar right now."""
+    try:
+        get_calendar(calendar_id)
+    except (TradingCalendarError, ImportError):
+        return False
+    return True
 
 
 __all__ = [
     "CRYPTO_24_7", "CRYPTO_247_CALENDAR", "Crypto247Calendar", "InstrumentError",
     "TRADING_CALENDAR_SCHEMA_VERSION", "TradingCalendar", "TradingCalendarError",
-    "get_calendar", "known_calendars",
+    "US_EQUITY_REGULAR", "calendar_available", "get_calendar", "known_calendars",
 ]

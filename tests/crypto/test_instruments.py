@@ -245,10 +245,16 @@ def test_an_unimplemented_calendar_never_falls_back_to_crypto():
     from scripts.trading_lab.trading_calendar import (
         TradingCalendarError, get_calendar, known_calendars)
 
-    assert known_calendars() == ("CRYPTO_24_7",)
+    assert known_calendars() == ("CRYPTO_24_7", "US_EQUITY_REGULAR")
+    # XNYS is a real MIC and the name the equity calendar uses internally, and
+    # it still resolves to nothing here: only the platform's own calendar ids
+    # are addressable, so a vendor's exchange code cannot pick a calendar.
     with pytest.raises(TradingCalendarError) as error:
         get_calendar("XNYS")
     assert "must not borrow" in str(error.value)
+    for spelling in ("crypto_24_7", "CRYPTO", "", "US_EQUITY", "NASDAQ"):
+        with pytest.raises(TradingCalendarError):
+            get_calendar(spelling)
 
 
 def test_a_timeframe_that_does_not_divide_a_day_is_refused():
@@ -385,9 +391,14 @@ def test_capabilities_default_to_absent():
 
     blank = ProviderCapabilities()
     for name, value in blank.payload().items():
-        if name == "market_calendar":
+        if isinstance(value, str):
             continue
         assert value is False, name
+    # The descriptive fields have an "absent" value too, and it is never one a
+    # caller may act on: an unnamed calendar and unspecified freshness both
+    # mean "this provider has not said", not "24/7" and not "live".
+    assert blank.market_calendar == ""
+    assert blank.data_freshness == "UNSPECIFIED"
 
 
 def test_no_provider_exposes_an_order_or_an_account():
