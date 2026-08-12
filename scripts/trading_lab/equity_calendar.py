@@ -332,20 +332,43 @@ class USEquityRegularCalendar(TradingCalendar):
         A bar may never cross the close, so an early close simply yields
         fewer bars -- 7 instead of 13 for a 30-minute grid. Nothing is
         synthesised to make the count match a normal day.
+
+        A daily bar is the exception, and not really an exception at all: for
+        an equity, a daily bar *is* the session. It is 6h30 of trading, not 24
+        hours of clock, and every vendor publishes it that way. Measuring it
+        against a 24-hour interval would make it never fit and report zero
+        daily bars a year.
         """
         frame = Timeframe.parse(timeframe)
         duration = frame.duration
         if duration <= timedelta(0):                 # pragma: no cover
             raise EquityCalendarError("timeframe duration must be positive")
+        if duration >= timedelta(days=1):
+            return (session.open_at,)
         openings, cursor = [], session.open_at
         while cursor + duration <= session.close_at:
             openings.append(cursor)
             cursor = cursor + duration
         return tuple(openings)
 
+    def bar_close_for(self, session: TradingSession, bar_open_at: datetime,
+                      timeframe: object) -> datetime:
+        """Where a bar opening at this instant ends.
+
+        A daily bar ends at the session close, which is what makes it shorter
+        on an early close -- and correct, rather than a 24-hour bar covering
+        eighteen hours the market was shut.
+        """
+        frame = Timeframe.parse(timeframe)
+        if frame.duration >= timedelta(days=1):
+            return session.close_at
+        return bar_open_at + frame.duration
+
     def bars_per_day(self, timeframe: object) -> int:
         """Bars in a *full* regular session. Early closes have fewer."""
         frame = Timeframe.parse(timeframe)
+        if frame.duration >= timedelta(days=1):
+            return 1
         full = timedelta(hours=6, minutes=30)
         if full % frame.duration:
             raise EquityCalendarError(
@@ -475,7 +498,7 @@ def bar_availability(calendar: USEquityRegularCalendar, *, bar_open_at: object,
         raise EquityCalendarError(
             f"{_iso(opening)} is not on the {frame.label} grid for session "
             f"{session.session_date}")
-    closing = opening + frame.duration
+    closing = calendar.bar_close_for(session, opening, frame)
     if closing > session.close_at:                   # pragma: no cover - grid
         raise EquityCalendarError(
             f"a {frame.label} bar opening at {_iso(opening)} would end after "

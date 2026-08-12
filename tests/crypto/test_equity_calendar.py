@@ -323,6 +323,51 @@ def test_an_early_close_yields_fewer_bars_and_none_are_synthesised(calendar):
     assert len(openings) == early.duration // timedelta(minutes=30)
 
 
+def test_a_daily_bar_is_the_session_not_twenty_four_hours(calendar):
+    """An equity daily bar is 6h30 of trading. Measured as 24h it never fits.
+
+    The naive rule -- a bar must end before the close, a day is 24 hours,
+    6h30 < 24h -- reports zero daily bars a year for every US equity. A daily
+    bar is the session, which is also why it is shorter on an early close.
+    """
+    assert calendar.bars_per_day("1d") == 1
+    regular = calendar.session_on("2026-01-15")
+    daily = calendar.expected_bar_opens(regular, "1d")
+    assert daily == (regular.open_at,)
+
+    availability = bar_availability(calendar, bar_open_at=daily[0],
+                                    timeframe="1d")
+    assert availability.available_at == regular.close_at
+    assert availability.available_at - availability.bar_open_at == REGULAR_SESSION
+
+    early = next(session for session
+                 in calendar.sessions_between("2026-11-01T00:00:00Z",
+                                              "2026-12-31T23:59:59Z")
+                 if session.early_close)
+    short = bar_availability(
+        calendar, bar_open_at=calendar.expected_bar_opens(early, "1d")[0],
+        timeframe="1d")
+    assert short.available_at == early.close_at
+    assert short.available_at - short.bar_open_at < REGULAR_SESSION
+
+    # A year of daily bars is a year of sessions, not 365 and not 252 by
+    # convention.
+    assert calendar.annualization_periods("1d", year=2026) == (
+        calendar.sessions_per_year(2026))
+
+
+def test_an_intraday_grid_longer_than_the_session_yields_nothing(calendar):
+    """8h does not fit in 6h30, and a bar claiming eight hours would lie.
+
+    Distinct from the daily case: a daily bar is *defined* as the session, an
+    8h bar is defined as eight hours, and eight hours of this market do not
+    exist in one day.
+    """
+    regular = calendar.session_on("2026-01-15")
+    assert calendar.expected_bar_opens(regular, "8h") == ()
+    assert calendar.expected_bar_opens(regular, "12h") == ()
+
+
 def test_a_timeframe_that_does_not_divide_a_session_is_refused(calendar):
     """6h30 holds no whole number of hourly bars, so there is no honest count."""
     for label in ("1h", "2h", "4h"):

@@ -109,6 +109,18 @@ against a copied table:
 rather than rounding, and the equity instruments do not list `1h` among their
 native timeframes at all. A bar count that is a rounding is not a fact.
 
+### A daily bar is the session
+
+For an equity, a daily bar is 6h30 of trading, not 24 hours of clock — which
+is also why it is shorter on an early close. Measuring it against a 24-hour
+interval would make it never fit inside a session and report **zero daily bars
+a year**. One daily bar per session, `annualization_periods("1d")` = the
+number of real sessions in the year.
+
+An *intraday* frame longer than the session is a different case and yields
+nothing: an 8h bar claims eight hours, and eight hours of this market do not
+exist in one day.
+
 ## 4. Gaps
 
 The single most useful thing in this phase.
