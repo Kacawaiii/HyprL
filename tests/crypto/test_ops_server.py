@@ -446,3 +446,58 @@ def test_an_unknown_portfolio_leaf_is_refused(server):
 @pytest.mark.parametrize("verb", ["POST", "PUT", "PATCH", "DELETE"])
 def test_the_portfolio_surface_is_read_only(server, verb):
     assert _get(f"{server}/api/v1/portfolio", method=verb)[0] == 405
+
+
+# --- shared paper portfolio (Phase 6C) ------------------------------------
+
+
+def test_the_paper_surface_reports_the_shared_portfolio(server):
+    status, _, body = _get(f"{server}/api/v1/paper/portfolio")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["mode"] == "SHARED_PORTFOLIO"
+    assert payload["shared_capital"] is True
+    assert payload["real_money"] is False
+    assert payload["broker_connected"] is False
+    assert payload["commercial_edge_established"] is False
+    assert payload["portfolio_spec_hash"]
+    assert payload["protected_holdout"]["observed"] is False
+
+
+def test_every_shared_portfolio_endpoint_answers_and_stays_bounded(server):
+    for path in ("/api/v1/paper/portfolio", "/api/v1/paper/portfolio/positions",
+                 "/api/v1/paper/portfolio/pending",
+                 "/api/v1/paper/portfolio/events",
+                 "/api/v1/paper/portfolio/fills",
+                 "/api/v1/paper/portfolio/equity", "/api/v1/paper/legacy"):
+        status, headers, body = _get(f"{server}{path}")
+        assert status == 200, path
+        assert len(body) < 256 * 1024, f"{path} returned {len(body)} bytes"
+        assert headers["Cache-Control"] == "no-store"
+        json.loads(body)
+
+
+def test_the_legacy_paper_history_is_reported_separately(server):
+    _, _, body = _get(f"{server}/api/v1/paper/legacy")
+    payload = json.loads(body)
+    assert payload["label"] == "PRE-SHARED-PORTFOLIO"
+    assert payload["shared_capital"] is False
+    assert "never added to it" in payload["note"]
+
+
+def test_the_portfolio_event_feed_refuses_an_unbounded_limit(server):
+    status, _, body = _get(f"{server}/api/v1/paper/portfolio/events?limit=999999")
+    assert status == 400
+    assert b"limit" in body
+
+
+@pytest.mark.parametrize("verb", ["POST", "PUT", "PATCH", "DELETE"])
+def test_the_shared_portfolio_surface_is_read_only(server, verb):
+    assert _get(f"{server}/api/v1/paper/portfolio", method=verb)[0] == 405
+
+
+def test_no_portfolio_endpoint_can_start_or_stop_a_session(server):
+    for path in ("/api/v1/paper/portfolio/start", "/api/v1/paper/portfolio/stop",
+                 "/api/v1/paper/start"):
+        assert _get(f"{server}{path}", method="POST")[0] == 405
+        assert _get(f"{server}{path}")[0] in (400, 404)

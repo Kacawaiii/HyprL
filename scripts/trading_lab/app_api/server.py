@@ -47,6 +47,22 @@ ALLOWED_METHODS = ("GET", "HEAD", "OPTIONS")
 # thread for a week.
 SSE_MAX_SECONDS = 900
 SSE_POLL_SECONDS = 1.0
+_PORTFOLIO_SSE_KINDS = {
+    "PORTFOLIO_BATCH_OPENED": "portfolio_batch_opened",
+    "PORTFOLIO_INSTRUMENT_READY": "portfolio_instrument_ready",
+    "PORTFOLIO_BATCH_READY": "portfolio_batch_ready",
+    "PORTFOLIO_BATCH_INCOMPLETE": "portfolio_batch_incomplete",
+    "PORTFOLIO_TARGET_SET_CREATED": "portfolio_target",
+    "PORTFOLIO_TARGET_SCALED": "portfolio_target_scaled",
+    "PORTFOLIO_FILL": "portfolio_fill",
+    "PORTFOLIO_SNAPSHOT": "portfolio_state",
+    "PORTFOLIO_VALUATION_UNAVAILABLE": "portfolio_valuation_unavailable",
+    "PROTECTED_HOLDOUT_BOUNDARY_REACHED": "portfolio_embargo",
+    "PORTFOLIO_SESSION_STARTED": "portfolio_status",
+    "PORTFOLIO_SESSION_STOPPED": "portfolio_status",
+    "ERROR": "error",
+}
+
 _SSE_KINDS = {
     "CANDLE_INGESTED": "candle",
     "PREDICTION_CREATED": "prediction",
@@ -128,6 +144,19 @@ def build_routes(service: AppService):
         "/api/v1/backtests": lambda query: service.backtests(),
         "/api/v1/paper": lambda query: service.paper_status(),
         "/api/v1/paper/status": lambda query: service.paper_status(),
+        "/api/v1/paper/portfolio": lambda query: service.paper_portfolio(),
+        "/api/v1/paper/portfolio/positions":
+            lambda query: service.paper_portfolio_positions(),
+        "/api/v1/paper/portfolio/pending":
+            lambda query: service.paper_portfolio_pending(),
+        "/api/v1/paper/portfolio/events": lambda query:
+            service.paper_portfolio_events(limit=_first(query, "limit"),
+                                           after_event_id=_first(query, "after")),
+        "/api/v1/paper/portfolio/fills":
+            lambda query: service.paper_portfolio_fills(limit=_first(query, "limit")),
+        "/api/v1/paper/portfolio/equity": lambda query:
+            service.paper_portfolio_equity(max_points=_first(query, "max_points")),
+        "/api/v1/paper/legacy": lambda query: service.paper_legacy(),
         "/api/v1/paper/products": lambda query: service.paper_products(),
         "/api/v1/paper/events": lambda query: service.paper_events(
             limit=_first(query, "limit"), after_event_id=_first(query, "after")),
@@ -264,21 +293,22 @@ class AppApiHandler(BaseHTTPRequestHandler):
 
         deadline = time.monotonic() + SSE_MAX_SECONDS
         try:
-            payload = self.service.paper_status()
-            self._sse("paper_status", payload)
+            payload = self.service.paper_portfolio()
+            self._sse("portfolio_status", payload)
             if cursor is None:
-                recent = self.service.paper_events(limit=DEFAULT_PAPER_EVENTS)
+                recent = self.service.paper_portfolio_events(
+                    limit=DEFAULT_PAPER_EVENTS)
                 cursor = recent["page"]["last_event_id"]
                 for event in recent["events"]:
-                    self._sse(_SSE_KINDS.get(event["event_type"], "event"), event,
-                              event_id=event["event_id"])
+                    self._sse(_PORTFOLIO_SSE_KINDS.get(event["event_type"], "event"),
+                              event, event_id=event["event_id"])
             while time.monotonic() < deadline:
-                batch = self.service.paper_events(
+                batch = self.service.paper_portfolio_events(
                     limit=MAX_SSE_REPLAY_EVENTS,
                     after_event_id=cursor if cursor is not None else 0)
                 for event in batch["events"]:
-                    self._sse(_SSE_KINDS.get(event["event_type"], "event"), event,
-                              event_id=event["event_id"])
+                    self._sse(_PORTFOLIO_SSE_KINDS.get(event["event_type"], "event"),
+                              event, event_id=event["event_id"])
                 if batch["page"]["last_event_id"] is not None:
                     cursor = batch["page"]["last_event_id"]
                 self._sse("heartbeat", {"cursor": cursor})

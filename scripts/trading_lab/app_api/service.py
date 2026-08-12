@@ -1241,3 +1241,208 @@ class AppService:
                 "total_execution_cost": result["metrics"]["total_execution_cost"],
             },
         }
+
+    # --- shared paper portfolio (read-only) ------------------------------
+
+    def _portfolio_store(self):
+        from scripts.trading_lab.paper_portfolio_store import PaperPortfolioStore
+
+        layout = self._layout()
+        if not layout.paper_portfolio_database.is_file():
+            return None
+        return PaperPortfolioStore(layout.paper_portfolio_database)
+
+    def _portfolio_session(self):
+        layout = self._layout()
+        marker = layout.paper_portfolio_session_marker
+        if not marker.is_file():
+            return None
+        try:
+            return json.loads(marker.read_text())
+        except (OSError, ValueError):
+            return None
+
+    def _latest_portfolio_session(self):
+        store = self._portfolio_store()
+        if store is None:
+            return None, None
+        sessions = store.sessions()
+        return (store, sessions[-1]) if sessions else (store, None)
+
+    def _portfolio_runtime_contract(self) -> dict:
+        from scripts.trading_lab.paper_engine import PAPER_EXECUTION_SPEC_V1
+        from scripts.trading_lab.portfolio import PORTFOLIO_SPEC_V1
+        from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
+
+        execution = PAPER_EXECUTION_SPEC_V1
+        return {
+            "mode": "SHARED_PORTFOLIO",
+            "shadow_mode": True,
+            "shared_capital": True,
+            "real_money": False,
+            "broker_connected": False,
+            "commercial_edge_established": False,
+            "portfolio_spec_hash": PORTFOLIO_SPEC_V1.portfolio_spec_hash,
+            "initial_equity": str(PORTFOLIO_SPEC_V1.initial_equity),
+            "max_instrument_abs_exposure":
+                str(PORTFOLIO_SPEC_V1.max_instrument_abs_exposure),
+            "max_gross_exposure": str(PORTFOLIO_SPEC_V1.max_gross_exposure),
+            "allocation_rule": PORTFOLIO_SPEC_V1.allocation_rule,
+            "simultaneous_rebalance_rule":
+                PORTFOLIO_SPEC_V1.simultaneous_rebalance_rule,
+            "paper_execution": {
+                "spec_hash": execution.paper_execution_spec_hash,
+                "fill_price_policy": execution.fill_price_policy,
+                "fill_observation_policy": execution.fill_observation_policy,
+            },
+            "protected_holdout": {
+                "holdout_id": PROTECTED_WINDOW_V1.holdout_id,
+                "start": PROTECTED_WINDOW_V1.start,
+                "end": PROTECTED_WINDOW_V1.end,
+                "holdout_hash": PROTECTED_WINDOW_V1.holdout_hash,
+                "observed": PROTECTED_WINDOW_V1.observed,
+            },
+        }
+
+    def paper_portfolio(self, *, now=None) -> dict:
+        """The shared portfolio's status. Never mixed with the legacy accounts."""
+        from scripts.trading_lab.protected_holdout import embargo_state
+
+        moment = now or _iso(datetime.now(timezone.utc))
+        store, session_id = self._latest_portfolio_session()
+        session = self._portfolio_session()
+        instruments = self._portfolio_instruments()
+        payload = dict(self._portfolio_runtime_contract())
+        payload.update({
+            "api_version": APP_API_VERSION,
+            "available": session_id is not None,
+            "reason": None if session_id else "no shared portfolio session recorded",
+            "active_session": session,
+            "session_id": session_id,
+            "instruments": instruments,
+            "embargo": {name: embargo_state(name, now=moment)
+                        for name in instruments},
+        })
+        if store is None or session_id is None:
+            return payload
+        payload["events"] = store.count(session_id=session_id)
+        try:
+            payload["chain"] = store.verify_chain(session_id=session_id)
+        except Exception as error:
+            payload["chain"] = {"verified": False, "error": str(error)}
+        snapshot = store.latest_snapshot(session_id=session_id)
+        payload["snapshot_verified"] = snapshot is not None
+        state = (snapshot or {}).get("state", {})
+        payload["state"] = state.get("state")
+        payload["pending_batches"] = state.get("pending", {})
+        payload["fill_count"] = state.get("fill_count", 0)
+        payload["rebalance_count"] = state.get("rebalance_count", 0)
+        return payload
+
+    def _portfolio_instruments(self) -> list:
+        from scripts.trading_lab.instrument_registry import INSTRUMENTS_V1
+
+        return [spec.canonical_id for spec in INSTRUMENTS_V1.all()]
+
+    def paper_portfolio_positions(self) -> dict:
+        payload = self.paper_portfolio()
+        state = payload.get("state") or {}
+        return {
+            "api_version": APP_API_VERSION,
+            "available": payload["available"],
+            "instruments": payload["instruments"],
+            "cash": state.get("cash"),
+            "equity": state.get("equity"),
+            "gross_exposure": state.get("gross_exposure"),
+            "net_exposure": state.get("net_exposure"),
+            "positions": state.get("positions", []),
+        }
+
+    def paper_portfolio_pending(self) -> dict:
+        """What the runtime is waiting for. Never implies a trade happened."""
+        payload = self.paper_portfolio()
+        return {
+            "api_version": APP_API_VERSION,
+            "available": payload["available"],
+            "status": "WAITING_FOR_PORTFOLIO_BATCH"
+            if payload.get("pending_batches") else "IDLE",
+            "pending_batches": payload.get("pending_batches", {}),
+        }
+
+    def paper_portfolio_events(self, *, limit=None, after_event_id=None) -> dict:
+        store, session_id = self._latest_portfolio_session()
+        size = require_limit(limit, default=DEFAULT_PAPER_EVENTS,
+                             maximum=MAX_PAPER_EVENTS)
+        if store is None or session_id is None:
+            return {"api_version": APP_API_VERSION, "available": False,
+                    "events": [], "page": {"returned": 0, "last_event_id": None}}
+        if after_event_id is None:
+            events = store.latest_events(session_id=session_id, limit=size)
+        else:
+            events = store.events(session_id=session_id,
+                                  after_event_id=int(after_event_id), limit=size)
+        return {
+            "api_version": APP_API_VERSION,
+            "available": True,
+            "events": [{
+                "event_id": event.event_id, "sequence": event.sequence,
+                "event_type": event.event_type, "event_at": event.event_at,
+                "instrument_id": event.instrument_id,
+                "natural_key": event.natural_key, "payload": event.payload,
+                "event_hash": event.event_hash,
+            } for event in events],
+            "page": {"returned": len(events),
+                     "last_event_id": events[-1].event_id if events else None},
+        }
+
+    def paper_portfolio_fills(self, *, limit=None) -> dict:
+        store, session_id = self._latest_portfolio_session()
+        size = require_limit(limit, default=DEFAULT_FILL_PAGE,
+                             maximum=MAX_FILL_PAGE)
+        if store is None or session_id is None:
+            return {"api_version": APP_API_VERSION, "available": False,
+                    "fills": [], "page": {"returned": 0}}
+        events = store.latest_events(session_id=session_id, limit=MAX_PAPER_EVENTS)
+        fills = [event.payload for event in events
+                 if event.event_type == "PORTFOLIO_FILL"][-size:]
+        return {"api_version": APP_API_VERSION, "available": True,
+                "fills": fills, "page": {"returned": len(fills)}}
+
+    def paper_portfolio_equity(self, *, max_points=None) -> dict:
+        """Equity from the recorded portfolio snapshots. Bounded."""
+        store, session_id = self._latest_portfolio_session()
+        points = require_limit(max_points, default=DEFAULT_PAPER_EQUITY_POINTS,
+                               maximum=MAX_PAPER_EQUITY_POINTS)
+        if store is None or session_id is None:
+            return {"api_version": APP_API_VERSION, "available": False,
+                    "series": [], "metadata": {"source_count": 0}}
+        events = store.latest_events(session_id=session_id, limit=MAX_PAPER_EVENTS)
+        series = [{
+            "timestamp": event.payload.get("timestamp") or event.event_at,
+            "equity": event.payload.get("equity"),
+            "cash": event.payload.get("cash"),
+            "gross_exposure": event.payload.get("gross_exposure"),
+            "net_exposure": event.payload.get("net_exposure"),
+        } for event in events if event.event_type == "PORTFOLIO_SNAPSHOT"]
+        kept = series[-points:]
+        return {"api_version": APP_API_VERSION, "available": True,
+                "series": kept,
+                "metadata": {"source_count": len(series),
+                             "returned_count": len(kept), "max_points": points}}
+
+    def paper_legacy(self) -> dict:
+        """The pre-shared-portfolio per-product sessions. Never summed with the
+        shared portfolio: two independent accounts are not its history."""
+        session = self._paper_session()
+        store = self._paper_store()
+        return {
+            "api_version": APP_API_VERSION,
+            "available": store is not None,
+            "label": "PRE-SHARED-PORTFOLIO",
+            "shared_capital": False,
+            "note": "independent per-product accounts; their equity is not the "
+                    "history of the shared portfolio and is never added to it",
+            "session": session,
+            "sessions": len(store.sessions()) if store is not None else 0,
+            "events": store.count() if store is not None else 0,
+        }

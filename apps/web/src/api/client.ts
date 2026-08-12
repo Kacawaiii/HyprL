@@ -14,7 +14,8 @@ import type {
   HealthHistory, InstrumentDetail, InstrumentsIndex, MarketsIndex,
   OpsRecovery, OpsRuntime, OpsSettings, OpsStorage, Overview,
   PortfolioAttribution, PortfolioBacktestsIndex, PortfolioDetail,
-  PortfolioEquity, PortfolioFillPage, PortfolioStatus,
+  PaperLegacy, PaperPortfolioEquity, PaperPortfolioPending,
+  PaperPortfolioStatus, PortfolioEquity, PortfolioFillPage, PortfolioStatus,
   ProvidersIndex, RiskView, SignalsView,
 } from './types';
 
@@ -219,6 +220,15 @@ export const apiClient = {
     request<PortfolioFillPage>(
       `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/fills${query({ limit })}`,
       signal),
+  getPaperPortfolio: (signal?: AbortSignal) =>
+    request<PaperPortfolioStatus>('/api/v1/paper/portfolio', signal),
+  getPaperPortfolioPending: (signal?: AbortSignal) =>
+    request<PaperPortfolioPending>('/api/v1/paper/portfolio/pending', signal),
+  getPaperPortfolioEquity: (maxPoints?: number, signal?: AbortSignal) =>
+    request<PaperPortfolioEquity>(
+      `/api/v1/paper/portfolio/equity${query({ max_points: maxPoints })}`, signal),
+  getPaperLegacy: (signal?: AbortSignal) =>
+    request<PaperLegacy>('/api/v1/paper/legacy', signal),
   getPortfolioAttribution: (version: string, signal?: AbortSignal) =>
     request<PortfolioAttribution>(
       `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/attribution`, signal),

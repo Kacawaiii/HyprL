@@ -492,3 +492,97 @@ export const portfolioBacktestsEmpty = {
   reason: 'no portfolio backtest has been run',
   portfolio: portfolioContract, runs: [],
 };
+
+/* --- shared paper portfolio (Phase 6C) ---------------------------------- */
+
+const paperPortfolioContract = {
+  api_version: 'trading-lab.app-api.v1', mode: 'SHARED_PORTFOLIO',
+  shadow_mode: true, shared_capital: true, real_money: false,
+  broker_connected: false, commercial_edge_established: false,
+  portfolio_spec_hash:
+    '32ec6c9f5f62c24bd18077dda79eefb30a334edcf26b811175f9b93584cdcebf',
+  initial_equity: '100000', max_instrument_abs_exposure: '0.25',
+  max_gross_exposure: '0.50',
+  allocation_rule: 'proportional-gross-cap-v1',
+  simultaneous_rebalance_rule: 'single-pretrade-equity-batch-v1',
+  paper_execution: {
+    spec_hash: 'bb944167fbcc', 
+    fill_price_policy: 'next-contiguous-bar-open-after-decision-v1',
+    fill_observation_policy: 'recorded-when-the-fill-bar-closes-v1',
+  },
+  protected_holdout: {
+    holdout_id: 'coinbase_confirmatory_2026q4', start: '2026-09-01T00:00:00Z',
+    end: '2026-11-30T23:00:00Z', holdout_hash: 'bf95ee8577bb', observed: false,
+  },
+  instruments: ['coinbase:BTC-USD', 'coinbase:ETH-USD'],
+  embargo: {
+    'coinbase:BTC-USD': { embargoed: false, reason: 'allowed' },
+    'coinbase:ETH-USD': { embargoed: false, reason: 'allowed' },
+  },
+};
+
+export const paperPortfolioEmpty = {
+  ...paperPortfolioContract, available: false,
+  reason: 'no shared portfolio session recorded',
+  session_id: null, active_session: null,
+};
+
+export const paperPortfolioRunning = {
+  ...paperPortfolioContract, available: true, reason: null,
+  session_id: 'portfolio-20260812T000000Z',
+  active_session: { session_id: 'portfolio-20260812T000000Z' },
+  events: 512, chain: { verified: true, events: 512 }, snapshot_verified: true,
+  fill_count: 4, rebalance_count: 9,
+  state: {
+    timestamp: '2026-08-12T03:00:00+00:00',
+    cash: '74981.22', equity: '99872.55',
+    gross_exposure: '0.2489', net_exposure: '0.2489',
+    cumulative_fees: '61.40', cumulative_slippage_cost: '30.70',
+    positions: [
+      { instrument_id: 'coinbase:BTC-USD', quantity: '0.41230000',
+        mark_price: '60300.00', market_value: '24861.69',
+        target_exposure: '0.25', cumulative_fees: '38.20',
+        cumulative_slippage_cost: '19.10', cumulative_gross_pnl: '-45.10' },
+      { instrument_id: 'coinbase:ETH-USD', quantity: '0', mark_price: '3010.00',
+        market_value: '0', target_exposure: '0', cumulative_fees: '23.20',
+        cumulative_slippage_cost: '11.60', cumulative_gross_pnl: '12.40' },
+    ],
+  },
+  pending_batches: {},
+};
+
+export const paperPortfolioPendingIdle = {
+  api_version: 'trading-lab.app-api.v1', available: true, status: 'IDLE',
+  pending_batches: {},
+};
+
+export const paperPortfolioPendingWaiting = {
+  api_version: 'trading-lab.app-api.v1', available: true,
+  status: 'WAITING_FOR_PORTFOLIO_BATCH',
+  pending_batches: {
+    '2026-08-12T03:00:00+00:00': {
+      decision_at: '2026-08-12T03:00:00+00:00',
+      required: ['coinbase:BTC-USD', 'coinbase:ETH-USD'],
+      ready: ['coinbase:BTC-USD'], missing: ['coinbase:ETH-USD'],
+      complete: false,
+    },
+  },
+};
+
+export const paperPortfolioEquity = {
+  api_version: 'trading-lab.app-api.v1', available: true,
+  series: Array.from({ length: 12 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2026, 7, 12, index)).toISOString(),
+    equity: String(100000 - index * 12), cash: String(75000 - index),
+    gross_exposure: '0.2489', net_exposure: '0.2489',
+  })),
+  metadata: { source_count: 12, returned_count: 12, max_points: 500 },
+};
+
+export const paperLegacy = {
+  api_version: 'trading-lab.app-api.v1', available: true,
+  label: 'PRE-SHARED-PORTFOLIO', shared_capital: false,
+  note: 'independent per-product accounts; their equity is not the history of '
+      + 'the shared portfolio and is never added to it',
+  session: null, sessions: 2, events: 5860,
+};

@@ -43,6 +43,10 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/providers': fixtures.providers,
     '/api/v1/portfolio': fixtures.portfolioEmpty,
     '/api/v1/portfolio/backtests': fixtures.portfolioBacktestsEmpty,
+    '/api/v1/paper/portfolio': fixtures.paperPortfolioRunning,
+    '/api/v1/paper/portfolio/pending': fixtures.paperPortfolioPendingIdle,
+    '/api/v1/paper/portfolio/equity': fixtures.paperPortfolioEquity,
+    '/api/v1/paper/legacy': fixtures.paperLegacy,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -284,8 +288,9 @@ describe('Paper', () => {
     renderAt('/paper');
     expect(await screen.findByText('SHADOW MODE')).toBeInTheDocument();
     expect(screen.getByText('NO REAL MONEY')).toBeInTheDocument();
-    expect(screen.getByText('NO BROKER')).toBeInTheDocument();
-    expect(screen.getByText('NO EXCHANGE ACCOUNT')).toBeInTheDocument();
+    expect(screen.getByText('SHARED CAPITAL')).toBeInTheDocument();
+    expect(screen.getByText('NO CONFIRMED EDGE')).toBeInTheDocument();
+    expect(screen.getByText('NOT CONNECTED')).toBeInTheDocument();
   });
 
   it('offers no way to place or override a trade', async () => {
@@ -300,37 +305,11 @@ describe('Paper', () => {
     }
   });
 
-  it('shows the holdout window and its current state', async () => {
-    renderAt('/paper');
-    expect(await screen.findByText('Protected research holdout')).toBeInTheDocument();
-    expect(screen.getByText('UNOBSERVED')).toBeInTheDocument();
-    expect(screen.getByText(/allowed until the embargo boundary/)).toBeInTheDocument();
-  });
-
-  it('says the embargo is active during the window', async () => {
-    vi.stubGlobal('fetch', mockApi({ '/api/v1/paper/status': fixtures.paperEmbargoed }));
-    renderAt('/paper');
-    expect(await screen.findByText('EMBARGO ACTIVE')).toBeInTheDocument();
-    expect(
-      screen.getByText(/disabled to preserve the confirmatory research holdout/),
-    ).toBeInTheDocument();
-  });
-
-  it('tells the reader the cockpit cannot start a session', async () => {
-    vi.stubGlobal('fetch', mockApi({ '/api/v1/paper/status': fixtures.paperStopped }));
-    renderAt('/paper');
-    expect(await screen.findByText('No shadow session is running')).toBeInTheDocument();
-    expect(screen.getByText(/paper_shadow.sh start/)).toBeInTheDocument();
-  });
-
-  it('renders backend paper state verbatim', async () => {
+  it('shows the reserved holdout as unobserved', async () => {
     renderAt('/paper');
     await screen.findByText('SHADOW MODE');
-    expect((await screen.findAllByText('BTC-USD')).length).toBeGreaterThan(0);
-    expect(screen.getByText('LONG')).toBeInTheDocument();
-    expect(screen.getByText('0.0031')).toBeInTheDocument();   // prediction, unmodified
-    expect(screen.getByText('0.06')).toBeInTheDocument();     // target exposure
-    expect(screen.getByText('99,871.2')).toBeInTheDocument(); // paper equity
+    expect(screen.getByText('UNOBSERVED')).toBeInTheDocument();
+    expect(screen.getByText('2026-09-01 → 2026-11-30')).toBeInTheDocument();
   });
 
   it('states the paper fill latency instead of hiding it', async () => {
@@ -339,7 +318,81 @@ describe('Paper', () => {
     expect(
       screen.getByText('recorded-when-the-fill-bar-closes-v1'),
     ).toBeInTheDocument();
-    expect(screen.getByText(/never liquidates a terminal position/)).toBeInTheDocument();
+  });
+
+  it('shows one shared cash ledger and one equity', async () => {
+    renderAt('/paper');
+    await screen.findByText('Shared paper portfolio');
+    expect(screen.getByText('99,872.55')).toBeInTheDocument();   // equity
+    expect(screen.getByText('74,981.22')).toBeInTheDocument();   // shared cash
+    expect(screen.getByText('SHARED_PORTFOLIO')).toBeInTheDocument();
+  });
+
+  it('renders one card per instrument from backend state', async () => {
+    renderAt('/paper');
+    await screen.findByText('Shared paper portfolio');
+    expect(screen.getByText('coinbase:BTC-USD')).toBeInTheDocument();
+    expect(screen.getByText('coinbase:ETH-USD')).toBeInTheDocument();
+    expect(screen.getByText('24,861.69')).toBeInTheDocument();   // market value
+  });
+
+  it('says a batch is waiting rather than implying a trade happened', async () => {
+    /* The runtime routinely holds one instrument's target while the other is
+       outstanding, and a target exposure reads like a position. */
+    renderAt('/paper', {
+      '/api/v1/paper/portfolio/pending': fixtures.paperPortfolioPendingWaiting,
+    });
+    expect(
+      await screen.findByText('WAITING FOR PORTFOLIO BATCH'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('BTC-USD READY')).toBeInTheDocument();
+    expect(screen.getByText('ETH-USD WAITING')).toBeInTheDocument();
+    expect(screen.getByText(/Nothing has been traded for these timestamps/))
+      .toBeInTheDocument();
+  });
+
+  it('says no batch is open when nothing is pending', async () => {
+    renderAt('/paper');
+    expect(
+      await screen.findByText(/No batch is open/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('WAITING FOR PORTFOLIO BATCH')).toBeNull();
+  });
+
+  it('tells the reader the cockpit cannot start a session', async () => {
+    renderAt('/paper', { '/api/v1/paper/portfolio': fixtures.paperPortfolioEmpty });
+    expect(
+      await screen.findByText('No shared portfolio session recorded'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/hyprl.sh paper start/)).toBeInTheDocument();
+  });
+
+  it('keeps the legacy per-product sessions apart and never sums them', async () => {
+    renderAt('/paper');
+    await screen.findByText('Shared paper portfolio');
+    expect(screen.getByText('PRE-SHARED-PORTFOLIO')).toBeInTheDocument();
+    expect(
+      screen.getByText(/never added to it/),
+    ).toBeInTheDocument();
+    // the legacy event count must not appear as portfolio state
+    expect(screen.queryByText('105,860')).toBeNull();
+  });
+
+  it('reports the portfolio event chain as verified', async () => {
+    renderAt('/paper');
+    await screen.findByText('Shared paper portfolio');
+    expect(screen.getByText('VERIFIED')).toBeInTheDocument();
+  });
+
+  it('shows the gross cap and allocation rule of the frozen spec', async () => {
+    renderAt('/paper');
+    await screen.findByText('Shared paper portfolio');
+    expect(
+      screen.getByText(/proportional-gross-cap-v1/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/single-pretrade-equity-batch-v1/),
+    ).toBeInTheDocument();
   });
 });
 

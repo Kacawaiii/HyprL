@@ -779,3 +779,101 @@ export interface PortfolioAttribution {
   reconciliation: Record<string, string>;
   metrics: { net_pnl: string; gross_pnl: string; total_execution_cost: string };
 }
+
+/* --- shared paper portfolio (Phase 6C) -------------------------------------
+ *
+ * One cash ledger across instruments. The legacy per-product sessions are a
+ * separate shape on purpose: their equity is not this portfolio's history and
+ * is never added to it. */
+
+export interface PaperPortfolioPosition {
+  instrument_id: string;
+  quantity: string;
+  mark_price: string;
+  market_value: string;
+  target_exposure: string;
+  cumulative_fees: string;
+  cumulative_slippage_cost: string;
+  cumulative_gross_pnl: string;
+}
+
+export interface PaperPortfolioState {
+  timestamp: string;
+  cash: string;
+  equity: string;
+  gross_exposure: string;
+  net_exposure: string;
+  cumulative_fees: string;
+  cumulative_slippage_cost: string;
+  positions: PaperPortfolioPosition[];
+}
+
+export interface PendingBatch {
+  decision_at: string;
+  required: string[];
+  ready: string[];
+  missing: string[];
+  complete: boolean;
+}
+
+export interface PaperPortfolioStatus {
+  api_version: string;
+  mode: string;
+  available: boolean;
+  reason: string | null;
+  shadow_mode: boolean;
+  shared_capital: boolean;
+  real_money: boolean;
+  broker_connected: boolean;
+  commercial_edge_established: boolean;
+  portfolio_spec_hash: string;
+  initial_equity: string;
+  max_instrument_abs_exposure: string;
+  max_gross_exposure: string;
+  allocation_rule: string;
+  simultaneous_rebalance_rule: string;
+  paper_execution: {
+    spec_hash: string; fill_price_policy: string; fill_observation_policy: string;
+  };
+  protected_holdout: {
+    holdout_id: string; start: string; end: string; holdout_hash: string;
+    observed: boolean;
+  };
+  instruments: string[];
+  session_id: string | null;
+  active_session: Record<string, unknown> | null;
+  embargo: Record<string, { embargoed: boolean; reason: string }>;
+  events?: number;
+  chain?: { verified: boolean; events?: number };
+  snapshot_verified?: boolean;
+  state?: PaperPortfolioState | null;
+  pending_batches?: Record<string, PendingBatch>;
+  fill_count?: number;
+  rebalance_count?: number;
+}
+
+export interface PaperPortfolioPending {
+  api_version: string;
+  available: boolean;
+  status: string;
+  pending_batches: Record<string, PendingBatch>;
+}
+
+export interface PaperPortfolioEquity {
+  api_version: string;
+  available: boolean;
+  series: { timestamp: string; equity: string; cash: string;
+            gross_exposure: string; net_exposure: string }[];
+  metadata: { source_count: number; returned_count?: number; max_points?: number };
+}
+
+export interface PaperLegacy {
+  api_version: string;
+  available: boolean;
+  label: string;
+  shared_capital: boolean;
+  note: string;
+  session: Record<string, unknown> | null;
+  sessions: number;
+  events: number;
+}
