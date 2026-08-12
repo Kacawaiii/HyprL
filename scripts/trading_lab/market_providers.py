@@ -38,6 +38,17 @@ MARKET_PROVIDER_SCHEMA_VERSION = "trading-lab.market-provider.v1"
 
 COINBASE_PUBLIC_V1 = "coinbase-public-v1"
 
+# How current a provider's data is. Not a quality rating -- a statement about
+# what a caller is allowed to conclude from the most recent row. An end-of-day
+# source can be excellent and still be useless for a decision at 15:00, and the
+# only thing that stops it being used that way is this flag being checked.
+FRESHNESS_UNSPECIFIED = "UNSPECIFIED"
+FRESHNESS_END_OF_DAY = "END_OF_DAY"
+FRESHNESS_DELAYED = "DELAYED"
+FRESHNESS_LIVE = "LIVE"
+FRESHNESS_LEVELS = (FRESHNESS_UNSPECIFIED, FRESHNESS_END_OF_DAY,
+                    FRESHNESS_DELAYED, FRESHNESS_LIVE)
+
 
 class MarketProviderError(RuntimeError):
     """Raised when a provider cannot serve a request."""
@@ -63,6 +74,7 @@ class ProviderCapabilities:
     order_book: bool = False
     corporate_actions: bool = False
     market_calendar: str = ""
+    data_freshness: str = FRESHNESS_UNSPECIFIED
     authenticated: bool = False
     private_account_data: bool = False
 
@@ -71,6 +83,15 @@ class ProviderCapabilities:
             raise MarketProviderError(
                 "private account data without authentication is not a thing a "
                 "provider can offer")
+        if self.data_freshness not in FRESHNESS_LEVELS:
+            raise MarketProviderError(
+                f"unknown data_freshness {self.data_freshness!r}; expected one "
+                f"of {list(FRESHNESS_LEVELS)}")
+        if self.data_freshness == FRESHNESS_LIVE and not (
+                self.latest_closed_bar or self.realtime_ticks):
+            raise MarketProviderError(
+                "a provider cannot claim LIVE freshness while serving neither "
+                "a latest closed bar nor ticks")
 
     def payload(self) -> dict:
         return {
@@ -80,6 +101,7 @@ class ProviderCapabilities:
             "order_book": self.order_book,
             "corporate_actions": self.corporate_actions,
             "market_calendar": self.market_calendar,
+            "data_freshness": self.data_freshness,
             "authenticated": self.authenticated,
             "private_account_data": self.private_account_data,
         }
@@ -138,6 +160,9 @@ COINBASE_PUBLIC_CAPABILITIES = ProviderCapabilities(
     order_book=False,
     corporate_actions=False,
     market_calendar=CRYPTO_24_7,
+    # Serves the most recent *closed* bar as soon as it closes. Live in the
+    # only sense this project uses the word: never a forming bar.
+    data_freshness=FRESHNESS_LIVE,
     # The public candles endpoint. No key, no header, no cookie -- and
     # therefore, structurally, no account data.
     authenticated=False,

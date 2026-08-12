@@ -124,6 +124,9 @@ scripts/paper_trading.py
 # these two files, never all JSON under tests/.
 !tests/fixtures/crypto/coinbase_btc_usd_1h.json
 !tests/fixtures/crypto/coinbase_eth_usd_1d.json
+# Evidence for the equity seed universe: the registry's venue and asset
+# class are asserted against this recorded vendor payload.
+!tests/fixtures/crypto/massive_reference_tickers.json
 
 # Phase 4A real-market corpus: captured once from the public Coinbase candles
 # endpoint, frozen, and verified offline by tests/crypto/test_capture_market_history.py.

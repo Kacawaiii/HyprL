@@ -432,10 +432,25 @@ def test_a_venue_is_not_a_provider():
     from scripts.trading_lab.instrument_registry import (
         BTC_USD, PROVIDERS_V1, RegistryError)
 
+    from scripts.trading_lab.instrument_registry import CATALOGUE_V1
+
     assert BTC_USD.instrument_id.venue == "coinbase"
-    assert PROVIDERS_V1.ids() == ("coinbase-public-v1",)
+    assert PROVIDERS_V1.ids() == (
+        "coinbase-public-v1", "massive-stocks-historical-v1")
     with pytest.raises(RegistryError):
         PROVIDERS_V1.resolve(BTC_USD.instrument_id.venue)
+    # The equity case is the one that actually tempts a shortcut: Massive
+    # serves AAPL but AAPL is listed on Nasdaq, so the identity is xnas:AAPL
+    # and never massive:AAPL. A provider is where bars come from; a venue is
+    # where the instrument trades, and conflating them would rename every
+    # instrument the day a second vendor was added.
+    venues = {spec.instrument_id.venue for spec in CATALOGUE_V1.all()}
+    assert venues == {"coinbase", "xnas"}
+    assert not venues & set(PROVIDERS_V1.ids())
+    for venue in venues:
+        with pytest.raises(RegistryError):
+            PROVIDERS_V1.resolve(venue)
+        assert not CATALOGUE_V1.get(f"{venue}:MASSIVE")
 
 
 # --- registry uniqueness --------------------------------------------------
@@ -643,3 +658,99 @@ def test_no_module_derives_a_filesystem_path_from_an_external_identity():
     # paper_shadow_cli composes <model_dir>/<product>.json from a CLI argument
     # that the registry has already constrained; it is the only one.
     assert offenders in ([], ["paper_shadow_cli.py"]), offenders
+
+
+# --- Phase 6D: the new identities ------------------------------------------
+#
+# The audit is replayed against everything Phase 6D introduced. The rule that
+# matters has not changed: semantic identities are canonicalised, opaque ones
+# are byte-exact, and an unknown is never equal to anything -- including
+# another unknown.
+
+
+def test_a_calendar_id_is_exact_and_never_canonicalised():
+    """A calendar is a closed set, not a name to be parsed leniently."""
+    from scripts.trading_lab.trading_calendar import (
+        TradingCalendarError, get_calendar, known_calendars)
+
+    assert "US_EQUITY_REGULAR" in known_calendars()
+    for alias in ("us_equity_regular", " US_EQUITY_REGULAR ", "US-EQUITY-REGULAR",
+                  "USEquityRegular", "XNYS", "NASDAQ", "NYSE", "XNAS"):
+        with pytest.raises(TradingCalendarError):
+            get_calendar(alias)
+    # Exactly one spelling works.
+    assert get_calendar("US_EQUITY_REGULAR").calendar_id == "US_EQUITY_REGULAR"
+
+
+def test_an_adjustment_policy_is_a_closed_set_with_no_default():
+    from scripts.trading_lab.equity_market import (
+        EquityMarketError, require_adjustment_policy)
+
+    assert require_adjustment_policy("RAW") == "RAW"
+    assert require_adjustment_policy("SPLIT_ADJUSTED") == "SPLIT_ADJUSTED"
+    for bad in ("raw", " RAW", "ADJUSTED", "", None, "TOTAL_RETURN"):
+        with pytest.raises(EquityMarketError):
+            require_adjustment_policy(bad)
+
+
+def test_a_vendor_exchange_code_is_mapped_never_inferred():
+    """An unmapped code names no venue, and a wrong venue names another market."""
+    from scripts.trading_lab.massive_provider import (
+        MassiveProviderError, parse_reference_ticker)
+
+    row = {"symbol": "AAPL", "primary_exchange": "XNAS", "type": "CS",
+           "currency_name": "USD", "name": "Apple Inc."}
+    assert parse_reference_ticker(row).venue == "xnas"
+    # Case is folded on the way in, so "xnas" is the same code as "XNAS" --
+    # that is class A behaviour and correct. What must never happen is an
+    # unlisted code resolving to some venue anyway.
+    assert parse_reference_ticker(
+        {**row, "primary_exchange": "xnas"}).venue == "xnas"
+    for code in ("Nasdaq Global Select", "XLON", "UNKNOWN", "", "XNA", "XNASS"):
+        with pytest.raises(MassiveProviderError):
+            parse_reference_ticker({**row, "primary_exchange": code})
+
+
+def test_the_calendar_spec_hash_is_opaque_and_byte_exact():
+    pytest.importorskip("pandas_market_calendars")
+    from scripts.trading_lab.equity_calendar import US_EQUITY_REGULAR_SPEC
+    from scripts.trading_lab.identity import IdentityError, require_exact_digest
+
+    digest = US_EQUITY_REGULAR_SPEC.spec_hash
+    assert require_exact_digest(digest, field="calendar_spec_hash") == digest
+    for mangled in (digest.upper(), f" {digest}", f"{digest}\n", digest[:63]):
+        with pytest.raises(IdentityError):
+            require_exact_digest(mangled, field="calendar_spec_hash")
+
+
+def test_an_equity_instrument_id_accepts_the_same_aliases_and_no_more():
+    from scripts.trading_lab.instrument_registry import CATALOGUE_V1
+
+    for spelling in ("xnas:AAPL", "XNAS:AAPL", " xnas:aapl ", "xnas:aapl"):
+        assert CATALOGUE_V1.resolve(spelling).canonical_id == "xnas:AAPL"
+    # A bare symbol resolves through the default venue, which is Coinbase --
+    # so it must NOT silently become the equity.
+    for wrong in ("AAPL", "massive:AAPL", "nasdaq:AAPL", "xnys:AAPL"):
+        assert CATALOGUE_V1.get(wrong) is None, wrong
+
+
+def test_the_holdout_wall_is_untouched_by_the_new_markets():
+    """Phase 6D adds markets. It does not look at the reserved window."""
+    from scripts.trading_lab.protected_holdout import (
+        PROTECTED_WINDOW_V1, embargo_state)
+
+    assert PROTECTED_WINDOW_V1.holdout_hash == (
+        "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85")
+    assert PROTECTED_WINDOW_V1.observed is False
+    assert PROTECTED_WINDOW_V1.single_use is True
+    assert sorted(PROTECTED_WINDOW_V1.products) == ["BTC-USD", "ETH-USD"]
+    # The guard covers the products it always covered. The equities are not
+    # among them because no equity data exists to protect -- and asking about
+    # one must not quietly report the crypto window's state as if it applied.
+    from datetime import datetime, timezone
+
+    inside = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    for product in ("BTC-USD", "ETH-USD"):
+        assert embargo_state(product, now=inside)["embargoed"] is True
+    for product in ("xnas:AAPL", "xnas:QQQ"):
+        assert embargo_state(product, now=inside)["embargoed"] is False

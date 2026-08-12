@@ -1,0 +1,51 @@
+{
+  "_note": "Recorded shape of a Massive /v1/reference/tickers response. This is the evidence for every venue and asset class in the equity seed universe: the registry is asserted against it, so a wrong venue fails a test instead of quietly naming a different instrument. No credential, no live capture, no real response body beyond the fields the adapter reads.",
+  "AAPL": {
+    "results": [
+      {
+        "symbol": "AAPL",
+        "name": "Apple Inc.",
+        "primary_exchange": "XNAS",
+        "type": "CS",
+        "currency_name": "usd",
+        "active": true
+      }
+    ]
+  },
+  "MSFT": {
+    "results": [
+      {
+        "symbol": "MSFT",
+        "name": "Microsoft Corporation",
+        "primary_exchange": "XNAS",
+        "type": "CS",
+        "currency_name": "usd",
+        "active": true
+      }
+    ]
+  },
+  "NVDA": {
+    "results": [
+      {
+        "symbol": "NVDA",
+        "name": "NVIDIA Corporation",
+        "primary_exchange": "XNAS",
+        "type": "CS",
+        "currency_name": "usd",
+        "active": true
+      }
+    ]
+  },
+  "QQQ": {
+    "results": [
+      {
+        "symbol": "QQQ",
+        "name": "Invesco QQQ Trust, Series 1",
+        "primary_exchange": "XNAS",
+        "type": "ETF",
+        "currency_name": "usd",
+        "active": true
+      }
+    ]
+  }
+}
