@@ -178,6 +178,61 @@ def test_no_credential_stops_before_the_network_and_writes_nothing(
     assert not root.exists(), "a directory was created for a capture that never ran"
 
 
+def test_a_failed_capture_leaves_the_path_exactly_as_it_found_it(
+        spec, keyed, tmp_path):
+    """A rejected key must not wedge the corpus path for the next attempt.
+
+    The directory tree is created before the first request, so an auth
+    failure, a schema mismatch or a dropped connection all abort with the tree
+    already on disk. If the emptiness guard counted directories, that aborted
+    run would refuse every later attempt -- and the operator's only recourse
+    would be to delete a path they were told never to touch by hand.
+    """
+    reference = {**REFERENCE,
+                 "AAPL": {**REFERENCE["AAPL"], "primary_exchange": "XNYS"}}
+    root = tmp_path / "corpus"
+    with pytest.raises(CaptureError):
+        _capture(spec, _single_page(spec), tmp_path, reference=reference)
+    assert not root.exists(), "an aborted run left a tree behind"
+
+    # And the next attempt, with the provider answering correctly, works.
+    manifest, _ = _capture(spec, _single_page(spec), tmp_path)
+    assert manifest["content"]["captured"] is True
+
+
+def test_a_partial_capture_is_preserved_rather_than_deleted(
+        spec, keyed, tmp_path, monkeypatch):
+    """Cleanup removes an empty tree only. Written bytes are evidence.
+
+    A run that stored raw responses and then failed has diagnostic value, and
+    silently deleting it would destroy the only record of what the provider
+    actually said.
+    """
+    from scripts.trading_lab import capture_us_equity_corpus as runner
+
+    original = runner.capture_splits
+
+    def explode(*args, **kwargs):
+        raise CaptureError("simulated failure after bars were stored")
+
+    monkeypatch.setattr(runner, "capture_splits", explode)
+    root = tmp_path / "corpus"
+    with pytest.raises(CaptureError):
+        _capture(spec, _single_page(spec), tmp_path)
+
+    assert root.exists(), "a run that wrote raw bytes was deleted"
+    raw_files = [path for path in root.rglob("*") if path.is_file()]
+    assert raw_files, "no raw evidence was kept"
+    # No manifest, so nothing claims to be a corpus.
+    assert not (root / "manifest.json").exists()
+
+    monkeypatch.setattr(runner, "capture_splits", original)
+    # And a retry into that path is refused, because it does hold artifacts.
+    with pytest.raises(CaptureError) as error:
+        _capture(spec, _single_page(spec), tmp_path)
+    assert "earlier attempt" in str(error.value)
+
+
 def test_a_capture_refuses_to_run_into_a_non_empty_directory(
         spec, keyed, tmp_path):
     """Two attempts must never be blended invisibly."""

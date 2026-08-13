@@ -404,10 +404,16 @@ def run_capture(*, spec: USEquityCorpusV1 = CORPUS_SPEC_V1, root=None,
         raise CaptureError(
             f"{layout.manifest_path} already exists. A capture writes a corpus "
             "once; rerunning into the same directory would mix two attempts.")
-    if layout.root.exists() and any(layout.root.iterdir()):
+    # Artifacts, not entries. The guard exists to stop two attempts being
+    # blended, and an empty directory tree blends nothing -- it is what an
+    # aborted run leaves behind, and refusing on it would mean the first
+    # rejected key permanently wedges the corpus path.
+    leftovers = [path for path in layout.root.rglob("*") if path.is_file()]
+    if leftovers:
         raise CaptureError(
-            f"{layout.root} is not empty. Start a capture run from a clean "
-            "directory so two attempts can never be blended invisibly.")
+            f"{layout.root} already holds {len(leftovers)} file(s) from an "
+            "earlier attempt. Start a capture run from a clean directory so "
+            "two attempts can never be blended invisibly.")
 
     transport = transport or MassiveHTTPTransport()
     provider = provider or MassiveStocksHistoricalProvider(
@@ -429,6 +435,29 @@ def run_capture(*, spec: USEquityCorpusV1 = CORPUS_SPEC_V1, root=None,
     }, sort_keys=True))
 
     layout.ensure()
+    try:
+        return _capture_body(spec=spec, layout=layout, transport=transport,
+                             provider=provider, started=started)
+    except BaseException:
+        # An aborted run must leave the path exactly as it found it. Only a
+        # tree that holds no files is removed, so a partial capture is still
+        # preserved for diagnosis rather than quietly deleted -- and a run
+        # that never got past the first rejected request does not wedge the
+        # next attempt.
+        _discard_empty_tree(layout)
+        raise
+
+
+def _discard_empty_tree(layout: CorpusLayout) -> None:
+    if not layout.root.exists():
+        return
+    if any(path.is_file() for path in layout.root.rglob("*")):
+        return
+    shutil.rmtree(layout.root, ignore_errors=True)
+
+
+def _capture_body(*, spec: USEquityCorpusV1, layout: CorpusLayout, transport,
+                  provider, started: str) -> dict:
     store = RawStore(layout)
     session_index = spec.session_index()
     expected_openings = tuple(session_index)
