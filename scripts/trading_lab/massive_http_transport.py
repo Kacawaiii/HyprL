@@ -130,22 +130,48 @@ class TransportResponse:
     url: str
 
 
+# The only port this transport will speak to. Named rather than implied,
+# because `parsed.hostname` silently discards a port and would let
+# api.massive.com:4444 read as the allowlisted host.
+ALLOWED_PORT = 443
+
+
 def require_allowed_host(url: str) -> str:
-    """Scheme and host only.
+    """Scheme, host, port and authority shape.
 
     Used for the URL that actually goes on the wire, which may legitimately
     carry a credential parameter when the vendor documents query auth. The
-    stricter check below is what guards every URL that gets recorded.
+    stricter check below is what guards every URL that gets *recorded*.
+
+    Three things `parsed.hostname` alone would miss, each of which makes a
+    hostile URL read as the allowlisted one:
+
+    * a port -- `api.massive.com:4444` has hostname `api.massive.com`;
+    * userinfo -- `https://evil.example.com@api.massive.com/` also has
+      hostname `api.massive.com`, and the reverse spelling is what a reader
+      skims past;
+    * an empty or malformed authority.
     """
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https":
         raise HostNotAllowedError(
             f"refusing a non-https request to {parsed.scheme!r}")
+    if parsed.username is not None or parsed.password is not None:
+        raise HostNotAllowedError(
+            "refusing a URL carrying userinfo; the authority it appears to "
+            "name is not the host that would be contacted")
     host = (parsed.hostname or "").lower()
     if host not in ALLOWED_HOSTS:
         raise HostNotAllowedError(
             f"{host!r} is not an allowlisted market-data host; allowed: "
             f"{list(ALLOWED_HOSTS)}")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise HostNotAllowedError(f"malformed port in {host!r}") from error
+    if port not in (None, ALLOWED_PORT):
+        raise HostNotAllowedError(
+            f"refusing port {port} on {host!r}; only {ALLOWED_PORT} is allowed")
     return url
 
 
@@ -158,15 +184,10 @@ def require_allowed_url(url: str) -> str:
     string ends up in every access log between here and the vendor, and in
     this repository forever.
     """
+    # Delegated rather than duplicated: two copies of an authority check
+    # drift, and the copy that drifts is the one nobody re-reads.
+    require_allowed_host(url)
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https":
-        raise HostNotAllowedError(
-            f"refusing a non-https request to {parsed.scheme!r}")
-    host = (parsed.hostname or "").lower()
-    if host not in ALLOWED_HOSTS:
-        raise HostNotAllowedError(
-            f"{host!r} is not an allowlisted market-data host; allowed: "
-            f"{list(ALLOWED_HOSTS)}")
     if parsed.query:
         # The credential travels in a header. A query string is copied into
         # access logs, proxy logs and browser history, so anything that looks
@@ -194,6 +215,48 @@ def strip_credential_params(url: str) -> str:
     return urllib.parse.urlunsplit((
         parsed.scheme, parsed.netloc, parsed.path,
         urllib.parse.urlencode(kept), ""))
+
+
+class AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only while it stays inside the allowlist.
+
+    ``urllib`` follows 3xx automatically, and its ``redirect_request`` copies
+    every header except Content-Length and Content-Type onto the new request.
+    ``Authorization`` is therefore among them. A vendor redirect to another
+    host would hand that host our API key -- bypassing, in one step, every
+    credential control in this project, because they all guard the value
+    everywhere *except* the moment it leaves the process.
+
+    The check happens here, before urllib builds the redirected request, so an
+    off-allowlist destination is never contacted at all rather than being
+    refused after the credential has already been sent.
+
+    A same-host redirect is still checked in full: scheme, host, port,
+    userinfo and credential-shaped query parameters all get the same treatment
+    the original URL received.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            require_allowed_host(newurl)
+        except TransportError as error:
+            # Raised rather than returned as None: None makes urllib surface
+            # the original 3xx as an opaque HTTPError, which would read like a
+            # vendor problem instead of a refused destination.
+            raise HostNotAllowedError(
+                f"refusing to follow a redirect to a host outside the "
+                f"market-data allowlist: {error}") from None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def build_hardened_opener() -> urllib.request.OpenerDirector:
+    """The production opener. Never bare urlopen.
+
+    Bare ``urlopen`` uses the default handler chain, whose redirect handler
+    will follow a 3xx anywhere. This one is assembled explicitly so the only
+    redirect policy in play is the one above.
+    """
+    return urllib.request.build_opener(AllowlistedRedirectHandler())
 
 
 def _retry_after_seconds(headers) -> float | None:
@@ -224,7 +287,10 @@ class MassiveHTTPTransport(MassiveTransport):
         self.max_attempts = int(max_attempts)
         # Injected so the retry and pacing logic can be tested without a
         # socket and without a test suite that takes twelve seconds to sleep.
-        self._opener = opener or urllib.request.urlopen
+        # The production default is the hardened opener, never bare urlopen:
+        # bare urlopen follows a redirect to any host and takes the
+        # Authorization header with it.
+        self._opener = opener or build_hardened_opener().open
         self._sleep = sleep or time.sleep
         self.stats = TransportStats()
         self._last_request_at: float | None = None
@@ -279,6 +345,12 @@ class MassiveHTTPTransport(MassiveTransport):
                 self._sleep(self._rate_limit_delay(error, attempt))
                 self.stats.retries += 1
                 continue
+            except HostNotAllowedError:
+                # A destination outside the allowlist is not a transient
+                # failure. Retrying it would ask the same forbidden question
+                # three more times and then report a timeout-shaped error,
+                # burying the refusal that actually happened.
+                raise
             except TransportError as error:
                 # Already classified as retryable by _attempt; anything not
                 # retryable was raised as a plain MassiveProviderError.
@@ -350,10 +422,23 @@ class MassiveHTTPTransport(MassiveTransport):
         request = urllib.request.Request(url, method="GET")
         for key, value in headers.items():
             request.add_header(key, value)
+        final_url = url
         try:
             with self._opener(request, timeout=self.timeout) as response:
                 raw = response.read()
                 status = getattr(response, "status", 200) or 200
+                # Where the bytes actually came from. A redirect the handler
+                # allowed still changes the URL, and recording the one we
+                # asked for would attribute the response to a path that never
+                # served it.
+                resolved = getattr(response, "geturl", None)
+                if callable(resolved):
+                    final_url = resolved() or url
+        except HostNotAllowedError:
+            # The redirect handler already refused, before any request left
+            # for that host. Surfaced unchanged rather than folded into the
+            # generic network-failure message.
+            raise
         except urllib.error.HTTPError as error:
             body_status = error.code
             headers_in = getattr(error, "headers", None)
@@ -380,6 +465,11 @@ class MassiveHTTPTransport(MassiveTransport):
                 f"network failure contacting the market-data provider: "
                 f"{type(error).__name__}") from None
 
+        # Belt and braces: the handler runs per hop, this runs once on the
+        # destination that actually answered. A future handler change, or a
+        # caller injecting its own opener, cannot quietly widen the boundary.
+        require_allowed_host(final_url)
+
         self.stats.requests += 1
         self.stats.bytes_received += len(raw)
         try:
@@ -393,8 +483,14 @@ class MassiveHTTPTransport(MassiveTransport):
         if not isinstance(payload, dict):
             raise MassiveProviderError(
                 "expected a JSON object from the market-data provider")
+        # The recorded URL is truthful about the destination and silent about
+        # the credential: a redirect is reflected, query auth never is.
+        if recorded_url is not None and final_url == url:
+            recorded = recorded_url
+        else:
+            recorded = strip_credential_params(final_url)
         return TransportResponse(status=status, raw=raw, payload=payload,
-                                 url=recorded_url if recorded_url else url)
+                                 url=recorded)
 
     def payload(self) -> dict:
         """Safe to publish: what this transport is, never what it carries."""
@@ -416,7 +512,9 @@ __all__ = [
     "MAX_ATTEMPTS", "MAX_RETRY_AFTER_SECONDS", "MassiveHTTPTransport",
     "RETRYABLE_STATUSES", "RETRY_BACKOFF_SECONDS", "RateLimitedError",
     "REQUEST_TIMEOUT_SECONDS", "TransportError", "TransportResponse",
-    "TransportStats", "CREDENTIAL_QUERY_KEYS", "require_allowed_host",
+    "TransportStats", "ALLOWED_PORT", "AllowlistedRedirectHandler",
+    "CREDENTIAL_QUERY_KEYS", "build_hardened_opener",
+    "require_allowed_host",
     "require_allowed_url",
     "strip_credential_params",
 ]

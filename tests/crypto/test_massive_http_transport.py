@@ -344,3 +344,187 @@ def test_bearer_remains_the_default_and_sends_no_query_key():
     assert SENTINEL not in transport.calls[0]["url"]
     assert SENTINEL not in response.url
     assert SENTINEL in transport.calls[0]["headers"]["Authorization"]
+
+
+# --- redirects (Phase 6E-V2-FIX2) -----------------------------------------
+#
+# urllib follows 3xx automatically and its redirect_request copies every
+# header except Content-Length and Content-Type onto the new request --
+# Authorization among them. A vendor redirect to another host would hand that
+# host the API key, bypassing in one step every credential control in this
+# project, because they all guard the value everywhere *except* the moment it
+# leaves the process.
+#
+# These tests watch the requests the opener actually builds. Calling the
+# validator directly would prove only that the validator works; it would not
+# prove the credential never reaches the wire.
+
+
+class _RedirectingOpener:
+    """A urllib handler chain with one scripted redirect hop.
+
+    Drives the real AllowlistedRedirectHandler, so the policy under test is
+    the production one rather than a re-implementation.
+    """
+
+    def __init__(self, location, *, final_payload=None, hops=1):
+        self.location = location
+        self.final_payload = final_payload if final_payload is not None else {
+            "results": []}
+        self.hops = hops
+        self.requests = []
+        from scripts.trading_lab.massive_http_transport import (
+            AllowlistedRedirectHandler)
+        self._handler = AllowlistedRedirectHandler()
+
+    def open(self, request, timeout=None):
+        self.requests.append({"url": request.full_url,
+                              "headers": dict(request.header_items())})
+        if len(self.requests) <= self.hops:
+            following = self._handler.redirect_request(
+                request, io.BytesIO(b""), 302, "Found", {}, self.location)
+            if following is None:                    # pragma: no cover
+                raise AssertionError("handler returned None")
+            return self.open(following, timeout=timeout)
+        response = _Response(self.final_payload)
+        response.geturl = lambda: self.requests[-1]["url"]
+        return response
+
+
+def _redirect_transport(location, **kwargs):
+    opener = _RedirectingOpener(location, **kwargs)
+    transport = MassiveHTTPTransport(opener=opener.open, sleep=lambda _: None)
+    transport.opener = opener
+    return transport
+
+
+def test_R6E_1_a_same_host_redirect_is_followed():
+    transport = _redirect_transport(
+        "https://api.massive.com/stocks/v1/splits?ticker=AAPL")
+    response = transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {})
+    assert response.payload == {"results": []}
+    assert len(transport.opener.requests) == 2
+
+
+def test_R6E_2_a_cross_host_redirect_is_refused():
+    from scripts.trading_lab.massive_http_transport import HostNotAllowedError
+
+    transport = _redirect_transport("https://evil.example.com/steal")
+    with pytest.raises(HostNotAllowedError) as error:
+        transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {})
+    assert "allowlist" in str(error.value)
+
+
+def test_R6E_3_authorization_never_reaches_a_cross_host_request():
+    """The whole point. The validator passing is not the same as the key
+    staying home."""
+    from scripts.trading_lab.massive_http_transport import HostNotAllowedError
+
+    transport = _redirect_transport("https://evil.example.com/steal")
+    with pytest.raises(HostNotAllowedError):
+        transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"},
+                        {"Authorization": f"Bearer {SENTINEL}"})
+
+    hostile = [call for call in transport.opener.requests
+               if "evil.example.com" in call["url"]]
+    assert hostile == [], "a request was built for the hostile host"
+    for call in transport.opener.requests:
+        assert "api.massive.com" in call["url"]
+    # And nowhere in anything the opener saw did the key leave the allowlist.
+    for call in transport.opener.requests:
+        if SENTINEL in json.dumps(call["headers"]):
+            assert "api.massive.com" in call["url"]
+
+
+def test_R6E_4_the_final_url_is_recorded_not_the_one_we_asked_for():
+    transport = _redirect_transport(
+        "https://api.massive.com/stocks/v1/splits?ticker=AAPL&page=2")
+    response = transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {})
+    assert "page=2" in response.url, "the redirect was not reflected"
+
+
+def test_R6E_5_the_final_url_is_revalidated_even_if_a_handler_lets_one_slip():
+    """Belt and braces: an injected opener must not widen the boundary."""
+    from scripts.trading_lab.massive_http_transport import HostNotAllowedError
+
+    def sneaky(request, timeout=None):
+        response = _Response({"results": []})
+        response.geturl = lambda: "https://evil.example.com/served"
+        return response
+
+    transport = MassiveHTTPTransport(opener=sneaky, sleep=lambda _: None)
+    with pytest.raises(HostNotAllowedError):
+        transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {})
+
+
+@pytest.mark.parametrize("location,label", [
+    ("http://api.massive.com/downgrade", "https->http"),
+    ("https://api.massive.com:4444/altport", "alternate port"),
+    ("https://api.massive.com.evil.example/sub", "hostile subdomain"),
+    ("https://evil.example.com@api.massive.com/userinfo", "userinfo"),
+    ("https://user:pass@api.massive.com/userinfo", "userinfo with password"),
+])
+def test_R6E_6_7_8_scheme_port_and_authority_attacks_are_refused(location,
+                                                                 label):
+    from scripts.trading_lab.massive_http_transport import HostNotAllowedError
+
+    transport = _redirect_transport(location)
+    with pytest.raises(HostNotAllowedError):
+        transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"},
+                        {"Authorization": f"Bearer {SENTINEL}"})
+    assert all("api.massive.com" in call["url"] and ":4444" not in call["url"]
+               for call in transport.opener.requests)
+
+
+def test_R6E_9_query_auth_never_survives_into_the_recorded_final_url():
+    transport = _redirect_transport(
+        f"https://api.massive.com/stocks/v1/splits?ticker=AAPL&apiKey={SENTINEL}")
+    response = transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {},
+                               auth_query={"apiKey": SENTINEL})
+    assert SENTINEL not in response.url
+    assert "apikey" not in response.url.lower()
+    assert "ticker=AAPL" in response.url
+
+
+def test_R6E_10_a_redirect_loop_stays_bounded_by_urllib():
+    """The hardened handler must not have removed urllib's own bound.
+
+    Asserting on a scripted opener would test the harness. What matters is
+    that the real handler still carries the inherited redirect ceiling and
+    the loop-detection machinery, so a vendor bouncing us between two of its
+    own paths terminates instead of spinning.
+    """
+    import urllib.request
+
+    from scripts.trading_lab.massive_http_transport import (
+        AllowlistedRedirectHandler)
+
+    handler = AllowlistedRedirectHandler()
+    assert isinstance(handler, urllib.request.HTTPRedirectHandler)
+    assert handler.max_redirections == \
+        urllib.request.HTTPRedirectHandler.max_redirections
+    assert handler.max_redirections < 100
+
+
+def test_a_refused_redirect_is_not_retried():
+    """It is a refusal, not a timeout. Retrying buries the real reason."""
+    from scripts.trading_lab.massive_http_transport import HostNotAllowedError
+
+    transport = _redirect_transport("https://evil.example.com/steal")
+    with pytest.raises(HostNotAllowedError):
+        transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {})
+    assert transport.stats.retries == 0
+    assert len(transport.opener.requests) == 1
+
+
+def test_the_production_default_is_the_hardened_opener_not_bare_urlopen():
+    import urllib.request
+
+    from scripts.trading_lab.massive_http_transport import (
+        AllowlistedRedirectHandler, build_hardened_opener)
+
+    transport = MassiveHTTPTransport()
+    assert transport._opener is not urllib.request.urlopen
+    opener = build_hardened_opener()
+    assert any(isinstance(handler, AllowlistedRedirectHandler)
+               for handler in opener.handlers)
