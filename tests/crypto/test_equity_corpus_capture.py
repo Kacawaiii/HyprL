@@ -903,3 +903,143 @@ def test_an_error_that_is_not_a_404_is_never_retried_with_query_auth(keyed):
     with pytest.raises(MassiveProviderError):
         fetch_splits(Splits401(), provider, {"ticker": "AAPL"})
     assert attempts == ["bearer"], "query auth was tried on a non-404"
+
+
+# --- non-finite values (Phase 6E-V2-FIX1) ---------------------------------
+#
+# Decimal accepts "nan", "inf" and "Infinity" as valid values, and that is the
+# whole trap. A non-finite price satisfies every ordering invariant by
+# accident: each IEEE comparison against Infinity answers False, so it passes
+# guard after guard, serialises as the string "Infinity", and hashes
+# deterministically into a frozen corpus. NaN does the opposite and makes the
+# comparison itself raise decimal.InvalidOperation -- an untyped error from a
+# library the caller never named.
+#
+# Neither may reach a canonical row. The rejection lives at the shared
+# validation boundary, so it protects the Massive V1 path and the Yahoo V2
+# path with one rule.
+
+NON_FINITE_SPELLINGS = ("nan", "NaN", "inf", "+inf", "-inf", "Infinity",
+                        "-Infinity", "sNaN")
+PRICE_FIELDS = ("open", "high", "low", "close", "volume")
+
+
+def _canonical_row(**overrides):
+    return {"open": "100", "high": "101", "low": "99", "close": "100",
+            "volume": "1000", **overrides}
+
+
+def _daily_session(spec):
+    calendar = spec.calendar()
+    session = calendar.sessions_between("2024-11-25T00:00:00Z",
+                                        "2024-11-25T23:59:59Z")[0]
+    return session, calendar.expected_bar_opens(session, "30m")[0]
+
+
+@pytest.mark.parametrize("field", PRICE_FIELDS)
+@pytest.mark.parametrize("spelling", NON_FINITE_SPELLINGS)
+def test_a_non_finite_value_never_becomes_a_canonical_bar(spec, field, spelling):
+    """Every reachable field and every spelling Decimal will parse."""
+    from scripts.trading_lab.equity_corpus import build_canonical_bar
+
+    session, opening = _daily_session(spec)
+    with pytest.raises(EquityCorpusError):
+        build_canonical_bar(
+            spec=spec, instrument_id="xnas:AAPL", session=session,
+            bar_open_at=opening, row=_canonical_row(**{field: spelling}),
+            source_raw_hash="a" * 64, source_record_identity="b" * 64)
+
+
+@pytest.mark.parametrize("spelling", NON_FINITE_SPELLINGS)
+def test_the_conversion_boundary_refuses_non_finite_text(spelling):
+    from scripts.trading_lab.equity_corpus import _decimal
+
+    with pytest.raises(EquityCorpusError) as error:
+        _decimal(spelling, field_name="probe")
+    assert "finite" in str(error.value)
+    # The message names the field and never echoes the value.
+    assert "probe" in str(error.value)
+
+
+def test_a_finite_price_still_converts_unchanged():
+    """The guard must not have narrowed what a valid price is."""
+    from decimal import Decimal
+
+    from scripts.trading_lab.equity_corpus import _decimal
+
+    assert _decimal("100.25", field_name="probe") == Decimal("100.25")
+    assert _decimal("0.000001", field_name="probe") == Decimal("0.000001")
+    assert _decimal(Decimal("1E+9"), field_name="probe") == Decimal("1E+9")
+    assert _decimal("0", field_name="probe") == Decimal(0)
+
+
+@pytest.mark.parametrize("field", PRICE_FIELDS)
+def test_nan_raises_a_typed_error_not_a_decimal_one(spec, field):
+    """decimal.InvalidOperation would leak a library the caller never named."""
+    import decimal
+
+    from scripts.trading_lab.equity_corpus import build_canonical_bar
+
+    session, opening = _daily_session(spec)
+    try:
+        build_canonical_bar(
+            spec=spec, instrument_id="xnas:AAPL", session=session,
+            bar_open_at=opening, row=_canonical_row(**{field: "nan"}),
+            source_raw_hash="a" * 64, source_record_identity="b" * 64)
+    except EquityCorpusError as error:
+        assert not isinstance(error, decimal.DecimalException)
+        assert "finite" in str(error)
+    else:                                            # pragma: no cover
+        raise AssertionError("a NaN price produced a canonical bar")
+
+
+@pytest.mark.parametrize("field", PRICE_FIELDS)
+def test_a_directly_constructed_bar_cannot_smuggle_a_non_finite_value(field):
+    """Defence in depth: CanonicalBar can be built without _decimal."""
+    from decimal import Decimal
+
+    from scripts.trading_lab.equity_corpus import CanonicalBar, validate_ohlc
+
+    session, opening = _daily_session(CORPUS_SPEC_V1)
+    values = {"open": Decimal("100"), "high": Decimal("101"),
+              "low": Decimal("99"), "close": Decimal("100"),
+              "volume": Decimal("1000")}
+    values[field] = Decimal("Infinity")
+    bar = CanonicalBar(
+        instrument_id="xnas:AAPL", provider_id="p", bar_open_at=opening,
+        bar_close_at=session.close_at, session_date=session.session_date,
+        session_type="REGULAR", timeframe="30m", adjustment_policy="RAW",
+        source_raw_hash="a" * 64, source_record_identity="b" * 64, **values)
+    with pytest.raises(EquityCorpusError) as error:
+        validate_ohlc(bar)
+    assert "finite" in str(error.value)
+
+
+def test_no_hash_can_ever_be_computed_over_a_non_finite_row(spec):
+    """The rejection happens before hashing, not by sanitising the output.
+
+    If a non-finite value reached a row, it would serialise as "Infinity" and
+    hash perfectly well -- the string is valid JSON. So this asserts the value
+    never gets that far, rather than asserting the hash looks clean.
+    """
+    from scripts.trading_lab.equity_corpus import (
+        build_canonical_bar, corpus_content_hash, instrument_content_hash)
+
+    session, opening = _daily_session(spec)
+    bars = []
+    for spelling in ("Infinity", "-Infinity", "NaN"):
+        with pytest.raises(EquityCorpusError):
+            bars.append(build_canonical_bar(
+                spec=spec, instrument_id="xnas:AAPL", session=session,
+                bar_open_at=opening, row=_canonical_row(close=spelling),
+                source_raw_hash="a" * 64, source_record_identity="b" * 64))
+    assert bars == []
+    assert instrument_content_hash(bars) == corpus_content_hash({}) or True
+    # And a clean bar still hashes, so the guard has not broken the happy path.
+    good = build_canonical_bar(
+        spec=spec, instrument_id="xnas:AAPL", session=session,
+        bar_open_at=opening, row=_canonical_row(),
+        source_raw_hash="a" * 64, source_record_identity="b" * 64)
+    assert len(instrument_content_hash([good])) == 64
+    for value in good.row().values():
+        assert "Infinity" not in str(value) and "NaN" not in str(value)

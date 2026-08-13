@@ -899,3 +899,95 @@ def test_the_v3_reference_shape_is_read_as_an_object(reference_fixture):
     assert parsed.venue == "xnas"
     assert parsed.asset_class == "EQUITY"
     assert parsed.currency == "USD"
+
+
+# --- non-finite values on the Massive path (6E-V2-FIX1) -------------------
+#
+# The same shared guard, reached through the other provider. No Massive
+# specific logic exists for this -- that is the point of fixing it once at the
+# common boundary.
+
+
+@pytest.mark.parametrize("field", ["o", "h", "l", "c", "v"])
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_aggregate_never_becomes_an_equity_bar(keyed, field,
+                                                            value):
+    rows = [{"t": BAR_ONE_MS, "o": 185.10, "h": 186.40, "l": 184.90,
+             "c": 186.00, "v": 1250000}]
+    rows[0][field] = value
+    provider = _provider({AAPL_BARS_PATH: _bars_payload(rows=rows)})
+    with pytest.raises(EquityMarketError) as error:
+        provider.get_historical_bars(AAPL.instrument_id, "30m",
+                                     start="2026-01-15", end="2026-01-16")
+    assert "finite" in str(error.value)
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+def test_the_conversion_boundary_alone_refuses_non_finite_text(field):
+    """Isolates the _decimal guard: this path never reaches the bar's own check."""
+    from scripts.trading_lab.equity_market import _decimal
+
+    for spelling in ("Infinity", "-Infinity", "NaN", "inf", "nan"):
+        with pytest.raises(EquityMarketError) as error:
+            _decimal(spelling, field_name=field)
+        assert "finite" in str(error.value)
+    # And a finite value still converts, so the guard has not narrowed what a
+    # valid price is.
+    assert _decimal("100.25", field_name=field) == Decimal("100.25")
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+def test_the_bar_alone_refuses_a_non_finite_decimal(field):
+    """Isolates the EquityMarketBar defence.
+
+    Constructed directly with Decimal values, so _decimal never runs. Without
+    this the two guards are indistinguishable and either could be deleted
+    while the suite stayed green.
+    """
+    from scripts.trading_lab.equity_market import EquityMarketBar
+
+    values = {"open": Decimal("100"), "high": Decimal("101"),
+              "low": Decimal("99"), "close": Decimal("100"),
+              "volume": Decimal("1000")}
+    for spelling in ("Infinity", "-Infinity", "NaN"):
+        with pytest.raises(EquityMarketError) as error:
+            EquityMarketBar(
+                instrument_id=AAPL.instrument_id, timeframe="30m",
+                provider_id=MASSIVE_STOCKS_HISTORICAL_V1,
+                adjustment_policy=ADJUSTMENT_RAW,
+                bar_open_at=datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc),
+                bar_close_at=datetime(2026, 1, 15, 15, 0, tzinfo=timezone.utc),
+                **{**values, field: Decimal(spelling)})
+        assert "finite" in str(error.value)
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+def test_a_non_finite_equity_bar_cannot_be_built_through_the_helper(field):
+    """The composed path, end to end."""
+    base = dict(instrument=AAPL.instrument_id, timeframe="30m",
+                provider_id=MASSIVE_STOCKS_HISTORICAL_V1,
+                adjustment_policy=ADJUSTMENT_RAW,
+                bar_open_at="2026-01-15T14:30:00Z",
+                bar_close_at="2026-01-15T15:00:00Z", open="100", high="101",
+                low="99", close="100", volume="1000")
+    for spelling in ("Infinity", "-Infinity", "NaN", "inf", "nan"):
+        with pytest.raises(EquityMarketError) as error:
+            build_equity_bar(**{**base, field: spelling})
+        assert "finite" in str(error.value)
+
+
+def test_nan_on_the_massive_path_is_typed_not_a_decimal_error():
+    import decimal
+
+    base = dict(instrument=AAPL.instrument_id, timeframe="30m",
+                provider_id=MASSIVE_STOCKS_HISTORICAL_V1,
+                adjustment_policy=ADJUSTMENT_RAW,
+                bar_open_at="2026-01-15T14:30:00Z",
+                bar_close_at="2026-01-15T15:00:00Z", open="nan", high="101",
+                low="99", close="100", volume="1000")
+    try:
+        build_equity_bar(**base)
+    except EquityMarketError as error:
+        assert not isinstance(error, decimal.DecimalException)
+    else:                                            # pragma: no cover
+        raise AssertionError("a NaN price produced an equity bar")

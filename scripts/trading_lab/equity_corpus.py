@@ -358,22 +358,35 @@ CANONICAL_FIELDS = (
 
 
 def _decimal(value: object, *, field_name: str) -> Decimal:
-    """Prices as Decimal, never from a float.
+    """Prices as Decimal, never from a float, and never non-finite.
 
     A float price has already lost digits before it reaches this line, and no
     amount of care downstream puts them back.
+
+    ``Decimal`` accepts "nan", "inf" and "Infinity" as perfectly valid values,
+    and that is the trap this guard closes. A non-finite price satisfies every
+    ordering invariant below by accident -- every IEEE comparison against
+    Infinity or NaN answers False -- so it would validate, serialise as the
+    string "Infinity", and hash deterministically into a frozen corpus. It
+    would then turn every return, volatility and risk figure computed from it
+    into inf or nan, invisibly, in a dataset whose whole purpose is to survive
+    an audit. Refused here, at the one boundary both providers pass through.
     """
     if isinstance(value, Decimal):
-        return value
-    if isinstance(value, float):
+        converted = value
+    elif isinstance(value, float):
         raise EquityCorpusError(
             f"{field_name} arrived as a float; prices must be strings or "
             "Decimal so the printed value is the stored value")
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as error:
-        raise EquityCorpusError(
-            f"{field_name} {value!r} is not a number") from error
+    else:
+        try:
+            converted = Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError) as error:
+            raise EquityCorpusError(
+                f"{field_name} {value!r} is not a number") from error
+    if not converted.is_finite():
+        raise EquityCorpusError(f"{field_name} is not a finite number")
+    return converted
 
 
 @dataclass(frozen=True)
@@ -436,6 +449,21 @@ def validate_ohlc(bar: CanonicalBar) -> CanonicalBar:
     and accepting it would put an impossible price into a dataset that later
     looks perfectly ordinary.
     """
+    # Finiteness first, before any comparison runs. Two reasons, and both are
+    # about the comparisons below rather than about the values themselves.
+    # NaN makes a Decimal comparison *raise* -- `Decimal("nan") <= 0` throws
+    # decimal.InvalidOperation, an untyped error from a library the caller
+    # never mentioned. Infinity does the opposite and answers False to every
+    # ordering test, so it passes each guard in turn. Neither is a bar, and a
+    # CanonicalBar can be built directly rather than through _decimal, so this
+    # check cannot live only at the conversion boundary.
+    for name in ("open", "high", "low", "close", "volume"):
+        value = getattr(bar, name)
+        if not value.is_finite():
+            raise EquityCorpusError(
+                f"{bar.instrument_id} {iso(bar.bar_open_at)}: {name} is not a "
+                "finite number")
+
     low, high = bar.low, bar.high
     for name in ("open", "high", "low", "close"):
         value = getattr(bar, name)

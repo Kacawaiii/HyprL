@@ -83,9 +83,16 @@ def _decimal(value: object, *, field_name: str) -> Decimal:
             f"{field_name} arrived as a float; prices must be strings or "
             "Decimal so the printed value is the stored value")
     try:
-        return Decimal(str(value))
+        converted = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError) as error:
         raise EquityMarketError(f"{field_name} {value!r} is not a number") from error
+    # Decimal happily accepts "nan", "inf" and "Infinity". A non-finite price
+    # satisfies every ordering invariant below by accident, because each IEEE
+    # comparison against it answers False -- so it would validate, serialise as
+    # "Infinity" and hash into an artefact that later looks entirely ordinary.
+    if not converted.is_finite():
+        raise EquityMarketError(f"{field_name} is not a finite number")
+    return converted
 
 
 def _utc(value: object, *, field_name: str) -> datetime:
@@ -140,6 +147,16 @@ class EquityMarketBar:
         if self.bar_close_at <= self.bar_open_at:
             raise EquityMarketError(
                 f"bar closes at {_iso(self.bar_close_at)}, at or before it opens")
+        # Finiteness before any comparison. NaN makes a Decimal comparison
+        # raise decimal.InvalidOperation -- an untyped error from a library
+        # the caller never named -- and Infinity answers False to every
+        # ordering test, so it passes each guard in turn. A bar can also be
+        # constructed directly rather than through _decimal, so the check
+        # cannot live only at the conversion boundary.
+        for name in ("open", "high", "low", "close", "volume"):
+            value = getattr(self, name)
+            if not value.is_finite():
+                raise EquityMarketError(f"{name} is not a finite number")
         low, high = self.low, self.high
         if high < low:
             raise EquityMarketError(f"high {high} is below low {low}")

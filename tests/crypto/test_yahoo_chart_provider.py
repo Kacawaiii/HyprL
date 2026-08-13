@@ -274,3 +274,58 @@ def test_no_splits_is_not_an_error(chart):
     quiet = json.loads(json.dumps(chart))
     quiet["chart"]["result"][0]["events"] = {}
     assert adapt_split_events(quiet, instrument_id="xnas:AAPL") == []
+
+
+# --- non-finite values reaching the canonical boundary (6E-V2-FIX1) -------
+#
+# The adapter deliberately does NOT reject these. Its job is to record what
+# arrived, so a raw payload carrying Infinity stays faithful provenance. The
+# rejection belongs to the shared canonical validation, and these tests prove
+# the value cannot survive that far.
+
+
+def _payload_with(chart: dict, field: str, value):
+    broken = json.loads(json.dumps(chart))
+    series = broken["chart"]["result"][0]["indicators"]["quote"][0][field]
+    series[0] = value
+    return broken
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+@pytest.mark.parametrize("value,label", [(float("inf"), "inf"),
+                                         (float("-inf"), "-inf"),
+                                         (float("nan"), "nan")])
+def test_a_non_finite_quote_never_reaches_a_canonical_bar(chart, field, value,
+                                                          label):
+    """Yahoo sends JSON numbers, so a non-finite arrives as a float."""
+    from scripts.trading_lab.equity_corpus import (
+        CORPUS_SPEC_V2, EquityCorpusError, build_canonical_bar)
+
+    rows = adapt_chart_rows(_payload_with(chart, field, value),
+                            instrument_id="xnas:AAPL")
+    # The adapter records it faithfully -- that is provenance, not acceptance.
+    assert rows, "the adapter dropped the row instead of recording it"
+
+    calendar = CORPUS_SPEC_V2.calendar()
+    session = calendar.sessions_between("2024-11-25T00:00:00Z",
+                                        "2024-11-25T23:59:59Z")[0]
+    opening = calendar.expected_bar_opens(session, "1d")[0]
+    row = {name: rows[0][name] for name in
+           ("open", "high", "low", "close", "volume")}
+    with pytest.raises(EquityCorpusError) as error:
+        build_canonical_bar(
+            spec=CORPUS_SPEC_V2, instrument_id="xnas:AAPL", session=session,
+            bar_open_at=opening, row=row, source_raw_hash="a" * 64,
+            source_record_identity="b" * 64)
+    assert "finite" in str(error.value)
+
+
+def test_a_null_still_drops_the_row_and_becomes_a_reported_gap(chart):
+    """Unchanged behaviour: a hole stays a hole, so the gap audit sees it.
+
+    Deliberately different from a non-finite value. A null is the source
+    saying it has nothing; Infinity is the source saying something impossible.
+    """
+    rows = adapt_chart_rows(_payload_with(chart, "close", None),
+                            instrument_id="xnas:AAPL")
+    assert len(rows) == len(chart["chart"]["result"][0]["timestamp"]) - 1
