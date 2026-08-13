@@ -698,7 +698,7 @@ def test_a_vendor_exchange_code_is_mapped_never_inferred():
     from scripts.trading_lab.massive_provider import (
         MassiveProviderError, parse_reference_ticker)
 
-    row = {"symbol": "AAPL", "primary_exchange": "XNAS", "type": "CS",
+    row = {"ticker": "AAPL", "primary_exchange": "XNAS", "type": "CS",
            "currency_name": "USD", "name": "Apple Inc."}
     assert parse_reference_ticker(row).venue == "xnas"
     # Case is folded on the way in, so "xnas" is the same code as "XNAS" --

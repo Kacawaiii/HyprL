@@ -154,6 +154,22 @@ def require_allowed_url(url: str) -> str:
     return url
 
 
+# Query parameters that may carry a secret. Removed from any URL the vendor
+# hands back before it is followed, logged or stored.
+CREDENTIAL_QUERY_KEYS = ("apikey", "api_key", "api-key", "key", "token",
+                         "secret", "access_token", "auth")
+
+
+def strip_credential_params(url: str) -> str:
+    """Drop credential-shaped query parameters from a URL. Never logs them."""
+    parsed = urllib.parse.urlsplit(url)
+    kept = [(key, value) for key, value in urllib.parse.parse_qsl(parsed.query)
+            if key.lower() not in CREDENTIAL_QUERY_KEYS]
+    return urllib.parse.urlunsplit((
+        parsed.scheme, parsed.netloc, parsed.path,
+        urllib.parse.urlencode(kept), ""))
+
+
 def _retry_after_seconds(headers) -> float | None:
     raw = headers.get("Retry-After") if headers else None
     if not raw:
@@ -237,6 +253,23 @@ class MassiveHTTPTransport(MassiveTransport):
         raise TransportError(
             f"giving up on {path} after {self.max_attempts} attempts: "
             f"{type(last_error).__name__}") from None
+
+    def fetch_absolute(self, url: str, headers: dict) -> "TransportResponse":
+        """Follow a continuation URL the vendor supplied.
+
+        Validated against the same allowlist as everything else -- a next_url
+        is data from the network, and following it unchecked would let the
+        response choose the next host.
+
+        Any credential-shaped query parameter is stripped first. Some vendors
+        embed the API key in next_url; that value would otherwise be recorded
+        in the raw request metadata and committed forever.
+        """
+        cleaned = strip_credential_params(url)
+        require_allowed_url(cleaned)
+        parsed = urllib.parse.urlsplit(cleaned)
+        params = dict(urllib.parse.parse_qsl(parsed.query))
+        return self.fetch(parsed.path, params, headers)
 
     def build_url(self, path: str, params: dict) -> str:
         query = urllib.parse.urlencode(
@@ -338,5 +371,6 @@ __all__ = [
     "MAX_ATTEMPTS", "MAX_RETRY_AFTER_SECONDS", "MassiveHTTPTransport",
     "RETRYABLE_STATUSES", "RETRY_BACKOFF_SECONDS", "RateLimitedError",
     "REQUEST_TIMEOUT_SECONDS", "TransportError", "TransportResponse",
-    "TransportStats", "require_allowed_url",
+    "TransportStats", "CREDENTIAL_QUERY_KEYS", "require_allowed_url",
+    "strip_credential_params",
 ]

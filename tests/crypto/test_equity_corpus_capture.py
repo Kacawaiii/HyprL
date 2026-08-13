@@ -31,18 +31,20 @@ pytest.importorskip(
     reason="the US equity corpus needs the optional [equities] extra")
 
 from scripts.trading_lab.capture_us_equity_corpus import (  # noqa: E402
-    BARS_PATH, CaptureError, CorpusLayout, MissingCredentialStop,
-    REFERENCE_PATH, SPLITS_PATH, adapt_bar_rows, run_capture,
-    verify_instrument_identity)
+    CaptureError, CorpusLayout, MissingCredentialStop, SPLITS_PATH,
+    adapt_bar_rows, run_capture, verify_instrument_identity)
+from scripts.trading_lab.massive_provider import (  # noqa: E402
+    bars_path, reference_path)
 from scripts.trading_lab.credentials import (  # noqa: E402
     MASSIVE_API_KEY_ENV, assert_absent, massive_credentials)
+from scripts.trading_lab.equity_market import EquityMarketError  # noqa: E402
 from scripts.trading_lab.equity_corpus import (  # noqa: E402
     CORPUS_SPEC_V1, EquityCorpusError, USEquityCorpusV1, audit_gaps,
     corpus_content_hash, instrument_content_hash, iso,
     overlapping_missing_intervals)
 from scripts.trading_lab.massive_http_transport import TransportResponse  # noqa: E402
 from scripts.trading_lab.massive_provider import (  # noqa: E402
-    MassiveStocksHistoricalProvider)
+    MassiveProviderError, MassiveStocksHistoricalProvider)
 from scripts.trading_lab.verify_us_equity_corpus import (  # noqa: E402
     CorpusVerificationError, rebuild, verify)
 
@@ -54,18 +56,21 @@ SENTINEL = "sentinel-massive-key-do-not-use-1a2b3c4d5e6f"
 WINDOW_START = "2024-11-25"
 WINDOW_END = "2024-12-02"
 
+# The vendor's v3 reference shape, sanitized: only the fields this platform
+# reads, and no identifiers beyond the public ticker metadata.
 REFERENCE = {
-    "AAPL": {"symbol": "AAPL", "name": "Apple Inc.", "primary_exchange": "XNAS",
-             "type": "CS", "currency_name": "USD", "active": True},
-    "MSFT": {"symbol": "MSFT", "name": "Microsoft Corporation",
-             "primary_exchange": "XNAS", "type": "CS", "currency_name": "USD",
-             "active": True},
-    "NVDA": {"symbol": "NVDA", "name": "NVIDIA Corporation",
-             "primary_exchange": "XNAS", "type": "CS", "currency_name": "USD",
-             "active": True},
-    "QQQ": {"symbol": "QQQ", "name": "Invesco QQQ Trust, Series 1",
-            "primary_exchange": "XNAS", "type": "ETF", "currency_name": "USD",
-            "active": True},
+    "AAPL": {"ticker": "AAPL", "name": "Apple Inc.", "primary_exchange": "XNAS",
+             "type": "CS", "currency_name": "usd", "active": True,
+             "market": "stocks", "locale": "us"},
+    "MSFT": {"ticker": "MSFT", "name": "Microsoft Corporation",
+             "primary_exchange": "XNAS", "type": "CS", "currency_name": "usd",
+             "active": True, "market": "stocks", "locale": "us"},
+    "NVDA": {"ticker": "NVDA", "name": "NVIDIA Corporation",
+             "primary_exchange": "XNAS", "type": "CS", "currency_name": "usd",
+             "active": True, "market": "stocks", "locale": "us"},
+    "QQQ": {"ticker": "QQQ", "name": "Invesco QQQ Trust, Series 1",
+            "primary_exchange": "XNAS", "type": "ETF", "currency_name": "usd",
+            "active": True, "market": "stocks", "locale": "us"},
 }
 
 
@@ -83,23 +88,30 @@ def keyed(monkeypatch):
 
 
 def _price_row(opening, *, base="100.00"):
-    """A well-formed bar. The price is arbitrary; the shape is not."""
+    """A well-formed aggregate row, in the vendor's own shape.
+
+    Terse keys and a millisecond epoch timestamp marking the START of the
+    window. The price is arbitrary; the shape is not.
+    """
     price = Decimal(base)
     return {
-        "bar_open_at": iso(opening),
-        "open": str(price),
-        "high": str(price + Decimal("1.50")),
-        "low": str(price - Decimal("0.75")),
-        "close": str(price + Decimal("0.25")),
-        "volume": "125000",
+        "t": int(opening.timestamp() * 1000),
+        "o": float(price),
+        "h": float(price + Decimal("1.50")),
+        "l": float(price - Decimal("0.75")),
+        "c": float(price + Decimal("0.25")),
+        "v": 125000,
+        "n": 812,
+        "vw": float(price),
     }
 
 
 class ScriptedTransport:
-    """Serves fixtures keyed by (path, symbol, cursor). Records every call.
+    """Serves fixtures for the real endpoint shapes. Records every call.
 
-    Not a mock of `urllib`: it stands in for the whole transport, which means
-    these tests exercise the capture runner's own logic and nothing else.
+    Not a mock of `urllib`: it stands in for the whole transport, so these
+    tests exercise the capture runner's own logic and nothing else. Paths now
+    carry the ticker, so routing is by path shape rather than by literal.
     """
 
     name = "scripted"
@@ -111,29 +123,59 @@ class ScriptedTransport:
         self.calls: list[dict] = []
         self.stats = None
 
+    def _route(self, path: str, params: dict):
+        if path.startswith("/v3/reference/tickers/"):
+            symbol = path.rsplit("/", 1)[-1]
+            if symbol not in self.reference:
+                return {"status": "NOT_FOUND", "results": None}
+            return {"status": "OK", "results": self.reference[symbol]}
+        if path == SPLITS_PATH:
+            symbol = params.get("ticker", "")
+            return {"status": "OK",
+                    "results": self.splits.get(symbol, [])}
+        if path.startswith("/v2/aggs/ticker/"):
+            symbol = path.split("/")[4]
+            cursor = params.get("cursor", "")
+            return self.pages[(symbol, cursor)]
+        raise AssertionError(f"unexpected path {path}")   # pragma: no cover
+
     def fetch(self, path, params, headers) -> TransportResponse:
         self.calls.append({"path": path, "params": dict(params),
                            "headers": dict(headers)})
-        symbol = params.get("symbol", "")
-        if path == REFERENCE_PATH:
-            payload = {"results": [self.reference[symbol]]} if symbol in \
-                self.reference else {"results": []}
-        elif path == SPLITS_PATH:
-            payload = {"splits": self.splits.get(symbol, [])}
-        elif path == BARS_PATH:
-            cursor = params.get("cursor", "")
-            payload = self.pages[(symbol, cursor)]
-        else:                                        # pragma: no cover
-            raise AssertionError(f"unexpected path {path}")
+        payload = self._route(path, params)
         raw = json.dumps(payload, sort_keys=True).encode("utf-8")
         return TransportResponse(status=200, raw=raw, payload=payload,
                                  url=f"https://api.massive.com{path}")
+
+    def fetch_absolute(self, url, headers) -> TransportResponse:
+        """Follow a continuation URL, as the real transport does."""
+        import urllib.parse
+
+        parsed = urllib.parse.urlsplit(url)
+        params = dict(urllib.parse.parse_qsl(parsed.query))
+        return self.fetch(parsed.path, params, headers)
 
     def request(self, path, params, headers):
         return self.fetch(path, params, headers).payload
 
 
-def _single_page(spec, *, rows_for=None, adjustment=None):
+def _bars_payload(symbol, rows, *, adjusted=True, next_url=None):
+    """One aggregates page in the vendor's shape."""
+    payload = {
+        "ticker": symbol,
+        "adjusted": adjusted,
+        "status": "OK",
+        "queryCount": len(rows),
+        "resultsCount": len(rows),
+        "results": rows,
+        "request_id": "fixture",
+    }
+    if next_url:
+        payload["next_url"] = next_url
+    return payload
+
+
+def _single_page(spec, *, rows_for=None, adjusted=True):
     """One page per instrument, holding every expected bar in the window."""
     openings = spec.expected_bar_opens()
     pages = {}
@@ -141,10 +183,7 @@ def _single_page(spec, *, rows_for=None, adjustment=None):
         symbol = instrument_id.split(":")[-1]
         rows = (rows_for(instrument_id, openings) if rows_for
                 else [_price_row(opening) for opening in openings])
-        pages[(symbol, "")] = {
-            "adjustment": adjustment or spec.adjustment_policy,
-            "bars": rows,
-        }
+        pages[(symbol, "")] = _bars_payload(symbol, rows, adjusted=adjusted)
     return pages
 
 
@@ -251,9 +290,10 @@ def test_every_venue_is_verified_against_the_provider_before_any_bar(
     """QQQ is not assumed to be on xnas. It is checked, every capture."""
     _, transport = _capture(spec, _single_page(spec), tmp_path)
     reference_calls = [call for call in transport.calls
-                       if call["path"] == REFERENCE_PATH]
-    bar_calls = [call for call in transport.calls if call["path"] == BARS_PATH]
-    assert {call["params"]["symbol"] for call in reference_calls} == {
+                       if call["path"].startswith("/v3/reference/tickers/")]
+    bar_calls = [call for call in transport.calls
+                 if call["path"].startswith("/v2/aggs/ticker/")]
+    assert {call["path"].rsplit("/", 1)[-1] for call in reference_calls} == {
         "AAPL", "MSFT", "NVDA", "QQQ"}
     # Every reference check happens before the first bar request.
     first_bar = transport.calls.index(bar_calls[0])
@@ -290,7 +330,7 @@ def test_the_registered_qqq_venue_matches_the_contractual_metadata():
     fixtures = json.loads(
         (pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "crypto"
          / "massive_reference_tickers.json").read_text())
-    parsed = parse_reference_ticker(fixtures["QQQ"]["results"][0])
+    parsed = parse_reference_ticker(fixtures["QQQ"]["results"])
     registered = CATALOGUE_V1.resolve("xnas:QQQ")
     assert parsed.venue == registered.instrument_id.venue == "xnas"
     assert parsed.asset_class == registered.asset_class == "ETF"
@@ -404,15 +444,14 @@ def test_pagination_is_followed_to_exhaustion(spec, keyed, tmp_path):
     pages = {}
     for instrument_id in spec.instruments:
         symbol = instrument_id.split(":")[-1]
-        pages[(symbol, "")] = {
-            "adjustment": spec.adjustment_policy,
-            "bars": [_price_row(item) for item in openings[:half]],
-            "next_cursor": "page-2",
-        }
-        pages[(symbol, "page-2")] = {
-            "adjustment": spec.adjustment_policy,
-            "bars": [_price_row(item) for item in openings[half:]],
-        }
+        follow = (f"https://api.massive.com/v2/aggs/ticker/{symbol}"
+                  f"/range/30/minute/{spec.requested_start}/{spec.requested_end}"
+                  f"?cursor=page-2")
+        pages[(symbol, "")] = _bars_payload(
+            symbol, [_price_row(item) for item in openings[:half]],
+            next_url=follow)
+        pages[(symbol, "page-2")] = _bars_payload(
+            symbol, [_price_row(item) for item in openings[half:]])
     manifest, _ = _capture(spec, pages, tmp_path)
     for entry in manifest["content"]["instruments"]:
         assert entry["rows"] == len(openings)
@@ -427,9 +466,11 @@ def test_a_repeated_pagination_cursor_stops_the_capture(spec, keyed, tmp_path):
     pages = {}
     for instrument_id in spec.instruments:
         symbol = instrument_id.split(":")[-1]
-        page = {"adjustment": spec.adjustment_policy,
-                "bars": [_price_row(item) for item in openings[:5]],
-                "next_cursor": "stuck"}
+        stuck = (f"https://api.massive.com/v2/aggs/ticker/{symbol}"
+                 f"/range/30/minute/{spec.requested_start}/{spec.requested_end}"
+                 f"?cursor=stuck")
+        page = _bars_payload(symbol, [_price_row(item) for item in openings[:5]],
+                             next_url=stuck)
         pages[(symbol, "")] = page
         pages[(symbol, "stuck")] = page
     with pytest.raises(CaptureError) as error:
@@ -443,17 +484,15 @@ def test_a_duplicate_bar_opening_across_pages_is_refused(spec, keyed, tmp_path):
     pages = {}
     for instrument_id in spec.instruments:
         symbol = instrument_id.split(":")[-1]
-        pages[(symbol, "")] = {
-            "adjustment": spec.adjustment_policy,
-            "bars": [_price_row(item) for item in openings],
-            "next_cursor": "again",
-        }
-        pages[(symbol, "again")] = {
-            "adjustment": spec.adjustment_policy,
-            # The same opening at a different price: two answers to one
-            # question, and the capture cannot choose.
-            "bars": [_price_row(openings[0], base="200.00")],
-        }
+        again = (f"https://api.massive.com/v2/aggs/ticker/{symbol}"
+                 f"/range/30/minute/{spec.requested_start}/{spec.requested_end}"
+                 f"?cursor=again")
+        pages[(symbol, "")] = _bars_payload(
+            symbol, [_price_row(item) for item in openings], next_url=again)
+        # The same opening at a different price: two answers to one question,
+        # and the capture cannot choose.
+        pages[(symbol, "again")] = _bars_payload(
+            symbol, [_price_row(openings[0], base="200.00")])
     with pytest.raises(CaptureError) as error:
         _capture(spec, pages, tmp_path)
     assert "more than once" in str(error.value)
@@ -477,11 +516,11 @@ def test_out_of_order_rows_are_canonicalised_not_rejected(spec, keyed, tmp_path)
 
 
 @pytest.mark.parametrize("field,value", [
-    ("high", "50.00"),      # below open/close
-    ("low", "500.00"),      # above open/close
-    ("open", "-1.00"),      # negative price
-    ("close", "0"),         # zero price
-    ("volume", "-5"),       # negative volume
+    ("h", 50.0),        # high below open/close
+    ("l", 500.0),       # low above open/close
+    ("o", -1.0),        # negative price
+    ("c", 0),           # zero price
+    ("v", -5),          # negative volume
 ])
 def test_a_bar_that_cannot_be_a_bar_is_refused(spec, keyed, tmp_path, field,
                                                value):
@@ -494,31 +533,39 @@ def test_a_bar_that_cannot_be_a_bar_is_refused(spec, keyed, tmp_path, field,
         _capture(spec, _single_page(spec, rows_for=rows_for), tmp_path)
 
 
-def test_a_float_price_is_refused(spec, keyed, tmp_path):
-    def rows_for(instrument_id, openings):
-        rows = [_price_row(opening) for opening in openings]
-        rows[0] = {**rows[0], "close": 100.25}
-        return rows
+def test_a_vendor_number_is_recorded_exactly_as_it_arrived(spec, keyed,
+                                                            tmp_path):
+    """The vendor sends JSON numbers, so a float has already been parsed.
 
-    with pytest.raises(EquityCorpusError) as error:
-        _capture(spec, _single_page(spec, rows_for=rows_for), tmp_path)
-    assert "float" in str(error.value)
+    Nothing can put back digits lost before this code ran. What it can do is
+    record exactly which float arrived, so the canonical value is reproducible
+    from the raw bytes rather than being re-rounded differently each rebuild.
+    A price that round-trips is the property that matters.
+    """
+    manifest, _ = _capture(spec, _single_page(spec), tmp_path)
+    layout = CorpusLayout(tmp_path / "corpus")
+    rows = [json.loads(line) for line in
+            layout.canonical_path("xnas:AAPL").read_text().splitlines()]
+    assert Decimal(rows[0]["open"]) == Decimal("100")
+    assert Decimal(rows[0]["high"]) == Decimal("101.5")
+    # Rebuilding from raw must land on the identical strings.
+    assert rebuild(tmp_path / "corpus")["byte_identical"] is True
 
 
 def test_a_raw_adjusted_mismatch_stops_the_capture(spec, keyed, tmp_path):
     """Asked for SPLIT_ADJUSTED, handed RAW, labelled SPLIT_ADJUSTED."""
-    with pytest.raises(CaptureError) as error:
-        _capture(spec, _single_page(spec, adjustment="RAW"), tmp_path)
+    with pytest.raises(EquityMarketError) as error:
+        _capture(spec, _single_page(spec, adjusted=False), tmp_path)
     assert "refusing to relabel" in str(error.value)
 
 
 def test_a_response_shape_the_contract_does_not_recognise_is_refused(spec):
     """Better a loud stop than a corpus of plausible nonsense."""
-    with pytest.raises(CaptureError) as error:
-        adapt_bar_rows({"results": []}, spec=spec, instrument_id="xnas:AAPL")
+    with pytest.raises(MassiveProviderError) as error:
+        adapt_bar_rows({"queryCount": 1}, spec=spec, instrument_id="xnas:AAPL")
     assert "does not match this capture's contract" in str(error.value)
-    with pytest.raises(CaptureError):
-        adapt_bar_rows({"bars": [{"open": "1"}]}, spec=spec,
+    with pytest.raises(MassiveProviderError):
+        adapt_bar_rows({"status": "OK", "results": [{"o": 1}]}, spec=spec,
                        instrument_id="xnas:AAPL")
 
 
@@ -526,7 +573,7 @@ def test_a_wrong_ticker_in_the_reference_response_is_refused(spec, keyed,
                                                              tmp_path):
     from scripts.trading_lab.massive_provider import MassiveProviderError
 
-    reference = {**REFERENCE, "NVDA": {**REFERENCE["NVDA"], "symbol": "NVDIA"}}
+    reference = {**REFERENCE, "NVDA": {**REFERENCE["NVDA"], "ticker": "NVDIA"}}
     transport = ScriptedTransport(_single_page(spec), reference=reference)
     provider = MassiveStocksHistoricalProvider(
         instruments=spec.instruments, transport=transport,
@@ -592,8 +639,8 @@ def test_the_gap_audit_never_counts_overnight_or_a_weekend(spec, keyed,
 
 def test_split_records_are_captured_with_provenance_and_not_applied(
         spec, keyed, tmp_path):
-    splits = {"NVDA": [{"effective_date": "2024-11-26", "ratio_numerator": 10,
-                        "ratio_denominator": 1}]}
+    splits = {"NVDA": [{"ticker": "NVDA", "execution_date": "2024-11-26",
+                        "split_from": 1, "split_to": 10}]}
     manifest, _ = _capture(spec, _single_page(spec), tmp_path, splits=splits)
     entry = next(item for item in manifest["content"]["instruments"]
                  if item["instrument_id"] == "xnas:NVDA")
@@ -612,7 +659,8 @@ def test_split_records_are_captured_with_provenance_and_not_applied(
 def test_the_key_reaches_the_header_and_no_committed_file(spec, keyed,
                                                           tmp_path):
     manifest, transport = _capture(spec, _single_page(spec), tmp_path)
-    bar_calls = [call for call in transport.calls if call["path"] == BARS_PATH]
+    bar_calls = [call for call in transport.calls
+                 if call["path"].startswith("/v2/aggs/ticker/")]
     assert SENTINEL in bar_calls[0]["headers"]["Authorization"]
 
     assert_absent(SENTINEL, manifest, where="manifest")
@@ -757,7 +805,7 @@ def test_a_corrupted_raw_file_fails_verification(spec, keyed, tmp_path):
     layout = CorpusLayout(tmp_path / "corpus")
     raw = next(iter(sorted((layout.root / "raw").rglob("*.json"))))
     payload = json.loads(raw.read_text())
-    payload["bars"][0]["close"] = "999999.00"
+    payload["results"][0]["c"] = 999999.0
     raw.write_text(json.dumps(payload, sort_keys=True))
     with pytest.raises(CorpusVerificationError) as error:
         verify(tmp_path / "corpus")

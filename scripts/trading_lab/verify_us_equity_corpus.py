@@ -32,7 +32,7 @@ import pathlib
 import sys
 
 from scripts.trading_lab.capture_us_equity_corpus import (
-    CorpusLayout, adapt_bar_rows)
+    CORPORATE_ACTIONS_MARKER, CorpusLayout, adapt_bar_rows)
 from scripts.trading_lab.equity_corpus import (
     CORPUS_ROOT, CORPUS_SPEC_V1, EquityCorpusError, SplitRecord,
     USEquityCorpusV1, accept_bar_opening, audit_gaps, build_canonical_bar,
@@ -112,8 +112,11 @@ def rebuild_bars_from_raw(layout: CorpusLayout, spec: USEquityCorpusV1,
                 f"{entry['raw_sha256'][:12]}, found {digest[:12]}")
         payload = json.loads(raw.decode("utf-8"))
         instrument_id = entry["instrument_id"]
-        if "bars" not in payload:
-            continue                                 # a corporate-action file
+        # Route on the recorded request identity rather than by sniffing the
+        # payload. Both endpoints answer with a "results" list, so guessing
+        # from the body would eventually read a splits response as bars.
+        if entry["request_identity"]["timeframe"] == CORPORATE_ACTIONS_MARKER:
+            continue
         rows = adapt_bar_rows(payload, spec=spec, instrument_id=instrument_id)
         for row in rows:
             opening = parse_utc(row["bar_open_at"], field_name="bar_open_at")

@@ -57,19 +57,26 @@ from scripts.trading_lab.equity_corpus import (
     serialise_rows, sha256_bytes, sha256_canonical)
 from scripts.trading_lab.instrument_registry import CATALOGUE_V1
 from scripts.trading_lab.instruments import InstrumentError, InstrumentId
+from scripts.trading_lab.massive_http_transport import strip_credential_params
 from scripts.trading_lab.massive_provider import (
-    MASSIVE_STOCKS_HISTORICAL_V1, MassiveProviderError, parse_reference_ticker)
+    ADJUSTED_FLAG, AGGREGATE_FIELDS, MAX_ROWS_PER_PAGE, MASSIVE_STOCKS_HISTORICAL_V1,
+    MassiveProviderError, SPLITS_ENDPOINT, adapt_aggregate_rows,
+    adapt_split_rows, bars_path, parse_reference_ticker, reference_path,
+    require_aggregate_window)
 
 MANIFEST_SCHEMA_VERSION = "trading-lab.us-equity-corpus-manifest.v1"
 
-# The fields this capture reads from a bars response. Named so a schema
+# The fields the vendor's aggregate rows must carry. Named so a schema
 # mismatch is reported against a list rather than discovered as a KeyError
 # halfway through a two-year range.
-REQUIRED_BAR_FIELDS = ("bar_open_at", "open", "high", "low", "close", "volume")
+REQUIRED_BAR_FIELDS = tuple(sorted(AGGREGATE_FIELDS))
 
-BARS_PATH = "/v1/stocks/bars"
-SPLITS_PATH = "/v1/stocks/splits"
-REFERENCE_PATH = "/v1/reference/tickers"
+SPLITS_PATH = SPLITS_ENDPOINT
+
+# The timeframe recorded on a corporate-action request. Not a real timeframe:
+# it marks the request identity so a verifier can tell a splits response from
+# a bars response without sniffing the body, which both endpoints shape alike.
+CORPORATE_ACTIONS_MARKER = "corporate-actions"
 
 
 class CaptureError(RuntimeError):
@@ -126,42 +133,31 @@ def _slug(instrument_id: str) -> str:
 
 def adapt_bar_rows(payload: dict, *, spec: USEquityCorpusV1,
                    instrument_id: str) -> list[dict]:
-    """Read the rows out of a bars response, or refuse the response.
+    """Read the rows out of an aggregates response, or refuse the response.
 
-    Checks the declared adjustment policy before reading a single price. A
-    response that says RAW when SPLIT_ADJUSTED was requested is not a response
-    to relabel: the numbers are different numbers.
+    Delegates to the provider's adapter so the capture runner and the provider
+    can never disagree about what a row is. Everything it checks -- the echoed
+    adjustment flag, the echoed ticker, the row keys, the millisecond
+    timestamp -- happens before a single price is read.
     """
-    declared = payload.get("adjustment")
-    if declared is not None and declared != spec.adjustment_policy:
-        raise CaptureError(
-            f"requested {spec.adjustment_policy} bars for {instrument_id} but "
-            f"the response declares {declared!r}; refusing to relabel data")
-    rows = payload.get("bars")
-    if rows is None:
-        raise CaptureError(
-            f"the bars response for {instrument_id} has no 'bars' field; the "
-            f"provider schema does not match this capture's contract "
-            f"(expected fields {list(REQUIRED_BAR_FIELDS)})")
-    if not isinstance(rows, list):
-        raise CaptureError(f"'bars' is not a list for {instrument_id}")
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            raise CaptureError(f"bar {index} for {instrument_id} is not an object")
-        missing = [name for name in REQUIRED_BAR_FIELDS if name not in row]
-        if missing:
-            raise CaptureError(
-                f"bar {index} for {instrument_id} is missing {missing}; the "
-                "provider schema does not match this capture's contract")
-    return rows
+    return adapt_aggregate_rows(payload, instrument_id=instrument_id,
+                                requested_policy=spec.adjustment_policy)
 
 
 def next_cursor(payload: dict):
-    """The provider's continuation token, if it gave one."""
-    for name in ("next_cursor", "next_page_token", "next"):
+    """The provider's continuation URL, stripped of anything secret.
+
+    The vendor paginates with a full ``next_url`` rather than an opaque token.
+    That URL is data from the network, so it is never followed as given: the
+    transport re-checks it against the host allowlist, and any credential-
+    shaped query parameter is removed here before the value is used as a
+    request identity or written into raw metadata. Some vendors embed the API
+    key in next_url, and that value would otherwise be committed forever.
+    """
+    for name in ("next_url", "next_cursor", "next_page_token", "next"):
         value = payload.get(name)
         if value:
-            return str(value)
+            return strip_credential_params(str(value))
     return None
 
 
@@ -296,18 +292,23 @@ def capture_instrument(*, spec: USEquityCorpusV1, instrument_id: str,
             start=spec.requested_start, end=spec.requested_end,
             page=page, cursor=identity_cursor)
 
+        symbol = instrument_id.split(":")[-1]
+        multiplier, timespan = require_aggregate_window(spec.timeframe)
+        path = bars_path(symbol, multiplier=multiplier, timespan=timespan,
+                         start=spec.requested_start, end=spec.requested_end)
         params = {
-            "symbol": instrument_id.split(":")[-1],
-            "venue": instrument_id.split(":")[0],
-            "timeframe": spec.timeframe,
-            "start": spec.requested_start,
-            "end": spec.requested_end,
-            "adjustment": spec.adjustment_policy,
+            "adjusted": ADJUSTED_FLAG[spec.adjustment_policy],
+            "sort": "asc",
+            "limit": MAX_ROWS_PER_PAGE,
         }
-        if identity_cursor:
-            params["cursor"] = identity_cursor
 
-        response = transport.fetch(BARS_PATH, params, provider._headers())
+        if identity_cursor:
+            # A continuation URL, already stripped of anything credential
+            # shaped. The transport re-validates the host before following it.
+            response = transport.fetch_absolute(identity_cursor,
+                                                provider._headers())
+        else:
+            response = transport.fetch(path, params, provider._headers())
         record = store.write(identity, response.raw, url=response.url,
                              sequence=sequence)
         raw_records.append(record)
@@ -359,25 +360,23 @@ def capture_splits(*, spec: USEquityCorpusV1, instrument_id: str, provider,
     """
     identity = RequestIdentity(
         provider_id=spec.provider_id, instrument_id=instrument_id,
-        timeframe="corporate-actions", adjustment_policy=spec.adjustment_policy,
+        timeframe=CORPORATE_ACTIONS_MARKER,
+        adjustment_policy=spec.adjustment_policy,
         start=spec.requested_start, end=spec.requested_end, page=0)
     params = {
-        "symbol": instrument_id.split(":")[-1],
-        "venue": instrument_id.split(":")[0],
-        "start": spec.requested_start,
-        "end": spec.requested_end,
+        "ticker": instrument_id.split(":")[-1],
+        "execution_date.gte": spec.requested_start,
+        "execution_date.lte": spec.requested_end,
     }
     response = transport.fetch(SPLITS_PATH, params, provider._headers())
     record = store.write(identity, response.raw, url=response.url,
                          sequence=sequence)
-    rows = response.payload.get("splits", [])
-    if not isinstance(rows, list):
-        raise CaptureError(f"'splits' is not a list for {instrument_id}")
+    rows = adapt_split_rows(response.payload, instrument_id=instrument_id)
     records = [
         SplitRecord(instrument_id=instrument_id,
-                    effective_date=str(row["effective_date"])[:10],
-                    ratio_numerator=int(row["ratio_numerator"]),
-                    ratio_denominator=int(row["ratio_denominator"]),
+                    effective_date=row["effective_date"],
+                    ratio_numerator=row["ratio_numerator"],
+                    ratio_denominator=row["ratio_denominator"],
                     provider_id=spec.provider_id,
                     source_raw_hash=record["raw_sha256"])
         for row in rows]
@@ -573,8 +572,9 @@ def build_manifest(*, layout: CorpusLayout, spec: USEquityCorpusV1,
         "raw_requests": len(raw_records),
         "raw_files": [
             {key: record[key] for key in
-             ("instrument_id", "raw_path", "raw_sha256", "raw_bytes",
-              "request_identity_hash", "capture_sequence", "source_url")}
+             ("instrument_id", "request_identity", "request_identity_hash",
+              "raw_path", "raw_sha256", "raw_bytes", "capture_sequence",
+              "source_url")}
             for record in sorted(raw_records,
                                  key=lambda item: item["capture_sequence"])],
         "raw_bytes": sum(record["raw_bytes"] for record in raw_records),
@@ -653,9 +653,10 @@ def main(argv=None) -> int:
 
 
 __all__ = [
-    "BARS_PATH", "CaptureError", "CorpusLayout", "MANIFEST_SCHEMA_VERSION",
-    "MissingCredentialStop", "REFERENCE_PATH", "REQUIRED_BAR_FIELDS",
-    "RawStore", "SPLITS_PATH", "adapt_bar_rows", "build_manifest",
+    "CaptureError", "CorpusLayout", "MANIFEST_SCHEMA_VERSION",
+    "CORPORATE_ACTIONS_MARKER", "MissingCredentialStop",
+    "REQUIRED_BAR_FIELDS", "SPLITS_PATH",
+    "RawStore", "adapt_bar_rows", "build_manifest",
     "capture_instrument", "capture_splits", "main", "next_cursor",
     "run_capture", "verify_instrument_identity", "write_corpus",
 ]

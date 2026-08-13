@@ -28,8 +28,9 @@ its most recent row as a current price.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from scripts.trading_lab.credentials import (
@@ -51,15 +52,67 @@ MASSIVE_STOCKS_HISTORICAL_V1 = "massive-stocks-historical-v1"
 
 MASSIVE_BASE_URL = "https://api.massive.com"
 
-# The only paths this provider may request. An allowlist rather than a
-# denylist: a denylist has to anticipate every account endpoint a vendor might
-# ever add, and it only has to miss one.
-ALLOWED_PATHS = (
-    "/v1/stocks/bars",
-    "/v1/stocks/splits",
-    "/v1/stocks/dividends",
-    "/v1/reference/tickers",
+# The documented endpoint shapes, as patterns rather than literals: the
+# ticker travels in the path, so a fixed set cannot express them. Still an
+# allowlist -- a path that does not match one of these three cannot be
+# requested, and a denylist would have to anticipate every account endpoint
+# the vendor might ever add and only has to miss one.
+#
+# A ticker is constrained to the characters a US listing can actually use, so
+# a crafted "ticker" cannot walk the path or smuggle a query string.
+_TICKER = r"[A-Z][A-Z0-9.\-]{0,15}"
+_DATE = r"\d{4}-\d{2}-\d{2}"
+
+ALLOWED_PATH_PATTERNS = (
+    # Aggregate bars: /v2/aggs/ticker/{ticker}/range/30/minute/{from}/{to}
+    re.compile(rf"^/v2/aggs/ticker/{_TICKER}/range/\d{{1,3}}/"
+               rf"(minute|hour|day)/{_DATE}/{_DATE}\Z"),
+    # Ticker reference details: /v3/reference/tickers/{ticker}
+    re.compile(rf"^/v3/reference/tickers/{_TICKER}\Z"),
+    # Corporate actions: /stocks/v1/splits
+    re.compile(r"^/stocks/v1/splits\Z"),
 )
+
+# Kept for the report and for tests: what the allowlist admits, in words.
+ALLOWED_PATHS = (
+    "/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}",
+    "/v3/reference/tickers/{ticker}",
+    "/stocks/v1/splits",
+)
+
+
+def bars_path(symbol: str, *, multiplier: int, timespan: str,
+              start: str, end: str) -> str:
+    """The aggregates endpoint, with the ticker in the path where it belongs."""
+    return (f"/v2/aggs/ticker/{symbol}/range/{int(multiplier)}/{timespan}"
+            f"/{start}/{end}")
+
+
+def reference_path(symbol: str) -> str:
+    return f"/v3/reference/tickers/{symbol}"
+
+
+SPLITS_ENDPOINT = "/stocks/v1/splits"
+
+# How a HyprL timeframe becomes a vendor (multiplier, timespan) pair. An
+# explicit table rather than string surgery: "30m" must mean 30 minutes to
+# both sides, and a timeframe with no documented mapping is refused rather
+# than approximated.
+TIMEFRAME_AGGREGATES = {
+    "30m": (30, "minute"),
+    "1h": (1, "hour"),
+    "1d": (1, "day"),
+}
+
+# What ``adjusted=true`` buys, stated once. The vendor's flag is a boolean and
+# means split-adjusted; it does NOT apply dividends. That is exactly HyprL's
+# SPLIT_ADJUSTED, and exactly not TOTAL_RETURN -- so RAW must send false and
+# anything else must be refused rather than mapped to a guess.
+ADJUSTED_FLAG = {
+    ADJUSTMENT_SPLIT_ADJUSTED: "true",
+    ADJUSTMENT_RAW: "false",
+}
+
 
 # Paths that are refused loudly rather than merely absent from the allowlist,
 # so the error says *why* instead of "unknown path".
@@ -233,10 +286,10 @@ class MassiveStocksHistoricalProvider(MarketDataProvider):
                     f"refusing to request {path!r}: this provider is market "
                     f"data only, and {marker!r} is not market data. No account "
                     "or order endpoint exists on this interface.")
-        if path not in ALLOWED_PATHS:
+        if not any(pattern.match(path) for pattern in ALLOWED_PATH_PATTERNS):
             raise MassiveProviderError(
-                f"{path!r} is not on this provider's allowlist "
-                f"{list(ALLOWED_PATHS)}")
+                f"{path!r} does not match any endpoint on this provider's "
+                f"allowlist {list(ALLOWED_PATHS)}")
         return path
 
     def _headers(self) -> dict:
@@ -285,32 +338,36 @@ class MassiveStocksHistoricalProvider(MarketDataProvider):
         frame = Timeframe.parse(timeframe)
         policy = require_adjustment_policy(
             adjustment_policy or self.adjustment_policy)
-        payload = self._fetch("/v1/stocks/bars", {
-            "symbol": identity.symbol,
-            "venue": identity.venue,
-            "timeframe": frame.label,
-            "start": _iso(start),
-            "end": _iso(end),
-            "adjustment": policy,
-        })
-        rows = payload.get("bars", [])
-        if not isinstance(rows, list):
-            raise MassiveProviderError("bars payload is not a list")
-        declared = payload.get("adjustment")
-        if declared is not None and declared != policy:
-            # The vendor answering with a different policy than was asked for
-            # is exactly the silent mismatch this whole module guards against.
-            raise EquityMarketError(
-                f"requested {policy} bars but the response declares "
-                f"{declared!r}; refusing to relabel data")
+        if frame.duration >= timedelta(days=1):
+            # A daily equity bar ends at the session close, not 24 hours after
+            # it opened, and this provider deliberately cannot load a calendar
+            # -- that would drag pandas into every crypto process. The corpus
+            # capture runner is the calendar-aware path; this convenience
+            # method refuses rather than inventing a close.
+            raise UnsupportedCapabilityError(
+                f"{self.provider_id} cannot close a {frame.label} bar without "
+                "a trading calendar; use the corpus capture runner, which is "
+                "session-aware")
+        multiplier, timespan = require_aggregate_window(frame.label)
+        payload = self._fetch(
+            bars_path(identity.symbol, multiplier=multiplier,
+                      timespan=timespan, start=_day(start), end=_day(end)),
+            {"adjusted": ADJUSTED_FLAG[policy], "sort": "asc",
+             "limit": MAX_ROWS_PER_PAGE})
+        rows = adapt_aggregate_rows(payload, instrument_id=identity.canonical,
+                                    requested_policy=policy)
         bars = tuple(
             build_equity_bar(
                 instrument=identity, timeframe=frame.label,
                 provider_id=self.provider_id, adjustment_policy=policy,
-                bar_open_at=row["bar_open_at"], bar_close_at=row["bar_close_at"],
+                bar_open_at=row["bar_open_at"],
+                # Intraday only, and every supported intraday grid divides a
+                # regular and an early-close session exactly, so a bar can
+                # never overrun its close here. The capture runner still does
+                # the session-membership check that proves it.
+                bar_close_at=row["bar_open_at"] + frame.duration,
                 open=row["open"], high=row["high"], low=row["low"],
-                close=row["close"], volume=row["volume"],
-                session_date=str(row.get("session_date", ""))[:10])
+                close=row["close"], volume=row["volume"])
             for row in rows)
         if bars:
             require_single_policy(bars)
@@ -328,39 +385,47 @@ class MassiveStocksHistoricalProvider(MarketDataProvider):
 
     def get_splits(self, instrument, *, start, end) -> tuple[StockSplit, ...]:
         identity = self.require_supported(instrument)
-        payload = self._fetch("/v1/stocks/splits", {
-            "symbol": identity.symbol, "venue": identity.venue,
-            "start": _iso(start), "end": _iso(end)})
+        payload = self._fetch(SPLITS_ENDPOINT, {
+            "ticker": identity.symbol,
+            "execution_date.gte": _day(start),
+            "execution_date.lte": _day(end)})
         return tuple(
             StockSplit(instrument_id=identity,
-                       effective_date=str(row["effective_date"])[:10],
-                       ratio_numerator=int(row["ratio_numerator"]),
-                       ratio_denominator=int(row["ratio_denominator"]),
+                       effective_date=split["effective_date"],
+                       ratio_numerator=split["ratio_numerator"],
+                       ratio_denominator=split["ratio_denominator"],
                        source=self.provider_id)
-            for row in payload.get("splits", []))
+            for split in adapt_split_rows(payload,
+                                          instrument_id=identity.canonical))
 
-    def get_dividends(self, instrument, *, start, end) -> tuple[CashDividend, ...]:
-        identity = self.require_supported(instrument)
-        payload = self._fetch("/v1/stocks/dividends", {
-            "symbol": identity.symbol, "venue": identity.venue,
-            "start": _iso(start), "end": _iso(end)})
-        return tuple(
-            CashDividend(instrument_id=identity,
-                         ex_date=str(row["ex_date"])[:10],
-                         amount=Decimal(str(row["amount"])),
-                         currency=str(row.get("currency", "USD")),
-                         source=self.provider_id)
-            for row in payload.get("dividends", []))
+    def get_dividends(self, instrument, *, start, end):
+        """Refused: no dividends endpoint is documented for this provider.
+
+        Corpus V1 is SPLIT_ADJUSTED and records dividends nowhere, so nothing
+        depends on this. A method that built a path the allowlist would reject
+        would be worse than one that says plainly there is no such endpoint.
+        """
+        raise UnsupportedCapabilityError(
+            f"{self.provider_id} has no documented dividends endpoint; "
+            "SPLIT_ADJUSTED prices do not apply dividends, and Corpus V1 does "
+            "not claim total return")
 
     # --- reference metadata -----------------------------------------------
 
     def get_reference_ticker(self, symbol: str) -> MassiveReferenceTicker:
         """What the vendor says this ticker is. Venue is read, never guessed."""
-        payload = self._fetch("/v1/reference/tickers", {"symbol": str(symbol)})
-        rows = payload.get("results", [])
-        if not rows:
+        payload = self._fetch(reference_path(str(symbol)), {})
+        results = payload.get("results")
+        if not results:
             raise MassiveProviderError(f"no reference metadata for {symbol!r}")
-        return parse_reference_ticker(rows[0])
+        # The single-ticker endpoint returns one object; the search endpoint
+        # returns a list. Both spellings are documented, so both are read --
+        # this is two known shapes, not a permissive fallback for unknown data.
+        row = results[0] if isinstance(results, list) else results
+        if not isinstance(row, dict):
+            raise MassiveProviderError(
+                f"reference metadata for {symbol!r} is not an object")
+        return parse_reference_ticker(row)
 
     def payload(self) -> dict:
         """Everything about this provider that is safe to publish.
@@ -386,6 +451,177 @@ class MassiveStocksHistoricalProvider(MarketDataProvider):
         }
 
 
+MAX_ROWS_PER_PAGE = 50000
+
+# The aggregate row, as the vendor sends it. Terse keys, and a timestamp in
+# milliseconds since the epoch rather than an ISO string.
+AGGREGATE_FIELDS = {"o": "open", "h": "high", "l": "low", "c": "close",
+                    "v": "volume", "t": "bar_open_at"}
+
+
+def require_aggregate_window(timeframe: str) -> tuple[int, str]:
+    """A HyprL timeframe as a vendor (multiplier, timespan) pair, or a refusal."""
+    if timeframe not in TIMEFRAME_AGGREGATES:
+        raise MassiveProviderError(
+            f"no documented aggregate window for timeframe {timeframe!r}; "
+            f"mapped: {sorted(TIMEFRAME_AGGREGATES)}")
+    return TIMEFRAME_AGGREGATES[timeframe]
+
+
+def _decimal_text(value, *, field: str, row_index: int):
+    """A vendor number to exact text, refusing anything that already lost digits.
+
+    The vendor sends JSON numbers, which Python has already parsed to float by
+    the time this sees them. A float carries the loss; ``repr`` at least
+    records exactly which float arrived, so the canonical value is reproducible
+    from the raw bytes rather than being re-rounded differently on each rebuild.
+    """
+    if isinstance(value, bool) or value is None:
+        raise MassiveProviderError(
+            f"aggregate row {row_index}: {field} is {value!r}, not a number")
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        return value.strip()
+    raise MassiveProviderError(
+        f"aggregate row {row_index}: {field} is {type(value).__name__}, "
+        "not a number")
+
+
+def adapt_aggregate_rows(payload: dict, *, instrument_id: str,
+                         requested_policy: str) -> list[dict]:
+    """Turn an aggregates response into rows this platform can validate.
+
+    Two checks come before any price is read.
+
+    The vendor echoes ``adjusted`` as a boolean. It must agree with what was
+    asked for: a response carrying raw prices while the request said adjusted
+    is not a response to relabel, because the numbers are different numbers.
+
+    The vendor also echoes ``ticker``. It must be the one requested -- a
+    response about another instrument would otherwise be filed under this
+    instrument's name.
+    """
+    status = payload.get("status")
+    if status is not None and str(status).upper() not in ("OK", "DELAYED"):
+        raise MassiveProviderError(
+            f"{instrument_id}: the provider reports status {status!r}")
+
+    declared = payload.get("adjusted")
+    if declared is not None:
+        expected = ADJUSTED_FLAG[requested_policy] == "true"
+        if bool(declared) is not expected:
+            raise EquityMarketError(
+                f"{instrument_id}: requested {requested_policy} bars but the "
+                f"response declares adjusted={declared!r}; refusing to relabel "
+                "data")
+
+    echoed = payload.get("ticker")
+    wanted = instrument_id.split(":")[-1]
+    if echoed is not None and str(echoed).strip().upper() != wanted:
+        raise MassiveProviderError(
+            f"asked for {wanted} aggregates and the response is about "
+            f"{echoed!r}; refusing to store one instrument under another's name")
+
+    results = payload.get("results")
+    if results is None:
+        # An empty window legitimately returns no results key at all, but only
+        # when the vendor also says so. Anything else is a shape this contract
+        # does not recognise, and guessing would produce plausible nonsense.
+        if payload.get("resultsCount") in (0, None) and status is not None:
+            return []
+        raise MassiveProviderError(
+            f"{instrument_id}: the aggregates response has no 'results' field; "
+            f"the provider schema does not match this capture's contract "
+            f"(expected row keys {sorted(AGGREGATE_FIELDS)})")
+    if not isinstance(results, list):
+        raise MassiveProviderError(f"{instrument_id}: 'results' is not a list")
+
+    rows = []
+    for index, row in enumerate(results):
+        if not isinstance(row, dict):
+            raise MassiveProviderError(
+                f"{instrument_id}: aggregate row {index} is not an object")
+        missing = [key for key in AGGREGATE_FIELDS if key not in row]
+        if missing:
+            raise MassiveProviderError(
+                f"{instrument_id}: aggregate row {index} is missing {missing}; "
+                "the provider schema does not match this capture's contract")
+        opening = _epoch_ms_to_utc(row["t"], row_index=index)
+        rows.append({
+            "bar_open_at": opening,
+            "open": _decimal_text(row["o"], field="o", row_index=index),
+            "high": _decimal_text(row["h"], field="h", row_index=index),
+            "low": _decimal_text(row["l"], field="l", row_index=index),
+            "close": _decimal_text(row["c"], field="c", row_index=index),
+            "volume": _decimal_text(row["v"], field="v", row_index=index),
+        })
+    return rows
+
+
+def _epoch_ms_to_utc(value, *, row_index: int) -> datetime:
+    """Milliseconds since the epoch to an aware UTC instant.
+
+    The vendor's aggregate timestamp is the START of the window. Treating it
+    as the end would shift every bar by one interval and still look plausible.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MassiveProviderError(
+            f"aggregate row {row_index}: timestamp {value!r} is not epoch "
+            "milliseconds")
+    if isinstance(value, float) and not value.is_integer():
+        raise MassiveProviderError(
+            f"aggregate row {row_index}: timestamp {value!r} is not a whole "
+            "number of milliseconds")
+    return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+
+
+def adapt_split_rows(payload: dict, *, instrument_id: str) -> list[dict]:
+    """Split records, with the vendor's from/to pair read as a ratio.
+
+    ``split_from``/``split_to`` are shares before and after: a 4-for-1 is
+    from 1 to 4. Reading them the wrong way round inverts every adjustment,
+    which would look like a 16x error rather than a 4x one and is exactly the
+    kind of mistake that survives a casual review.
+    """
+    results = payload.get("results")
+    if results is None:
+        raise MassiveProviderError(
+            f"{instrument_id}: the splits response has no 'results' field")
+    if not isinstance(results, list):
+        raise MassiveProviderError(f"{instrument_id}: 'results' is not a list")
+
+    wanted = instrument_id.split(":")[-1]
+    rows = []
+    for index, row in enumerate(results):
+        if not isinstance(row, dict):
+            raise MassiveProviderError(
+                f"{instrument_id}: split row {index} is not an object")
+        echoed = str(row.get("ticker", wanted)).strip().upper()
+        if echoed != wanted:
+            raise MassiveProviderError(
+                f"{instrument_id}: split row {index} is about {echoed!r}")
+        for key in ("execution_date", "split_from", "split_to"):
+            if key not in row:
+                raise MassiveProviderError(
+                    f"{instrument_id}: split row {index} is missing {key!r}")
+        rows.append({
+            "effective_date": str(row["execution_date"])[:10],
+            "ratio_numerator": int(row["split_to"]),
+            "ratio_denominator": int(row["split_from"]),
+        })
+    return rows
+
+
+def _day(value) -> str:
+    """A request bound as the vendor wants it: a plain calendar date."""
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).date().isoformat()
+    return str(value).strip()[:10]
+
+
 def parse_reference_ticker(row: dict) -> MassiveReferenceTicker:
     """Turn a vendor reference row into a venue this platform can name.
 
@@ -394,9 +630,9 @@ def parse_reference_ticker(row: dict) -> MassiveReferenceTicker:
     instrument with a plausible name, and every artefact referencing it would
     be wrong in a way no test about prices would catch.
     """
-    symbol = str(row.get("symbol", "")).strip().upper()
+    symbol = str(row.get("ticker", "")).strip().upper()
     if not symbol:
-        raise MassiveProviderError("a reference row must name a symbol")
+        raise MassiveProviderError("a reference row must name a ticker")
     code = str(row.get("primary_exchange", "")).strip().upper()
     if code not in VENUE_BY_EXCHANGE_CODE:
         raise MassiveProviderError(
@@ -451,7 +687,11 @@ def build_live_massive_provider(instruments=()):
 
 
 __all__ = [
-    "ALLOWED_PATHS", "ASSET_CLASS_BY_VENDOR_TYPE", "FORBIDDEN_PATH_MARKERS",
+    "ADJUSTED_FLAG", "AGGREGATE_FIELDS", "ALLOWED_PATHS",
+    "ALLOWED_PATH_PATTERNS", "ASSET_CLASS_BY_VENDOR_TYPE",
+    "FORBIDDEN_PATH_MARKERS", "MAX_ROWS_PER_PAGE", "SPLITS_ENDPOINT",
+    "TIMEFRAME_AGGREGATES", "adapt_aggregate_rows", "adapt_split_rows",
+    "bars_path", "reference_path", "require_aggregate_window",
     "MASSIVE_BASE_URL", "MASSIVE_PROVIDER_SCHEMA_VERSION",
     "MASSIVE_STOCKS_CAPABILITIES", "MASSIVE_STOCKS_HISTORICAL_V1",
     "MassiveProviderError", "MassiveReferenceTicker",

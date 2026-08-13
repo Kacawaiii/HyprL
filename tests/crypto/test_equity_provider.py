@@ -50,18 +50,25 @@ def reference_fixture() -> dict:
     return json.loads((FIXTURES / "massive_reference_tickers.json").read_text())
 
 
-def _bars_payload(adjustment=ADJUSTMENT_RAW, rows=None):
+# 2026-01-15 is a regular session: opens 14:30Z, so 14:30 and 15:00 are the
+# first two 30-minute openings. Timestamps are epoch milliseconds, as sent.
+BAR_ONE_MS = 1768487400000   # 2026-01-15T14:30:00Z
+BAR_TWO_MS = 1768489200000   # 2026-01-15T15:00:00Z
+
+AAPL_BARS_PATH = "/v2/aggs/ticker/AAPL/range/30/minute/2026-01-15/2026-01-16"
+
+
+def _bars_payload(adjusted=False, rows=None, ticker="AAPL"):
+    """One aggregates page in the vendor's shape."""
     rows = rows if rows is not None else [
-        {"bar_open_at": "2026-01-15T14:30:00Z",
-         "bar_close_at": "2026-01-15T15:00:00Z", "session_date": "2026-01-15",
-         "open": "185.10", "high": "186.40", "low": "184.90",
-         "close": "186.00", "volume": "1250000"},
-        {"bar_open_at": "2026-01-15T15:00:00Z",
-         "bar_close_at": "2026-01-15T15:30:00Z", "session_date": "2026-01-15",
-         "open": "186.00", "high": "186.75", "low": "185.55",
-         "close": "185.80", "volume": "980000"},
+        {"t": BAR_ONE_MS, "o": 185.10, "h": 186.40, "l": 184.90,
+         "c": 186.00, "v": 1250000, "n": 900, "vw": 185.6},
+        {"t": BAR_TWO_MS, "o": 186.00, "h": 186.75, "l": 185.55,
+         "c": 185.80, "v": 980000, "n": 700, "vw": 186.1},
     ]
-    return {"adjustment": adjustment, "bars": rows}
+    return {"ticker": ticker, "adjusted": adjusted, "status": "OK",
+            "queryCount": len(rows), "resultsCount": len(rows),
+            "results": rows, "request_id": "fixture"}
 
 
 def _provider(responses=None, credentials=None, **kwargs):
@@ -196,7 +203,7 @@ def test_the_key_never_appears_in_a_repr_or_an_exception(keyed):
     assert_absent(SENTINEL, repr(provider), where="provider repr")
     assert_absent(SENTINEL, repr(provider.credentials), where="credentials repr")
     with pytest.raises(MassiveProviderError) as error:
-        provider._fetch("/v1/stocks/bars", {"symbol": "AAPL"})
+        provider._fetch(AAPL_BARS_PATH, {})
     assert_absent(SENTINEL, str(error.value), where="exception message")
     assert_absent(SENTINEL, repr(error.value), where="exception repr")
 
@@ -232,7 +239,7 @@ def test_the_provider_holds_no_attribute_containing_the_key(keyed):
     check walks the instance's own state rather than naming one attribute,
     because the attribute a future author adds will not be the one named here.
     """
-    transport = RecordedTransport({"/v1/stocks/bars": _bars_payload()})
+    transport = RecordedTransport({AAPL_BARS_PATH: _bars_payload()})
     provider = _provider({})
     provider.transport = transport
     provider.get_historical_bars(AAPL.instrument_id, "30m",
@@ -251,7 +258,7 @@ def test_the_provider_holds_no_attribute_containing_the_key(keyed):
 
 def test_the_key_is_sent_in_the_header_and_nowhere_else(keyed):
     """It must reach the wire -- a provider that never sends it is useless."""
-    transport = RecordedTransport({"/v1/stocks/bars": _bars_payload()})
+    transport = RecordedTransport({AAPL_BARS_PATH: _bars_payload()})
     provider = _provider({})
     provider.transport = transport
     provider.get_historical_bars(AAPL.instrument_id, "30m",
@@ -299,7 +306,7 @@ def test_a_missing_credential_raises_instead_of_sending_an_empty_one(monkeypatch
     provider = _provider({})
     assert provider.payload()["credential_configured"] is False
     with pytest.raises(CredentialError):
-        provider._fetch("/v1/stocks/bars", {})
+        provider._fetch(AAPL_BARS_PATH, {})
 
     blank = MissingCredentialProvider()
     assert blank.available() is False
@@ -349,7 +356,7 @@ def test_every_seed_instrument_matches_its_recorded_vendor_metadata(
     assert len(EQUITY_INSTRUMENTS_V1) == 4
     for spec in EQUITY_INSTRUMENTS_V1.all():
         symbol = spec.instrument_id.symbol
-        row = reference_fixture[symbol]["results"][0]
+        row = reference_fixture[symbol]["results"]
         parsed = parse_reference_ticker(row)
         assert parsed.venue == spec.instrument_id.venue
         assert parsed.asset_class == spec.asset_class
@@ -367,23 +374,23 @@ def test_the_etf_is_registered_as_an_etf_and_the_shares_as_equities():
 def test_an_unknown_exchange_or_security_type_is_refused_not_defaulted():
     """A guessed venue names a different instrument with a plausible id."""
     with pytest.raises(MassiveProviderError) as error:
-        parse_reference_ticker({"symbol": "XYZ", "primary_exchange": "XLON",
+        parse_reference_ticker({"ticker": "XYZ", "primary_exchange": "XLON",
                                 "type": "CS"})
     assert "will not guess" in str(error.value)
     with pytest.raises(MassiveProviderError):
-        parse_reference_ticker({"symbol": "XYZ", "primary_exchange": "XNAS",
+        parse_reference_ticker({"ticker": "XYZ", "primary_exchange": "XNAS",
                                 "type": "WARRANT"})
     with pytest.raises(MassiveProviderError):
-        parse_reference_ticker({"symbol": "XYZ", "primary_exchange": "",
+        parse_reference_ticker({"ticker": "XYZ", "primary_exchange": "",
                                 "type": "CS"})
     with pytest.raises(MassiveProviderError):
-        parse_reference_ticker({"symbol": "", "primary_exchange": "XNAS",
+        parse_reference_ticker({"ticker": "", "primary_exchange": "XNAS",
                                 "type": "CS"})
 
 
 def test_a_non_usd_listing_is_refused_rather_than_converted():
     with pytest.raises(MassiveProviderError) as error:
-        parse_reference_ticker({"symbol": "SAP", "primary_exchange": "XNYS",
+        parse_reference_ticker({"ticker": "SAP", "primary_exchange": "XNYS",
                                 "type": "CS", "currency_name": "EUR"})
     assert "USD only" in str(error.value)
 
@@ -403,7 +410,7 @@ def test_the_provider_is_not_the_venue():
 
 
 def test_bars_carry_their_instrument_provider_and_policy(keyed):
-    provider = _provider({"/v1/stocks/bars": _bars_payload()})
+    provider = _provider({AAPL_BARS_PATH: _bars_payload()})
     bars = provider.get_historical_bars(AAPL.instrument_id, "30m",
                                         start="2026-01-15T00:00:00Z",
                                         end="2026-01-16T00:00:00Z")
@@ -420,7 +427,7 @@ def test_bars_carry_their_instrument_provider_and_policy(keyed):
 
 
 def test_a_bar_is_available_only_at_its_close(keyed):
-    provider = _provider({"/v1/stocks/bars": _bars_payload()})
+    provider = _provider({AAPL_BARS_PATH: _bars_payload()})
     bar = provider.get_historical_bars(AAPL.instrument_id, "30m",
                                        start="2026-01-15T00:00:00Z",
                                        end="2026-01-16T00:00:00Z")[0]
@@ -430,8 +437,7 @@ def test_a_bar_is_available_only_at_its_close(keyed):
 
 def test_a_response_that_declares_a_different_policy_is_refused(keyed):
     """The silent mismatch: asked for RAW, handed adjusted, labelled RAW."""
-    provider = _provider({
-        "/v1/stocks/bars": _bars_payload(adjustment=ADJUSTMENT_SPLIT_ADJUSTED)})
+    provider = _provider({AAPL_BARS_PATH: _bars_payload(adjusted=True)})
     with pytest.raises(EquityMarketError) as error:
         provider.get_historical_bars(AAPL.instrument_id, "30m",
                                      start="2026-01-15T00:00:00Z",
@@ -443,7 +449,7 @@ def test_a_response_that_declares_a_different_policy_is_refused(keyed):
 def test_an_instrument_the_provider_does_not_serve_is_refused(keyed):
     from scripts.trading_lab.market_providers import MarketProviderError
 
-    provider = _provider({"/v1/stocks/bars": _bars_payload()})
+    provider = _provider({AAPL_BARS_PATH: _bars_payload()})
     with pytest.raises(MarketProviderError):
         provider.get_historical_bars("coinbase:BTC-USD", "30m",
                                      start="2026-01-15T00:00:00Z",
@@ -451,29 +457,33 @@ def test_an_instrument_the_provider_does_not_serve_is_refused(keyed):
 
 
 def test_a_malformed_bar_is_refused_rather_than_stored(keyed):
-    broken = [{"bar_open_at": "2026-01-15T14:30:00Z",
-               "bar_close_at": "2026-01-15T15:00:00Z", "open": "185.10",
-               # high below low: structurally impossible, and it would sail
-               # through any check that only looked at the close.
-               "high": "180.00", "low": "184.90", "close": "182.00",
-               "volume": "1"}]
-    provider = _provider({"/v1/stocks/bars": _bars_payload(rows=broken)})
+    # high below low: structurally impossible, and it would sail through any
+    # check that only looked at the close.
+    broken = [{"t": BAR_ONE_MS, "o": 185.10, "h": 180.00, "l": 184.90,
+               "c": 182.00, "v": 1}]
+    provider = _provider({AAPL_BARS_PATH: _bars_payload(rows=broken)})
     with pytest.raises(EquityMarketError):
         provider.get_historical_bars(AAPL.instrument_id, "30m",
                                      start="2026-01-15T00:00:00Z",
                                      end="2026-01-16T00:00:00Z")
 
 
-def test_a_float_price_is_refused(keyed):
-    rows = [{"bar_open_at": "2026-01-15T14:30:00Z",
-             "bar_close_at": "2026-01-15T15:00:00Z", "open": 185.1,
-             "high": 186.4, "low": 184.9, "close": 186.0, "volume": 1}]
-    provider = _provider({"/v1/stocks/bars": _bars_payload(rows=rows)})
-    with pytest.raises(EquityMarketError) as error:
+def test_a_non_numeric_vendor_value_is_refused(keyed):
+    """A null or a string where a price belongs is a shape mismatch."""
+    rows = [{"t": BAR_ONE_MS, "o": None, "h": 1.0, "l": 1.0, "c": 1.0, "v": 1}]
+    provider = _provider({AAPL_BARS_PATH: _bars_payload(rows=rows)})
+    with pytest.raises(MassiveProviderError):
         provider.get_historical_bars(AAPL.instrument_id, "30m",
-                                     start="2026-01-15T00:00:00Z",
-                                     end="2026-01-16T00:00:00Z")
-    assert "float" in str(error.value)
+                                     start="2026-01-15", end="2026-01-16")
+
+
+def test_a_daily_bar_is_refused_without_a_calendar(keyed):
+    """Its close is the session close, which this provider cannot know."""
+    provider = _provider({})
+    with pytest.raises(UnsupportedCapabilityError) as error:
+        provider.get_historical_bars(AAPL.instrument_id, "1d",
+                                     start="2026-01-15", end="2026-01-16")
+    assert "session-aware" in str(error.value)
 
 
 # --- adjustment policy identity -------------------------------------------
@@ -619,22 +629,44 @@ def test_a_dividend_is_recorded_and_explicitly_not_applied():
                      amount="-1")
 
 
-def test_splits_and_dividends_come_back_bound_to_their_instrument(keyed):
+def test_splits_come_back_bound_to_their_instrument(keyed):
     provider = _provider({
-        "/v1/stocks/splits": {"splits": [
-            {"effective_date": "2026-06-10", "ratio_numerator": 4,
-             "ratio_denominator": 1}]},
-        "/v1/stocks/dividends": {"dividends": [
-            {"ex_date": "2026-02-06", "amount": "0.25"}]},
+        "/stocks/v1/splits": {"status": "OK", "results": [
+            {"ticker": "AAPL", "execution_date": "2026-06-10",
+             "split_from": 1, "split_to": 4}]},
     })
     splits = provider.get_splits(AAPL.instrument_id, start="2026-01-01",
                                 end="2026-12-31")
-    dividends = provider.get_dividends(AAPL.instrument_id, start="2026-01-01",
-                                       end="2026-12-31")
     assert splits[0].instrument_id == AAPL.instrument_id
     assert splits[0].ratio == Decimal(4)
+    assert splits[0].label == "4-for-1"
     assert splits[0].source == MASSIVE_STOCKS_HISTORICAL_V1
-    assert dividends[0].amount == Decimal("0.25")
+
+
+def test_a_split_read_backwards_would_invert_every_adjustment(keyed):
+    """split_from/split_to are shares before and after, in that order.
+
+    Reading them the wrong way round turns a 4-for-1 into a 1-for-4 and
+    inverts every adjusted price -- a 16x error dressed as a 4x one.
+    """
+    provider = _provider({
+        "/stocks/v1/splits": {"status": "OK", "results": [
+            {"ticker": "AAPL", "execution_date": "2026-06-10",
+             "split_from": 2, "split_to": 3}]},
+    })
+    split = provider.get_splits(AAPL.instrument_id, start="2026-01-01",
+                               end="2026-12-31")[0]
+    assert split.ratio_numerator == 3 and split.ratio_denominator == 2
+    assert split.ratio == Decimal("1.5")
+
+
+def test_dividends_are_refused_because_no_endpoint_is_documented(keyed):
+    """Corpus V1 is split-adjusted and claims no total return."""
+    provider = _provider({})
+    with pytest.raises(UnsupportedCapabilityError) as error:
+        provider.get_dividends(AAPL.instrument_id, start="2026-01-01",
+                               end="2026-12-31")
+    assert "total return" in str(error.value)
 
 
 # --- corpus spec -----------------------------------------------------------
@@ -731,3 +763,139 @@ def test_the_frozen_crypto_instrument_hashes_are_unchanged():
         "492c167c1e66a37a377cff8b4e135841c5a13a7c60324ec9b5c8b1976bf5701f")
     assert ETH_USD.instrument_spec_hash == (
         "2a9e1d1c922fbb9af68ad92f8f2638e951a2fef830afb6e514a29ebfab35d7f3")
+
+
+# --- the vendor's real request and response shapes (Phase 6E) --------------
+#
+# These pin the adapter written on first contact. Every fixture below is
+# derived from the documented endpoint shapes and sanitized: public ticker
+# metadata and price rows only, no credential, no request identifiers.
+
+
+def test_the_bars_path_carries_the_ticker_and_the_window():
+    from scripts.trading_lab.massive_provider import bars_path
+
+    assert bars_path("AAPL", multiplier=30, timespan="minute",
+                     start="2024-08-01", end="2026-07-31") == (
+        "/v2/aggs/ticker/AAPL/range/30/minute/2024-08-01/2026-07-31")
+
+
+def test_only_the_three_documented_endpoints_are_reachable(keyed):
+    """Still an allowlist. A pattern is not a licence to wander."""
+    from scripts.trading_lab.massive_provider import (
+        ALLOWED_PATHS, bars_path, reference_path)
+
+    provider = _provider({})
+    assert len(ALLOWED_PATHS) == 3
+    for good in (bars_path("AAPL", multiplier=30, timespan="minute",
+                           start="2024-08-01", end="2024-08-02"),
+                 reference_path("QQQ"), "/stocks/v1/splits"):
+        assert provider._require_allowed(good) == good
+    for bad in ("/v2/aggs/ticker/AAPL/../../v1/account",
+                "/v2/aggs/ticker/AAPL/range/30/minute/2024-08-01",
+                "/v3/reference/tickers/AAPL/financials",
+                "/v2/snapshot/locale/us/markets/stocks/tickers",
+                "/stocks/v1/splits/../orders",
+                # lower case is not the documented ticker form
+                "/v3/reference/tickers/aapl"):
+        with pytest.raises(MassiveProviderError):
+            provider._require_allowed(bad)
+
+
+def test_a_thirty_minute_timeframe_maps_to_the_documented_window():
+    from scripts.trading_lab.massive_provider import (
+        MassiveProviderError as Error, require_aggregate_window)
+
+    assert require_aggregate_window("30m") == (30, "minute")
+    assert require_aggregate_window("1d") == (1, "day")
+    for unmapped in ("5m", "2h", "1w", ""):
+        with pytest.raises(Error):
+            require_aggregate_window(unmapped)
+
+
+def test_the_adjusted_flag_means_splits_and_never_dividends():
+    """The vendor's flag is a boolean; HyprL's policy is a name.
+
+    ``adjusted=true`` restates for splits only. Mapping TOTAL_RETURN onto it
+    would silently claim dividends were applied when they were not.
+    """
+    from scripts.trading_lab.massive_provider import ADJUSTED_FLAG
+
+    assert ADJUSTED_FLAG[ADJUSTMENT_SPLIT_ADJUSTED] == "true"
+    assert ADJUSTED_FLAG[ADJUSTMENT_RAW] == "false"
+    assert ADJUSTMENT_TOTAL_RETURN not in ADJUSTED_FLAG
+
+
+def test_the_millisecond_timestamp_is_read_as_the_window_start():
+    """Treating it as the end would shift every bar by one interval."""
+    from scripts.trading_lab.massive_provider import adapt_aggregate_rows
+
+    rows = adapt_aggregate_rows(
+        _bars_payload(), instrument_id="xnas:AAPL",
+        requested_policy=ADJUSTMENT_RAW)
+    assert rows[0]["bar_open_at"] == datetime(2026, 1, 15, 14, 30,
+                                              tzinfo=timezone.utc)
+    assert rows[1]["bar_open_at"] == datetime(2026, 1, 15, 15, 0,
+                                              tzinfo=timezone.utc)
+
+
+def test_a_timestamp_that_is_not_whole_milliseconds_is_refused():
+    from scripts.trading_lab.massive_provider import adapt_aggregate_rows
+
+    for bad in ("1768487400000", 1768487400000.5, None, True):
+        rows = [{"t": bad, "o": 1.0, "h": 1.0, "l": 1.0, "c": 1.0, "v": 1}]
+        with pytest.raises(MassiveProviderError):
+            adapt_aggregate_rows(_bars_payload(rows=rows),
+                                 instrument_id="xnas:AAPL",
+                                 requested_policy=ADJUSTMENT_RAW)
+
+
+def test_a_response_about_another_ticker_is_refused():
+    """The vendor echoes the ticker, so a mix-up is detectable rather than fatal."""
+    from scripts.trading_lab.massive_provider import adapt_aggregate_rows
+
+    with pytest.raises(MassiveProviderError) as error:
+        adapt_aggregate_rows(_bars_payload(ticker="MSFT"),
+                             instrument_id="xnas:AAPL",
+                             requested_policy=ADJUSTMENT_RAW)
+    assert "under another's name" in str(error.value)
+
+
+def test_an_error_status_is_refused_before_any_price_is_read():
+    from scripts.trading_lab.massive_provider import adapt_aggregate_rows
+
+    payload = {**_bars_payload(), "status": "ERROR"}
+    with pytest.raises(MassiveProviderError) as error:
+        adapt_aggregate_rows(payload, instrument_id="xnas:AAPL",
+                             requested_policy=ADJUSTMENT_RAW)
+    assert "status" in str(error.value)
+
+
+def test_an_empty_window_is_not_a_schema_mismatch():
+    """No results plus a stated count of zero is a legitimate empty answer."""
+    from scripts.trading_lab.massive_provider import adapt_aggregate_rows
+
+    assert adapt_aggregate_rows(
+        {"ticker": "AAPL", "status": "OK", "resultsCount": 0, "adjusted": True},
+        instrument_id="xnas:AAPL",
+        requested_policy=ADJUSTMENT_SPLIT_ADJUSTED) == []
+
+
+def test_a_shape_with_neither_results_nor_a_count_is_refused():
+    from scripts.trading_lab.massive_provider import adapt_aggregate_rows
+
+    with pytest.raises(MassiveProviderError) as error:
+        adapt_aggregate_rows({"bars": []}, instrument_id="xnas:AAPL",
+                             requested_policy=ADJUSTMENT_RAW)
+    assert "does not match this capture's contract" in str(error.value)
+
+
+def test_the_v3_reference_shape_is_read_as_an_object(reference_fixture):
+    """The single-ticker endpoint returns one object, not a list."""
+    from scripts.trading_lab.massive_provider import parse_reference_ticker
+
+    parsed = parse_reference_ticker(reference_fixture["AAPL"]["results"])
+    assert parsed.symbol == "AAPL"
+    assert parsed.venue == "xnas"
+    assert parsed.asset_class == "EQUITY"
+    assert parsed.currency == "USD"
