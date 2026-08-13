@@ -351,6 +351,29 @@ def capture_instrument(*, spec: USEquityCorpusV1, instrument_id: str,
             "sequence": sequence}
 
 
+def fetch_splits(transport, provider, params: dict):
+    """The splits endpoint, Bearer first and query auth only if it must be.
+
+    Bearer is the documented default and is what every other endpoint uses.
+    This route has been observed to answer 404 under Bearer while the others
+    authenticate normally, which is the signature of an endpoint that wants
+    the vendor's query-parameter scheme instead. So the fallback is narrow: it
+    is tried only for this path, only on a 404, and only after Bearer has
+    actually been attempted.
+
+    The key still never reaches anything recorded -- the transport builds the
+    outbound URL and the recorded URL separately, and only the outbound one
+    carries it.
+    """
+    try:
+        return transport.fetch(SPLITS_PATH, params, provider._headers())
+    except MassiveProviderError as error:
+        if "404" not in str(error):
+            raise
+    return transport.fetch(SPLITS_PATH, params, provider._headers(),
+                           auth_query=provider._auth_query())
+
+
 def capture_splits(*, spec: USEquityCorpusV1, instrument_id: str, provider,
                    transport, store: RawStore, sequence: int) -> dict:
     """Split records over the corpus range, for provenance only.
@@ -368,7 +391,7 @@ def capture_splits(*, spec: USEquityCorpusV1, instrument_id: str, provider,
         "execution_date.gte": spec.requested_start,
         "execution_date.lte": spec.requested_end,
     }
-    response = transport.fetch(SPLITS_PATH, params, provider._headers())
+    response = fetch_splits(transport, provider, params)
     record = store.write(identity, response.raw, url=response.url,
                          sequence=sequence)
     rows = adapt_split_rows(response.payload, instrument_id=instrument_id)
@@ -654,7 +677,7 @@ def main(argv=None) -> int:
 
 __all__ = [
     "CaptureError", "CorpusLayout", "MANIFEST_SCHEMA_VERSION",
-    "CORPORATE_ACTIONS_MARKER", "MissingCredentialStop",
+    "CORPORATE_ACTIONS_MARKER", "MissingCredentialStop", "fetch_splits",
     "REQUIRED_BAR_FIELDS", "SPLITS_PATH",
     "RawStore", "adapt_bar_rows", "build_manifest",
     "capture_instrument", "capture_splits", "main", "next_cursor",

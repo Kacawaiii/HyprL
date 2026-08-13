@@ -302,6 +302,17 @@ class MassiveStocksHistoricalProvider(MarketDataProvider):
         return {"Authorization": f"Bearer {secret.reveal()}",
                 "Accept": "application/json"}
 
+    def _auth_query(self) -> dict:
+        """The vendor's documented query-parameter auth, built at call time.
+
+        Only for endpoints that require it. The transport merges this into the
+        outbound URL and into nothing that is recorded, so using it does not
+        put the key in raw metadata, the manifest or an access log of ours.
+        Bearer remains the default everywhere it works.
+        """
+        secret = self.credentials.get()
+        return {"apiKey": secret.reveal()}
+
     def _fetch(self, path: str, params: dict) -> dict:
         safe_path = self._require_allowed(path)
         if isinstance(self.transport, NoNetworkTransport):

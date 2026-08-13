@@ -130,8 +130,34 @@ class TransportResponse:
     url: str
 
 
+def require_allowed_host(url: str) -> str:
+    """Scheme and host only.
+
+    Used for the URL that actually goes on the wire, which may legitimately
+    carry a credential parameter when the vendor documents query auth. The
+    stricter check below is what guards every URL that gets recorded.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https":
+        raise HostNotAllowedError(
+            f"refusing a non-https request to {parsed.scheme!r}")
+    host = (parsed.hostname or "").lower()
+    if host not in ALLOWED_HOSTS:
+        raise HostNotAllowedError(
+            f"{host!r} is not an allowlisted market-data host; allowed: "
+            f"{list(ALLOWED_HOSTS)}")
+    return url
+
+
 def require_allowed_url(url: str) -> str:
-    """Refuse a URL that leaves for a host nobody put on the list."""
+    """Refuse a URL that leaves for a host nobody put on the list.
+
+    Also refuses anything credential-shaped in the query string. This is the
+    check applied to every URL that is *recorded* -- stored in raw metadata,
+    written to the manifest, put in an exception -- because a key in a query
+    string ends up in every access log between here and the vendor, and in
+    this repository forever.
+    """
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https":
         raise HostNotAllowedError(
@@ -212,9 +238,26 @@ class MassiveHTTPTransport(MassiveTransport):
 
     # --- the capture interface --------------------------------------------
 
-    def fetch(self, path: str, params: dict, headers: dict) -> TransportResponse:
-        """A single GET, retried only when the request was never answered."""
+    def fetch(self, path: str, params: dict, headers: dict,
+              *, auth_query: dict | None = None) -> TransportResponse:
+        """A single GET, retried only when the request was never answered.
+
+        ``auth_query`` is the vendor's documented query-parameter auth. It is
+        merged into the URL that goes on the wire and into nothing else: the
+        URL recorded on the response, stored in raw metadata and quoted in any
+        error is built without it and re-checked to be credential-free. So the
+        key can satisfy an endpoint that requires query auth without ever
+        being written down.
+        """
+        # What gets recorded. Credential-free by construction, and checked.
         url = self.build_url(path, params)
+        # What goes on the wire. Never returned, never stored, never logged.
+        request_url = url
+        if auth_query:
+            merged = {**{key: str(value) for key, value in params.items()},
+                      **{key: str(value) for key, value in auth_query.items()}}
+            query = urllib.parse.urlencode(sorted(merged.items()))
+            request_url = require_allowed_host(f"{self.base_url}{path}?{query}")
         request_headers = {
             **{key: value for key, value in (headers or {}).items()},
             "User-Agent": CAPTURE_USER_AGENT,
@@ -226,7 +269,8 @@ class MassiveHTTPTransport(MassiveTransport):
         for attempt in range(1, self.max_attempts + 1):
             self._pace()
             try:
-                response = self._attempt(url, request_headers)
+                response = self._attempt(request_url, request_headers,
+                                         recorded_url=url)
             except RateLimitedError as error:
                 self.stats.rate_limits += 1
                 last_error = error
@@ -301,7 +345,8 @@ class MassiveHTTPTransport(MassiveTransport):
         return RETRY_BACKOFF_SECONDS[
             min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
 
-    def _attempt(self, url: str, headers: dict) -> TransportResponse:
+    def _attempt(self, url: str, headers: dict, *,
+                 recorded_url: str | None = None) -> TransportResponse:
         request = urllib.request.Request(url, method="GET")
         for key, value in headers.items():
             request.add_header(key, value)
@@ -349,7 +394,7 @@ class MassiveHTTPTransport(MassiveTransport):
             raise MassiveProviderError(
                 "expected a JSON object from the market-data provider")
         return TransportResponse(status=status, raw=raw, payload=payload,
-                                 url=url)
+                                 url=recorded_url if recorded_url else url)
 
     def payload(self) -> dict:
         """Safe to publish: what this transport is, never what it carries."""
@@ -371,6 +416,7 @@ __all__ = [
     "MAX_ATTEMPTS", "MAX_RETRY_AFTER_SECONDS", "MassiveHTTPTransport",
     "RETRYABLE_STATUSES", "RETRY_BACKOFF_SECONDS", "RateLimitedError",
     "REQUEST_TIMEOUT_SECONDS", "TransportError", "TransportResponse",
-    "TransportStats", "CREDENTIAL_QUERY_KEYS", "require_allowed_url",
+    "TransportStats", "CREDENTIAL_QUERY_KEYS", "require_allowed_host",
+    "require_allowed_url",
     "strip_credential_params",
 ]

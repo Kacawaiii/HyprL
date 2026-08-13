@@ -850,3 +850,56 @@ def test_the_manifest_names_the_calendar_that_defined_the_grid(spec, keyed,
     assert recorded["calendar_id"] == "US_EQUITY_REGULAR"
     assert recorded["calendar_dependency_version"] == "5.4.0"
     assert len(recorded["calendar_spec_hash"]) == 64
+
+
+# --- the splits auth fallback (Phase 6E) ----------------------------------
+
+
+def test_splits_uses_bearer_first_and_query_auth_only_on_a_404(keyed):
+    """Bearer is the default everywhere. The fallback is deliberately narrow."""
+    from scripts.trading_lab.capture_us_equity_corpus import fetch_splits
+    from scripts.trading_lab.massive_provider import MassiveProviderError
+
+    attempts = []
+
+    class Splits404UnderBearer:
+        def fetch(self, path, params, headers, *, auth_query=None):
+            attempts.append("query" if auth_query else "bearer")
+            if auth_query is None:
+                raise MassiveProviderError(
+                    "the market-data provider returned HTTP 404")
+            assert auth_query["apiKey"] == SENTINEL
+            return TransportResponse(
+                status=200, raw=b'{"results": []}', payload={"results": []},
+                # The recorded URL is credential-free; that is the transport's
+                # job and is asserted in its own tests.
+                url="https://api.massive.com/stocks/v1/splits?ticker=AAPL")
+
+    provider = MassiveStocksHistoricalProvider(
+        instruments=("xnas:AAPL",), transport=None,
+        credentials=massive_credentials())
+    response = fetch_splits(Splits404UnderBearer(), provider, {"ticker": "AAPL"})
+    assert attempts == ["bearer", "query"], "bearer must be tried first"
+    assert SENTINEL not in response.url
+
+
+def test_an_error_that_is_not_a_404_is_never_retried_with_query_auth(keyed):
+    """A 401 means the key was read and refused. Resending it differently is
+    not a fix, and would put it in a query string for no reason."""
+    from scripts.trading_lab.capture_us_equity_corpus import fetch_splits
+    from scripts.trading_lab.massive_provider import MassiveProviderError
+
+    attempts = []
+
+    class Splits401:
+        def fetch(self, path, params, headers, *, auth_query=None):
+            attempts.append("query" if auth_query else "bearer")
+            raise MassiveProviderError(
+                "the market-data provider refused the request (HTTP 401)")
+
+    provider = MassiveStocksHistoricalProvider(
+        instruments=("xnas:AAPL",), transport=None,
+        credentials=massive_credentials())
+    with pytest.raises(MassiveProviderError):
+        fetch_splits(Splits401(), provider, {"ticker": "AAPL"})
+    assert attempts == ["bearer"], "query auth was tried on a non-404"

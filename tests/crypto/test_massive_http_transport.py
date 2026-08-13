@@ -20,8 +20,9 @@ import urllib.error
 import pytest
 
 from scripts.trading_lab.massive_http_transport import (
-    ALLOWED_HOSTS, CAPTURE_USER_AGENT, HostNotAllowedError, MAX_RETRY_AFTER_SECONDS,
-    MassiveHTTPTransport, RateLimitedError, TransportError, require_allowed_url)
+    ALLOWED_HOSTS, CAPTURE_USER_AGENT, HostNotAllowedError,
+    MAX_RETRY_AFTER_SECONDS, MassiveHTTPTransport, RateLimitedError,
+    TransportError, require_allowed_host, require_allowed_url)
 from scripts.trading_lab.massive_provider import MassiveProviderError
 
 SENTINEL = "sentinel-massive-key-do-not-use-1a2b3c4d5e6f"
@@ -280,3 +281,66 @@ def test_the_no_network_default_is_untouched_by_this_module():
     provider = PROVIDERS_V1.resolve("massive-stocks-historical-v1")
     assert isinstance(provider.transport, NoNetworkTransport)
     assert provider.payload()["network_enabled"] is False
+
+
+# --- documented query auth, kept out of everything recorded ---------------
+#
+# Some endpoints require the key as a query parameter rather than a header.
+# That is the vendor's documented scheme, so the transport supports it -- but
+# a key in a query string is exactly what lands in access logs and, worse, in
+# committed raw metadata. So the URL that goes on the wire and the URL that
+# gets recorded are built separately, and only one of them ever carries a key.
+
+
+def test_query_auth_reaches_the_wire():
+    """Not a vacuous check: the request really must carry the credential."""
+    transport = _transport([_Response({"results": []})])
+    transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {},
+                    auth_query={"apiKey": SENTINEL})
+    assert SENTINEL in transport.calls[0]["url"]
+
+
+def test_query_auth_never_reaches_the_recorded_url():
+    """The recorded URL is what gets stored in raw metadata forever."""
+    transport = _transport([_Response({"results": []})])
+    response = transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {},
+                               auth_query={"apiKey": SENTINEL})
+    assert SENTINEL not in response.url
+    assert "apikey" not in response.url.lower()
+    assert response.url.endswith("?ticker=AAPL")
+
+
+def test_query_auth_never_reaches_an_exception_or_the_stats():
+    transport = _transport([_http_error(500)] * 4)
+    with pytest.raises(TransportError) as error:
+        transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"}, {},
+                        auth_query={"apiKey": SENTINEL})
+    assert SENTINEL not in str(error.value)
+    assert SENTINEL not in repr(error.value)
+    assert SENTINEL not in json.dumps(transport.payload())
+
+
+def test_a_recorded_url_carrying_a_key_is_still_refused():
+    """The strict check stays strict; query auth does not relax it."""
+    with pytest.raises(TransportError):
+        require_allowed_url(
+            "https://api.massive.com/stocks/v1/splits?apiKey=abc")
+    # The host-only check is what the outbound URL uses, and it permits it.
+    assert require_allowed_host(
+        "https://api.massive.com/stocks/v1/splits?apiKey=abc")
+
+
+def test_query_auth_still_cannot_reach_another_host():
+    transport = _transport([_Response({"results": []})])
+    with pytest.raises(HostNotAllowedError):
+        transport.build_url("/stocks/v1/splits", {})
+        require_allowed_host("https://evil.example.com/x?apiKey=abc")
+
+
+def test_bearer_remains_the_default_and_sends_no_query_key():
+    transport = _transport([_Response({"results": []})])
+    response = transport.fetch("/stocks/v1/splits", {"ticker": "AAPL"},
+                               {"Authorization": f"Bearer {SENTINEL}"})
+    assert SENTINEL not in transport.calls[0]["url"]
+    assert SENTINEL not in response.url
+    assert SENTINEL in transport.calls[0]["headers"]["Authorization"]
