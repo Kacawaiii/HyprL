@@ -136,6 +136,13 @@ scripts/paper_trading.py
 !data/crypto/
 !data/crypto/**
 
+# The US equity corpus (Phase 6E), for the same reason: raw responses,
+# canonical rows, corporate actions and the manifest are the corpus, and an
+# ignored corpus cannot be verified or rebuilt from a fresh clone. Declared
+# before the capture, so no storage decision is made after seeing the data.
+!data/equities/
+!data/equities/**
+
 # HyprL cockpit (Phase 5UI-A): build output and installed packages are derived
 # artefacts. The lockfile IS tracked, so an install is reproducible.
 apps/web/node_modules/

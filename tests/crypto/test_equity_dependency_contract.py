@@ -41,6 +41,10 @@ CORE_MODULES = (
     "credentials",
     "equity_market",
     "massive_provider",
+    "massive_http_transport",
+    "equity_corpus",
+    "capture_us_equity_corpus",
+    "verify_us_equity_corpus",
     "paper_portfolio",
     "paper_engine",
     "protected_holdout",
@@ -137,6 +141,52 @@ print("PROVIDER-OK")
 ''')
     assert result.returncode == 0, result.stderr
     assert "PROVIDER-OK" in result.stdout
+
+
+def test_the_capture_contract_declares_itself_without_pandas() -> None:
+    """The corpus identity is verifiable on a core install. The grid is not.
+
+    A useful split, and not an accident. The calendar's *spec* -- which
+    library, which version, which calendar, which session type -- is pure
+    metadata, so `corpus_spec_hash` can be recomputed by anyone auditing what
+    was requested, without installing anything. The calendar's *schedule* is
+    the part that needs the extra, so `sessions()` and `expected_bar_opens()`
+    refuse rather than returning an empty grid that would make every bar look
+    unexpected and every gap look real.
+    """
+    result = _run("""
+from scripts.trading_lab.equity_corpus import CORPUS_SPEC_V1
+
+assert CORPUS_SPEC_V1.instruments == (
+    "xnas:AAPL", "xnas:MSFT", "xnas:NVDA", "xnas:QQQ")
+assert CORPUS_SPEC_V1.adjustment_policy == "SPLIT_ADJUSTED"
+assert CORPUS_SPEC_V1.timeframe == "30m"
+assert CORPUS_SPEC_V1.session_type == "REGULAR"
+assert CORPUS_SPEC_V1.requested_start == "2024-08-01"
+assert CORPUS_SPEC_V1.requested_end == "2026-07-31"
+assert CORPUS_SPEC_V1.calendar_id == "US_EQUITY_REGULAR"
+
+# The identity is computable: it is metadata about the rules, not the rules.
+payload = CORPUS_SPEC_V1.canonical()
+assert payload["calendar_spec_hash"] == (
+    "1ef910eb3d4f5096ab2888ea6213df1f688870dfea02ba977bfc7faea9db6314")
+assert payload["calendar_dependency_version"] == "5.4.0"
+assert CORPUS_SPEC_V1.corpus_spec_hash == (
+    "93cfdb1a749bfa1de5c69c5dced2908413cfb8bba7f3f663fd9c747151b1b5ed")
+
+# The schedule is not. An empty grid would make every captured bar look
+# unexpected and every absent bar look like a real gap.
+for attempt in (CORPUS_SPEC_V1.expected_bar_opens, CORPUS_SPEC_V1.sessions):
+    try:
+        attempt()
+    except Exception as error:
+        assert "equities" in str(error), str(error)
+    else:
+        raise AssertionError(f"{attempt} produced a schedule without a calendar")
+print("CORPUS-OK")
+""")
+    assert result.returncode == 0, result.stderr
+    assert "CORPUS-OK" in result.stdout
 
 
 def test_the_missing_extra_produces_a_clear_error_not_a_wrong_calendar() -> None:
