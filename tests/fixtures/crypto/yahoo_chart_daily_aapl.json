@@ -1,0 +1,87 @@
+{
+  "_note": "Sanitized structure of a Yahoo chart daily response, reduced to the fields this platform reads. Prices are synthetic and deliberately not real market data: the fixture exercises the adapter's shape handling, not anyone's quotes. Timestamps come from the pinned US_EQUITY_REGULAR calendar, so the fixture cannot disagree with the grid it tests. No credential exists for this source.",
+  "chart": {
+    "error": null,
+    "result": [
+      {
+        "meta": {
+          "currency": "USD",
+          "symbol": "AAPL",
+          "exchangeName": "NMS",
+          "instrumentType": "EQUITY",
+          "exchangeTimezoneName": "America/New_York",
+          "gmtoffset": -18000
+        },
+        "timestamp": [
+          1732545000,
+          1732631400,
+          1732717800,
+          1732890600,
+          1733149800
+        ],
+        "events": {
+          "splits": {
+            "1732717800": {
+              "date": 1732717800,
+              "numerator": 4,
+              "denominator": 1,
+              "splitRatio": "4:1"
+            }
+          }
+        },
+        "indicators": {
+          "quote": [
+            {
+              "open": [
+                100.0,
+                101.0,
+                102.0,
+                103.0,
+                104.0
+              ],
+              "high": [
+                101.5,
+                102.5,
+                103.5,
+                104.5,
+                105.5
+              ],
+              "low": [
+                99.25,
+                100.25,
+                101.25,
+                102.25,
+                103.25
+              ],
+              "close": [
+                100.25,
+                101.25,
+                102.25,
+                103.25,
+                104.25
+              ],
+              "volume": [
+                1250000,
+                1251000,
+                1252000,
+                1253000,
+                1254000
+              ]
+            }
+          ],
+          "adjclose": [
+            {
+              "adjclose": [
+                100.25,
+                101.25,
+                102.25,
+                103.25,
+                104.25
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

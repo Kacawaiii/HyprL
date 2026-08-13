@@ -45,6 +45,7 @@ CORE_MODULES = (
     "equity_corpus",
     "capture_us_equity_corpus",
     "verify_us_equity_corpus",
+    "yahoo_chart_provider",
     "paper_portfolio",
     "paper_engine",
     "protected_holdout",

@@ -127,6 +127,9 @@ scripts/paper_trading.py
 # Evidence for the equity seed universe: the registry's venue and asset
 # class are asserted against this recorded vendor payload.
 !tests/fixtures/crypto/massive_reference_tickers.json
+# Sanitized structure of a Yahoo chart response: synthetic prices on
+# calendar-derived timestamps, exercising the V2 adapter's shape handling.
+!tests/fixtures/crypto/yahoo_chart_daily_aapl.json
 
 # Phase 4A real-market corpus: captured once from the public Coinbase candles
 # endpoint, frozen, and verified offline by tests/crypto/test_capture_market_history.py.

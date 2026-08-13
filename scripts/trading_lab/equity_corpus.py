@@ -36,7 +36,8 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, localcontext
 
 from scripts.trading_lab.equity_market import (
-    ADJUSTMENT_SPLIT_ADJUSTED, EquityMarketError, require_adjustment_policy)
+    ADJUSTMENT_RAW, ADJUSTMENT_SPLIT_ADJUSTED, EquityMarketError,
+    require_adjustment_policy)
 from scripts.trading_lab.instruments import InstrumentId, Timeframe
 from scripts.trading_lab.massive_provider import MASSIVE_STOCKS_HISTORICAL_V1
 from scripts.trading_lab.trading_calendar import US_EQUITY_REGULAR
@@ -250,6 +251,55 @@ class USEquityCorpusV1:
 
 
 CORPUS_SPEC_V1 = USEquityCorpusV1()
+
+
+# --- Corpus V2: the credential-free daily corpus ---------------------------
+
+CORPUS_V2_ID = "yahoo_us_equity_daily_v1"
+CORPUS_V2_ROOT = "data/equities/yahoo_us_equity_daily_v1"
+CORPUS_V2_PROVIDER = "yahoo-chart-daily-v1"
+CORPUS_V2_TIMEFRAME = "1d"
+CORPUS_V2_ADJUSTMENT = ADJUSTMENT_RAW
+
+# Splits and dividends are recorded as events and never applied to a price.
+# That is the honest description of a source that serves unadjusted OHLC.
+CORPUS_V2_CORPORATE_ACTION_POLICY = (
+    "source-unadjusted:events-recorded-not-applied")
+
+CORPUS_V2_CAPTURE_PROTOCOL = "yahoo-chart-daily-v1"
+
+
+@dataclass(frozen=True)
+class USEquityCorpusV2(USEquityCorpusV1):
+    """A daily corpus from a source that needs no credential.
+
+    A separate corpus rather than a variant of V1, because almost everything
+    that gives a corpus its meaning is different: a different provider, a
+    different timeframe, a different adjustment policy, and a different set of
+    guarantees behind it. Its hash is therefore different too, which is the
+    point -- nothing downstream can mistake one for the other or silently
+    substitute this where V1 was expected.
+
+    What it shares with V1 is deliberate and is what makes the two
+    comparable: the same instruments, the same calendar and calendar hash, the
+    same requested range, and the same session semantics. So a gap in one can
+    be read against the other.
+
+    **Daily, not 30-minute, and not by choice.** The source refuses intraday
+    beyond about a month (HTTP 422 over a two-year range). A 30-minute corpus
+    over this range still needs a paid provider, and V1 remains the spec for
+    that -- frozen, unmodified, waiting on a key.
+    """
+
+    corpus_id: str = CORPUS_V2_ID
+    provider_id: str = CORPUS_V2_PROVIDER
+    timeframe: str = CORPUS_V2_TIMEFRAME
+    adjustment_policy: str = CORPUS_V2_ADJUSTMENT
+    corporate_action_policy: str = CORPUS_V2_CORPORATE_ACTION_POLICY
+    capture_protocol_version: str = CORPUS_V2_CAPTURE_PROTOCOL
+
+
+CORPUS_SPEC_V2 = USEquityCorpusV2()
 
 
 # --- request identity ------------------------------------------------------
@@ -623,7 +673,8 @@ __all__ = [
     "CORPORATE_ACTION_POLICY", "CORPUS_ADJUSTMENT", "CORPUS_CALENDAR",
     "CORPUS_ID", "CORPUS_INSTRUMENTS", "CORPUS_PROVIDER", "CORPUS_RANGE_END",
     "CORPUS_RANGE_START", "CORPUS_ROOT", "CORPUS_SESSION_TYPE",
-    "CORPUS_SPEC_V1", "CORPUS_TIMEFRAME", "CanonicalBar",
+    "CORPUS_SPEC_V1", "CORPUS_SPEC_V2", "CORPUS_TIMEFRAME",
+    "CORPUS_V2_ID", "CORPUS_V2_ROOT", "USEquityCorpusV2", "CanonicalBar",
     "EQUITY_CORPUS_SCHEMA_VERSION", "ECONOMIC_PRECISION", "EquityCorpusError",
     "GAP_POLICY", "GapAudit", "MAX_PAGES_PER_REQUEST", "MAX_ROWS_TOTAL",
     "RequestIdentity", "SplitRecord", "USEquityCorpusV1", "accept_bar_opening",
