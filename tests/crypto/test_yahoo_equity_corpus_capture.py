@@ -744,11 +744,17 @@ def test_the_local_store_is_gitignored_and_release_excluded():
     from scripts.trading_lab.ops.release import EXCLUDED_DIRECTORIES
 
     root = pathlib.Path(__file__).resolve().parents[2]
+
+    # The half that holds anywhere, including inside a `git archive` export
+    # where there is no repository to ask.
+    assert LOCAL_CORPUS_ROOT.split("/")[0] in EXCLUDED_DIRECTORIES
+
+    if not (root / ".git").exists():
+        pytest.skip("no repository here; the gitignore half needs one")
     probe = f"{LOCAL_CORPUS_ROOT}/canonical/xnas_AAPL.jsonl"
     result = subprocess.run(["git", "check-ignore", probe], cwd=root,
                             capture_output=True, text=True)
     assert result.returncode == 0, f"{probe} is NOT gitignored"
-    assert LOCAL_CORPUS_ROOT.split("/")[0] in EXCLUDED_DIRECTORIES
 
 
 def test_the_release_refuses_a_bundle_containing_restricted_data(tmp_path):
