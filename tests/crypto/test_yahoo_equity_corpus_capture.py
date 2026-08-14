@@ -716,7 +716,7 @@ def test_the_fingerprint_cannot_reconstruct_a_price_series(spec, tmp_path):
                       "100.25", "1250000", '"timestamp"', '"quote"'):
         assert forbidden not in rendered, f"fingerprint leaks {forbidden}"
     assert fingerprint["source_data_committed"] is False
-    assert fingerprint["redistribution_permitted"] is False
+    assert fingerprint["source_redistribution_permitted"] is False
     assert fingerprint["corpus_content_hash"] == \
         manifest["content"]["corpus_content_hash"]
     for entry in fingerprint["instruments"]:
@@ -773,6 +773,25 @@ def test_the_release_refuses_a_bundle_containing_restricted_data(tmp_path):
     assert "forbids redistribution" in str(error.value)
 
 
+def test_the_fingerprint_itself_does_not_trip_the_release_guard(tmp_path):
+    """It describes the source's terms; it is not the source.
+
+    A bare `redistribution_permitted: false` on the fingerprint would block a
+    release containing the very artifact designed to be shippable in the
+    corpus's place.
+    """
+    from scripts.trading_lab.ops.release import assert_no_restricted_data
+
+    spec = USEquityCorpusV2(requested_start=WINDOW_START,
+                            requested_end=WINDOW_END)
+    manifest, _ = _capture(spec, tmp_path / "corpus-src")
+    bundle = tmp_path / "bundle"
+    (bundle / "docs" / "artifacts").mkdir(parents=True)
+    (bundle / "docs" / "artifacts" / "fingerprint.json").write_text(
+        json.dumps(build_fingerprint(manifest)))
+    assert assert_no_restricted_data(bundle) == []
+
+
 def test_the_guard_also_catches_a_top_level_flag(tmp_path):
     from scripts.trading_lab.ops.release import (
         ReleaseError, assert_no_restricted_data)
@@ -804,3 +823,79 @@ def test_the_request_identity_carries_no_wall_clock(spec):
     canonical = first.canonical()
     for volatile in ("captured_at", "now", "attempt", "pid", "tmp"):
         assert volatile not in json.dumps(canonical)
+
+
+# --- the committed fingerprint binds to the local corpus (§51) -------------
+
+
+FINGERPRINT_PATH = (pathlib.Path(__file__).resolve().parents[2]
+                    / "docs" / "artifacts"
+                    / "us_equity_corpus_v2_fingerprint.json")
+
+
+def _fingerprint():
+    if not FINGERPRINT_PATH.is_file():
+        pytest.skip("no corpus has been frozen in this checkout")
+    return json.loads(FINGERPRINT_PATH.read_text())
+
+
+def test_the_committed_fingerprint_names_the_frozen_v2_contract():
+    """True in any checkout, with or without the local corpus present."""
+    fingerprint = _fingerprint()
+    assert fingerprint["corpus_spec_hash"] == CORPUS_SPEC_V2.corpus_spec_hash
+    assert fingerprint["calendar_spec_hash"] == (
+        "1ef910eb3d4f5096ab2888ea6213df1f688870dfea02ba977bfc7faea9db6314")
+    assert fingerprint["provider_id"] == "yahoo-chart-daily-v1"
+    assert fingerprint["timeframe"] == "1d"
+    assert fingerprint["adjustment_policy"] == "RAW"
+    assert fingerprint["source_data_committed"] is False
+    assert fingerprint["source_redistribution_permitted"] is False
+    assert [item["instrument_id"] for item in fingerprint["instruments"]] == \
+        list(CORPUS_SPEC_V2.instruments)
+
+
+def test_the_committed_fingerprint_carries_no_market_rows():
+    """It stands in for the corpus; it must not be able to replace it."""
+    rendered = FINGERPRINT_PATH.read_text() if FINGERPRINT_PATH.is_file() else ""
+    if not rendered:
+        pytest.skip("no corpus has been frozen in this checkout")
+    for forbidden in ('"open"', '"high"', '"low"', '"close"', '"volume"',
+                      '"quote"', '"timestamp"', '"results"'):
+        assert forbidden not in rendered, f"fingerprint leaks {forbidden}"
+    # A few kilobytes cannot encode thousands of bars.
+    assert len(rendered) < 32 * 1024
+
+
+def test_a_local_corpus_is_only_accepted_when_it_matches_the_fingerprint():
+    """A random directory of files is not a corpus. Fail closed on mismatch."""
+    from scripts.trading_lab.capture_yahoo_equity_corpus import (
+        LocalCorpusLayout as Layout)
+
+    fingerprint = _fingerprint()
+    layout = Layout(pathlib.Path(LOCAL_CORPUS_ROOT))
+    if not layout.manifest_path.is_file():
+        pytest.skip("the local corpus is not present on this machine")
+
+    manifest = json.loads(layout.manifest_path.read_text())
+    content = manifest["content"]
+    assert content["corpus_spec_hash"] == fingerprint["corpus_spec_hash"]
+    assert content["corpus_content_hash"] == fingerprint["corpus_content_hash"]
+    recorded = {item["instrument_id"]: item["instrument_content_hash"]
+                for item in content["instruments"]}
+    promised = {item["instrument_id"]: item["instrument_content_hash"]
+                for item in fingerprint["instruments"]}
+    assert recorded == promised
+    assert content["verified"] is True
+    assert content["reproducible"] is True
+
+
+def test_a_tampered_local_corpus_does_not_match_the_fingerprint(tmp_path):
+    """The binding must actually discriminate, not merely compare a constant."""
+    fingerprint = _fingerprint()
+    spec = USEquityCorpusV2(requested_start=WINDOW_START,
+                            requested_end=WINDOW_END)
+    manifest, _ = _capture(spec, tmp_path)
+    # A different corpus over a different window: same spec family, different
+    # content. The fingerprint must not accept it.
+    assert manifest["content"]["corpus_content_hash"] != \
+        fingerprint["corpus_content_hash"]

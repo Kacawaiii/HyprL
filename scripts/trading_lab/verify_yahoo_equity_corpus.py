@@ -302,12 +302,45 @@ def recount(root=None) -> dict:
     return totals
 
 
+def promote(root=None) -> dict:
+    """Mark the corpus verified and reproducible -- only after earning it.
+
+    Runs all three passes first. The flags are claims, and a claim written by
+    a function that did not check is worse than no claim: it would survive
+    into the fingerprint and into every report downstream.
+
+    The corpus content hash and every instrument hash are untouched by this;
+    only the manifest's own digest moves, because the manifest changed.
+    """
+    layout = LocalCorpusLayout(pathlib.Path(root or LOCAL_CORPUS_ROOT))
+    verify(layout.root)
+    rebuild(layout.root)
+    recount(layout.root)
+
+    manifest = load_manifest(layout)
+    before = manifest["content"]["corpus_content_hash"]
+    manifest["content"]["verified"] = True
+    manifest["content"]["reproducible"] = True
+    manifest["manifest_content_sha256"] = sha256_canonical(manifest["content"])
+    layout.manifest_path.write_text(
+        json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+
+    # The data identity must not have moved. Only the status did.
+    assert manifest["content"]["corpus_content_hash"] == before
+    verify(layout.root)
+    return {"ok": True, "verified": True, "reproducible": True,
+            "corpus_content_hash": before,
+            "manifest_content_sha256": manifest["manifest_content_sha256"]}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("verify", "rebuild", "recount"))
+    parser.add_argument("command",
+                        choices=("verify", "rebuild", "recount", "promote"))
     parser.add_argument("--root", default=LOCAL_CORPUS_ROOT)
     arguments = parser.parse_args(argv)
-    runner = {"verify": verify, "rebuild": rebuild, "recount": recount}
+    runner = {"verify": verify, "rebuild": rebuild, "recount": recount,
+              "promote": promote}
     try:
         report = runner[arguments.command](arguments.root)
     except (CorpusVerificationError, EquityCorpusError) as error:
@@ -318,8 +351,9 @@ def main(argv=None) -> int:
     return 0
 
 
-__all__ = ["CorpusVerificationError", "load_manifest", "main", "rebuild",
-           "rebuild_from_raw", "recount", "spec_from_manifest", "verify"]
+__all__ = ["CorpusVerificationError", "load_manifest", "main", "promote",
+           "rebuild", "rebuild_from_raw", "recount", "spec_from_manifest",
+           "verify"]
 
 
 if __name__ == "__main__":                           # pragma: no cover

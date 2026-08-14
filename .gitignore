@@ -130,6 +130,11 @@ scripts/paper_trading.py
 # Sanitized structure of a Yahoo chart response: synthetic prices on
 # calendar-derived timestamps, exercising the V2 adapter's shape handling.
 !tests/fixtures/crypto/yahoo_chart_daily_aapl.json
+# Corpus fingerprints: hashes, counts and identities that prove which
+# local corpus was frozen. They carry no market rows and are the
+# artifact committed IN PLACE OF restricted source data.
+!docs/artifacts/
+!docs/artifacts/**
 
 # Phase 4A real-market corpus: captured once from the public Coinbase candles
 # endpoint, frozen, and verified offline by tests/crypto/test_capture_market_history.py.

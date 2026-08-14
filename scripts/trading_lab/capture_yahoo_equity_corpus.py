@@ -452,8 +452,12 @@ def build_fingerprint(manifest: dict) -> dict:
         "capture_code_commit": content["capture_code_commit"],
         "local_storage_root": LOCAL_CORPUS_ROOT,
         "source_data_committed": False,
-        "redistribution_permitted": False,
-        "official_contract": False,
+        # Named for what it describes: the SOURCE's terms, not this file's.
+        # The fingerprint itself carries no market data and is safe to ship;
+        # a bare `redistribution_permitted: false` here would trip the release
+        # guard on the very artifact that exists to be distributable.
+        "source_redistribution_permitted": False,
+        "source_official_contract": False,
         "point_in_time_exchange_revision_history": False,
         "note": ("Fingerprint only. The Yahoo source data is not redistributed "
                  "and is not present in this repository; it lives in the "
