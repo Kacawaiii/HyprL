@@ -39,6 +39,14 @@ from dataclasses import dataclass, field
 
 from scripts.trading_lab.massive_provider import (
     MassiveProviderError, MassiveTransport)
+from scripts.trading_lab.safe_http import (
+    ALLOWED_PORT as _ALLOWED_PORT,
+    AllowlistedRedirectHandler as _AllowlistedRedirectHandler,
+    CREDENTIAL_QUERY_KEYS as _CREDENTIAL_QUERY_KEYS,
+    HostNotAllowedError as _HostNotAllowedError,
+    build_hardened_opener as _build_hardened_opener,
+    require_https_host,
+    strip_credential_params as _strip_credential_params)
 
 MASSIVE_TRANSPORT_SCHEMA_VERSION = "trading-lab.massive-http-transport.v1"
 
@@ -130,49 +138,17 @@ class TransportResponse:
     url: str
 
 
-# The only port this transport will speak to. Named rather than implied,
-# because `parsed.hostname` silently discards a port and would let
-# api.massive.com:4444 read as the allowlisted host.
-ALLOWED_PORT = 443
+# Port, redirect policy and credential-parameter handling all come from the
+# shared primitive. One implementation of a security control, not two: the
+# copy that drifts is always the one nobody re-reads.
+ALLOWED_PORT = _ALLOWED_PORT
+CREDENTIAL_QUERY_KEYS = _CREDENTIAL_QUERY_KEYS
 
 
 def require_allowed_host(url: str) -> str:
-    """Scheme, host, port and authority shape.
-
-    Used for the URL that actually goes on the wire, which may legitimately
-    carry a credential parameter when the vendor documents query auth. The
-    stricter check below is what guards every URL that gets *recorded*.
-
-    Three things `parsed.hostname` alone would miss, each of which makes a
-    hostile URL read as the allowlisted one:
-
-    * a port -- `api.massive.com:4444` has hostname `api.massive.com`;
-    * userinfo -- `https://evil.example.com@api.massive.com/` also has
-      hostname `api.massive.com`, and the reverse spelling is what a reader
-      skims past;
-    * an empty or malformed authority.
-    """
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https":
-        raise HostNotAllowedError(
-            f"refusing a non-https request to {parsed.scheme!r}")
-    if parsed.username is not None or parsed.password is not None:
-        raise HostNotAllowedError(
-            "refusing a URL carrying userinfo; the authority it appears to "
-            "name is not the host that would be contacted")
-    host = (parsed.hostname or "").lower()
-    if host not in ALLOWED_HOSTS:
-        raise HostNotAllowedError(
-            f"{host!r} is not an allowlisted market-data host; allowed: "
-            f"{list(ALLOWED_HOSTS)}")
-    try:
-        port = parsed.port
-    except ValueError as error:
-        raise HostNotAllowedError(f"malformed port in {host!r}") from error
-    if port not in (None, ALLOWED_PORT):
-        raise HostNotAllowedError(
-            f"refusing port {port} on {host!r}; only {ALLOWED_PORT} is allowed")
-    return url
+    """Scheme, host, port and authority shape, against the Massive allowlist."""
+    return require_https_host(url, ALLOWED_HOSTS,
+                              error_class=HostNotAllowedError)
 
 
 def require_allowed_url(url: str) -> str:
@@ -184,14 +160,9 @@ def require_allowed_url(url: str) -> str:
     string ends up in every access log between here and the vendor, and in
     this repository forever.
     """
-    # Delegated rather than duplicated: two copies of an authority check
-    # drift, and the copy that drifts is the one nobody re-reads.
     require_allowed_host(url)
     parsed = urllib.parse.urlsplit(url)
     if parsed.query:
-        # The credential travels in a header. A query string is copied into
-        # access logs, proxy logs and browser history, so anything that looks
-        # like a key in one is refused rather than merely discouraged.
         lowered = parsed.query.lower()
         for marker in ("apikey", "api_key", "token", "secret", "key="):
             if marker in lowered:
@@ -201,62 +172,22 @@ def require_allowed_url(url: str) -> str:
     return url
 
 
-# Query parameters that may carry a secret. Removed from any URL the vendor
-# hands back before it is followed, logged or stored.
-CREDENTIAL_QUERY_KEYS = ("apikey", "api_key", "api-key", "key", "token",
-                         "secret", "access_token", "auth")
-
-
 def strip_credential_params(url: str) -> str:
-    """Drop credential-shaped query parameters from a URL. Never logs them."""
-    parsed = urllib.parse.urlsplit(url)
-    kept = [(key, value) for key, value in urllib.parse.parse_qsl(parsed.query)
-            if key.lower() not in CREDENTIAL_QUERY_KEYS]
-    return urllib.parse.urlunsplit((
-        parsed.scheme, parsed.netloc, parsed.path,
-        urllib.parse.urlencode(kept), ""))
+    """Drop credential-shaped query parameters from a URL."""
+    return _strip_credential_params(url)
 
 
-class AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Follow a redirect only while it stays inside the allowlist.
+class AllowlistedRedirectHandler(_AllowlistedRedirectHandler):
+    """The shared redirect policy, bound to the Massive allowlist."""
 
-    ``urllib`` follows 3xx automatically, and its ``redirect_request`` copies
-    every header except Content-Length and Content-Type onto the new request.
-    ``Authorization`` is therefore among them. A vendor redirect to another
-    host would hand that host our API key -- bypassing, in one step, every
-    credential control in this project, because they all guard the value
-    everywhere *except* the moment it leaves the process.
-
-    The check happens here, before urllib builds the redirected request, so an
-    off-allowlist destination is never contacted at all rather than being
-    refused after the credential has already been sent.
-
-    A same-host redirect is still checked in full: scheme, host, port,
-    userinfo and credential-shaped query parameters all get the same treatment
-    the original URL received.
-    """
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        try:
-            require_allowed_host(newurl)
-        except TransportError as error:
-            # Raised rather than returned as None: None makes urllib surface
-            # the original 3xx as an opaque HTTPError, which would read like a
-            # vendor problem instead of a refused destination.
-            raise HostNotAllowedError(
-                f"refusing to follow a redirect to a host outside the "
-                f"market-data allowlist: {error}") from None
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+    def __init__(self, allowed_hosts=ALLOWED_HOSTS):
+        super().__init__(allowed_hosts, error_class=HostNotAllowedError)
 
 
 def build_hardened_opener() -> urllib.request.OpenerDirector:
-    """The production opener. Never bare urlopen.
-
-    Bare ``urlopen`` uses the default handler chain, whose redirect handler
-    will follow a 3xx anywhere. This one is assembled explicitly so the only
-    redirect policy in play is the one above.
-    """
-    return urllib.request.build_opener(AllowlistedRedirectHandler())
+    """The production opener. Never bare urlopen."""
+    return _build_hardened_opener(ALLOWED_HOSTS,
+                                  error_class=HostNotAllowedError)
 
 
 def _retry_after_seconds(headers) -> float | None:

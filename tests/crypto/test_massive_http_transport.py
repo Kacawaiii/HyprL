@@ -521,10 +521,21 @@ def test_the_production_default_is_the_hardened_opener_not_bare_urlopen():
     import urllib.request
 
     from scripts.trading_lab.massive_http_transport import (
-        AllowlistedRedirectHandler, build_hardened_opener)
+        ALLOWED_HOSTS, build_hardened_opener)
+    from scripts.trading_lab.safe_http import AllowlistedRedirectHandler
 
     transport = MassiveHTTPTransport()
     assert transport._opener is not urllib.request.urlopen
+
     opener = build_hardened_opener()
-    assert any(isinstance(handler, AllowlistedRedirectHandler)
-               for handler in opener.handlers)
+    guards = [h for h in opener.handlers
+              if isinstance(h, AllowlistedRedirectHandler)]
+    assert guards, "the production opener carries no allowlisted redirect guard"
+    # Stronger than merely present: bound to this provider's allowlist, and
+    # raising this provider's error type rather than the shared one.
+    assert guards[0].allowed_hosts == ALLOWED_HOSTS
+    assert guards[0].error_class is HostNotAllowedError
+    # urllib's own permissive handler must not also be in the chain.
+    plain = [h for h in opener.handlers
+             if type(h) is urllib.request.HTTPRedirectHandler]
+    assert plain == []

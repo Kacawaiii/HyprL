@@ -261,6 +261,47 @@ signed before it deserved to exist.
 """
 
 
+# A corpus may carry its provider's terms. When those terms say the source may
+# not be redistributed, no release may contain it -- and that must not depend
+# on anyone remembering to keep it out of RESEARCH_DATA.
+REDISTRIBUTION_FLAG = "redistribution_permitted"
+
+
+def assert_no_restricted_data(directory: pathlib.Path) -> list:
+    """Refuse to ship a corpus whose own manifest forbids redistribution.
+
+    A positive check on the assembled bundle rather than a rule about which
+    paths are copied. The counter-review found the current release safe only
+    because ``RESEARCH_DATA`` happens not to name equities -- an accident that
+    a future maintainer adding one line would undo silently. This looks at
+    what is actually about to ship and asks each dataset for its own terms.
+
+    Deliberately fail-closed and deliberately cheap: it reads only JSON files,
+    and a dataset that says nothing is treated as unrestricted, because the
+    crypto corpus predates the flag and saying nothing is what it does.
+    """
+    restricted = []
+    for path in sorted(directory.rglob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError, OSError):
+            continue
+        candidates = [payload]
+        if isinstance(payload, dict) and isinstance(payload.get("content"), dict):
+            candidates.append(payload["content"])
+        for candidate in candidates:
+            if isinstance(candidate, dict) and \
+                    candidate.get(REDISTRIBUTION_FLAG) is False:
+                restricted.append(str(path.relative_to(directory)))
+                break
+    if restricted:
+        raise ReleaseError(
+            "refusing to build a release containing data whose provider "
+            f"forbids redistribution: {restricted}. Remove it from the bundle; "
+            "a fingerprint may be shipped in its place, the source data may not.")
+    return restricted
+
+
 def build_release(*, root=None, output=None, include_research_data: bool = True,
                   clean: bool = True) -> dict:
     """Assemble the bundle. Requires a frontend build to already exist."""
@@ -295,6 +336,10 @@ def build_release(*, root=None, output=None, include_research_data: bool = True,
     (output / LAUNCHER_NAME).chmod(0o755)
     (output / "scripts/hyprl.sh").chmod(0o755)
     (output / README_NAME).write_text(README, encoding="utf-8")
+
+    # Checked after assembly, before anything is hashed or reported: the
+    # question is what the bundle contains, not what we intended to copy.
+    assert_no_restricted_data(output)
 
     files = []
     for item in sorted(output.rglob("*")):

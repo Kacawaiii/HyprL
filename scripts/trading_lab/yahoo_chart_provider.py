@@ -276,7 +276,17 @@ def adapt_chart_rows(payload: dict, *, instrument_id: str) -> list[dict]:
             f"{instrument_id}: the chart response carries no quote series; "
             f"the source schema does not match this capture's contract "
             f"(expected fields {list(QUOTE_FIELDS)})")
-    quote = indicators["quote"][0]
+    blocks = indicators["quote"]
+    if not isinstance(blocks, list) or len(blocks) != 1:
+        # The documented shape carries exactly one quote block. Two is an
+        # anomaly nobody has characterised, and reading the first would be a
+        # silent choice about which series is the real one -- the same class
+        # of mistake as keeping the first of two duplicate bars.
+        raise YahooProviderError(
+            f"{instrument_id}: expected exactly one quote block, found "
+            f"{len(blocks) if isinstance(blocks, list) else 'a non-list'}; "
+            "refusing to choose between them")
+    quote = blocks[0]
     missing = [name for name in QUOTE_FIELDS if name not in quote]
     if missing:
         raise YahooProviderError(
