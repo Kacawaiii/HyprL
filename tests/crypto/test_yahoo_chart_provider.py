@@ -329,3 +329,47 @@ def test_a_null_still_drops_the_row_and_becomes_a_reported_gap(chart):
     rows = adapt_chart_rows(_payload_with(chart, "close", None),
                             instrument_id="xnas:AAPL")
     assert len(rows) == len(chart["chart"]["result"][0]["timestamp"]) - 1
+
+
+# --- the request window must match the spec's inclusive range -------------
+
+
+def test_the_query_window_covers_the_session_opening_on_the_final_day():
+    """A real capture lost its last session to this off-by-one.
+
+    The source returns bars strictly before `period2`, and a US session opens
+    at 13:30 or 14:30 UTC. Midnight of the final day therefore excludes that
+    day's session while every other day survives -- producing one permanent,
+    identical missing session on every instrument, which looks like a provider
+    gap and is not. The expected grid uses T23:59:59Z, so the request bound
+    has to as well.
+    """
+    from datetime import datetime, timezone
+
+    provider = YahooChartDailyProvider()
+    params = provider.chart_params(timeframe="1d", start="2024-08-01",
+                                   end="2026-07-31")
+
+    final_session_open = int(
+        datetime(2026, 7, 31, 13, 30, tzinfo=timezone.utc).timestamp())
+    assert params["period2"] > final_session_open, (
+        "period2 excludes the session opening on the last requested day")
+    assert datetime.fromtimestamp(params["period2"], timezone.utc).date() \
+        == datetime(2026, 7, 31, tzinfo=timezone.utc).date()
+
+    # The lower bound stays at the start of the first day, which already
+    # precedes that day's open.
+    first_session_open = int(
+        datetime(2024, 8, 1, 13, 30, tzinfo=timezone.utc).timestamp())
+    assert params["period1"] <= first_session_open
+
+
+def test_the_query_window_spans_every_expected_session_in_the_range():
+    """Derived from the calendar, so it cannot drift from the expected grid."""
+    provider = YahooChartDailyProvider()
+    params = provider.chart_params(
+        timeframe="1d", start=CORPUS_SPEC_V2.requested_start,
+        end=CORPUS_SPEC_V2.requested_end)
+    openings = [int(o.timestamp()) for o in CORPUS_SPEC_V2.expected_bar_opens()]
+    assert params["period1"] <= min(openings)
+    assert params["period2"] > max(openings)

@@ -386,10 +386,20 @@ class YahooChartDailyProvider(MarketDataProvider):
         return {"Accept": "application/json"}
 
     def chart_params(self, *, timeframe: str, start, end) -> dict:
+        """The query window, matching the spec's inclusive range.
+
+        ``period2`` is the END of the requested day, not its midnight. The
+        source returns bars whose timestamp is strictly before period2, and a
+        US session opens at 13:30 or 14:30 UTC -- so midnight would silently
+        exclude the final session of the range while every other day survived.
+        The expected grid is built with ``T23:59:59Z`` for exactly the same
+        reason, and the two boundaries have to agree or the last session shows
+        up as a permanent, identical gap on every instrument.
+        """
         return {
             "interval": require_interval(timeframe),
             "period1": _epoch(start),
-            "period2": _epoch(end),
+            "period2": _epoch(end, end_of_day=True),
             "events": "div,split",
         }
 
@@ -425,13 +435,21 @@ class YahooChartDailyProvider(MarketDataProvider):
         }
 
 
-def _epoch(value) -> int:
+def _epoch(value, *, end_of_day: bool = False) -> int:
+    """A request bound as epoch seconds.
+
+    ``end_of_day`` moves a bare date to 23:59:59 of that day, so an inclusive
+    range bound covers the session that opens on it rather than stopping at
+    the midnight before.
+    """
     if isinstance(value, datetime):
         moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-        return int(moment.timestamp())
-    text = str(value).strip()[:10]
-    return int(datetime.fromisoformat(text).replace(
-        tzinfo=timezone.utc).timestamp())
+    else:
+        moment = datetime.fromisoformat(str(value).strip()[:10]).replace(
+            tzinfo=timezone.utc)
+        if end_of_day:
+            moment = moment.replace(hour=23, minute=59, second=59)
+    return int(moment.timestamp())
 
 
 __all__ = [
