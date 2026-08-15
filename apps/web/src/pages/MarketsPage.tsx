@@ -8,6 +8,7 @@ import {
   InstrumentDetails, InstrumentSelector, findInstrument, useInstruments,
 } from '../components/InstrumentSelector';
 import { SessionCalendar } from '../components/SessionCalendar';
+import { LocalResearchCorpus } from '../components/LocalResearchCorpus';
 import type { Candle, Instrument } from '../api/types';
 
 /** Windows are chosen in the UI; the server decides how many points come back. */
@@ -46,6 +47,13 @@ export function MarketsPage() {
 
   const markets = useQuery('markets', (signal) => apiClient.getMarkets(signal));
   const entry = markets.data?.products.find((item) => item.product === product);
+
+  // Asked for unconditionally, because "is it installed" is itself the answer
+  // the panel renders. It is a local filesystem question; nothing is fetched
+  // from a provider to answer it.
+  const corpus = useQuery('research-corpus', (signal) =>
+    apiClient.getResearchCorpus(signal),
+  );
 
   // The window is derived from the corpus end, not from the wall clock: this
   // is historical data, and "now" has nothing to do with it.
@@ -147,6 +155,10 @@ export function MarketsPage() {
           </>
         )}
       </section>
+
+      {corpus.data && (
+        <LocalResearchCorpus instruments={reference} corpus={corpus.data} />
+      )}
 
       {reference.length > 0 && (
         <section className="card">

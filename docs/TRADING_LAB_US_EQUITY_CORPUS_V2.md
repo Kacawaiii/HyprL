@@ -34,8 +34,14 @@ corpus still requires a paid provider, and V1 remains its frozen spec.
 
 It is **RAW**, not adjusted. The payload carries unadjusted OHLC in `quote` and
 a separate adjusted close in `adjclose`; this corpus reads the raw quote and
-records corporate actions beside it. It never claims an adjustment it did not
-perform, and `adjclose` is never substituted for a close.
+records **split events** beside it, in `corporate_actions/`. It never claims an
+adjustment it did not perform, and `adjclose` is never substituted for a close.
+
+Splits are what `corporate_actions/` publishes, because splits are what would
+restate a raw price. Dividends are requested from the source and arrive in the
+response, but they are not republished as a separate artefact — they remain in
+the stored raw payload, which is hashed and kept, so a later total-return layer
+can recover them. Nothing here applies either one to a price.
 
 ## 2. Identity
 

@@ -17,7 +17,7 @@ import type {
   PortfolioAttribution, PortfolioBacktestsIndex, PortfolioDetail,
   PaperLegacy, PaperPortfolioEquity, PaperPortfolioPending,
   PaperPortfolioStatus, PortfolioEquity, PortfolioFillPage, PortfolioStatus,
-  ProvidersIndex, RiskView, SignalsView,
+  ProvidersIndex, ResearchBarPage, ResearchCorpusStatus, RiskView, SignalsView,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -204,6 +204,26 @@ export const apiClient = {
   getInstrument: (instrumentId: string, signal?: AbortSignal) =>
     request<InstrumentDetail>(
       `/api/v1/instruments/${encodeURIComponent(instrumentId)}`, signal),
+  /** Whether the local equity research corpus binds on this machine.
+   *  Status only. There is deliberately no companion call that fetches,
+   *  repairs or refreshes it -- capture is a command-line act. */
+  getResearchCorpus: (signal?: AbortSignal) =>
+    request<ResearchCorpusStatus>('/api/v1/research/equities/corpus', signal),
+  /** A bounded page of canonical daily bars from the local corpus. */
+  getResearchBars: (
+    instrumentId: string,
+    options: { start?: string; end?: string; limit?: number; cursor?: string } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<ResearchBarPage>(
+      `/api/v1/research/equities/${encodeURIComponent(instrumentId)}/bars${query({
+        start: options.start,
+        end: options.end,
+        limit: options.limit,
+        cursor: options.cursor,
+      })}`,
+      signal,
+    ),
   getProviders: (signal?: AbortSignal) =>
     request<ProvidersIndex>('/api/v1/providers', signal),
   getCalendars: (signal?: AbortSignal) =>

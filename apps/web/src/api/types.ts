@@ -582,6 +582,108 @@ export interface Instrument {
   /** What the committed artefacts call it. Null for anything untradable,
    *  because only a tradable instrument appears in an artefact that uses one. */
   legacy_product_id: string | null;
+  /** Whether verified local research history exists for it on this machine.
+   *  Independent of `tradable`: an instrument can have years of history and
+   *  still be one this build refuses to trade. */
+  research: InstrumentResearchStatus;
+}
+
+export interface InstrumentResearchStatus {
+  local_corpus_available: boolean;
+  local_corpus_status: CorpusStatus | null;
+  corpus_id?: string;
+  provider?: string;
+  source_timeframe?: string;
+  adjustment?: string;
+  official_contract?: boolean;
+  redistribution_permitted?: boolean;
+  rows?: number;
+}
+
+export type CorpusStatus = 'AVAILABLE' | 'NOT_INSTALLED' | 'INVALID' | 'CORRUPT';
+
+/** Per-instrument detail. Diagnostic only -- the corpus is atomic, so this
+ *  never decides whether anything may be charted. */
+export interface CorpusInstrumentDiagnostic {
+  instrument_id: string;
+  present: boolean;
+  rows: number;
+  content_hash_matches: boolean;
+  canonical_sha256_matches: boolean;
+  problem: string | null;
+}
+
+export interface ResearchCorpusMetadata {
+  provider: string;
+  corpus_id: string;
+  source_timeframe: string;
+  adjustment: string;
+  session: string;
+  official_contract: boolean;
+  redistribution_permitted: boolean;
+  local_verified: boolean;
+  source_kind: string;
+  live: boolean;
+  realtime: boolean;
+}
+
+export interface ResearchCorpusStatus {
+  api_version: string;
+  schema_version: string;
+  status: CorpusStatus;
+  available: boolean;
+  reasons: string[];
+  instruments: CorpusInstrumentDiagnostic[];
+  corpus_id: string | null;
+  provider_id: string | null;
+  timeframe: string | null;
+  adjustment_policy: string | null;
+  session_type: string | null;
+  requested_range: { start: string; end: string } | null;
+  corpus_spec_hash: string | null;
+  calendar_spec_hash: string | null;
+  corpus_content_hash: string | null;
+  official_contract: boolean;
+  redistribution_permitted: boolean;
+  instruments_expected: string[];
+  rows_total?: number;
+  expected_sessions?: number;
+  capabilities: {
+    local_history: boolean;
+    live: boolean;
+    realtime: boolean;
+    prediction: boolean;
+    backtest: boolean;
+    paper_trading: boolean;
+    tradable: boolean;
+    download: boolean;
+  };
+  metadata?: ResearchCorpusMetadata;
+}
+
+export interface ResearchBar {
+  instrument_id: string;
+  bar_open_at: string;
+  bar_close_at: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  session_date: string;
+}
+
+export interface ResearchBarPage {
+  api_version: string;
+  instrument_id: string;
+  metadata: ResearchCorpusMetadata;
+  bars: ResearchBar[];
+  page: {
+    returned: number;
+    limit: number;
+    has_more: boolean;
+    next_cursor: string | null;
+  };
 }
 
 export interface InstrumentGroup {

@@ -48,6 +48,7 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/paper/portfolio/pending': fixtures.paperPortfolioPendingIdle,
     '/api/v1/paper/portfolio/equity': fixtures.paperPortfolioEquity,
     '/api/v1/paper/legacy': fixtures.paperLegacy,
+    '/api/v1/research/equities/corpus': fixtures.researchCorpusAvailable,
     ...overrides,
   };
   return vi.fn((input: string) => {
@@ -56,6 +57,10 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     // `/api/v1/markets`, and matching the index route first would hand the
     // chart a candle page.
     if (path.includes('/chart')) return jsonResponse(fixtures.chart);
+    // The research bars route before anything else that matches /research.
+    if (path.includes('/research/equities/') && path.includes('/bars')) {
+      return jsonResponse(fixtures.researchBars);
+    }
     if (path.includes('/paper/') && path.includes('/equity')) {
       return jsonResponse(fixtures.paperEquity);
     }

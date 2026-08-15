@@ -407,6 +407,7 @@ const btcInstrument = {
     '492c167c1e66a37a377cff8b4e135841c5a13a7c60324ec9b5c8b1976bf5701f',
   providers: ['coinbase-public-v1'], tradable: true,
   legacy_product_id: 'BTC-USD' as string | null,
+  research: { local_corpus_available: false, local_corpus_status: null },
 };
 
 const ethInstrument = {
@@ -436,6 +437,17 @@ const aaplInstrument = {
     'b9bb3ddb9309e527a98dcaa8ee4704bbcb2068997cae2aff244cd21cb8f354fb',
   providers: ['massive-stocks-historical-v1'], tradable: false,
   legacy_product_id: null as string | null,
+  research: {
+    local_corpus_available: true,
+    local_corpus_status: 'AVAILABLE' as const,
+    corpus_id: 'yahoo_us_equity_daily_v1',
+    provider: 'yahoo-chart-daily-v1',
+    source_timeframe: '1d',
+    adjustment: 'RAW',
+    official_contract: false,
+    redistribution_permitted: false,
+    rows: 501,
+  },
 };
 
 const qqqInstrument = {
@@ -733,4 +745,121 @@ export const paperLegacy = {
   note: 'independent per-product accounts; their equity is not the history of '
       + 'the shared portfolio and is never added to it',
   session: null, sessions: 2, events: 5860,
+};
+
+/* --- local equity research corpus (Phase 6E-V2 UI) ---------------------- */
+
+const researchMetadata = {
+  provider: 'yahoo-chart-daily-v1',
+  corpus_id: 'yahoo_us_equity_daily_v1',
+  source_timeframe: '1d',
+  adjustment: 'RAW',
+  session: 'REGULAR',
+  official_contract: false,
+  redistribution_permitted: false,
+  local_verified: true,
+  source_kind: 'LOCAL_RESEARCH_CORPUS',
+  live: false,
+  realtime: false,
+};
+
+const researchDiagnostic = (instrumentId: string) => ({
+  instrument_id: instrumentId,
+  present: true,
+  rows: 501,
+  content_hash_matches: true,
+  canonical_sha256_matches: true,
+  problem: null as string | null,
+});
+
+/** A corpus that binds. What a machine with the capture installed sees. */
+export const researchCorpusAvailable = {
+  api_version: 'trading-lab.app-api.v1',
+  schema_version: 'trading-lab.local-research-corpus.v1',
+  status: 'AVAILABLE' as const,
+  available: true,
+  reasons: [] as string[],
+  instruments: [
+    researchDiagnostic('xnas:AAPL'), researchDiagnostic('xnas:MSFT'),
+    researchDiagnostic('xnas:NVDA'), researchDiagnostic('xnas:QQQ'),
+  ],
+  corpus_id: 'yahoo_us_equity_daily_v1',
+  provider_id: 'yahoo-chart-daily-v1',
+  timeframe: '1d',
+  adjustment_policy: 'RAW',
+  session_type: 'REGULAR',
+  requested_range: { start: '2024-08-01', end: '2026-07-31' },
+  corpus_spec_hash:
+    'b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae',
+  calendar_spec_hash:
+    '1ef910eb3d4f5096ab2888ea6213df1f688870dfea02ba977bfc7faea9db6314',
+  corpus_content_hash:
+    '64ac4485fc2541e671b899928f804bf3a7ceed5d380cb266145904446f71e024',
+  official_contract: false,
+  redistribution_permitted: false,
+  instruments_expected: ['xnas:AAPL', 'xnas:MSFT', 'xnas:NVDA', 'xnas:QQQ'],
+  rows_total: 2004,
+  expected_sessions: 501,
+  capabilities: {
+    local_history: true, live: false, realtime: false, prediction: false,
+    backtest: false, paper_trading: false, tradable: false, download: false,
+  },
+  metadata: researchMetadata,
+};
+
+/** A machine that has the code and the fingerprint but not the data. */
+export const researchCorpusAbsent = {
+  ...researchCorpusAvailable,
+  status: 'NOT_INSTALLED' as const,
+  available: false,
+  reasons: ['no local research corpus store on this machine'],
+  instruments: [],
+  rows_total: undefined,
+  expected_sessions: undefined,
+  capabilities: { ...researchCorpusAvailable.capabilities, local_history: false },
+  metadata: undefined,
+};
+
+/** Files present, fingerprint mismatch. Nothing may be charted from these. */
+export const researchCorpusCorrupt = {
+  ...researchCorpusAvailable,
+  status: 'CORRUPT' as const,
+  available: false,
+  reasons: [
+    'at least one instrument does not match the committed fingerprint; ' +
+      'the corpus is atomic and serves nothing',
+  ],
+  instruments: [
+    researchDiagnostic('xnas:AAPL'), researchDiagnostic('xnas:MSFT'),
+    researchDiagnostic('xnas:NVDA'),
+    { ...researchDiagnostic('xnas:QQQ'), present: false, rows: 0,
+      content_hash_matches: false, canonical_sha256_matches: false,
+      problem: 'the canonical file is missing' },
+  ],
+  capabilities: { ...researchCorpusAvailable.capabilities, local_history: false },
+  metadata: undefined,
+};
+
+const researchBar = (index: number) => {
+  const day = String((index % 28) + 1).padStart(2, '0');
+  const base = 220 + index * 0.5;
+  return {
+    instrument_id: 'xnas:AAPL',
+    bar_open_at: `2026-03-${day}T13:30:00Z`,
+    bar_close_at: `2026-03-${day}T20:00:00Z`,
+    open: base.toFixed(2),
+    high: (base + 2).toFixed(2),
+    low: (base - 2).toFixed(2),
+    close: (base + 1).toFixed(2),
+    volume: '51000000',
+    session_date: `2026-03-${day}`,
+  };
+};
+
+export const researchBars = {
+  api_version: 'trading-lab.app-api.v1',
+  instrument_id: 'xnas:AAPL',
+  metadata: researchMetadata,
+  bars: Array.from({ length: 20 }, (_, index) => researchBar(index)),
+  page: { returned: 20, limit: 120, has_more: false, next_cursor: null },
 };
