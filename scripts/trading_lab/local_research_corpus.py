@@ -73,14 +73,6 @@ def _slug(instrument_id: str) -> str:
     return instrument_id.replace(":", "_")
 
 
-def _sha256_file(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 @dataclass(frozen=True)
 class InstrumentDiagnostic:
     """Per-instrument detail. Published for diagnosis, never for eligibility.
@@ -165,50 +157,83 @@ class LocalResearchCorpusRegistry:
 
     # --- cache ------------------------------------------------------------
 
-    def _identity_key(self) -> tuple:
-        """File identity of everything the verdict depends on.
+    def _read_bytes(self, path: pathlib.Path) -> bytes | None:
+        try:
+            return path.read_bytes()
+        except OSError:
+            return None
 
-        Size and mtime of each input, so a corpus edited after it was cached
-        is revalidated instead of being served from a verdict that describes
-        the previous bytes. Deliberately not "cache forever": the whole point
-        of this module is that a frozen file can stop being what it was.
+    def _read_inputs(self) -> dict:
+        """Every file the verdict depends on, read once, as bytes.
+
+        Read once and then reused for both the cache key and the evaluation,
+        so the bytes that were hashed are the bytes that were judged. Reading
+        twice would leave a window between the two in which the file could
+        change, and the verdict would then describe something nobody hashed.
+
+        Only the files that actually constitute the proof are here: the
+        committed fingerprint, the local manifest and the canonical
+        artefacts. Raw provider payloads are deliberately absent -- nothing in
+        the read path touches them, so they are not part of what AVAILABLE
+        means, and hashing them would only make the answer slower.
         """
-        paths = [self.fingerprint_path, self.manifest_path]
-        paths.extend(self.canonical_path(item) for item in self.spec.instruments)
-        key = []
-        for path in paths:
-            try:
-                stat = path.stat()
-                key.append((str(path), stat.st_size, stat.st_mtime_ns))
-            except OSError:
-                key.append((str(path), None, None))
-        return tuple(key)
+        inputs = {
+            "fingerprint": self._read_bytes(self.fingerprint_path),
+            "manifest": self._read_bytes(self.manifest_path),
+        }
+        for instrument_id in self.spec.instruments:
+            inputs[f"canonical:{instrument_id}"] = self._read_bytes(
+                self.canonical_path(instrument_id))
+        return inputs
+
+    @staticmethod
+    def _identity_key(inputs: dict) -> tuple:
+        """Cache identity, over the bytes themselves.
+
+        This used to be ``(path, st_size, st_mtime_ns)``, and that was wrong.
+        Those are metadata a writer controls independently of content: a
+        canonical file rewritten to the same length with its mtime restored
+        by ``os.utime`` produced an identical key, so a warm cache kept
+        answering AVAILABLE and the API served forged prices under
+        ``local_verified: true``. Size and mtime are not evidence of anything.
+
+        The digest is. It is the same thing the fingerprint binding compares
+        against, so the cache can no longer disagree with the check it exists
+        to memoise.
+        """
+        return tuple(sorted(
+            (name, None if blob is None else hashlib.sha256(blob).hexdigest())
+            for name, blob in inputs.items()))
 
     def report(self, *, refresh: bool = False) -> LocalCorpusReport:
-        """The verdict, cached against file identity."""
-        key = self._identity_key()
+        """The verdict, cached against the content of its inputs."""
+        inputs = self._read_inputs()
+        key = self._identity_key(inputs)
         if not refresh and self._cached is not None and self._cache_key == key:
             return self._cached
-        report = self._evaluate()
+        report = self._evaluate(inputs)
         self._cached = report
         self._cache_key = key
         return report
 
     # --- the binding ------------------------------------------------------
 
-    def _read_json(self, path: pathlib.Path):
+    @staticmethod
+    def _parse_json(blob: bytes | None):
+        if blob is None:
+            return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, UnicodeDecodeError):
+            return json.loads(blob.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
             return None
 
-    def _evaluate(self) -> LocalCorpusReport:
+    def _evaluate(self, inputs: dict) -> LocalCorpusReport:
         spec = self.spec
         expected_instruments = tuple(spec.instruments)
 
         # 1. The committed anchor. Without it there is nothing to bind to, and
         #    a manifest validating only against itself is not a check.
-        fingerprint = self._read_json(self.fingerprint_path)
+        fingerprint = self._parse_json(inputs.get("fingerprint"))
         if fingerprint is None:
             return LocalCorpusReport(
                 CorpusStatus.NOT_INSTALLED,
@@ -239,7 +264,7 @@ class LocalResearchCorpusRegistry:
                 CorpusStatus.NOT_INSTALLED,
                 ("no local research corpus store on this machine",),
                 identity=identity)
-        manifest = self._read_json(self.manifest_path)
+        manifest = self._parse_json(inputs.get("manifest"))
         if manifest is None or not isinstance(manifest.get("content"), dict):
             return LocalCorpusReport(
                 CorpusStatus.NOT_INSTALLED,
@@ -343,30 +368,33 @@ class LocalResearchCorpusRegistry:
         for instrument_id in expected_instruments:
             expected = fingerprint_by_id.get(instrument_id)
             recorded = manifest_by_id.get(instrument_id)
-            path = self.canonical_path(instrument_id)
+            blob = inputs.get(f"canonical:{instrument_id}")
             if expected is None or recorded is None:
                 diagnostics.append(InstrumentDiagnostic(
                     instrument_id, present=False,
                     problem="not described by both fingerprint and manifest"))
                 corrupt = True
                 continue
-            if not path.is_file():
+            if blob is None:
                 diagnostics.append(InstrumentDiagnostic(
                     instrument_id, present=False,
                     problem="the canonical file is missing"))
                 corrupt = True
                 continue
 
-            file_digest = _sha256_file(path)
+            # Hashed and parsed from one in-memory copy. Hashing the path and
+            # then reopening it would judge one version of the file and read
+            # another; these are necessarily the same bytes.
+            file_digest = hashlib.sha256(blob).hexdigest()
             file_ok = file_digest == expected.get("canonical_sha256")
             # The content hash is over the parsed rows, so it catches a
             # reordering or a re-serialisation that a byte digest would also
             # catch -- but it is what the aggregate is built from, so it is the
             # one that has to agree with the fingerprint.
             try:
-                rows = [json.loads(line) for line in
-                        path.read_text(encoding="utf-8").splitlines() if line]
-            except (OSError, ValueError, UnicodeDecodeError):
+                rows = [json.loads(line) for line
+                        in blob.decode("utf-8").splitlines() if line]
+            except (ValueError, UnicodeDecodeError):
                 diagnostics.append(InstrumentDiagnostic(
                     instrument_id, present=True, canonical_sha256_matches=file_ok,
                     problem="the canonical file is not readable JSONL"))
@@ -429,6 +457,17 @@ class LocalResearchCorpusRegistry:
     def instrument_ids(self) -> tuple[str, ...]:
         return tuple(self.spec.instruments)
 
+    def expected_canonical_digest(self, instrument_id: str) -> str | None:
+        """The byte digest the committed fingerprint records for a file."""
+        fingerprint = self._parse_json(self._read_bytes(self.fingerprint_path))
+        if not isinstance(fingerprint, dict):
+            return None
+        for entry in fingerprint.get("instruments", []):
+            if isinstance(entry, dict) \
+                    and entry.get("instrument_id") == instrument_id:
+                return entry.get("canonical_sha256")
+        return None
+
     def read_bars(self, instrument_id: str) -> tuple[dict, ...]:
         """Canonical daily bars for one instrument, or refuse.
 
@@ -436,19 +475,37 @@ class LocalResearchCorpusRegistry:
         never `adjclose`, never the network -- the canonical rows are the ones
         the fingerprint covers, and they are the only ones anything downstream
         is allowed to see.
+
+        The bytes are read once, hashed, checked against the digest the
+        committed fingerprint records, and only then parsed. Passing the
+        availability check is not enough on its own: that verdict was reached
+        against a read that has already finished, and this one has not. Doing
+        it in this order means the rows handed back came out of exactly the
+        bytes that were just verified, rather than out of whatever the file
+        happens to hold by the time it is reopened.
         """
-        report = self.require_available()
+        self.require_available()
         if instrument_id not in self.spec.instruments:
             raise LocalCorpusError(
                 f"{instrument_id!r} is not part of the local research corpus")
-        path = self.canonical_path(instrument_id)
+        blob = self._read_bytes(self.canonical_path(instrument_id))
+        if blob is None:
+            raise LocalCorpusError("the canonical file could not be read")
+        expected = self.expected_canonical_digest(instrument_id)
+        if not expected:
+            raise LocalCorpusError(
+                "the committed fingerprint records no digest for "
+                f"{instrument_id!r}")
+        if hashlib.sha256(blob).hexdigest() != expected:
+            raise LocalCorpusError(
+                f"the canonical bytes for {instrument_id!r} do not match the "
+                "committed fingerprint; serving them is refused")
         try:
             rows = [json.loads(line) for line
-                    in path.read_text(encoding="utf-8").splitlines() if line]
-        except (OSError, ValueError, UnicodeDecodeError) as error:
+                    in blob.decode("utf-8").splitlines() if line]
+        except (ValueError, UnicodeDecodeError) as error:
             raise LocalCorpusError(
                 "the canonical file could not be read") from error
-        del report
         return tuple(rows)
 
     def metadata(self) -> dict:

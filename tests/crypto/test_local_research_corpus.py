@@ -393,6 +393,195 @@ def test_a_cached_verdict_is_invalidated_when_a_file_changes(store):
 # --- §9: the reader ------------------------------------------------------
 
 
+def _tamper_preserving_metadata(path: pathlib.Path, line: int = 5) -> str:
+    """Rewrite one price without changing the file's size or mtime.
+
+    The adversary this models is not exotic: anything that can write the file
+    can also call ``os.utime``, and a same-length digit swap needs no effort
+    at all. Returns the forged value so a caller can prove it was never
+    served.
+    """
+    import os
+
+    before = path.stat()
+    rows = path.read_text(encoding="utf-8").splitlines()
+    payload = json.loads(rows[line])
+    original = payload["close"]
+    forged = ("9" + original[1:]) if original[0] != "9" else ("1" + original[1:])
+    payload["close"] = forged
+    rows[line] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    os.utime(path, ns=(before.st_mtime_ns, before.st_mtime_ns))
+
+    after = path.stat()
+    assert after.st_size == before.st_size, "the tamper changed the file size"
+    assert after.st_mtime_ns == before.st_mtime_ns, "the tamper moved mtime"
+    return forged
+
+
+@needs_corpus
+def test_same_size_same_mtime_tampering_is_detected(store):
+    """UI6E-R13: metadata is not evidence.
+
+    Path, size and mtime are all unchanged. Only the bytes moved, and that is
+    the only thing that may decide. This is the exact case that used to be
+    served as AVAILABLE from a warm cache.
+    """
+    registry = _registry(store)
+    assert registry.report().status == CorpusStatus.AVAILABLE
+
+    path = store / "canonical" / f"{_slug('xnas:AAPL')}.jsonl"
+    forged = _tamper_preserving_metadata(path)
+
+    # No refresh flag: the same registry instance must notice by itself.
+    report = registry.report()
+    assert report.status == CorpusStatus.CORRUPT
+    assert report.available is False
+
+    # Atomic: every instrument is refused, not just the tampered one, and the
+    # forged price is never handed to a caller.
+    for instrument in INSTRUMENTS:
+        with pytest.raises(LocalCorpusError):
+            registry.read_bars(instrument)
+    assert forged in path.read_text(), "the tamper did not land on disk"
+
+
+@needs_corpus
+def test_read_bars_revalidates_even_against_a_stale_verdict(store):
+    """The served bytes are checked by the read, not only by the verdict.
+
+    A verdict is reached against a read that has already finished. This forces
+    a stale AVAILABLE into the cache so the availability gate cannot be what
+    refuses, and the refusal has to come from the read revalidating the bytes
+    it just pulled off disk.
+    """
+    registry = _registry(store)
+    good = registry.report()
+    assert good.status == CorpusStatus.AVAILABLE
+
+    path = store / "canonical" / f"{_slug('xnas:QQQ')}.jsonl"
+    _tamper_preserving_metadata(path)
+
+    # Pin the old verdict against the NEW inputs, defeating the cache on purpose.
+    registry._cached = good
+    registry._cache_key = registry._identity_key(registry._read_inputs())
+    assert registry.report().available is True, "the stale verdict did not stick"
+
+    with pytest.raises(LocalCorpusError, match="committed fingerprint"):
+        registry.read_bars("xnas:QQQ")
+
+
+@needs_corpus
+def test_a_whole_file_swap_with_preserved_metadata_is_detected(store):
+    """§15: replace the file entirely, keep path, size and mtime."""
+    import os
+
+    canonical = store / "canonical"
+    target = canonical / f"{_slug('xnas:AAPL')}.jsonl"
+    donor = canonical / f"{_slug('xnas:MSFT')}.jsonl"
+    before = target.stat()
+    replacement = donor.read_bytes()[:before.st_size].ljust(before.st_size, b" ")
+    target.write_bytes(replacement)
+    os.utime(target, ns=(before.st_mtime_ns, before.st_mtime_ns))
+
+    assert target.stat().st_size == before.st_size
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    assert _registry(store).report().status == CorpusStatus.CORRUPT
+
+
+@needs_corpus
+def test_the_cache_key_is_built_from_content_not_metadata(store):
+    """Stated directly, so a future refactor cannot quietly regress it."""
+    registry = _registry(store)
+    before = registry._identity_key(registry._read_inputs())
+    _tamper_preserving_metadata(
+        store / "canonical" / f"{_slug('xnas:NVDA')}.jsonl")
+    after = registry._identity_key(registry._read_inputs())
+    assert before != after, "identical metadata produced an identical key"
+    # And the key carries digests, not sizes or timestamps.
+    for _, value in after:
+        assert value is None or (isinstance(value, str) and len(value) == 64)
+
+
+@needs_corpus
+def test_the_verdict_judges_the_bytes_it_hashed(store):
+    """One read feeds both the cache key and the evaluation."""
+    registry = _registry(store)
+    reads = []
+    original = registry._read_bytes
+
+    def counting(path):
+        reads.append(str(path))
+        return original(path)
+
+    registry._read_bytes = counting
+    registry.report(refresh=True)
+    # Six inputs, read once each: the fingerprint, the manifest and four
+    # canonical files. A second read of any of them would be a second version.
+    assert len(reads) == len(set(reads)) == 6
+
+
+@needs_corpus
+def test_read_bars_reads_the_canonical_file_exactly_once(store):
+    """UI6E-R13-C: there is no window between hashing and parsing.
+
+    Two reads would mean the digest describes one version of the file and the
+    rows come from another, and a writer landing between them gets its bytes
+    served under a passing check. One read makes that unexpressible rather
+    than merely unlikely, so this counts the reads instead of trying to win a
+    race in a test.
+    """
+    registry = _registry(store)
+    registry.report()                       # warm, so the verdict is settled
+    target = registry.canonical_path("xnas:AAPL")
+
+    reads = []
+    original = registry._read_bytes
+
+    def counting(path):
+        if path == target:
+            reads.append(str(path))
+        return original(path)
+
+    registry._read_bytes = counting
+    registry.read_bars("xnas:AAPL")
+    # One for the availability verdict, one for the serve. Never a third,
+    # which is what a hash-then-reopen implementation would need.
+    assert len(reads) == 2
+
+
+@needs_corpus
+def test_the_rows_served_come_from_the_bytes_that_were_hashed(store):
+    """A writer landing after the read still cannot change what is served."""
+    registry = _registry(store)
+    registry.report()
+    target = registry.canonical_path("xnas:AAPL")
+    good = target.read_bytes()
+
+    original = registry._read_bytes
+    seen = {"count": 0}
+
+    def tamper_after_serving_read(path):
+        data = original(path)
+        if path == target:
+            seen["count"] += 1
+            if seen["count"] == 2:      # read_bars' own read has just returned
+                rows = good.decode("utf-8").splitlines()
+                payload = json.loads(rows[5])
+                payload["close"] = "9" + payload["close"][1:]
+                rows[5] = json.dumps(payload, sort_keys=True,
+                                     separators=(",", ":"))
+                target.write_bytes(("\n".join(rows) + "\n").encode("utf-8"))
+        return data
+
+    registry._read_bytes = tamper_after_serving_read
+    bars = registry.read_bars("xnas:AAPL")
+    assert not [bar for bar in bars if bar["close"].startswith("9")], (
+        "a row written after the verified read was served")
+    # The next request sees the new bytes and refuses them.
+    assert _registry(store).report().status == CorpusStatus.CORRUPT
+
+
 @needs_corpus
 def test_read_bars_returns_canonical_rows_only(store):
     rows = _registry(store).read_bars("xnas:AAPL")
@@ -455,6 +644,90 @@ def test_status_endpoint_reports_corruption(store):
     payload = _service(store).research_equity_corpus()
     assert payload["status"] == CorpusStatus.CORRUPT
     assert payload["available"] is False
+
+
+@needs_corpus
+def test_the_service_stops_serving_after_metadata_preserving_tampering(store):
+    """§10: through the object an HTTP request actually uses.
+
+    One AppService per server process, so this is the long-lived instance
+    whose warm cache used to keep answering AVAILABLE for the lifetime of the
+    server.
+    """
+    service = _service(store)
+    assert service.research_equity_corpus()["status"] == CorpusStatus.AVAILABLE
+    assert service.research_equity_bars("xnas:AAPL", limit=5)["bars"]
+
+    forged = _tamper_preserving_metadata(
+        store / "canonical" / f"{_slug('xnas:AAPL')}.jsonl")
+
+    payload = service.research_equity_corpus()
+    assert payload["status"] == CorpusStatus.CORRUPT
+    assert payload["available"] is False
+    # The response must not keep asserting a verification that no longer holds.
+    assert "metadata" not in payload
+    assert payload["capabilities"]["local_history"] is False
+
+    with pytest.raises(AppApiError):
+        service.research_equity_bars("xnas:AAPL")
+    assert forged  # the tamper was real
+
+
+@needs_corpus
+def test_no_route_serves_a_forged_bar(store):
+    """§11: at the route table, the shape a browser would hit."""
+    from scripts.trading_lab.app_api.server import build_routes
+
+    service = _service(store)
+    routes, *_ = build_routes(service)
+    status_route = routes["/api/v1/research/equities/corpus"]
+    assert status_route({})["status"] == CorpusStatus.AVAILABLE
+
+    forged = _tamper_preserving_metadata(
+        store / "canonical" / f"{_slug('xnas:MSFT')}.jsonl")
+
+    assert status_route({})["status"] == CorpusStatus.CORRUPT
+    for instrument in INSTRUMENTS:
+        with pytest.raises(AppApiError):
+            service.research_equity_bars(instrument, limit=5)
+    assert forged
+
+
+@needs_corpus
+def test_instrument_metadata_stops_claiming_availability_after_tampering(store):
+    service = _service(store)
+    assert all(item["research"]["local_corpus_available"]
+               for item in service.instruments()["instruments"]
+               if item["instrument_id"] in INSTRUMENTS)
+
+    _tamper_preserving_metadata(
+        store / "canonical" / f"{_slug('xnas:NVDA')}.jsonl")
+
+    for item in service.instruments()["instruments"]:
+        if item["instrument_id"] in INSTRUMENTS:
+            assert item["research"]["local_corpus_available"] is False
+            assert item["research"]["local_corpus_status"] == CorpusStatus.CORRUPT
+
+
+@needs_corpus
+def test_tamper_detection_opens_no_socket(store, monkeypatch):
+    """§18: the new path is as offline as the old one."""
+    import socket
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("revalidation attempted a network call")
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+
+    service = _service(store)
+    assert service.research_equity_corpus()["status"] == CorpusStatus.AVAILABLE
+    _tamper_preserving_metadata(
+        store / "canonical" / f"{_slug('xnas:QQQ')}.jsonl")
+    assert service.research_equity_corpus()["status"] == CorpusStatus.CORRUPT
+    with pytest.raises(AppApiError):
+        service.research_equity_bars("xnas:QQQ")
 
 
 @needs_corpus
