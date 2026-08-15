@@ -121,7 +121,38 @@ def build(*, layout, root=None, health=None, static_site=None,
         }
 
     bundle["storage"] = storage_report(layout)
+    bundle["research_corpus"] = _research_corpus_section()
     return bundle
+
+
+def _research_corpus_section() -> dict:
+    """Whether the local research corpus is installed and binds. No prices.
+
+    A support bundle is a file people email, so this carries the answer to
+    "is their corpus intact" -- status, identity and hashes -- and none of the
+    data itself. The corpus declares `redistribution_permitted: false`, and
+    that applies to a diagnostic archive exactly as it applies to a release.
+    """
+    from scripts.trading_lab.local_research_corpus import default_registry
+
+    try:
+        report = default_registry().report()
+    except Exception:                       # pragma: no cover - defensive
+        return {"installed": False, "status": "UNKNOWN"}
+    identity = report.identity
+    return {
+        "installed": report.status != "NOT_INSTALLED",
+        "status": report.status,
+        "fingerprint_match": report.available,
+        "corpus_id": identity.get("corpus_id"),
+        "provider_id": identity.get("provider_id"),
+        "corpus_spec_hash": identity.get("corpus_spec_hash"),
+        "calendar_spec_hash": identity.get("calendar_spec_hash"),
+        "corpus_content_hash": identity.get("corpus_content_hash"),
+        "rows_total": identity.get("rows_total"),
+        "redistribution_permitted": False,
+        "source_data_included": False,
+    }
 
 
 def _paper_section(store) -> dict:

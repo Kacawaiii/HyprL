@@ -49,6 +49,18 @@ PAPER_DATABASE = "paper_v1.sqlite"
 SUPPORTED_PRODUCTS = ("BTC-USD", "ETH-USD")
 SUPPORTED_TIMEFRAME = "1h"
 
+# The local equity research corpus. Read-only, local-only, and bounded like
+# everything else -- today it holds 501 daily bars per instrument, but a page
+# size is a property of the endpoint, not of how much data happens to exist.
+# A corpus that later covers twenty years must not turn one GET into a
+# multi-megabyte response because nobody revisited the default.
+DEFAULT_RESEARCH_BAR_PAGE = 180
+MAX_RESEARCH_BAR_PAGE = 1_000
+
+# The window the Markets view opens on. Sessions, not days: 120 sessions is
+# roughly six months of trading, and the calendar decides which days those are.
+DEFAULT_RESEARCH_CHART_SESSIONS = 120
+
 # Every capability the UI may branch on, stated once. False here means the
 # feature genuinely does not exist -- the UI must show that, not simulate it.
 CAPABILITIES = {

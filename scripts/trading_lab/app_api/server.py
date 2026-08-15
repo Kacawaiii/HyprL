@@ -141,6 +141,11 @@ def build_routes(service: AppService):
             limit=_first(query, "limit")),
         "/api/v1/research/benchmarks": lambda query: {
             "benchmarks": service.benchmark_summaries()},
+        # The local equity research corpus. Status only -- there is no verb
+        # here that captures, downloads, repairs or rebuilds anything, and the
+        # read-only method table below is what guarantees that.
+        "/api/v1/research/equities/corpus":
+            lambda query: service.research_equity_corpus(),
         "/api/v1/backtests": lambda query: service.backtests(),
         "/api/v1/paper": lambda query: service.paper_status(),
         "/api/v1/paper/status": lambda query: service.paper_status(),
@@ -225,6 +230,16 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/research/benchmarks/{version}/{product}
         if len(parts) == 6 and parts[:4] == ["api", "v1", "research", "benchmarks"]:
             return self.service.benchmark_detail(parts[4], parts[5])
+        # /api/v1/research/equities/{instrument_id}/bars -- canonical ids carry
+        # a colon, so the segment may arrive percent-encoded. Decoded once and
+        # matched against a closed four-entry set; it never reaches a path.
+        if len(parts) == 6 and parts[:4] == ["api", "v1", "research", "equities"] \
+                and parts[5] == "bars":
+            return self.service.research_equity_bars(
+                unquote(parts[4]), start=_query_first(query, "start"),
+                end=_query_first(query, "end"),
+                limit=_query_first(query, "limit"),
+                cursor=_query_first(query, "cursor"))
         # /api/v1/backtests/{version}/{product}
         if len(parts) == 5 and parts[:3] == ["api", "v1", "backtests"]:
             return self.service.backtest_detail(parts[3], parts[4])

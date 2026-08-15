@@ -24,7 +24,9 @@ from scripts.trading_lab.app_api.contracts import (
     DEFAULT_PAPER_EQUITY_POINTS,
     DEFAULT_PAGE_SIZE,
     DEFAULT_PAPER_EVENTS,
+    DEFAULT_RESEARCH_BAR_PAGE,
     ECONOMIC_BACKTEST_VERSIONS,
+    MAX_RESEARCH_BAR_PAGE,
     MAX_CHART_POINTS,
     MAX_PAGE_SIZE,
     MAX_EQUITY_POINTS,
@@ -91,10 +93,17 @@ class AppService:
     so no client-supplied string ever reaches the filesystem.
     """
 
-    def __init__(self, data_root):
+    def __init__(self, data_root, *, research_corpus_root=None,
+                 research_fingerprint_path=None):
         self._root = pathlib.Path(data_root).resolve()
         self._rows: dict[str, tuple[dict[str, str], ...]] = {}
         self._manifests: dict[str, dict] = {}
+        # The research corpus lives outside the data root: it is gitignored
+        # local state, not committed artefacts, and the two must not be
+        # reachable through the same path resolution.
+        self._research_corpus = None
+        self._research_corpus_root = research_corpus_root
+        self._research_fingerprint_path = research_fingerprint_path
 
     # --- artefact access (whitelisted, never client-controlled) -----------
 
@@ -1040,6 +1049,10 @@ class AppService:
         # Only a tradable instrument has a legacy product id, because only a
         # tradable instrument appears in the committed artefacts that use one.
         payload["legacy_product_id"] = spec.legacy_product_id if tradable else None
+        # Whether local research history exists for it. One registry, extended
+        # here, rather than a second instrument list the frontend maintains --
+        # two registries drift, and the UI would be the one that drifts.
+        payload["research"] = self._research_instrument_status(spec.canonical_id)
         return payload
 
     def _calendar_payload(self, calendar_id: str, timeframe: str) -> dict:
@@ -1205,6 +1218,175 @@ class AppService:
             provider.payload()
             for provider in PROVIDERS_V1.for_instrument(spec.instrument_id)]
         return payload
+
+    # --- local equity research corpus -------------------------------------
+
+    def _research_registry(self):
+        """The discovery registry, resolved once per service instance.
+
+        Held here rather than imported at call sites so a test can point a
+        service at a temporary store, and so nothing in the request path can
+        choose a different root.
+        """
+        if self._research_corpus is None:
+            from scripts.trading_lab.local_research_corpus import (
+                LocalResearchCorpusRegistry)
+
+            self._research_corpus = LocalResearchCorpusRegistry(
+                corpus_root=self._research_corpus_root,
+                fingerprint_path=self._research_fingerprint_path)
+        return self._research_corpus
+
+    def research_equity_corpus(self) -> dict:
+        """Whether the local research corpus is usable, and what it is.
+
+        Always answers. A machine without the corpus gets NOT_INSTALLED and a
+        complete identity block -- the UI needs to say *which* corpus is
+        absent, and no part of that answer requires touching the network.
+        """
+        registry = self._research_registry()
+        report = registry.report()
+        payload = {
+            "api_version": APP_API_VERSION,
+            **report.payload(),
+            "capabilities": {
+                # Stated so the UI branches on data instead of inferring.
+                # False means the feature does not exist, not that it failed.
+                "local_history": report.available,
+                "live": False,
+                "realtime": False,
+                "prediction": False,
+                "backtest": False,
+                "paper_trading": False,
+                "tradable": False,
+                "download": False,
+            },
+        }
+        if report.available:
+            payload["metadata"] = registry.metadata()
+        return payload
+
+    def _research_instrument_status(self, instrument_id: str) -> dict:
+        """The per-instrument slice of the corpus verdict, for §12.
+
+        Atomic on purpose: an instrument is available only when the whole
+        corpus is. Reporting `local_corpus_available` per instrument from its
+        own diagnostic would let three good files present themselves as a
+        working dataset while the fourth was missing.
+        """
+        registry = self._research_registry()
+        report = registry.report()
+        if instrument_id not in registry.instrument_ids():
+            return {"local_corpus_available": False,
+                    "local_corpus_status": None}
+        status = {
+            "local_corpus_available": report.available,
+            "local_corpus_status": report.status,
+            "corpus_id": report.identity.get("corpus_id"),
+            "provider": report.identity.get("provider_id"),
+            "source_timeframe": report.identity.get("timeframe"),
+            "adjustment": report.identity.get("adjustment_policy"),
+            "official_contract": report.identity.get("official_contract", False),
+            "redistribution_permitted": report.identity.get(
+                "redistribution_permitted", False),
+        }
+        for diagnostic in report.instruments:
+            if diagnostic.instrument_id == instrument_id:
+                status["rows"] = diagnostic.rows if report.available else 0
+                break
+        return status
+
+    def _require_research_instrument(self, instrument_id: object) -> str:
+        """Resolve to a corpus instrument, or refuse.
+
+        Fail-closed against the corpus spec rather than the catalogue: the
+        catalogue also describes BTC and ETH, and a venue-shaped string like
+        ``yahoo:AAPL`` names a provider rather than an exchange and must not
+        resolve to anything at all.
+        """
+        registry = self._research_registry()
+        if not isinstance(instrument_id, str) or not instrument_id.strip():
+            raise AppApiError("an instrument id is required")
+        candidate = instrument_id.strip()
+        if candidate not in registry.instrument_ids():
+            raise NotFoundError(
+                f"{candidate!r} is not part of the local equity research "
+                "corpus")
+        return candidate
+
+    def research_equity_bars(self, instrument_id, *, start=None, end=None,
+                             limit=None, cursor=None) -> dict:
+        """A bounded page of canonical daily bars. Never the whole corpus.
+
+        Reads the verified canonical artefact only. There is no raw view, no
+        provider payload, and no fallback: if discovery says the corpus is not
+        AVAILABLE, this refuses rather than serving files that no fingerprint
+        describes.
+        """
+        from scripts.trading_lab.local_research_corpus import LocalCorpusError
+
+        instrument_id = self._require_research_instrument(instrument_id)
+        size = require_limit(limit, default=DEFAULT_RESEARCH_BAR_PAGE,
+                             maximum=MAX_RESEARCH_BAR_PAGE)
+        registry = self._research_registry()
+        report = registry.report()
+        if not report.available:
+            raise AppApiError(
+                "the local equity research corpus is not available on this "
+                f"machine (status {report.status}); it is captured by an "
+                "explicit command-line run, never by this API")
+        try:
+            rows = list(registry.read_bars(instrument_id))
+        except LocalCorpusError as error:
+            raise AppApiError(str(error)) from error
+
+        query = {"start": start or "", "end": end or "", "limit": size}
+        if start:
+            begin = _parse(start)
+            rows = [row for row in rows
+                    if _parse(row["bar_open_at"]) >= begin]
+        if end:
+            finish = _parse(end)
+            rows = [row for row in rows if _parse(row["bar_open_at"]) <= finish]
+        if cursor:
+            after = decode_cursor(cursor, endpoint="research_equity_bars",
+                                  product=instrument_id, query=query)
+            marker = _parse(after)
+            rows = [row for row in rows if _parse(row["bar_open_at"]) > marker]
+
+        page = rows[:size]
+        has_more = len(rows) > size
+        next_cursor = (
+            encode_cursor(endpoint="research_equity_bars",
+                          product=instrument_id,
+                          last_timestamp=page[-1]["bar_open_at"], query=query)
+            if has_more and page else None
+        )
+        return {
+            "api_version": APP_API_VERSION,
+            "instrument_id": instrument_id,
+            "metadata": registry.metadata(),
+            "bars": [
+                {
+                    "instrument_id": row["instrument_id"],
+                    "bar_open_at": row["bar_open_at"],
+                    "bar_close_at": row["bar_close_at"],
+                    "open": row["open"],
+                    "high": row["high"],
+                    "low": row["low"],
+                    "close": row["close"],
+                    "volume": row["volume"],
+                    "session_date": row["session_date"],
+                }
+                for row in page
+            ],
+            "page": {
+                "returned": len(page),
+                "limit": size,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+            },
+        }
 
     def providers(self) -> dict:
         from scripts.trading_lab.instrument_registry import PROVIDERS_V1
