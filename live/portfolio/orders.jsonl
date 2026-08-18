@@ -21,3 +21,4 @@
 {"ts": "2026-08-13T21:40:16.557208+00:00", "equity": 111170.84, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
 {"ts": "2026-08-14T21:20:54.885475+00:00", "equity": 110841.53, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
 {"ts": "2026-08-17T21:21:40.672257+00:00", "equity": 110418.69, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
+{"ts": "2026-08-18T21:19:20.906459+00:00", "equity": 109777.34, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
