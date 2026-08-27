@@ -1,10 +1,10 @@
 {
-  "ts": "2026-08-25T21:23:36.986784+00:00",
+  "ts": "2026-08-27T00:24:28.559547+00:00",
   "ok": true,
-  "equity": 109394.21,
+  "equity": 110138.7,
   "mode": "live",
-  "orders": 2,
-  "sent": 2,
+  "orders": 1,
+  "sent": 1,
   "failed": 0,
   "api_failed": 0,
   "blocked": 0,
@@ -14,10 +14,10 @@
   "account_mode": "long-short",
   "shorting_enabled": true,
   "momentum_targets": 33,
-  "trend_targets": 4,
+  "trend_targets": 5,
   "actual_positions": 37,
   "actual_trend_positions": 4,
   "open_orders_at_start": 0,
-  "reconciled_state": 1,
+  "reconciled_state": 0,
   "issues": []
 }
