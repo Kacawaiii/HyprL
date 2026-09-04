@@ -1,0 +1,274 @@
+{
+ "cadence_classes": [
+  "SCHEDULED_RELEASE",
+  "PERIODIC_POLL",
+  "HIGH_FREQUENCY_INCIDENT",
+  "OFFLINE_BACKFILL"
+ ],
+ "causal_quality_grades": {
+  "A": "official release, exact publication timestamp, live-observed",
+  "B": "primary source, reliable timestamp",
+  "C": "reputable media, minute-level timestamp",
+  "D": "date-only historical item",
+  "E": "unknown timing"
+ },
+ "causal_time_policy": {
+  "backfill_policy": "HISTORICAL_BACKFILL may never populate observed_at with a reconstructed value; its available_at derives from published_at and it is labelled as such",
+  "clock_precision": [
+   "second",
+   "minute",
+   "hour",
+   "day",
+   "unknown"
+  ],
+  "date_only_policy": "a day-precision item becomes available at the END of its day in the source's timezone, never 00:00",
+  "gate": "an event revision is visible to as_of(T) only when available_at <= T",
+  "observation_modes": [
+   "LIVE",
+   "HISTORICAL_BACKFILL"
+  ],
+  "precedent": "market_data_store.available_at + _later_timestamp",
+  "published_at_trusted_requires": [
+   "source_tier in (TIER_1_OFFICIAL, TIER_2_PRIMARY)",
+   "clock_precision <= minute",
+   "observation_mode == LIVE"
+  ],
+  "rationale": "published_at alone proves when a source says it published, not when we could know. observed_at alone discards a real official release timestamp. The max of the two is never earlier than the moment we could actually have known.",
+  "timestamps": {
+   "effective_at": "economic instant the event applies to, when different",
+   "ingested_at": "instant the revision became durable in the store",
+   "observed_at": "first instant OUR collector saw the resource",
+   "published_at": "instant the source declares as first publication",
+   "source_updated_at": "source's own last-modified, when exposed"
+  },
+  "unknown_precision_policy": "excluded from causal queries; fail closed",
+  "untrusted_published_at_falls_back_to": "observed_at",
+  "visibility_rule": "available_at = max(published_at_trusted, observed_at)"
+ },
+ "dedup_policy": {
+  "cluster_identity": "cluster_state_hash(as_of) is a function of T",
+  "clustering": "as_of(T) clusters use only observations with available_at <= T",
+  "leak_guarded": "a cluster enriched by a later observation must not be visible at an earlier T",
+  "observations_never_merged": true
+ },
+ "design_id": "event_intelligence_design_v1",
+ "enrichment_boundary": {
+  "degraded_mode": "without an LLM the deterministic event remains valid",
+  "enrichment_record_binds": [
+   "model_id",
+   "model_version",
+   "prompt_spec_hash",
+   "computed_at",
+   "input_content_hash"
+  ],
+  "llm_may_not_produce": [
+   "published_at",
+   "observed_at",
+   "source identity",
+   "raw content"
+  ],
+  "llm_required_for_ingestion": false,
+  "reanalysis": "appends a new enrichment revision; never overwrites"
+ },
+ "entity_identity_policy": {
+  "fail_closed": "an ambiguous mention links to no instrument",
+  "linking": "every link carries method, confidence and provenance",
+  "namespaces": [
+   "asset:<venue>:<symbol>",
+   "instrument:<venue>:<symbol>",
+   "org:<slug>",
+   "country:<iso3166>",
+   "currency:<iso4217>"
+  ],
+  "precedent": "instrument_registry canonical ids, fail-closed resolution"
+ },
+ "event_model": {
+  "CanonicalEvent": "causal cluster of observations describing one fact",
+  "Enrichment": "derived semantic features; versioned, append-only",
+  "Outcome": "post-event market reaction; stored OUTSIDE the causal event",
+  "SourceObservation": "one publication actually observed; immutable",
+  "layers": [
+   "SourceObservation",
+   "CanonicalEvent",
+   "Enrichment",
+   "Outcome"
+  ],
+  "separation_rule": "no outcome field may be reachable from an object a causal query returns"
+ },
+ "implements": false,
+ "invariants": [
+  "E1",
+  "E2",
+  "E3",
+  "E4",
+  "E5",
+  "E6",
+  "E7",
+  "E8",
+  "E9",
+  "E10",
+  "E11",
+  "E12",
+  "E13",
+  "E14",
+  "E15",
+  "E16",
+  "E17",
+  "E18",
+  "E19",
+  "E20",
+  "E21",
+  "E22"
+ ],
+ "macro_surprise_policy": {
+  "consensus_is_causal_data": true,
+  "consensus_requires": "its own available_at, provider and revision history",
+  "fields": [
+   "indicator",
+   "period",
+   "actual",
+   "consensus",
+   "previous",
+   "revised_previous",
+   "unit",
+   "release_timestamp"
+  ],
+  "post_release_consensus": "may never serve as a pre-release expectation",
+  "surprise": [
+   "surprise_raw = actual - consensus",
+   "surprise_pct",
+   "surprise_zscore"
+  ],
+  "zscore_rule": "normalising statistics use only releases available before this release; never the full history"
+ },
+ "market_context_policy": {
+  "context_window": "strictly before or at available_at",
+  "outcome_window": "strictly after available_at",
+  "storage": "separate artefacts, joined only by event_id at analysis time"
+ },
+ "missingness_policy": {
+  "rule": "these are distinct states and none may be encoded as zero",
+  "states": [
+   "NO_EVENTS_OBSERVED",
+   "SOURCE_UNAVAILABLE",
+   "SOURCE_NOT_CHECKED",
+   "RATE_LIMITED",
+   "PARSER_FAILED"
+  ]
+ },
+ "non_goals": [
+  "scrapers",
+  "provider implementations",
+  "LLM calls",
+  "event corpus",
+  "event features",
+  "prediction",
+  "signal",
+  "backtest",
+  "paper trading",
+  "broker"
+ ],
+ "note": "A design contract, not a capture spec. It binds the policies a future ingestion phase must satisfy; it authorises no provider, no network call and no corpus.",
+ "provider_classes": [
+  "OFFICIAL_MACRO",
+  "CENTRAL_BANK_GOVERNMENT",
+  "CORPORATE_EQUITY",
+  "CRYPTO_SPECIFIC",
+  "GENERAL_FINANCIAL_NEWS",
+  "SOCIAL_COMMUNITY"
+ ],
+ "provider_spec_fields": [
+  "provider_id",
+  "provider_class",
+  "source_tier",
+  "official_source",
+  "official_contract",
+  "redistribution_permitted",
+  "requires_credentials",
+  "expected_latency",
+  "timestamp_quality",
+  "revision_support",
+  "historical_availability",
+  "cadence_class"
+ ],
+ "raw_first_policy": {
+  "order": [
+   "fetch",
+   "persist raw bytes + fsync",
+   "hash",
+   "parse",
+   "normalize",
+   "append observation"
+  ],
+  "precedent": "capture_yahoo_equity_corpus.persist_raw",
+  "rule": "no observation exists before its raw artefact is durable"
+ },
+ "redistribution_policy": {
+  "normalized_full_text_is_still_restricted": true,
+  "per_provider": true,
+  "precedent": "ops/release.assert_no_restricted_data",
+  "publishable": [
+   "hashes",
+   "counts",
+   "timestamps",
+   "taxonomy labels",
+   "aggregate metrics"
+  ],
+  "restricted_raw_never_committed": true
+ },
+ "revision_policy": {
+  "append_only": true,
+  "logical_identity": "stable source_item_id per source",
+  "overwrite": "forbidden",
+  "precedent": "market_snapshots deterministic revision selection",
+  "revision_selection": "max(available_at) <= as_of, ties fail closed"
+ },
+ "schema_version": "trading-lab.event-intelligence-design.v1",
+ "source_tiers": [
+  "TIER_1_OFFICIAL",
+  "TIER_2_PRIMARY",
+  "TIER_3_REPUTABLE_MEDIA",
+  "TIER_4_SOCIAL"
+ ],
+ "status": "DESIGN_ONLY",
+ "storage_policy": {
+  "decision": "SQLite append-only receipts + immutable manifests, reusing the Phase 1C causal snapshot architecture",
+  "local_restricted": [
+   "raw source payloads",
+   "normalized article text",
+   "enrichment outputs",
+   "outcome rows"
+  ],
+  "offline_replay": "InformationSnapshot(as_of=T) rebuildable from raw with no network",
+  "raw_artefacts": "content-addressed files beside the database",
+  "rejected_alternative": "a second, parallel causal store",
+  "tracked_in_git": [
+   "design specs",
+   "taxonomy",
+   "provider specs",
+   "manifest fingerprints",
+   "aggregate metrics"
+  ]
+ },
+ "taxonomy_v1": {
+  "types": [
+   "MACRO_RELEASE",
+   "CENTRAL_BANK",
+   "REGULATION",
+   "EARNINGS",
+   "CORPORATE_ACTION",
+   "M_AND_A",
+   "LEGAL",
+   "CYBER_INCIDENT",
+   "EXCHANGE_INCIDENT",
+   "PROTOCOL_INCIDENT",
+   "ETF_FLOW_OR_DECISION",
+   "INSTITUTIONAL_ADOPTION",
+   "LIQUIDITY_EVENT",
+   "GEOPOLITICAL",
+   "GENERAL_NEWS"
+  ],
+  "unclassified": "GENERAL_NEWS is the fallback, never a silent drop",
+  "version": "trading-lab.event-taxonomy.v1"
+ }
+}
