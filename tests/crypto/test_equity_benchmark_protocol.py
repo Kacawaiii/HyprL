@@ -537,12 +537,25 @@ def test_an_equity_model_grants_no_equity_tradability():
 # --- §25 restricted artefacts ----------------------------------------------
 
 
+def test_the_local_research_root_is_under_a_gitignored_path():
+    """Repo-independent half: the path itself must sit under `var/`.
+
+    Stated without invoking git so it still means something inside a release
+    archive, which has no `.git` to ask.
+    """
+    from scripts.trading_lab.run_equity_benchmark import LOCAL_RESEARCH_ROOT
+
+    assert LOCAL_RESEARCH_ROOT.startswith("var/")
+
+
 def test_row_level_research_output_is_not_tracked_by_git():
     import subprocess
 
+    if not pathlib.Path(".git").exists():
+        pytest.skip("not a git checkout; the path rule above still applies")
     tracked = subprocess.run(["git", "ls-files"], capture_output=True,
                              text=True, check=True).stdout.splitlines()
     for path in tracked:
-        assert "equity_research" not in path or path.startswith("scripts/")
-        assert not path.endswith("features.jsonl")
-        assert not path.endswith("predictions.jsonl")
+        assert not path.startswith("var/")
+        assert not path.endswith(".oos.json")
+        assert not path.endswith(".dataset.json")
