@@ -244,6 +244,47 @@ def test_features_never_read_the_future(synthetic):
             assert row["features"] == shared[row["session_date"]], row["session_date"]
 
 
+def test_each_return_feature_equals_its_independent_definition(synthetic):
+    """Values pinned against arithmetic computed here, not against another run.
+
+    Comparing two runs of the same code cannot detect a systematic lookahead:
+    a return1 that secretly reads close[t+1] shifts both runs identically and
+    every cross-run assertion still passes. So the expectation is recomputed
+    from the known synthetic closes instead.
+    """
+    closes = [100 + i * 1.7 + (i % 5) * 0.3 for i in range(45)]
+    dataset = build_dataset("xnas:AAPL", registry=synthetic(closes), spec=SPEC)
+    names = list(FEATURE_NAMES)
+    for row in dataset["rows"]:
+        t = row["session_ordinal"]
+        here = Decimal(str(closes[t]))
+        for name, lag in (("return1", 1), ("return5", 5), ("return20", 20)):
+            before = Decimal(str(closes[t - lag]))
+            expected = here / before - 1
+            actual = Decimal(row["features"][names.index(name)])
+            assert abs(actual - expected) < Decimal("1e-12"), (name, t)
+
+
+def test_a_feature_never_moves_when_only_the_future_changes(synthetic):
+    """Independent of the definitions: rewrite the tail, keep the past.
+
+    Complements the test above -- that one pins the arithmetic, this one pins
+    the direction of information flow for the indicators whose closed forms
+    are long enough that restating them here would just be a second
+    implementation to drift.
+    """
+    base = [100 + i * 0.6 for i in range(70)]
+    altered = list(base)
+    for index in range(50, 70):
+        altered[index] = 5_000.0
+    first = build_dataset("xnas:AAPL", registry=synthetic(base), spec=SPEC)
+    second = build_dataset("xnas:AAPL", registry=synthetic(altered), spec=SPEC)
+    kept = {row["session_ordinal"]: row["features"] for row in first["rows"]}
+    for row in second["rows"]:
+        if row["session_ordinal"] < 45:
+            assert row["features"] == kept[row["session_ordinal"]], row
+
+
 def test_return20_needs_twenty_prior_sessions(synthetic):
     registry = synthetic([100 + i for i in range(30)])
     dataset = build_dataset("xnas:AAPL", registry=registry, spec=SPEC)
@@ -376,6 +417,48 @@ def test_the_run_is_deterministic(tmp_path):
     assert first["ridge"] == second["ridge"]
     assert [f["coefficients"] for f in first["folds"]] == \
         [f["coefficients"] for f in second["folds"]]
+
+
+def test_the_scaler_and_model_are_fitted_on_the_train_block_only(tmp_path):
+    """Count the rows each fit actually receives.
+
+    A scaler fitted on train+test leaks the test distribution's mean and
+    variance into every prediction -- invisible in any output, and it makes
+    results look better than they are. Recording the fit sizes is the only
+    way to state the guarantee rather than hope for it.
+    """
+    import sklearn.preprocessing
+    from sklearn.linear_model import Ridge
+
+    dataset = _dataset([100 + i * 0.3 for i in range(360)], "xnas:AAPL", tmp_path)
+    folds = build_folds(len(dataset["rows"]), spec=SPEC.walk_forward)
+    train_size = SPEC.walk_forward.train_sessions
+
+    scaler_fits, model_fits = [], []
+    real_scaler_fit = sklearn.preprocessing.StandardScaler.fit
+    real_model_fit = Ridge.fit
+
+    # Only `fit` is instrumented: `fit_transform` delegates to it, so wrapping
+    # both would count each fold twice and the assertion would be measuring
+    # sklearn's call graph rather than this code's data flow.
+    def record_scaler_fit(self, X, *args, **kwargs):
+        scaler_fits.append(len(X))
+        return real_scaler_fit(self, X, *args, **kwargs)
+
+    def record_model_fit(self, X, y, *args, **kwargs):
+        model_fits.append(len(X))
+        return real_model_fit(self, X, y, *args, **kwargs)
+
+    sklearn.preprocessing.StandardScaler.fit = record_scaler_fit
+    Ridge.fit = record_model_fit
+    try:
+        run_instrument(dataset, spec=SPEC)
+    finally:
+        sklearn.preprocessing.StandardScaler.fit = real_scaler_fit
+        Ridge.fit = real_model_fit
+
+    assert scaler_fits == [train_size] * len(folds), scaler_fits
+    assert model_fits == [train_size] * len(folds), model_fits
 
 
 def test_a_model_sees_only_its_own_instrument(tmp_path):

@@ -179,8 +179,9 @@ def test_modules_built_on_top_of_models_are_declared_ml_coupled() -> None:
                     and node.module.endswith("trading_lab.models"):
                 transitive.append(path.name)
                 break
-    assert transitive == ["paper_model.py", "real_benchmark.py",
-                          "real_benchmark_v2.py", "run_real_benchmark.py"], transitive
+    assert transitive == ["equity_benchmark.py", "paper_model.py",
+                          "real_benchmark.py", "real_benchmark_v2.py",
+                          "run_real_benchmark.py"], transitive
 
 
 @pytest.mark.parametrize("module", CORE_MODULES)

@@ -217,6 +217,33 @@ def _to_decimal(value: float, exponent: Decimal = COEFFICIENT_EXPONENT) -> Decim
         return Decimal(repr(float(value))).quantize(exponent, rounding=ROUND_HALF_EVEN)
 
 
+def fit_predict_standardised_ridge(train_x, train_y, test_x, *, alpha: float,
+                                   fit_intercept: bool, solver: str):
+    """The equity benchmark's model step, kept behind this module's boundary.
+
+    Exists here rather than in the research code because exactly one module in
+    `trading_lab` may import the ML stack, and that rule is what keeps the
+    core installable without it. The arithmetic is float sklearn on purpose:
+    it is the frozen Equity Model Spec V1, and routing it through the Decimal
+    predictor below would quantise the coefficients and quietly change a
+    protocol that was hashed before any result was seen.
+
+    Scaler and estimator are fitted on the training block alone. The test
+    block is only ever transformed.
+    """
+    import numpy
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+
+    scaler = StandardScaler()
+    scaled_train = scaler.fit_transform(numpy.asarray(train_x, dtype=float))
+    scaled_test = scaler.transform(numpy.asarray(test_x, dtype=float))
+    model = Ridge(alpha=alpha, fit_intercept=fit_intercept, solver=solver)
+    model.fit(scaled_train, numpy.asarray(train_y, dtype=float))
+    return (model.predict(scaled_test), list(model.coef_),
+            float(model.intercept_))
+
+
 class RidgeRegressionPredictor:
     """L2-penalised linear regression on the dataset's canonical features."""
 

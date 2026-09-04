@@ -148,21 +148,17 @@ def directional_accuracy(predictions, actuals) -> dict:
 def _fit_predict(train_x, train_y, test_x, *, spec):
     """Scaler and model fitted on train alone, applied to test.
 
-    Returns the coefficients too: they are what a reader needs to see that the
-    model is a linear combination of six named features and nothing else.
+    Delegates to `models`, the one module permitted to import the ML stack;
+    importing sklearn here would break the dependency contract that keeps the
+    core installable without it. Returns the coefficients too: they are what a
+    reader needs to see that the model is a linear combination of six named
+    features and nothing else.
     """
-    import numpy
-    from sklearn.linear_model import Ridge
-    from sklearn.preprocessing import StandardScaler
+    from scripts.trading_lab.models import fit_predict_standardised_ridge
 
-    scaler = StandardScaler()
-    scaled_train = scaler.fit_transform(numpy.asarray(train_x, dtype=float))
-    scaled_test = scaler.transform(numpy.asarray(test_x, dtype=float))
-    model = Ridge(alpha=spec.alpha, fit_intercept=spec.fit_intercept,
-                  solver=spec.solver)
-    model.fit(scaled_train, numpy.asarray(train_y, dtype=float))
-    return (model.predict(scaled_test), list(model.coef_),
-            float(model.intercept_))
+    return fit_predict_standardised_ridge(
+        train_x, train_y, test_x, alpha=spec.alpha,
+        fit_intercept=spec.fit_intercept, solver=spec.solver)
 
 
 def run_instrument(dataset: dict, *, spec) -> dict:
