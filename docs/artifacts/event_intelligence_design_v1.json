@@ -73,6 +73,65 @@
   },
   "observations_never_merged_or_deleted": true
  },
+ "crash_state_matrix": {
+  "A_response_received_only": {
+   "event_visible": false,
+   "ingested_at": null,
+   "normalized": false,
+   "raw": false,
+   "retry": "refetch"
+  },
+  "B_raw_durable_only": {
+   "event_visible": false,
+   "ingested_at": null,
+   "normalized": false,
+   "raw": true,
+   "retry": "reparse from raw, no network"
+  },
+  "C_normalized_transaction_in_flight": {
+   "event_visible": false,
+   "ingested_at": null,
+   "normalized": false,
+   "raw": true,
+   "retry": "re-attempt commit"
+  },
+  "D_normalized_commit_failed": {
+   "event_visible": false,
+   "ingested_at": "discarded; the attempt never existed",
+   "normalized": false,
+   "raw": true,
+   "retry": "new attempt gets a NEW boundary"
+  },
+  "E_normalized_commit_succeeded": {
+   "event_visible": "once durable_available_at <= T",
+   "ingested_at": "valid durable boundary",
+   "normalized": true,
+   "raw": true
+  },
+  "F_commit_succeeded_ack_lost": {
+   "event_visible": true,
+   "ingested_at": "the ORIGINAL committed boundary, preserved",
+   "normalized": true,
+   "raw": true,
+   "retry": "idempotent rediscovery; no duplicate"
+  },
+  "G_enrichment_computed_only": {
+   "enrichment_visible": false,
+   "event_visible": true,
+   "retry": "re-persist; computed_at is not availability"
+  },
+  "H_enrichment_committed": {
+   "enrichment_visible": "once its own durable_available_at <= T",
+   "event_visible": true
+  },
+  "I_cluster_merge_computed_only": {
+   "cluster_state": "prior state remains",
+   "note": "no in-memory cluster state is ever used by replay"
+  },
+  "J_cluster_merge_committed": {
+   "cluster_state": "new ClusterStateRevision visible"
+  }
+ },
  "date_only_policy": {
   "example": {
    "date": "2026-09-05",
@@ -86,7 +145,43 @@
   "why": "deterministic; no microsecond debate; a 23h or 25h DST day is resolved by the timezone database rather than by arithmetic; and it never asserts knowledge during the day it cannot place"
  },
  "design_id": "event_intelligence_design_v1",
- "design_revision": 2,
+ "design_revision": 3,
+ "durability_and_transaction_policy": {
+  "applies_equally_to": [
+   "event revisions",
+   "enrichments",
+   "cluster state revisions",
+   "source-health records"
+  ],
+  "authoritative_store": "the normalized EventStore transaction. A durable raw artefact alone never makes a normalized revision visible; there are not two competing truths.",
+  "clock_quality": "ingested_at carries a time value but its authority is ordering and durability, not absolute clock accuracy; a clock skew never makes an uncommitted row durable, and source/observed timestamps are never rewritten",
+  "commit_order_vs_semantic_order": "store commit order may disambiguate STORAGE chronology; it never overrides the equal-source-timestamp conflict rule, and a rowid is never business truth",
+  "concurrency_model_v1": "a single authoritative SQLite EventStore with serialized write transactions; commit ordering at the store boundary resolves durable ingestion order. No distributed consensus is implied.",
+  "distinct_content_race": "two distinct revisions may both commit, each with its own durable boundary; normal causal selection applies; no overwrite",
+  "durability_honesty": "'durable' means committed under the store's frozen durability configuration - the Phase 1C contract is journal_mode=WAL with synchronous=FULL - not a metaphysical claim about surviving any hardware failure",
+  "durable_definition": "a normalized EventRevision is durable only after the transaction that makes it visible in the authoritative EventStore has COMMITTED SUCCESSFULLY",
+  "eventstore_authority": "visibility of the normalized revision",
+  "failed_commit": "no ingested_at; the revision is invisible; no fallback to observed_at",
+  "ingested_at": "the logical durable-commit boundary associated with the SUCCESSFUL transaction that first makes this immutable revision visible in the authoritative EventStore",
+  "ingested_at_assignment": {
+   "form": "TRANSACTION_ASSIGNED_LOGICAL_COMMIT_BOUND",
+   "prepared_at": "optional diagnostic only; a pre-commit wall clock is never durable evidence and never affects visibility",
+   "rule": "the value is assigned inside the transaction but becomes authoritative only if that transaction commits; on rollback or failure it is discarded and never was an ingested_at",
+   "why_not_post_commit_wallclock": "stamping after commit would require a second transaction to write it back"
+  },
+  "lost_acknowledgement_after_success": "the already-committed revision is authoritative; deterministic identity and a uniqueness constraint let the retry rediscover and reuse it rather than create a duplicate or a later ingested_at",
+  "nonexistent_for_snapshots": [
+   "uncommitted attempt",
+   "in-flight transaction",
+   "rolled-back transaction",
+   "failed commit",
+   "in-memory object"
+  ],
+  "raw_authority": "source bytes and provenance",
+  "retry_after_failure": "a successful retry receives a NEW durable boundary; a failed attempt never donates its timestamp, even when the content bytes are identical",
+  "same_content_race": "deterministic identity + uniqueness yields exactly one revision",
+  "undefined_when_uncommitted": "durable_available_at is undefined; revision invisible"
+ },
  "effective_at_policy": {
   "describes": "the economic period or instant the event applies to",
   "example": "July CPI published in August is visible in August, never in July",
@@ -179,7 +274,14 @@
   "E27",
   "E28",
   "E29",
-  "E30"
+  "E30",
+  "E31",
+  "E32",
+  "E33",
+  "E34",
+  "E35",
+  "E36",
+  "E37"
  ],
  "macro_surprise_policy": {
   "consensus_is_causal_data": true,
@@ -235,7 +337,7 @@
   "paper trading",
   "broker"
  ],
- "note": "A design contract, not a capture spec. Revision 2 closes the counter-review MEDIUM: ingested_at now governs durable visibility instead of being a defined-but-unused field.",
+ "note": "A design contract, not a capture spec. Revision 3 defines 'durable' against the authoritative commit instead of leaving it an intuitive word, and binds the timestamp trust policy into snapshot identity.",
  "provider_classes": [
   "OFFICIAL_MACRO",
   "CENTRAL_BANK_GOVERNMENT",
@@ -268,6 +370,19 @@
    "eligible for snapshot"
   ],
   "rule": "a revision observed but never durably persisted never appears in a DURABLE_OBSERVED replay; a surviving raw artefact remains available for forensics and rebuild"
+ },
+ "raw_integrity_policy": {
+  "forensic_inspection": "if ever offered, must be named NON_VERIFIED / FORENSIC and can never produce a verified InformationSnapshot; V1 preference is fail closed only",
+  "normalized_binds_raw": "every normalized EventRevision binds the content hash of the raw artefact it came from",
+  "normalized_present_raw_corrupt": {
+   "diagnostic": "NORMALIZED_PRESENT_RAW_CORRUPT",
+   "never": [
+    "network repair",
+    "silent continue"
+   ],
+   "verified_replay": "FAIL CLOSED",
+   "why": "the snapshot asserts a provenance bound to source bytes that can no longer be verified; a normalized row looking fine is not evidence the bytes behind it were"
+  }
  },
  "redistribution_policy": {
   "llm_summary_is_not_automatically_redistributable": true,
@@ -309,16 +424,21 @@
   "binds": [
    "as_of",
    "visibility_mode",
-   "causal_quality_policy",
+   "timestamp_trust_policy_id",
+   "timestamp_trust_policy_version",
+   "minimum_causal_quality",
    "visible_event_revisions",
-   "cluster_state_revisions",
+   "cluster_state_revision_identity",
    "visible_enrichments",
-   "retrospective_enrichment_policy_if_used",
+   "enrichment_policy",
+   "taxonomy_version_if_classifications_used",
    "source_health_state",
-   "market_snapshot_identity"
+   "market_snapshot_identity",
+   "retrospective_enrichment_policy_if_used"
   ],
   "excludes_wall_clock": true,
-  "modes_produce_distinct_identities": true
+  "modes_produce_distinct_identities": true,
+  "semantics_are_part_of_identity": "two snapshots with the same as_of, mode and visible rows but different trust policy versions MUST have different identities"
  },
  "snapshot_modes": {
   "DURABLE_OBSERVED": {
@@ -345,6 +465,11 @@
   "mode_is_mandatory": true,
   "mode_participates_in_snapshot_identity": true,
   "no_implicit_default": true
+ },
+ "snapshot_read_consistency": {
+  "forbidden": "events read before a concurrent commit while clusters or source-health are read after it",
+  "precedent": "Phase 1C takes BEGIN IMMEDIATE before selection so attested rows cannot move",
+  "rule": "one InformationSnapshot is built from ONE consistent bounded store view; it may never combine causal objects from mutually inconsistent commit states"
  },
  "source_independence_policy": {
   "attention_is_not_confirmation": true,
@@ -390,7 +515,10 @@
    "aggregate metrics"
   ]
  },
- "supersedes_hash": "8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f",
+ "supersedes_hash": [
+  "8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f",
+  "25a8839f57f296320983d459e115e699edd366be32e28ce49dbffdaa5c5284cd"
+ ],
  "taxonomy_v1": {
   "types": [
    "MACRO_RELEASE",
@@ -413,7 +541,20 @@
   "version": "trading-lab.event-taxonomy.v1",
   "versioned_reclassification": "a V2 taxonomy never rewrites V1 labels; reclassification is a new enrichment revision"
  },
+ "timestamp_precision_policy": {
+  "EXACT_INSTANT": "usable at the stated instant; no artificial +1 unit is added when the provider contract guarantees an exact publication instant",
+  "day_interval": "2026-09-05 Europe/Paris -> 2026-09-06 00:00:00 Europe/Paris -> UTC",
+  "hour_interval": "2026-09-05 14h Europe/Paris -> 15:00:00 Europe/Paris -> UTC",
+  "minute_interval": "2026-09-05 14:32 Europe/Paris -> 14:33:00 Europe/Paris -> UTC",
+  "precision_is_not_semantics": "precision=minute does not by itself mean 'published sometime during that minute'; a provider contract may define a truncated display of an exact instant. The trust policy therefore binds precision AND timestamp semantics, and the conservative resolution follows the provider's declared semantics.",
+  "principle": "when a source timestamp identifies an INTERVAL rather than an exact instant, source_available_at is the START OF THE NEXT UNIT in source-local time",
+  "provider_semantics_require_web_verification": true,
+  "second_interval": "start of the next second, source-local",
+  "timezone": "from the frozen provider contract; DST resolved by the timezone database; unknown timezone yields no source_available_at and never defaults to UTC",
+  "unknown": "unavailable for strict causal use"
+ },
  "timestamp_trust_policy": {
+  "binds_precision_and_semantics": true,
   "evaluated_at_ingestion_not_at_query": true,
   "inputs": [
    "provider_class",
@@ -426,12 +567,28 @@
   ],
   "no_human_judgement_at_query_time": true,
   "policy_id": "TimestampTrustPolicyV1",
+  "timestamp_semantics_values": [
+   "EXACT_INSTANT",
+   "INTERVAL_START",
+   "INTERVAL_UNKNOWN",
+   "DATE_ONLY",
+   "UNKNOWN"
+  ],
   "trusted_requires": [
    "source_tier in (TIER_1_OFFICIAL, TIER_2_PRIMARY)",
    "timestamp_precision <= minute",
    "known timezone"
   ],
   "untrusted_effect": "source_available_at = null; only observed_at can bound",
+  "verdict_provenance": {
+   "each_verdict_retains": [
+    "policy_id",
+    "policy_version_or_hash",
+    "classification",
+    "audit inputs"
+   ],
+   "reevaluation": "a V2 never rewrites a V1 verdict; it appends a trust revision"
+  },
   "verdicts": [
    "TRUSTED_EXACT",
    "TRUSTED_CONSERVATIVE",

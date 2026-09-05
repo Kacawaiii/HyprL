@@ -7,10 +7,10 @@ NO SCRAPER · NO PROVIDER · NO NETWORK · NO LLM CALL
 
 NO EVENT CORPUS · NO MODEL · NO SIGNAL · NO BACKTEST
 
-DESIGN SPEC HASH (revision 2)
-25a8839f57f296320983d459e115e699edd366be32e28ce49dbffdaa5c5284cd
+DESIGN SPEC HASH (revision 3 — authoritative)
+9ebd1972a79bd1310e3d33018dc8a445a67a74689ea72e88839269b30934fc19
 
-supersedes 8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f
+supersedes  8d3f9b15… (rev 1)  →  25a8839f… (rev 2)  →  3fc3ad33… (rev 3)
 ```
 
 Canonical spec: `docs/artifacts/event_intelligence_design_v1.json`. The hash is
@@ -145,31 +145,148 @@ degradation, or a fail-closed refusal depending on severity. Where both
 timestamps are usable, the `max` is already the conservative resolution. No NTP
 machinery is implied.
 
-### Date-only timestamps are deterministic
+### Interval timestamps resolve to the start of the next unit
 
-`second | minute | hour | day | unknown`. A DATE-ONLY timestamp resolves to the
-**start of the next local calendar day in the source's timezone**, converted to
-UTC:
+A precision is not a semantics. `precision = minute` does not by itself mean
+"published somewhere inside that minute" — a provider contract may define a
+minute timestamp as an exact instant truncated for display. So the trust policy
+binds **precision and timestamp semantics together**, and the resolution
+follows the provider's declared semantics:
 
 ```
-date 2026-09-05, timezone America/New_York
-  → source_available_at = 2026-09-06T00:00:00 America/New_York → UTC
+EXACT_INSTANT · INTERVAL_START · INTERVAL_UNKNOWN · DATE_ONLY · UNKNOWN
 ```
 
-Not `00:00` of the same day, which would hand a model a free day of lookahead,
-and not an arbitrary `23:59:59`, which invites a microsecond argument. The
-next-day boundary is deterministic, and a 23-hour or 25-hour DST day resolves
-through the timezone database rather than through arithmetic. It says exactly
-what is true: we cannot place the information inside that day, so we do not
-claim it during that day.
+When the timestamp identifies an **interval**, `source_available_at` is the
+**start of the next unit** in source-local time:
 
-**If the source timezone is unknown, `source_available_at` is unavailable.** UTC
-is never silently assumed.
+| precision | example (Europe/Paris) | `source_available_at` |
+|---|---|---|
+| EXACT_INSTANT | 14:32:07 declared exact | **14:32:07** — no artificial +1 unit |
+| second (interval) | 14:32:07 | 14:32:08 → UTC |
+| minute | 14:32 | **14:33:00** → UTC |
+| hour | 14h | **15:00:00** → UTC |
+| day | 2026-09-05 | **2026-09-06 00:00:00** → UTC |
+| unknown | — | **unavailable** for strict causal use |
+
+The reasoning is the same at every scale: we do not claim knowledge inside an
+interval we cannot place. An official release whose contract guarantees an
+exact publication instant is used at that instant — adding a second there would
+be false conservatism, and the trust policy is what distinguishes the two
+cases. Which semantics a given provider actually offers is a question for the
+web-verification phase, not an assumption made here.
+
+Timezone comes from the frozen provider contract and DST is resolved by the
+timezone database. An **unknown timezone yields no `source_available_at`** and
+never silently defaults to UTC.
 
 ### `effective_at` never gates anything
 
 It describes the economic period an event concerns. July CPI published in
 August is visible in August and never in July.
+
+## 2b. What "durable" means
+
+Revision 2 made `ingested_at` the gate and then used the word *durable*
+intuitively. That is not good enough for the quantity a whole visibility rule
+rests on, so it is defined here against the only event that can carry it.
+
+> A normalized `EventRevision` is **durable** only after the transaction that
+> makes it visible in the authoritative EventStore has **committed
+> successfully**.
+
+Four things therefore **do not exist** for any snapshot: an uncommitted
+attempt, an in-flight transaction, a rolled-back transaction, and a failed
+commit. Not "exist but invisible" — they have no `ingested_at` at all, and
+`durable_available_at` is undefined. There is no fallback to `observed_at`.
+
+**Two authorities, no competition.** The raw artefact is authoritative for
+source bytes and provenance. The EventStore commit is authoritative for the
+visibility of the normalized revision. A durable raw file alone never makes a
+revision visible.
+
+### How `ingested_at` is assigned
+
+Requiring a wall clock read *after* commit and written back would need a second
+transaction, so the semantics are stated instead of a fictional API:
+
+> **Transaction-assigned logical commit bound.** The value is assigned inside
+> the transaction and becomes authoritative **only if that transaction
+> commits**. On rollback or failure it is discarded and never was an
+> `ingested_at`.
+
+A pre-commit wall clock may be retained as a `prepared_at` diagnostic. It is
+never durable evidence and never affects visibility.
+
+```
+attempt 1  prepared_at 14:02:59.900 · commit FAILS   → no ingested_at
+attempt 2  commit succeeds                            → ingested_at = 14:07
+```
+
+14:02:59.900 is never resurrected, even when the content bytes are identical.
+A failed attempt cannot donate its timestamp to a later success.
+
+### The one case that is not a failure
+
+A commit can succeed and the acknowledgement be lost — the process dies after
+the write. That revision **is** durable and authoritative. Deterministic
+identity plus a uniqueness constraint let the retry *rediscover* it rather than
+write a duplicate or a later `ingested_at`. Phase 1C already does exactly this:
+an existing snapshot id is verified field by field and entry by entry rather
+than trusted.
+
+The distinction matters and is easy to get backwards:
+
+| | outcome |
+|---|---|
+| commit **failed** | retry gets a **new** durable boundary |
+| commit **succeeded**, ack lost | the **original** committed boundary stands; no duplicate |
+
+### Concurrency
+
+V1 assumes a single authoritative SQLite EventStore with serialized write
+transactions; commit ordering at the store boundary resolves durable ingestion
+order. No distributed consensus is implied. Two collectors racing on the same
+content produce exactly one revision; two genuinely different revisions may
+both commit, each with its own boundary, and normal causal selection applies.
+
+Store commit order may disambiguate *storage* chronology. It never overrides
+the equal-source-timestamp conflict rule, and a rowid is never business truth.
+
+### Honest durability
+
+"Durable" means committed under the store's frozen durability configuration —
+the Phase 1C contract is `journal_mode=WAL` with `synchronous=FULL` — not a
+metaphysical claim that no hardware failure could ever lose it. `ingested_at`
+carries a time value, but its authority is ordering and durability, not
+absolute clock accuracy: a clock skew never makes an uncommitted row durable,
+and source or observed timestamps are never rewritten to fit it.
+
+### The crash matrix
+
+| state | raw | normalized | `ingested_at` | event visible | retry |
+|---|---|---|---|---|---|
+| **A** response received, nothing written | no | no | — | **no** | refetch |
+| **B** raw durable, normalized absent | yes | no | — | **no** | reparse from raw, no network |
+| **C** normalized transaction in flight | yes | no | — | **no** | re-attempt commit |
+| **D** normalized commit failed / rolled back | yes | no | discarded | **no** | new attempt, **new** boundary |
+| **E** normalized commit succeeded | yes | yes | valid | **yes**, once `durable_available_at <= T` | — |
+| **F** commit succeeded, ack lost | yes | yes | the **original** boundary | **yes** | idempotent rediscovery, no duplicate |
+| **G** enrichment computed, not persisted | — | — | — | event **yes**, enrichment **no** | re-persist |
+| **H** enrichment committed | — | — | — | enrichment **yes** once its own boundary ≤ T | — |
+| **I** cluster merge computed, not committed | — | — | — | **prior** cluster state stands | re-attempt |
+| **J** cluster merge committed | — | — | — | new `ClusterStateRevision` visible | — |
+
+The commit rule applies identically to event revisions, enrichments, cluster
+state revisions and **source-health records**. A failed write of
+`SOURCE_UNAVAILABLE` is not durable knowledge of an outage; it is nothing.
+
+### One consistent read
+
+A snapshot is built from **one consistent bounded store view**. It may never
+combine events read before a concurrent commit with clusters or source-health
+read after it — that would describe a state the store never occupied. Phase 1C
+takes `BEGIN IMMEDIATE` before its selection for precisely this reason.
 
 ## 3. Revisions: what we knew at 14:05 vs 14:10
 
@@ -451,7 +568,9 @@ Concretely, the mapping a future 6G-A inherits rather than invents:
 | append-only receipt rows keyed by logical id | **as-is** — event revisions per `source_item_id` |
 | `as_of` cutoff over a declared availability timestamp | **generalised** — the gating column becomes mode-dependent (`durable_available_at` or `source_available_at`) |
 | deterministic revision selection, fail-closed on ties | **as-is** |
-| immutable snapshot manifests + bounded reads | **generalised** — manifest identity additionally binds `visibility_mode` and the quality policy |
+| immutable snapshot manifests + bounded reads | **generalised** — manifest identity additionally binds `visibility_mode`, the trust policy id/version, and the quality policy |
+| `BEGIN IMMEDIATE` before selection, idempotence proven field-by-field | **pattern reused directly** — it is the consistent-read rule (E34) and the lost-acknowledgement rule (E33) |
+| `journal_mode=WAL`, `synchronous=FULL` durability contract | **inherited as the meaning of "durable"**, not as a metaphysical guarantee |
 | replay that rebuilds rather than trusts a stored hash | **as-is** |
 | `_later_timestamp` conservative combiner | **generalised, not borrowed blindly** — it combines two market bounds; events need a three-way rule over source/observation/ingestion, so the pattern is reused and the helper is not |
 
@@ -482,6 +601,16 @@ explicit.
 Corruption is fail-closed, following the local corpus: hash the raw, hash the
 normalized observation, bind both to a manifest, and never silently re-fetch
 from the network to repair a read.
+
+Every normalized revision **binds the content hash of the raw artefact it came
+from**. That makes one case explicit which revision 2 left open: if the
+required raw artefact is missing, hash-mismatched or corrupt while the
+normalized row is intact, verified replay of any snapshot depending on that
+revision **fails closed** — diagnostic `NORMALIZED_PRESENT_RAW_CORRUPT`. A
+normalized row that looks fine is not evidence that the bytes behind it were;
+the snapshot asserts a provenance that can no longer be verified. Nothing is
+re-fetched. If a forensic inspection mode is ever offered it must be named
+`NON_VERIFIED` and can never produce a verified snapshot.
 
 ## 12. Redistribution
 
@@ -564,6 +693,23 @@ applies here.
 
 Every row is decided by a stated rule, not by interpretation.
 
+And the transaction-boundary cases, decided the same way:
+
+| # | scenario | outcome |
+|---|---|---|
+| T1 | pre-transaction timestamp candidate, commit fails | revision **invisible**; the candidate never was an `ingested_at` |
+| T2 | failed at 14:03, retry commits 14:07 | durable visibility **≥ 14:07**; never 14:03 |
+| T3 | commit succeeds 14:03, crash before ack, retry at 14:07 | **original** revision authoritative, boundary 14:03 preserved, no duplicate |
+| T4 | raw durable, normalized parse crashes | raw exists; **no** EventRevision visible |
+| T5 | revision committed, required raw later corrupt | verified replay **fails closed** |
+| T6 | same visible rows, TrustPolicyV1 vs V2 | **different** snapshot identities |
+| T7 | minute-precision interval 14:32 | invisible before the provider-resolved boundary (14:33 if INTERVAL) |
+| T8 | hour-precision 14h | invisible before the provider-resolved boundary (15:00 if INTERVAL) |
+| T9 | event committed, enrichment persistence fails | event **yes**, enrichment **absent** |
+| T10 | MERGE computed, transaction fails | **prior** cluster state remains |
+| T11 | two concurrent identical-content ingestions | exactly **one** revision |
+| T12 | snapshot read concurrent with new commits | one consistent store view, no mixed state |
+
 ## 15. Invariants
 
 | # | invariant |
@@ -590,14 +736,20 @@ Every row is decided by a stated rule, not by interpretation.
 | E20 | `effective_at` never gates visibility; only `available_at` does. |
 | E21 | No query parameter can bypass the `available_at <= as_of` gate. |
 | E22 | A source observation is never deleted or merged away by clustering. |
-| **E23** | **Durable visibility.** No LIVE revision is visible in a `DURABLE_OBSERVED` snapshot at T unless its `durable_available_at <= T`, where `durable_available_at = max(live_observed_available_at, ingested_at)`. |
+| **E23** | **Durable visibility.** A revision, enrichment, cluster-state revision or source-health record is invisible in `DURABLE_OBSERVED` until the authoritative transaction persisting that exact immutable object has **committed successfully**; visibility then requires `durable_available_at = max(live_observed_available_at, ingested_at) <= T`. Failed, rolled-back and in-flight transactions have no durable boundary. |
 | **E24** | **Backfill honesty.** `HISTORICAL_BACKFILL` observations are never represented as live-observed system knowledge; retrospective visibility requires the explicit `RETROSPECTIVE_SOURCE` mode. |
 | **E25** | **Date-only determinism.** A date-only source timestamp resolves to the start of the next local calendar day in the source timezone; an unknown timezone never defaults to UTC and yields no `source_available_at`. |
 | **E26** | **Enrichment availability.** No enrichment computed or persisted after T may appear in a `DURABLE_OBSERVED` snapshot at T. |
 | **E27** | **Cluster lineage.** A later MERGE, SPLIT or RECLASSIFY never rewrites a prior cluster state or a prior snapshot. |
 | **E28** | **Source independence.** Distinct hostnames are never automatically independent sources; without lineage, `independent_source_count` stays unknown. |
 | **E29** | **Effective time.** `effective_at` never advances causal visibility under any mode. |
-| **E30** | **Replay durability.** A `DURABLE_OBSERVED` snapshot is exactly reconstructible from artefacts durably present by its visibility boundary. |
+| **E30** | **Replay durability.** A verified `DURABLE_OBSERVED` snapshot is reconstructible only from objects whose authoritative commits succeeded by their durable boundaries **and** whose bound raw/provenance artefacts pass integrity verification. |
+| **E32** | **Commit authority.** No pre-commit timestamp, prepared object, in-memory object or failed transaction can satisfy durable visibility. |
+| **E33** | **Retry honesty.** A failed attempt never donates its timestamp to a later successful retry. A lost acknowledgement after a successful commit reuses the existing committed revision rather than creating a duplicate or a later boundary. |
+| **E34** | **Consistent snapshot read.** An `InformationSnapshot` is built from one consistent bounded store view and cannot combine causal objects from mutually inconsistent commit states. |
+| **E35** | **Raw integrity.** A verified snapshot depending on a normalized revision requires the bound raw/provenance hashes to verify; missing or corrupt required raw causes fail-closed replay. |
+| **E36** | **Trust policy identity.** Snapshot identity binds the exact timestamp trust policy id and version used. |
+| **E37** | **Precision conservatism.** An interval-valued timestamp cannot become causally visible before the conservatively resolved end of its uncertainty interval, per the frozen provider timestamp semantics. |
 | **E31** | **Snapshot mode is explicit.** No snapshot may be built without a stated `visibility_mode`; the mode participates in the snapshot identity. |
 
 ## 16. Threat model
@@ -627,6 +779,13 @@ Every row is decided by a stated rule, not by interpretation.
 | cluster split retroactivity | E27 — split and merge are lineage operations, prior snapshots unchanged |
 | syndication inflation | E28 — hostname count is never independence |
 | future-computed enrichment appearing historically | E26 — an enrichment needs its own durable availability |
+| pre-commit timestamp used as durability evidence | E32 — only a successful commit carries a boundary |
+| failed attempt donating its timestamp to a retry | E33 — a retry gets a new boundary |
+| duplicate revision after a lost acknowledgement | E33 — deterministic identity, idempotent rediscovery |
+| snapshot mixing pre- and post-commit reads | E34 — one consistent bounded store view |
+| normalized row intact but raw corrupt | E35 — verified replay fails closed |
+| trust policy swapped without changing identity | E36 — policy id/version is bound |
+| interval timestamp treated as an exact instant | E37 — provider semantics decide the conservative boundary |
 
 ## 17. Carried-forward findings from 6F
 
