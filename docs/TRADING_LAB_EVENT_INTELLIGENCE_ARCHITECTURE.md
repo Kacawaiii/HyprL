@@ -7,10 +7,10 @@ NO SCRAPER · NO PROVIDER · NO NETWORK · NO LLM CALL
 
 NO EVENT CORPUS · NO MODEL · NO SIGNAL · NO BACKTEST
 
-DESIGN SPEC HASH (revision 3 — authoritative)
-9ebd1972a79bd1310e3d33018dc8a445a67a74689ea72e88839269b30934fc19
+DESIGN SPEC HASH (revision 4 — authoritative)
+4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689
 
-supersedes  8d3f9b15… (rev 1)  →  25a8839f… (rev 2)  →  3fc3ad33… (rev 3)
+supersedes  8d3f9b15… (rev 1) → 25a8839f… (rev 2) → 9ebd1972… (rev 3)
 ```
 
 Canonical spec: `docs/artifacts/event_intelligence_design_v1.json`. The hash is
@@ -520,28 +520,125 @@ opinion per entity — direction, confidence, horizon hint — and it is a
 
 ## 9. Market context vs outcome
 
-The same price series serves two roles that must never touch.
+The same price series serves two roles that must never touch — and, revision 4
+adds, market data has a **causal barrier of its own**.
 
-| | window | may enter a snapshot |
-|---|---|---|
-| **context** | strictly ≤ `available_at` | yes |
-| **outcome** | strictly > `available_at` | **never** |
+### Two gates, combined with AND
 
-Context: returns over 5m/1h/24h before T, volatility, volume, trend and
-correlation regime. Outcome: returns at +5m/+30m/+1h/+6h/+1d/+5 sessions, max
-favourable and adverse excursion, volatility expansion.
+Revisions 1–3 constrained market context by the bar's own time and stopped
+there. That is not enough. A bar can be economically old and epistemically
+new — corrected, revised or backfilled long after the moment it describes. So:
 
-They live in **separate artefacts**, joined only by `event_id` at analysis
-time. No object a causal query returns has an outcome field reachable from it.
-That is a structural guarantee, not a convention — the 6F leakage audit showed
-how cheap it is to check a structural rule and how expensive an implicit one
-is to trust.
+```
+a market row may enter InformationSnapshot(as_of=T) only if
+
+    market event time  <= T          (economic gate)
+AND
+    the selected revision is available under
+    Phase 1C declared-ingested as_of(T)   (ingestion gate)
+```
+
+Never OR. A bar whose event time is *after* T stays forbidden even if a
+corrupted record claims an earlier ingestion; a bar whose declared
+`ingested_at` is after T is invisible even though its bar time precedes T.
+
+### Phase 1C is the market authority
+
+Market context is **consumed** from an exact Phase 1C `MarketSnapshot` taken at
+the same `as_of`, not re-derived here:
+
+```
+InformationSnapshot(T)
+├── event side   — event causal policy (DURABLE_OBSERVED | RETROSPECTIVE_SOURCE)
+└── market side  — MarketSnapshot(as_of=T), PHASE1C_DECLARED_INGESTED_ASOF_V1
+```
+
+Reading canonical or final bars filtered only by market timestamp is
+**forbidden** as a construction of verified causal context. Phase 1C already
+selects deterministically over declared `ingested_at` and already fails closed
+when two contradictory contents sit at the same maximal ingestion time — it
+refuses to arbitrate by comparing hashes, because a hash is not an arbiter
+between two contradictory OHLCV declarations.
+
+`MarketSnapshot.as_of` **equals** `InformationSnapshot.as_of`. Not the latest
+snapshot, not the nearest, not one taken after T.
+
+### What Phase 1C does and does not prove
+
+Stated plainly, because overselling it here would undo the point. Phase 1C's
+`ingested_at` is the **declared** historical ingestion timeline persisted in
+the store. It provides replay causality *according to that stored timeline*.
+Its own contract says it is "never a live wall-clock, never a promise of
+lookahead-free real-time knowledge".
+
+So the market policy is named `PHASE1C_DECLARED_INGESTED_ASOF_V1` and is
+**never** labelled `LIVE_OBSERVED`. The event side and the market side are
+distinct causal policies, both bound into identity, and the composite claims no
+more than the weaker of the two: *events are DURABLE_OBSERVED while market data
+follows PHASE1C_DECLARED_INGESTED_ASOF_V1*.
+
+A future provider supplying historical candles does not thereby prove those
+candles were observed live at the time; a future market provider must declare
+its own timestamp and ingestion semantics.
+
+### Retrospective research does not license final prices
+
+A `RETROSPECTIVE_SOURCE` event snapshot still uses a causal market context.
+Retrospective mode is about *source* timestamps for events; it never licenses
+"load the final historical prices". If research later needs
+`FINAL_HISTORICAL_MARKET_DATA`, that must be a distinct, named, hashed policy —
+never conflated with causal context. It is not created now.
+
+### Derived market features
+
+Returns over 5m/1h/24h, volatility, volume, trend and correlation regime may be
+computed **only** from rows the bound market causality policy admits at T —
+never from a final full-history dataset. And the same distinction the
+enrichment layer already makes applies here:
+
+| | |
+|---|---|
+| **causal market input data** | rows admitted at T |
+| **derived market feature availability** | whether the *computed artefact* was itself available at T |
+
+A feature computed later from inputs that were causally available at T is valid
+**research reconstruction**. It may not be presented as something HyprL held at
+T unless its own durable availability supports that claim.
+
+### Outcome stays on the other side
+
+Outcome — returns at +5m/+30m/+1h/+6h/+1d/+5 sessions, max favourable and
+adverse excursion, volatility expansion — lives in **separate artefacts**,
+joined only by `event_id` at analysis time. No object a causal query returns has
+an outcome field reachable from it.
+
+There are now **two protected directions**, and the new gate completes the old
+one rather than replacing it:
+
+| | forbidden in causal context |
+|---|---|
+| **A** (E9) | market data from *after* the event |
+| **B** (E38) | market data from *before* the event but **ingested after** `as_of` |
+
+### Failure and composition
+
+MarketSnapshot corruption, missing required data or an ambiguous revision
+selection makes the composite verified replay **fail closed** — no
+final-history fallback, in either direction: never "causal events + final market
+data", never "causal market + latest events".
+
+The composite does **not** claim a distributed transaction across two stores,
+because none exists and pretending otherwise would be the same kind of
+overselling this section exists to prevent. Each component is independently
+exact and verified under its own causal store at the same declared `as_of`, and
+both component identities are frozen into the composite identity. Determinism
+comes from identities, not from a cross-database lock.
 
 `LargeMoveDefinitionSpec` (asset, horizon, threshold, direction, and a
 volatility-normalised alternative) is deliberately **not defined now**.
 Choosing a threshold after looking at recent moves is exactly how a
-research question gets selected by its answer. It must be frozen before use, like every
-other spec in this repository.
+research question gets selected by its answer. It must be frozen before use,
+like every other spec in this repository.
 
 ## 10. No news vs no collector
 
@@ -571,6 +668,7 @@ Concretely, the mapping a future 6G-A inherits rather than invents:
 | immutable snapshot manifests + bounded reads | **generalised** — manifest identity additionally binds `visibility_mode`, the trust policy id/version, and the quality policy |
 | `BEGIN IMMEDIATE` before selection, idempotence proven field-by-field | **pattern reused directly** — it is the consistent-read rule (E34) and the lost-acknowledgement rule (E33) |
 | `journal_mode=WAL`, `synchronous=FULL` durability contract | **inherited as the meaning of "durable"**, not as a metaphysical guarantee |
+| `MarketSnapshot` builder — `as_of` over declared `ingested_at`, deterministic revision selection, `SnapshotSelectionConflict` on ties, immutable identity, bounded read, offline replay | **reusable as-is, and mandatory** — it *is* the market context authority (E38). Required properties: `ingested_at <= as_of`, deterministic selection, ambiguity fail-closed, immutable snapshot identity, offline replay, bounded read. **Forbidden bypass:** reading canonical or final bars filtered only by market timestamp. |
 | replay that rebuilds rather than trusts a stored hash | **as-is** |
 | `_later_timestamp` conservative combiner | **generalised, not borrowed blindly** — it combines two market bounds; events need a three-way rule over source/observation/ingestion, so the pattern is reused and the helper is not |
 
@@ -693,6 +791,21 @@ applies here.
 
 Every row is decided by a stated rule, not by interpretation.
 
+And the market-causality cases:
+
+| # | scenario | outcome |
+|---|---|---|
+| MKT1 | bar open 13:00, declared ingested 18:00, snapshot 14:00 | **ABSENT** — 13:00 ≤ 14:00 but 18:00 > `as_of` |
+| MKT2 | bar V1 ingested 13:05, correction V2 ingested 18:00, snapshot 14:00 | **V1** |
+| MKT3 | same data, snapshot 19:00 | **V2**, if normal Phase 1C selection admits it |
+| MKT4 | bar event time 15:00, ingested 13:00, snapshot 14:00 | **ABSENT** — market event time is in the future |
+| MKT5 | backfilled bar, event time years before T, ingested after T | **ABSENT** |
+| MKT6 | final canonical history returns a corrected bar, Phase 1C returns an older revision | the snapshot **must** use the Phase 1C result |
+| MKT7 | same visible rows under two market causality policies | **different** snapshot identities |
+| MKT8 | a derived return uses one row not admitted by the causal MarketSnapshot | **invalid**, fail closed |
+| MKT9 | event side verified, MarketSnapshot corrupt | composite verified replay **fails** |
+| MKT10 | events DURABLE_OBSERVED + market PHASE1C_DECLARED_INGESTED_ASOF_V1 | valid composite, but it may **not** claim market live-observation semantics the market policy does not prove |
+
 And the transaction-boundary cases, decided the same way:
 
 | # | scenario | outcome |
@@ -750,6 +863,9 @@ And the transaction-boundary cases, decided the same way:
 | **E35** | **Raw integrity.** A verified snapshot depending on a normalized revision requires the bound raw/provenance hashes to verify; missing or corrupt required raw causes fail-closed replay. |
 | **E36** | **Trust policy identity.** Snapshot identity binds the exact timestamp trust policy id and version used. |
 | **E37** | **Precision conservatism.** An interval-valued timestamp cannot become causally visible before the conservatively resolved end of its uncertainty interval, per the frozen provider timestamp semantics. |
+| **E38** | **Market ingestion causality.** Any market data entering an `InformationSnapshot` must satisfy the frozen market causality policy at the snapshot's `as_of`. A market revision whose declared ingestion availability is later than `as_of` is invisible even when its market event time is earlier. A direct event-time-only market read is forbidden for verified causal context. |
+| **E39** | **Market causal policy identity.** Snapshot identity binds the exact market causality policy id/version and the `MarketSnapshot` identity and `as_of` used. Different market causality semantics produce different snapshot identities even when the visible rows happen to be identical. |
+| **E40** | **Market derivation causality.** Derived market context may depend only on market inputs admitted by the bound market causality policy; a retrospectively computed market feature is not represented as historically durable unless its own availability supports that claim. |
 | **E31** | **Snapshot mode is explicit.** No snapshot may be built without a stated `visibility_mode`; the mode participates in the snapshot identity. |
 
 ## 16. Threat model
@@ -786,6 +902,11 @@ And the transaction-boundary cases, decided the same way:
 | normalized row intact but raw corrupt | E35 — verified replay fails closed |
 | trust policy swapped without changing identity | E36 — policy id/version is bound |
 | interval timestamp treated as an exact instant | E37 — provider semantics decide the conservative boundary |
+| late market correction leaking into an earlier snapshot | E38 — the ingestion gate; the snapshot sees the revision selected at T |
+| historical market backfill presented as available at an old T | E38 — declared ingestion after `as_of` is invisible |
+| final canonical market history bypassing Phase 1C | E38 — an event-time-only read is forbidden for verified context |
+| market causality policy changed without changing snapshot identity | E39 — policy id/version is bound |
+| derived market feature consuming future or late-ingested input | E40 — derivation may only consume admitted rows |
 
 ## 17. Carried-forward findings from 6F
 

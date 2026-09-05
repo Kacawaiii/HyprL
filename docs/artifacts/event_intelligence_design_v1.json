@@ -145,7 +145,7 @@
   "why": "deterministic; no microsecond debate; a 23h or 25h DST day is resolved by the timezone database rather than by arithmetic; and it never asserts knowledge during the day it cannot place"
  },
  "design_id": "event_intelligence_design_v1",
- "design_revision": 3,
+ "design_revision": 4,
  "durability_and_transaction_policy": {
   "applies_equally_to": [
    "event revisions",
@@ -281,7 +281,10 @@
   "E34",
   "E35",
   "E36",
-  "E37"
+  "E37",
+  "E38",
+  "E39",
+  "E40"
  ],
  "macro_surprise_policy": {
   "consensus_is_causal_data": true,
@@ -307,11 +310,40 @@
   "zscore_rule": "sigma from prior releases only; current and future releases excluded; insufficient history yields unavailable, never 0"
  },
  "market_context_policy": {
-  "context_window": "strictly <= gating availability timestamp",
+  "applies_to_both_event_modes": "RETROSPECTIVE_SOURCE event snapshots also use a causal market context; retrospective mode never licenses loading final historical prices",
+  "composite_consistency": "event and market components each verified exactly under their own causal store at the same declared as_of, with both component identities frozen into the composite identity. No cross-database distributed transaction is claimed or required; determinism comes from identities, not a lock.",
+  "context_window": "strictly <= gating availability timestamp AND causally available at T",
+  "corruption": "MarketSnapshot corruption, missing required data or ambiguous revision selection makes the composite InformationSnapshot verified replay FAIL CLOSED; no final-history fallback",
+  "cumulative_gates": {
+   "combination": "AND, never OR",
+   "event_time_gate": "the bar's economic time must be admissible at T; a bar whose market event time is after T stays forbidden even if a corrupted record claims an earlier ingestion",
+   "ingestion_gate": "the selected revision must be available under Phase 1C declared-ingested as_of(T); a bar whose declared ingested_at is after T is invisible even when its bar time precedes T"
+  },
   "dependency_direction": "causal information -> outcome layer, never inverse",
+  "derived_market_context": {
+   "distinction": "CAUSAL MARKET INPUT DATA vs DERIVED MARKET FEATURE AVAILABILITY",
+   "input_causality": "returns, volatility, volume anomalies, correlation, regime and indicators may be computed ONLY from market rows admitted by the bound market causality policy at T; never from a final full-history dataset",
+   "retrospective_computation": "a market feature computed later from inputs that were causally available at T is valid RESEARCH RECONSTRUCTION, but may not be presented as an artefact HyprL held at T unless its own durable availability supports the claim"
+  },
+  "final_history_bypass": "FORBIDDEN. Reading canonical/final bars filtered only by market timestamp is not a permitted construction of verified causal context.",
+  "future_final_history_mode": "if research ever needs FINAL_HISTORICAL_MARKET_DATA it must be a distinct, named, hashed policy, never conflated with causal context. Not created now.",
+  "historical_backfill": "a bar whose event time long precedes T but whose declared ingestion is after T is absent from a snapshot at T",
+  "late_correction": "a correction ingested after T is invisible at T; the snapshot sees the revision that was selected at T, never the latest or final bar",
+  "live_knowledge_limitation": "Phase 1C ingested_at is the DECLARED historical ingestion timeline persisted in the store. It provides replay causality according to that stored timeline. It does NOT by itself prove real-time observation at T - the module's own contract says 'never a live wall-clock, never a promise of lookahead-free real-time knowledge'. The market policy is therefore never labelled LIVE_OBSERVED.",
+  "market_snapshot_as_of": "MarketSnapshot.as_of == InformationSnapshot.as_of; never the latest snapshot, the closest one, or one taken after T. A different as_of would have to be bound into identity explicitly.",
   "no_optional_future_fields_on_causal_records": true,
   "outcome_window": "strictly after it",
-  "storage": "separate artefacts joined only by event_id at analysis time"
+  "phase1c_primitive": "the Phase 1C MarketSnapshot builder; market context is CONSUMED from an exact Phase 1C snapshot, never re-derived by this layer",
+  "phase1c_semantics_id": "PHASE1C_DECLARED_INGESTED_ASOF_V1",
+  "policy_id": "MarketContextCausalityPolicyV1",
+  "revision_selection": "Phase 1C deterministic selection over declared ingested_at, with contradictory contents at the same maximal ingested_at failing closed rather than being arbitrated by a hash",
+  "same_as_of_required": true,
+  "storage": "separate artefacts joined only by event_id at analysis time",
+  "two_protected_directions": {
+   "A": "no post-event market data in causal context (E9)",
+   "B": "no earlier-but-late-ingested market data in causal context (E38)"
+  },
+  "versioned": true
  },
  "missingness_policy": {
   "durable_requirement": "source-health state must itself be durably recorded before it is visible, or replay is impossible",
@@ -337,7 +369,7 @@
   "paper trading",
   "broker"
  ],
- "note": "A design contract, not a capture spec. Revision 3 defines 'durable' against the authoritative commit instead of leaving it an intuitive word, and binds the timestamp trust policy into snapshot identity.",
+ "note": "A design contract, not a capture spec. Revision 4 gives market context its own causal barrier: a bar-time filter alone is no longer sufficient, and the market causality policy is bound into snapshot identity.",
  "provider_classes": [
   "OFFICIAL_MACRO",
   "CENTRAL_BANK_GOVERNMENT",
@@ -399,6 +431,7 @@
   "restricted_raw_never_committed": true
  },
  "replay_policy": {
+  "composite": "verified replay reconstructs the event side under its bound causal policy AND the market side under Phase 1C; if either fails the composite fails. No 'causal events + final market data' fallback, and no 'causal market + latest events' fallback.",
   "durable_observed": "exactly reconstructible from artefacts durably present by the visibility boundary; a snapshot can never depend on a revision not yet ingested at T",
   "no_latest_model_at_replay": true,
   "no_network": true,
@@ -423,7 +456,7 @@
  "snapshot_identity": {
   "binds": [
    "as_of",
-   "visibility_mode",
+   "event_visibility_mode",
    "timestamp_trust_policy_id",
    "timestamp_trust_policy_version",
    "minimum_causal_quality",
@@ -431,11 +464,16 @@
    "cluster_state_revision_identity",
    "visible_enrichments",
    "enrichment_policy",
-   "taxonomy_version_if_classifications_used",
    "source_health_state",
    "market_snapshot_identity",
+   "market_snapshot_as_of",
+   "market_context_causality_policy_id",
+   "market_context_causality_policy_version",
+   "market_derivation_policy_if_used",
+   "taxonomy_version_if_classifications_used",
    "retrospective_enrichment_policy_if_used"
   ],
+  "event_and_market_policies_are_separate": "events may be DURABLE_OBSERVED while market data follows PHASE1C_DECLARED_INGESTED_ASOF_V1; the two are distinct causal policies and both are bound. No claim stronger than the weaker evidence.",
   "excludes_wall_clock": true,
   "modes_produce_distinct_identities": true,
   "semantics_are_part_of_identity": "two snapshots with the same as_of, mode and visible rows but different trust policy versions MUST have different identities"
@@ -517,7 +555,8 @@
  },
  "supersedes_hash": [
   "8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f",
-  "25a8839f57f296320983d459e115e699edd366be32e28ce49dbffdaa5c5284cd"
+  "25a8839f57f296320983d459e115e699edd366be32e28ce49dbffdaa5c5284cd",
+  "9ebd1972a79bd1310e3d33018dc8a445a67a74689ea72e88839269b30934fc19"
  ],
  "taxonomy_v1": {
   "types": [
