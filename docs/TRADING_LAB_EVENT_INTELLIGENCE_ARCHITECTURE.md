@@ -7,8 +7,10 @@ NO SCRAPER · NO PROVIDER · NO NETWORK · NO LLM CALL
 
 NO EVENT CORPUS · NO MODEL · NO SIGNAL · NO BACKTEST
 
-DESIGN SPEC HASH
-8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f
+DESIGN SPEC HASH (revision 2)
+25a8839f57f296320983d459e115e699edd366be32e28ce49dbffdaa5c5284cd
+
+supersedes 8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f
 ```
 
 Canonical spec: `docs/artifacts/event_intelligence_design_v1.json`. The hash is
@@ -36,74 +38,138 @@ answer to one question:
 Everything below exists to make that question answerable, auditable, and
 replayable offline. None of it is implemented here.
 
-## 1. What HyprL knows at T
+## 1. What HyprL knows at T — and in which sense
 
-`InformationSnapshot(as_of=T)` is the only object a future model may consume.
-It contains, and can contain nothing else:
+There are two honest answers to "what was known at T", and conflating them is
+the single most expensive mistake this architecture can make. So the mode is
+**mandatory**, part of the snapshot's identity, and has no default:
 
-- event revisions whose `available_at <= T`, one per logical event — the
-  latest such revision, chosen deterministically;
-- the causal cluster state as it stood at T;
-- market data already available at T;
-- enrichments computed **only** from inputs available at T.
+```
+InformationSnapshot(as_of=T, visibility_mode=DURABLE_OBSERVED)
+InformationSnapshot(as_of=T, visibility_mode=RETROSPECTIVE_SOURCE,
+                    minimum_causal_quality=...)
+```
 
-It is deterministic and hashed. Two rebuilds from the same raw artefacts
-produce the same snapshot hash, with no network.
+**DURABLE_OBSERVED** answers *what had HyprL actually observed and made durable
+by T*. It gates on `durable_available_at <= T`. This is the reference for live
+operation, exact replay, and auditing a decision that was really taken.
 
-This is not a new invention. Phase 1C already implements exactly this shape
-for market bars — `as_of` as a cutoff over a declared availability timestamp,
+**RETROSPECTIVE_SOURCE** answers *what the world could have known at T
+according to source timestamps recovered later*. It gates on
+`source_available_at <= T` and requires an explicit minimum causal quality. It
+is for historical research only and may **never** be presented as
+`LIVE_OBSERVED` or as "HyprL knew this at T".
+
+Either way a snapshot contains only: event revisions visible under that mode,
+the cluster state resolved at T, enrichments visible under that mode, market
+data available at T, and the durably recorded source-health state. It is
+deterministic and hashed, and the two modes produce **distinct identities**.
+
+This is not a new invention. Phase 1C already implements this shape for market
+bars — `as_of` as a cutoff over a declared availability timestamp,
 deterministic revision selection, fail-closed ties, immutable manifests,
 bounded reads, replay. Event Intelligence extends that machinery to a second
 record type rather than building a second causal store beside it.
 
 ## 2. Which timestamp gates visibility
 
-Five timestamps, one gate.
+Three timestamps are recorded independently, and **none is ever rewritten from
+another**.
 
 | field | meaning |
 |---|---|
-| `published_at` | the instant the **source declares** as first publication |
-| `observed_at` | the first instant **our collector** saw the resource |
-| `ingested_at` | the instant the revision became durable in our store |
-| `effective_at` | the **economic** instant the event applies to, when different |
-| `source_updated_at` | the source's own last-modified, when exposed |
+| `source_available_at` | conservative instant the **source** claims it became public — `null` when the source timestamp fails the trust policy |
+| `observed_at` | the instant **our collector** actually obtained the bytes |
+| `ingested_at` | the instant the normalized revision became **durable**, and therefore replayable |
 
-The gate is:
+Two bounds are derived from them:
 
 ```
-available_at = max(published_at_trusted, observed_at)
-visible to as_of(T)  ⟺  available_at <= T
+live_observed_available_at = max(source_available_at if trusted, observed_at)
+durable_available_at       = max(live_observed_available_at, ingested_at)
 ```
 
-**Why the max, and not either alone.** `published_at` alone proves only when a
-source *says* it published; it is self-reported, frequently wrong, sometimes
-backdated, and for a scraped page often just a CMS field. `observed_at` alone
-is honest but throws away real information: an official CPI release genuinely
-was public at 08:30:00 ET even if our poller noticed at 08:30:04. The maximum
-is never earlier than the moment we could actually have known, which is the
-only property a causal gate needs.
+`live_observed_available_at` measures the earliest defensible *collector*
+knowledge. It is a diagnostic — a latency measure — and it **does not gate**
+the snapshot.
 
-`published_at` is *trusted* — allowed to win the max — only when the source is
-TIER_1_OFFICIAL or TIER_2_PRIMARY, clock precision is minute or better, and
-the observation was LIVE. Otherwise it falls back to `observed_at`. A media
-article claiming 14:00 while we first saw it at 15:40 becomes available at
-15:40.
+`durable_available_at` measures the earliest instant the *system* could
+durably reproduce the revision, and **it is the gate** for DURABLE_OBSERVED.
 
-`effective_at` never gates visibility. A CPI release at 08:30 concerns the
-prior month; the month is `effective_at`, the release instant is what a trader
-could act on.
+### Why durability, and not observation
 
-The repository already carries this pattern: `market_data_store` stores
-`available_at` beside `ingested_at` and combines bounds conservatively with
-`_later_timestamp`. This design generalises a rule that already exists here.
+A collector can observe at 14:00:04 and crash before the durable write, which
+only lands at 14:03:
 
-### Clock precision is a field, not an assumption
+```
+published 14:00:00 · observed 14:00:04 · ingested 14:03:00
+durable_available_at = 14:03:00
 
-`second | minute | hour | day | unknown`. A date-only historical item is
-**not** placed at 00:00 and treated as known from midnight — that would hand a
-model most of a day of free lookahead. It becomes available at the **end** of
-its day in the source's timezone. `unknown` precision is excluded from causal
-queries entirely: fail closed.
+DURABLE_OBSERVED snapshot at 14:01  →  ABSENT
+DURABLE_OBSERVED snapshot at 14:04  →  VISIBLE
+```
+
+Gating on the observation would let a replay at 14:01 assert knowledge the
+durable store did not hold — a window exactly as wide as a retry or an
+incident, which is when markets move. A replay can only honour what was
+durable, so durability gates the snapshot. The observation bound is kept
+because it is the honest measure of collector latency; it is simply not the
+thing a replay can promise.
+
+Within the max, `source_available_at` may win only when the timestamp is
+**trusted** — and trust is a versioned decision, not a judgement made at query
+time.
+
+### TimestampTrustPolicyV1
+
+Evaluated **at ingestion**, recorded on the revision, and versioned. Inputs:
+provider class, source tier, provenance, timestamp precision, timezone
+confidence, source timestamp semantics, observation mode. Verdicts:
+
+```
+TRUSTED_EXACT · TRUSTED_CONSERVATIVE · UNTRUSTED · UNKNOWN
+```
+
+Trust requires TIER_1_OFFICIAL or TIER_2_PRIMARY, precision of a minute or
+better, and a known timezone. `UNTRUSTED` sets `source_available_at = null`, so
+only `observed_at` can bound the revision. A media article claiming 14:00 that
+we first saw at 15:40 becomes collector-available at 15:40, and durable when it
+is written.
+
+### Clock anomalies
+
+Source clock ahead, source clock behind, collector clock anomaly, timezone
+parse anomaly: all three timestamps are retained separately and none is
+silently corrected. An anomaly produces a diagnostic flag, a causal-quality
+degradation, or a fail-closed refusal depending on severity. Where both
+timestamps are usable, the `max` is already the conservative resolution. No NTP
+machinery is implied.
+
+### Date-only timestamps are deterministic
+
+`second | minute | hour | day | unknown`. A DATE-ONLY timestamp resolves to the
+**start of the next local calendar day in the source's timezone**, converted to
+UTC:
+
+```
+date 2026-09-05, timezone America/New_York
+  → source_available_at = 2026-09-06T00:00:00 America/New_York → UTC
+```
+
+Not `00:00` of the same day, which would hand a model a free day of lookahead,
+and not an arbitrary `23:59:59`, which invites a microsecond argument. The
+next-day boundary is deterministic, and a 23-hour or 25-hour DST day resolves
+through the timezone database rather than through arithmetic. It says exactly
+what is true: we cannot place the information inside that day, so we do not
+claim it during that day.
+
+**If the source timezone is unknown, `source_available_at` is unavailable.** UTC
+is never silently assumed.
+
+### `effective_at` never gates anything
+
+It describes the economic period an event concerns. July CPI published in
+August is visible in August and never in July.
 
 ## 3. Revisions: what we knew at 14:05 vs 14:10
 
@@ -127,19 +193,36 @@ choice Phase 1C already makes for market receipts.
 
 ## 4. Live vs historical backfill
 
-These are different epistemic objects and must be labelled as such.
+Different epistemic objects, labelled as such and never relabelled.
 
-| | `observation_mode=LIVE` | `HISTORICAL_BACKFILL` |
+| | `LIVE` | `HISTORICAL_BACKFILL` |
 |---|---|---|
-| `observed_at` | genuinely recorded | **must not be fabricated** |
-| `available_at` | `max(published_at_trusted, observed_at)` | derived from `published_at` alone |
-| causal strength | strong | weaker, and marked |
+| `observed_at` | genuinely recorded | the instant of **the backfill**, never reconstructed |
+| `ingested_at` | when the revision became durable | the backfill's durable write |
+| DURABLE_OBSERVED at historical T | as computed | **effectively absent** — `ingested_at` is the backfill instant |
+| RETROSPECTIVE_SOURCE at historical T | n/a | admissible **only** if `source_available_at` is determinable, trusted, precision known, and causal quality meets the study's minimum |
 
-A backfill can never claim to know when we would have observed something in
-2024. Pretending otherwise is the single easiest way to manufacture a fake
-edge. A future benchmark may therefore require a minimum causal quality grade
-(A–E) and refuse to mix a date-only D item with an exact A release without
-saying so.
+An article published in 2024 and backfilled in 2027 carries
+`observed_at = 2027`. Writing 2024 there would be a fabrication, and it is the
+easiest way to manufacture a fake edge. It is therefore invisible to any
+DURABLE_OBSERVED snapshot of 2024, and visible to a RETROSPECTIVE_SOURCE
+snapshot only under an explicit quality floor.
+
+Items that fail the floor are still **stored** — they are simply inadmissible
+for strict causal research, rather than quietly mixed in.
+
+### Causal quality grades
+
+| grade | criteria |
+|---|---|
+| A | official/primary, exact timestamp, LIVE, strong provenance |
+| B | reliable source, minute precision, trusted timestamp |
+| C | weaker timestamp semantics, media tier |
+| D | date-only, conservative next-day-start availability |
+| E | unknown timing or unknown timezone — excluded from strict snapshots |
+
+A future study states `minimum_causal_quality >= B` and the policy decides,
+with no ad-hoc human interpretation at query time.
 
 ## 5. Twenty articles, one fact
 
@@ -164,16 +247,56 @@ This is the subtle leak. Consider:
 
 ```
 14:00  a small ambiguous wire item
-15:00  a detailed story revealing the item was a major announcement
+14:30  a second source: "the announcement concerns ETF approvals"
+15:00  official confirmation
 ```
 
-A cluster built today knows both. A snapshot at 14:10 must not. So cluster
-state is a **function of `as_of`**: `cluster_state(as_of=T)` is computed from
-observations with `available_at <= T` only, and carries its own hash. The
-enriched 15:00 cluster exists only for `T >= 15:00`.
+A cluster built today knows all three. A snapshot at 14:10 must not. So cluster
+state is a **function of `as_of` and of the visibility mode**: it uses only
+observations visible under that mode at T, and carries its own hash. The
+enriched cluster exists only for `T >= 14:30`.
 
 This costs recomputation. It is the difference between measuring foresight and
 measuring hindsight.
+
+### Merge, split, and lineage
+
+Clustering is a **derived state versioned in time**, with an append-only
+lineage rather than a mutable label:
+
+```
+ClusterStateRevision · ClusterLineageId · parent_cluster_ids[]
+operation ∈ { CREATE, MERGE, SPLIT, RECLASSIFY }
+```
+
+**Merge** — X and Y look separate at T1 and are recognised as one event at T2.
+Snapshot T1 still shows two; snapshot T2 shows the merged state.
+
+**Split** — X looks single at T1 and is recognised as two events X1 and X2 at
+T2. Snapshot T1 still shows one; snapshot T2 shows the split.
+
+Neither operation rewrites a prior cluster state or a prior snapshot.
+`CanonicalEventId` is therefore resolved **through the lineage as of T** — it is
+never a final identity computed with future observations, which would make
+every historical snapshot depend on today's opinion.
+
+### Syndication: a hostname is not a source
+
+A Reuters dispatch republished by fifteen domains is not fifteen independent
+confirmations. Observations carry a source lineage — `publisher`,
+`origin_publisher`, `syndication_parent`, `wire_service`, `source_lineage_id`,
+`provenance_confidence` — and the counts stay distinct:
+
+```
+observation_count = 15   publisher_count = 15   syndicated_copy_count = 14
+independent_source_count = 1
+```
+
+When provenance is unavailable, `independent_source_count` is **unknown or
+low-confidence — never the hostname count**. A flood of copies is a real
+attention signal, and attention is not confirmation; keeping
+`observation_count`, `publisher_count`, `independent_source_count` and
+`velocity` as separate metrics is what stops one from being read as the other.
 
 ## 6. Official macro releases and surprise
 
@@ -199,7 +322,9 @@ surprise_zscore = surprise_raw / σ(prior surprises available before this releas
 Two rules that are easy to get wrong and fatal when wrong:
 
 1. A consensus figure published **after** the release may never serve as the
-   pre-release expectation.
+   pre-release expectation. Under DURABLE_OBSERVED the consensus must have been
+   **durably** available before the release; under RETROSPECTIVE_SOURCE its
+   `source_available_at` must precede the release and meet the quality floor.
 2. The `σ` normalising a z-score uses only releases available before this one.
    Computing σ over the whole sample leaks the future into every observation.
 
@@ -235,11 +360,39 @@ or raw content. Provenance is not a judgement call.
 
 Every enrichment record binds `model_id`, `model_version`,
 `prompt_spec_hash`, `computed_at`, `input_content_hash`. Re-analysis under a
-new model **appends** a revision; it never overwrites. Model drift then
-becomes visible and datable instead of silently rewriting history.
+new model **appends** a revision; it never overwrites. Model drift then becomes
+visible and datable instead of silently rewriting history.
 
 If no model is available, ingestion still works and events remain valid —
 degraded, not broken.
+
+### An enrichment has its own availability
+
+An enrichment is not available merely because its input was. It carries
+`input_available_at`, `computed_at` and its own `ingested_at`, and under
+DURABLE_OBSERVED it is visible only when its **own** `durable_available_at <= T`:
+
+```
+article available 14:00 · enrichment computed 18:00
+
+DURABLE_OBSERVED snapshot 15:00  →  article YES, enrichment NO
+DURABLE_OBSERVED snapshot 19:00  →  article YES, enrichment YES
+```
+
+Letting an 18:00 sentiment appear in a 15:00 snapshot would be a lookahead
+dressed as a feature.
+
+### Retrospective enrichment is a separate layer
+
+Re-analysing a 2024 archive with a 2026 model is legitimate research, and it is
+**not** a live-known feature. It is an explicit `RETROSPECTIVE_ENRICHMENT`
+layer; the snapshot identity binds the visibility mode, the enrichment policy
+and the model/spec version, so a retrospective feature can never be mistaken
+for something the system knew at the time.
+
+The same rule governs entity linking. Deterministic linking performed at
+ingestion may be durable; a later relink with a better model is a versioned
+enrichment, never a retroactive improvement of an old snapshot.
 
 ### Sentiment is entity-conditioned
 
@@ -290,6 +443,22 @@ poll records its outcome, so absence is always attributable.
 
 **Decision: reuse the Phase 1C architecture — SQLite append-only receipts plus
 immutable manifests — rather than build a second causal store.**
+
+Concretely, the mapping a future 6G-A inherits rather than invents:
+
+| Phase 1C primitive | reuse for events |
+|---|---|
+| append-only receipt rows keyed by logical id | **as-is** — event revisions per `source_item_id` |
+| `as_of` cutoff over a declared availability timestamp | **generalised** — the gating column becomes mode-dependent (`durable_available_at` or `source_available_at`) |
+| deterministic revision selection, fail-closed on ties | **as-is** |
+| immutable snapshot manifests + bounded reads | **generalised** — manifest identity additionally binds `visibility_mode` and the quality policy |
+| replay that rebuilds rather than trusts a stored hash | **as-is** |
+| `_later_timestamp` conservative combiner | **generalised, not borrowed blindly** — it combines two market bounds; events need a three-way rule over source/observation/ingestion, so the pattern is reused and the helper is not |
+
+Raw payloads are content-addressed files beside the database, exactly as the
+Yahoo corpus stores raw beside canonical. A same-URL fetch whose bytes differ
+produces a **new** raw artefact, a new content hash and a new revision; the
+earlier raw is never overwritten.
 
 The requirements list (point-in-time query, revision history, deterministic
 replay, corruption detection, bounded reads, durability) is the list Phase 1C
@@ -378,6 +547,23 @@ No model is built until the corpus is capturable and replayable. 6F's value
 was that its protocol was frozen before its result existed; the same ordering
 applies here.
 
+## 15. Ten cases the design must answer without argument
+
+| # | scenario | DURABLE_OBSERVED | RETROSPECTIVE_SOURCE |
+|---|---|---|---|
+| C1 | published 14:00, observed 14:00:04, ingested 14:03 — snapshot **14:01** | **ABSENT** | — |
+| C2 | same event — snapshot **14:04** | **VISIBLE** | — |
+| C3 | article published 2024, backfilled 2027 — snapshot at 2024 | **ABSENT** (`ingested_at` = 2027) | visible **only if** the source timestamp is trusted and meets the quality floor |
+| C4 | date-only, timezone `America/New_York` | available at start of the **next** local day, in UTC | same |
+| C5 | date-only, timezone unknown | no `source_available_at`; grade E | **inadmissible** to strict causal research |
+| C6 | article available 14:00, enrichment computed 18:00 — snapshot **15:00** | article **YES**, enrichment **NO** | enrichment only as `RETROSPECTIVE_ENRICHMENT`, explicitly marked |
+| C7 | two clusters merge at T2 — snapshot **T1** | unchanged: still two | unchanged |
+| C8 | one cluster splits at T2 — snapshot **T1** | unchanged: still one | unchanged |
+| C9 | 15 syndicated copies of one dispatch | `observation_count = 15`, `independent_source_count = 1` (or unknown) — **never 15** | same |
+| C10 | `effective_at` precedes publication (July CPI, August release) | visible in **August** | visible in **August** |
+
+Every row is decided by a stated rule, not by interpretation.
+
 ## 15. Invariants
 
 | # | invariant |
@@ -404,6 +590,15 @@ applies here.
 | E20 | `effective_at` never gates visibility; only `available_at` does. |
 | E21 | No query parameter can bypass the `available_at <= as_of` gate. |
 | E22 | A source observation is never deleted or merged away by clustering. |
+| **E23** | **Durable visibility.** No LIVE revision is visible in a `DURABLE_OBSERVED` snapshot at T unless its `durable_available_at <= T`, where `durable_available_at = max(live_observed_available_at, ingested_at)`. |
+| **E24** | **Backfill honesty.** `HISTORICAL_BACKFILL` observations are never represented as live-observed system knowledge; retrospective visibility requires the explicit `RETROSPECTIVE_SOURCE` mode. |
+| **E25** | **Date-only determinism.** A date-only source timestamp resolves to the start of the next local calendar day in the source timezone; an unknown timezone never defaults to UTC and yields no `source_available_at`. |
+| **E26** | **Enrichment availability.** No enrichment computed or persisted after T may appear in a `DURABLE_OBSERVED` snapshot at T. |
+| **E27** | **Cluster lineage.** A later MERGE, SPLIT or RECLASSIFY never rewrites a prior cluster state or a prior snapshot. |
+| **E28** | **Source independence.** Distinct hostnames are never automatically independent sources; without lineage, `independent_source_count` stays unknown. |
+| **E29** | **Effective time.** `effective_at` never advances causal visibility under any mode. |
+| **E30** | **Replay durability.** A `DURABLE_OBSERVED` snapshot is exactly reconstructible from artefacts durably present by its visibility boundary. |
+| **E31** | **Snapshot mode is explicit.** No snapshot may be built without a stated `visibility_mode`; the mode participates in the snapshot identity. |
 
 ## 16. Threat model
 
@@ -426,6 +621,12 @@ applies here.
 | LLM model drift | versioned enrichment revisions; old snapshots reproducible |
 | redistribution leak | four-tier policy + existing release guard |
 | corrupt local artefact | hash mismatch → fail closed, no network repair |
+| collector observed then crashed before durable ingest | E23 — the revision is invisible until `ingested_at`; no snapshot claims it earlier |
+| replay overclaims pre-ingestion knowledge | E23, E30 — durability is the gate, and replay is bounded by it |
+| date-only timezone ambiguity | E25 — next-day-start in the source timezone; unknown timezone yields no availability |
+| cluster split retroactivity | E27 — split and merge are lineage operations, prior snapshots unchanged |
+| syndication inflation | E28 — hostname count is never independence |
+| future-computed enrichment appearing historically | E26 — an enrichment needs its own durable availability |
 
 ## 17. Carried-forward findings from 6F
 

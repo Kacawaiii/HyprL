@@ -1,4 +1,15 @@
 {
+ "backfill_policy": {
+  "durable_observed_visibility": "effectively absent at historical T, since ingested_at is the backfill instant",
+  "never_relabelled_live": true,
+  "observation_mode_values": [
+   "LIVE",
+   "HISTORICAL_BACKFILL"
+  ],
+  "observed_at_is_the_backfill_instant": true,
+  "otherwise": "stored but inadmissible for strict causal research",
+  "retrospective_visibility": "admissible only when source_available_at is determinable, trusted, precision known, and causal quality meets the study's minimum"
+ },
  "cadence_classes": [
   "SCHEDULED_RELEASE",
   "PERIODIC_POLL",
@@ -6,69 +17,119 @@
   "OFFLINE_BACKFILL"
  ],
  "causal_quality_grades": {
-  "A": "official release, exact publication timestamp, live-observed",
-  "B": "primary source, reliable timestamp",
-  "C": "reputable media, minute-level timestamp",
-  "D": "date-only historical item",
-  "E": "unknown timing"
+  "A": "official/primary, exact timestamp, LIVE, strong provenance",
+  "B": "reliable source, minute precision, trusted timestamp",
+  "C": "weaker timestamp semantics, media tier",
+  "D": "date-only, conservative next-day-start availability",
+  "E": "unknown timing or unknown timezone; excluded from strict snapshots"
  },
  "causal_time_policy": {
-  "backfill_policy": "HISTORICAL_BACKFILL may never populate observed_at with a reconstructed value; its available_at derives from published_at and it is labelled as such",
-  "clock_precision": [
-   "second",
-   "minute",
-   "hour",
-   "day",
-   "unknown"
-  ],
-  "date_only_policy": "a day-precision item becomes available at the END of its day in the source's timezone, never 00:00",
-  "gate": "an event revision is visible to as_of(T) only when available_at <= T",
-  "observation_modes": [
-   "LIVE",
-   "HISTORICAL_BACKFILL"
-  ],
-  "precedent": "market_data_store.available_at + _later_timestamp",
-  "published_at_trusted_requires": [
-   "source_tier in (TIER_1_OFFICIAL, TIER_2_PRIMARY)",
-   "clock_precision <= minute",
-   "observation_mode == LIVE"
-  ],
-  "rationale": "published_at alone proves when a source says it published, not when we could know. observed_at alone discards a real official release timestamp. The max of the two is never earlier than the moment we could actually have known.",
-  "timestamps": {
-   "effective_at": "economic instant the event applies to, when different",
-   "ingested_at": "instant the revision became durable in the store",
-   "observed_at": "first instant OUR collector saw the resource",
-   "published_at": "instant the source declares as first publication",
-   "source_updated_at": "source's own last-modified, when exposed"
+  "derived_bounds": {
+   "durable_available_at": "max(live_observed_available_at, ingested_at)",
+   "live_observed_available_at": "max(source_available_at if trusted, observed_at)"
   },
-  "unknown_precision_policy": "excluded from causal queries; fail closed",
-  "untrusted_published_at_falls_back_to": "observed_at",
-  "visibility_rule": "available_at = max(published_at_trusted, observed_at)"
+  "durable_available_at_meaning": "earliest instant the SYSTEM could durably reproduce the revision",
+  "ingested_at_monotonicity": "ingested_at >= observed_at except when explicitly flagged as a clock anomaly",
+  "live_observed_available_at_meaning": "earliest defensible COLLECTOR knowledge; diagnostic only, never the gate",
+  "precedent": "market_data_store.available_at + _later_timestamp; Phase 1C as_of",
+  "rationale": "A collector may observe at 14:00:04 and crash before a durable write that only lands at 14:03. Gating on the observation would let a replay assert knowledge the durable store did not hold at 14:01. Durability is what a replay can honour, so durability gates the snapshot.",
+  "three_distinct_notions": {
+   "ingested_at": "instant the normalized revision became durable and therefore replayable",
+   "observed_at": "instant our collector actually obtained the bytes; under HISTORICAL_BACKFILL this is the instant of the BACKFILL, never a reconstructed historical value",
+   "source_available_at": "conservative instant at which the SOURCE claims the information became public; null when the source timestamp fails the trust policy"
+  }
  },
- "dedup_policy": {
-  "cluster_identity": "cluster_state_hash(as_of) is a function of T",
-  "clustering": "as_of(T) clusters use only observations with available_at <= T",
-  "leak_guarded": "a cluster enriched by a later observation must not be visible at an earlier T",
-  "observations_never_merged": true
+ "clock_anomaly_policy": {
+  "all_three_retained_independently": true,
+  "cases": [
+   "source clock ahead",
+   "source clock behind",
+   "collector clock anomaly",
+   "timezone parse anomaly"
+  ],
+  "effect": "diagnostic flag, causal-quality degradation, or fail closed",
+  "max_rule_is_the_conservative_resolution": true,
+  "never_rewrite_one_timestamp_from_another": true
+ },
+ "clustering_policy": {
+  "as_of_rule": "cluster_state(T) uses only observations visible under the mode at T",
+  "canonical_event_id": "resolved through lineage as_of(T); never a final cluster identity computed with future observations",
+  "cluster_state_is_derived_and_versioned_in_time": true,
+  "lineage": {
+   "merge": "X,Y separate at T1; one event at T2; snapshot T1 unchanged",
+   "never_rewrites_prior_state_or_snapshot": true,
+   "operations": [
+    "CREATE",
+    "MERGE",
+    "SPLIT",
+    "RECLASSIFY"
+   ],
+   "records": [
+    "ClusterStateRevision",
+    "ClusterLineageId",
+    "parent_cluster_ids[]"
+   ],
+   "split": "X single at T1; X1,X2 at T2; snapshot T1 unchanged"
+  },
+  "observations_never_merged_or_deleted": true
+ },
+ "date_only_policy": {
+  "example": {
+   "date": "2026-09-05",
+   "source_available_at": "2026-09-06T00:00:00 America/New_York -> UTC",
+   "timezone": "America/New_York"
+  },
+  "never_00_00_of_the_same_day": true,
+  "never_assume_utc": true,
+  "rule": "a DATE-ONLY source timestamp resolves to the START OF THE NEXT local calendar day in the source timezone, converted to UTC",
+  "timezone_unknown": "source_available_at = unavailable",
+  "why": "deterministic; no microsecond debate; a 23h or 25h DST day is resolved by the timezone database rather than by arithmetic; and it never asserts knowledge during the day it cannot place"
  },
  "design_id": "event_intelligence_design_v1",
- "enrichment_boundary": {
-  "degraded_mode": "without an LLM the deterministic event remains valid",
-  "enrichment_record_binds": [
+ "design_revision": 2,
+ "effective_at_policy": {
+  "describes": "the economic period or instant the event applies to",
+  "example": "July CPI published in August is visible in August, never in July",
+  "gates_visibility": false
+ },
+ "enrichment_policy": {
+  "durable_visibility_rule": "enrichment durable_available_at <= T",
+  "enrichment_has_own_timestamps": [
+   "input_available_at",
+   "computed_at",
+   "ingested_at"
+  ],
+  "entity_linking": "deterministic linking at ingestion may be durable; later relinking is a versioned enrichment, never retroactive",
+  "late_computed_enrichment": "an enrichment computed at 18:00 from a 14:00 article is INVISIBLE to a DURABLE_OBSERVED snapshot at 15:00",
+  "llm_may_not_produce": [
+   "source_available_at",
+   "observed_at",
+   "ingested_at",
+   "source identity",
+   "raw content",
+   "revision provenance",
+   "macro actual",
+   "consensus source value"
+  ],
+  "llm_required_for_ingestion": false,
+  "reanalysis": "appends a revision; never overwrites",
+  "record_binds": [
    "model_id",
    "model_version",
    "prompt_spec_hash",
    "computed_at",
    "input_content_hash"
   ],
-  "llm_may_not_produce": [
-   "published_at",
-   "observed_at",
-   "source identity",
-   "raw content"
-  ],
-  "llm_required_for_ingestion": false,
-  "reanalysis": "appends a new enrichment revision; never overwrites"
+  "retrospective_enrichment": {
+   "explicitly_marked": true,
+   "layer": "RETROSPECTIVE_ENRICHMENT",
+   "never_conflated_with_live_known_features": true,
+   "snapshot_identity_binds": [
+    "visibility_mode",
+    "enrichment policy",
+    "model/spec version"
+   ]
+  }
  },
  "entity_identity_policy": {
   "fail_closed": "an ambiguous mention links to no instrument",
@@ -79,21 +140,13 @@
    "org:<slug>",
    "country:<iso3166>",
    "currency:<iso4217>"
-  ],
-  "precedent": "instrument_registry canonical ids, fail-closed resolution"
+  ]
  },
- "event_model": {
-  "CanonicalEvent": "causal cluster of observations describing one fact",
-  "Enrichment": "derived semantic features; versioned, append-only",
-  "Outcome": "post-event market reaction; stored OUTSIDE the causal event",
-  "SourceObservation": "one publication actually observed; immutable",
-  "layers": [
-   "SourceObservation",
-   "CanonicalEvent",
-   "Enrichment",
-   "Outcome"
-  ],
-  "separation_rule": "no outcome field may be reachable from an object a causal query returns"
+ "identifiers": {
+  "CanonicalEventId": "resolved through cluster lineage as_of(T), never a final future-informed identity",
+  "EnrichmentId": "derived from (input_content_hash, model_id, model_version, prompt_spec_hash)",
+  "RevisionId": "derived from (observation, content_hash, gating timestamps)",
+  "SourceObservationId": "derived from (provider, source_item_id, content_hash); never URL alone"
  },
  "implements": false,
  "invariants": [
@@ -118,11 +171,21 @@
   "E19",
   "E20",
   "E21",
-  "E22"
+  "E22",
+  "E23",
+  "E24",
+  "E25",
+  "E26",
+  "E27",
+  "E28",
+  "E29",
+  "E30"
  ],
  "macro_surprise_policy": {
   "consensus_is_causal_data": true,
-  "consensus_requires": "its own available_at, provider and revision history",
+  "consensus_requires": "its own availability timestamps, provider, revisions",
+  "cutoff_durable_observed": "consensus durably available before the release",
+  "cutoff_retrospective": "consensus source_available_at before the release, meeting causal quality",
   "fields": [
    "indicator",
    "period",
@@ -133,23 +196,27 @@
    "unit",
    "release_timestamp"
   ],
-  "post_release_consensus": "may never serve as a pre-release expectation",
+  "post_release_consensus_never_used_as_expectation": true,
   "surprise": [
    "surprise_raw = actual - consensus",
    "surprise_pct",
    "surprise_zscore"
   ],
-  "zscore_rule": "normalising statistics use only releases available before this release; never the full history"
+  "zscore_rule": "sigma from prior releases only; current and future releases excluded; insufficient history yields unavailable, never 0"
  },
  "market_context_policy": {
-  "context_window": "strictly before or at available_at",
-  "outcome_window": "strictly after available_at",
-  "storage": "separate artefacts, joined only by event_id at analysis time"
+  "context_window": "strictly <= gating availability timestamp",
+  "dependency_direction": "causal information -> outcome layer, never inverse",
+  "no_optional_future_fields_on_causal_records": true,
+  "outcome_window": "strictly after it",
+  "storage": "separate artefacts joined only by event_id at analysis time"
  },
  "missingness_policy": {
-  "rule": "these are distinct states and none may be encoded as zero",
+  "durable_requirement": "source-health state must itself be durably recorded before it is visible, or replay is impossible",
+  "modelling_caution": "outage may correlate with large events; it may be an observable feature but never a zero event count",
+  "never_encoded_as_zero": true,
   "states": [
-   "NO_EVENTS_OBSERVED",
+   "EVENTS_OBSERVED_ZERO",
    "SOURCE_UNAVAILABLE",
    "SOURCE_NOT_CHECKED",
    "RATE_LIMITED",
@@ -168,7 +235,7 @@
   "paper trading",
   "broker"
  ],
- "note": "A design contract, not a capture spec. It binds the policies a future ingestion phase must satisfy; it authorises no provider, no network call and no corpus.",
+ "note": "A design contract, not a capture spec. Revision 2 closes the counter-review MEDIUM: ingested_at now governs durable visibility instead of being a defined-but-unused field.",
  "provider_classes": [
   "OFFICIAL_MACRO",
   "CENTRAL_BANK_GOVERNMENT",
@@ -191,19 +258,19 @@
   "historical_availability",
   "cadence_class"
  ],
- "raw_first_policy": {
+ "provider_status": "NONE SELECTED; every property REQUIRES WEB VERIFICATION BEFORE FREEZE",
+ "raw_first_and_durability_order": {
   "order": [
-   "fetch",
-   "persist raw bytes + fsync",
-   "hash",
-   "parse",
-   "normalize",
-   "append observation"
+   "fetch bytes",
+   "durable raw artefact + hash",
+   "parse/normalize",
+   "durable normalized revision",
+   "eligible for snapshot"
   ],
-  "precedent": "capture_yahoo_equity_corpus.persist_raw",
-  "rule": "no observation exists before its raw artefact is durable"
+  "rule": "a revision observed but never durably persisted never appears in a DURABLE_OBSERVED replay; a surviving raw artefact remains available for forensics and rebuild"
  },
  "redistribution_policy": {
+  "llm_summary_is_not_automatically_redistributable": true,
   "normalized_full_text_is_still_restricted": true,
   "per_provider": true,
   "precedent": "ops/release.assert_no_restricted_data",
@@ -216,14 +283,89 @@
   ],
   "restricted_raw_never_committed": true
  },
+ "replay_policy": {
+  "durable_observed": "exactly reconstructible from artefacts durably present by the visibility boundary; a snapshot can never depend on a revision not yet ingested at T",
+  "no_latest_model_at_replay": true,
+  "no_network": true,
+  "retrospective_source": "reconstructible from source artefacts plus the trust policy and causal-quality policy"
+ },
  "revision_policy": {
   "append_only": true,
   "logical_identity": "stable source_item_id per source",
   "overwrite": "forbidden",
-  "precedent": "market_snapshots deterministic revision selection",
-  "revision_selection": "max(available_at) <= as_of, ties fail closed"
+  "per_revision_fields": [
+   "source_available_at",
+   "observed_at",
+   "ingested_at",
+   "source_updated_at",
+   "content_hash",
+   "observation_mode",
+   "parser_version"
+  ],
+  "selection": "max(gating timestamp) <= as_of, ties fail closed"
  },
  "schema_version": "trading-lab.event-intelligence-design.v1",
+ "snapshot_identity": {
+  "binds": [
+   "as_of",
+   "visibility_mode",
+   "causal_quality_policy",
+   "visible_event_revisions",
+   "cluster_state_revisions",
+   "visible_enrichments",
+   "retrospective_enrichment_policy_if_used",
+   "source_health_state",
+   "market_snapshot_identity"
+  ],
+  "excludes_wall_clock": true,
+  "modes_produce_distinct_identities": true
+ },
+ "snapshot_modes": {
+  "DURABLE_OBSERVED": {
+   "authoritative_for": [
+    "live operation",
+    "exact replay",
+    "audit of a real decision"
+   ],
+   "question": "what had HyprL actually observed AND made durable by T",
+   "visibility_rule": "durable_available_at <= T"
+  },
+  "RETROSPECTIVE_SOURCE": {
+   "authoritative_for": [
+    "historical research only"
+   ],
+   "must_never_be_presented_as": [
+    "LIVE_OBSERVED",
+    "HYPRL_KNEW_AT_T"
+   ],
+   "question": "what the world could have known at T according to source timestamps recovered in a backfill",
+   "requires": "explicit minimum_causal_quality",
+   "visibility_rule": "source_available_at <= T"
+  },
+  "mode_is_mandatory": true,
+  "mode_participates_in_snapshot_identity": true,
+  "no_implicit_default": true
+ },
+ "source_independence_policy": {
+  "attention_is_not_confirmation": true,
+  "distinct_hostname_is_not_an_independent_source": true,
+  "distinct_metrics": [
+   "observation_count",
+   "publisher_count",
+   "independent_source_count",
+   "syndicated_copy_count",
+   "velocity"
+  ],
+  "source_lineage_fields": [
+   "publisher",
+   "origin_publisher",
+   "syndication_parent",
+   "wire_service",
+   "source_lineage_id",
+   "provenance_confidence"
+  ],
+  "unknown_provenance": "independent_source_count is unknown or lower-confidence, never the hostname count"
+ },
  "source_tiers": [
   "TIER_1_OFFICIAL",
   "TIER_2_PRIMARY",
@@ -232,15 +374,13 @@
  ],
  "status": "DESIGN_ONLY",
  "storage_policy": {
-  "decision": "SQLite append-only receipts + immutable manifests, reusing the Phase 1C causal snapshot architecture",
+  "decision": "SQLite append-only revision receipts + immutable snapshot manifests, reusing the Phase 1C causal architecture; raw payloads content-addressed as files beside the database",
   "local_restricted": [
    "raw source payloads",
    "normalized article text",
    "enrichment outputs",
    "outcome rows"
   ],
-  "offline_replay": "InformationSnapshot(as_of=T) rebuildable from raw with no network",
-  "raw_artefacts": "content-addressed files beside the database",
   "rejected_alternative": "a second, parallel causal store",
   "tracked_in_git": [
    "design specs",
@@ -250,6 +390,7 @@
    "aggregate metrics"
   ]
  },
+ "supersedes_hash": "8d3f9b151ffc204b93de58c7802475dc2d23bd9e54ded58be42481507cd7724f",
  "taxonomy_v1": {
   "types": [
    "MACRO_RELEASE",
@@ -269,6 +410,34 @@
    "GENERAL_NEWS"
   ],
   "unclassified": "GENERAL_NEWS is the fallback, never a silent drop",
-  "version": "trading-lab.event-taxonomy.v1"
+  "version": "trading-lab.event-taxonomy.v1",
+  "versioned_reclassification": "a V2 taxonomy never rewrites V1 labels; reclassification is a new enrichment revision"
+ },
+ "timestamp_trust_policy": {
+  "evaluated_at_ingestion_not_at_query": true,
+  "inputs": [
+   "provider_class",
+   "source_tier",
+   "provenance",
+   "timestamp_precision",
+   "timezone_confidence",
+   "source_timestamp_semantics",
+   "observation_mode"
+  ],
+  "no_human_judgement_at_query_time": true,
+  "policy_id": "TimestampTrustPolicyV1",
+  "trusted_requires": [
+   "source_tier in (TIER_1_OFFICIAL, TIER_2_PRIMARY)",
+   "timestamp_precision <= minute",
+   "known timezone"
+  ],
+  "untrusted_effect": "source_available_at = null; only observed_at can bound",
+  "verdicts": [
+   "TRUSTED_EXACT",
+   "TRUSTED_CONSERVATIVE",
+   "UNTRUSTED",
+   "UNKNOWN"
+  ],
+  "versioned": true
  }
 }
