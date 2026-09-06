@@ -1,0 +1,639 @@
+{
+  "adversarial_cases": {
+    "FOMC01": {
+      "case": "summer statement, 'For release at 2:00 p.m. EDT'",
+      "source_available_at": "date + 14:00 + (-04:00) => UTC",
+      "verdict": "exact"
+    },
+    "FOMC02": {
+      "case": "winter statement, 'For release at 2:00 p.m. EST'",
+      "source_available_at": "date + 14:00 + (-05:00) => UTC",
+      "verdict": "exact"
+    },
+    "FOMC03": {
+      "case": "'For immediate release'",
+      "source_available_at": null,
+      "verdict": "VALID event; timestamp unavailable; NOT parser failure"
+    },
+    "FOMC04": {
+      "case": "release line says bare 'ET'",
+      "source_available_at": null,
+      "verdict": "no timezone guess; fail closed on the timestamp"
+    },
+    "FOMC05": {
+      "case": "feed shows item, primary page unavailable",
+      "verdict": "NO EventRevision; SOURCE_UNAVAILABLE; discovery raw retained; retried on a later normal poll; observed_at NEVER taken from discovery"
+    },
+    "FOMC06": {
+      "case": "primary page observed 90s after declared release",
+      "verdict": "source_available_at = release instant; observed_at = +90s; live_observed_available_at = max(...) = observed_at; durable gate as usual"
+    },
+    "FOMC07": {
+      "case": "same GUID, identical page bytes",
+      "verdict": "no duplicate revision"
+    },
+    "FOMC08": {
+      "case": "same GUID, changed page bytes",
+      "verdict": "append a NEW immutable revision; GUID is never proof of unchanged content"
+    },
+    "FOMC09": {
+      "case": "different GUID unexpectedly maps to the same logical item",
+      "verdict": "FAIL CLOSED identity conflict; no 'latest wins'"
+    },
+    "FOMC10": {
+      "case": "Last Update later than release",
+      "verdict": "source_available_at unchanged; Last Update never advances availability"
+    },
+    "FOMC11": {
+      "case": "2027 backfill of a 2026 statement",
+      "verdict": "observed_at = 2027 collection instant; RETROSPECTIVE_SOURCE may use the trusted 2026 release instant; never relabelled LIVE"
+    },
+    "FOMC12": {
+      "case": "stored raw statement corrupt locally",
+      "verdict": "verified replay FAILS CLOSED; no network repair"
+    },
+    "FOMC13": {
+      "case": "feed XML malformed",
+      "verdict": "PARSER_FAILED; NOT zero events"
+    },
+    "FOMC14": {
+      "case": "feed HTTP failure",
+      "verdict": "SOURCE_UNAVAILABLE; NOT zero events"
+    },
+    "FOMC15": {
+      "case": "valid feed, zero new FOMC items",
+      "verdict": "EVENTS_OBSERVED_ZERO for that successful check interval"
+    },
+    "FOMC16": {
+      "case": "normalization transaction fails after raw persisted",
+      "verdict": "no ingested_at, no EventRevision visibility; raw survives for rebuild"
+    },
+    "FOMC17": {
+      "case": "commit succeeds but ACK lost",
+      "verdict": "the committed revision remains authoritative and is rediscovered idempotently"
+    },
+    "FOMC18": {
+      "case": "re-check at +7d unchanged",
+      "verdict": "no new content revision; observation metadata still auditable"
+    }
+  },
+  "authority_conflicts": {
+    "identity_mapping_conflict": "FAIL CLOSED - no silent merge",
+    "primary_page_governs": [
+      "normalized event semantics",
+      "statement date",
+      "release instant",
+      "event family"
+    ],
+    "rss_role": "discovery provenance only"
+  },
+  "binds": {
+    "event_intelligence_design_hash": "4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689",
+    "event_intelligence_design_revision": 4,
+    "no_floating_dependency": true,
+    "provider_verification_hash": "e854ddb9cc8b5bc2634fe6ca6fc793289bafd6c94bb49dde71109e1d17341034",
+    "provider_verification_revision": 3,
+    "shared_http_primitive": "scripts/trading_lab/safe_http.py::require_https_host + AllowlistedRedirectHandler",
+    "taxonomy_version": "trading-lab.event-taxonomy.v1",
+    "timestamp_trust_policy": "TimestampTrustPolicyV1"
+  },
+  "canonical_serialization": {
+    "generated_at_field": "deliberately absent so the spec hash is reproducible",
+    "no_runtime_timestamp_in_hashed_semantics": true,
+    "repo_primitive": "sha256_canonical",
+    "rule": "json.dumps(payload, sort_keys=True, separators=(',',':'), allow_nan=False).encode('utf-8'), SHA-256 over those bytes"
+  },
+  "capture_spec_id": "federal_reserve_fomc_capture_v1",
+  "capture_spec_status": "FROZEN_PRE_IMPLEMENTATION",
+  "capture_spec_version": 1,
+  "future_fixture_requirements": {
+    "capture_authorization": "real historical raw fixtures may be captured only after implementation is authorised",
+    "required_before_implementation_is_accepted": [
+      "a summer EDT statement",
+      "a winter EST statement",
+      "a historical 'For immediate release' statement",
+      "an unchanged re-fetch",
+      "a synthetic changed-content revision",
+      "a synthetic malformed release line",
+      "a feed item whose primary fetch initially fails"
+    ],
+    "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
+  },
+  "http_policy": {
+    "browser": false,
+    "client_user_agent": "hyprl-trading-lab-event-capture/1.0",
+    "client_user_agent_policy": "IDENTIFYING_STANDARD_HTTP_CLIENT",
+    "conditional_requests": "V1 CORRECTNESS MUST NOT DEPEND ON HTTP 304. A conditional request may never be the reason a raw artefact is missing. Any later use requires separate review.",
+    "connect_timeout_seconds": 10,
+    "https_only": true,
+    "javascript": false,
+    "max_feed_body_bytes": 2097152,
+    "max_redirects": 3,
+    "max_redirects_note": "tightens urllib's default of 10; must be enforced explicitly",
+    "max_statement_body_bytes": 5242880,
+    "network_during_replay": false,
+    "provider_user_agent_requirement": "UNKNOWN",
+    "read_timeout_note": "matches the repo convention REQUEST_TIMEOUT_SECONDS = 30",
+    "read_timeout_seconds": 30,
+    "redirect_chain_recorded": true,
+    "redirect_rule": "validated BEFORE being followed; destination must stay on the allowlist; off-allowlist => fail closed, host never contacted",
+    "user_agent_note": "repo convention hyprl-trading-lab-<purpose>/<version>. No personal e-mail, no secret, no browser impersonation."
+  },
+  "identity": {
+    "conflict_policy": {
+      "resolution": "never 'latest wins'; persist conflict diagnostics and raw provenance; no trusted normalized event until a deterministic resolution policy admits it",
+      "same_guid_different_logical_item": "FAIL CLOSED - identity conflict",
+      "same_logical_item_incompatible_guids_in_one_causal_state": "FAIL CLOSED - identity conflict"
+    },
+    "guid_note": "historical statements may lie outside current feed depth; identity must not depend on the feed",
+    "guid_required_for_backfill": false,
+    "logical_item_key": [
+      "provider_id",
+      "event_family",
+      "official_statement_date",
+      "canonical_primary_statement_url"
+    ],
+    "revision_id": "design rev4: derived from (observation, content_hash, gating timestamps)",
+    "rss_guid_role": "OFFICIAL DISCOVERY IDENTIFIER AND PROVENANCE ONLY - not business identity, not revision identity, not proof of unchanged content",
+    "rss_guid_stored": [
+      "guid_value",
+      "guid_is_permalink_attribute_if_present",
+      "canonical_primary_link"
+    ],
+    "source_item_id": "SHA256 over the canonical JSON serialization of the logical_item_key tuple",
+    "source_observation_id": "design rev4: derived from (provider, source_item_id, content_hash); NEVER URL alone",
+    "uniqueness_claim": "NOT contractually documented by the provider; identity quality remains GOOD, not EXCELLENT"
+  },
+  "invariants": {
+    "F01": "Only official allowlisted Federal Reserve surfaces may contribute.",
+    "F02": "RSS is discovery, never source-time authority.",
+    "F03": "The primary statement page is the semantic authority.",
+    "F04": "source_available_at requires a strict explicit date PLUS an explicit EST/EDT release grammar.",
+    "F05": "No timezone is ever inferred.",
+    "F06": "observed_at is the real primary-statement acquisition instant.",
+    "F07": "Backfill never reconstructs observed_at.",
+    "F08": "Raw is made durable before any parse.",
+    "F09": "Same logical item with changed bytes appends a new revision.",
+    "F10": "Same bytes create no duplicate revision.",
+    "F11": "Last Update never advances original source availability.",
+    "F12": "The provider numeric rate limit remains UNKNOWN; the client ceiling is HyprL policy only.",
+    "F13": "Raw redistribution is disabled in V1.",
+    "F14": "Unknown upstream correction semantics never imply immutability.",
+    "F15": "Replay is offline; no network.",
+    "F16": "No market, outcome, consensus or LLM field exists in the capture layer.",
+    "F17": "The CaptureSpec hash is bound into every normalized revision.",
+    "F18": "Unsupported release syntax fails closed."
+  },
+  "item_predicate": {
+    "evidence": "title verified on the four FOMC statement feed items and on statement pages sampled 2015-2026",
+    "feed_title_exact": "Federal Reserve issues FOMC statement",
+    "insufficient_alone": [
+      "a URL containing 'monetary'",
+      "a feed category",
+      "a date pattern"
+    ],
+    "known_v1_narrowness": "an unscheduled or differently-titled FOMC action would not match and would be skipped rather than guessed. Fail-closed is deliberate; widening requires a spec revision.",
+    "normalization": "exact match after Unicode NFC, HTML entity unescaping, and collapsing runs of ASCII whitespace to one space; comparison is case-sensitive",
+    "on_no_match": "NOT an FOMC event. No FOMC EventRevision is created. Discovery raw is still retained as provenance.",
+    "primary_page_title_exact": "Federal Reserve issues FOMC statement",
+    "rule": "CONJUNCTION - both must hold, on verified official fields only"
+  },
+  "modes": {
+    "HISTORICAL_BACKFILL": {
+      "cadence_class": "OFFLINE_BACKFILL",
+      "discovery": "official FOMC calendar/archive links; URLs never synthesised from dates",
+      "observed_at": "the actual backfill collection instant",
+      "raw_first": "the archive/calendar page is itself preserved when its links form the provenance of discovery",
+      "relabelling": "a backfill item is NEVER relabelled LIVE"
+    },
+    "LIVE": {
+      "cadence_class": "PERIODIC_POLL",
+      "discovery": "official monetary-policy feed poll",
+      "observed_at": "real primary statement fetch instant"
+    },
+    "reconstruction": "observed_at is NEVER reconstructed from source timestamps in either mode"
+  },
+  "non_goals": [
+    "implementation",
+    "any network request",
+    "fixtures",
+    "corpus",
+    "EventStore code",
+    "LLM",
+    "model",
+    "signal",
+    "backtest",
+    "paper trading",
+    "holdout access",
+    "market data join",
+    "consensus",
+    "rate-decision extraction"
+  ],
+  "normalized_forbidden_fields": [
+    "sentiment",
+    "importance",
+    "novelty",
+    "LLM summary",
+    "asset impact",
+    "future reaction",
+    "target",
+    "market outcome",
+    "returns",
+    "volatility",
+    "consensus",
+    "expected rate move",
+    "probability",
+    "target range",
+    "basis-point change",
+    "vote split",
+    "policy stance",
+    "QT amounts"
+  ],
+  "normalized_minimum_fields": [
+    "provider_id",
+    "provider_class",
+    "source_tier",
+    "event_family",
+    "taxonomy_type",
+    "taxonomy_version",
+    "source_item_id",
+    "source_observation_id",
+    "revision_id",
+    "official_statement_date",
+    "canonical_source_url",
+    "rss_guid_if_available",
+    "source_available_at_nullable",
+    "observed_at",
+    "ingested_at",
+    "timestamp_trust_verdict",
+    "timestamp_semantics",
+    "raw_artifact_identities_and_hashes",
+    "observation_mode",
+    "capture_spec_id",
+    "capture_spec_hash"
+  ],
+  "parser_policy": {
+    "determinism": "operates offline on locally stored raw bytes only",
+    "forbidden": [
+      "browser",
+      "JavaScript execution",
+      "live DOM",
+      "network subresource fetches",
+      "shelling out"
+    ],
+    "html_semantic_anchors": [
+      "official statement date",
+      "page title / event family",
+      "release line",
+      "canonical source link"
+    ],
+    "llm": "FORBIDDEN anywhere in ingestion - an LLM may not decide whether something is an FOMC statement, nor its date, release time, identity, revision or source authority",
+    "xml": {
+      "external_entity_resolution": "MUST BE DISABLED",
+      "extract_only": [
+        "guid",
+        "link",
+        "title",
+        "pubDate as non-authoritative metadata"
+      ],
+      "unsupported_extensions": "ignored unless frozen by a spec revision",
+      "xxe_note": "XML external entity expansion and network entity resolution are a security requirement, not an optimisation"
+    }
+  },
+  "polling": {
+    "ceiling_covers": [
+      "the feed poll",
+      "occasional primary statement fetch",
+      "bounded revision re-checks"
+    ],
+    "client_limit_source": "HYPRL_CONSERVATIVE_POLICY",
+    "client_max_requests_per_minute": 6,
+    "honesty_note": "This ceiling is a HyprL client policy. The Federal Reserve has NOT granted a quota of 6 requests/minute or any other figure. Never state or imply otherwise.",
+    "live_feed_poll_interval_seconds": 60,
+    "minimum_request_spacing_seconds": 10,
+    "provider_automated_access_prohibition": "NOT_VERIFIED",
+    "provider_rate_limit": "UNKNOWN",
+    "retry_policy": {
+      "exponential_request_storm": false,
+      "hidden_library_retries": "forbidden",
+      "rule": "on failure, record source health and retry only on the next normal discovery cycle or a scheduled pending-item retry, all under the same ceiling",
+      "tight_retry_loop": false
+    }
+  },
+  "provider": {
+    "cadence_class_historical": "OFFLINE_BACKFILL",
+    "cadence_class_live": "PERIODIC_POLL",
+    "cadence_note": "the EVENT family is a scheduled release, but the COLLECTOR is a plain periodic poll. V1 derives no schedule from FOMC calendars, the 2:00 p.m. tradition, or RSS pubDate.",
+    "event_family": "FOMC_MONETARY_POLICY_STATEMENT",
+    "expected_latency": "UNKNOWN - feed cadence undocumented; bounded in practice by the client poll interval",
+    "historical_availability": "statement pages retrievable by official archive link; explicit release line verified on samples across 2016-2026",
+    "official_contract": "no published numeric rate limit; no verified prohibition of automated access",
+    "official_source": true,
+    "provider_class": "CENTRAL_BANK_GOVERNMENT",
+    "provider_id": "federal_reserve_fomc_statements_v1",
+    "redistribution_permitted": false,
+    "requires_credentials": false,
+    "revision_support": "UPSTREAM UNKNOWN - handled client-side by content-hash re-observation, never by assuming immutability",
+    "source_tier": "TIER_1_OFFICIAL",
+    "taxonomy_note": "existing frozen rev4 value reused; NO new taxonomy introduced",
+    "taxonomy_type": "CENTRAL_BANK",
+    "timestamp_quality": "EXCELLENT on the primary statement when the strict release grammar matches; otherwise unavailable"
+  },
+  "raw_policy": {
+    "accepted_media": {
+      "discovery": [
+        "application/rss+xml",
+        "application/xml",
+        "text/xml"
+      ],
+      "primary": [
+        "text/html"
+      ]
+    },
+    "applies_to": [
+      "every discovery feed poll",
+      "every primary statement fetch",
+      "every scheduled re-observation"
+    ],
+    "bytes_semantics": "raw_body_bytes = the entity body AFTER standard HTTP content decoding; Content-Encoding retained as metadata",
+    "charset": "determined only AFTER the raw artefact exists; invalid or unexpected encoding => PARSER_FAILED; no lossy decode before hashing",
+    "corrupt_raw_at_replay": "verified replay FAILS CLOSED (design NORMALIZED_PRESENT_RAW_CORRUPT)",
+    "hash_algorithm": "SHA-256",
+    "hash_algorithm_note": "repo primitive sha256_bytes; no second digest algorithm introduced",
+    "hash_before_text_decode": true,
+    "network_repair": "FORBIDDEN",
+    "order": [
+      "fetch bytes",
+      "durable raw artefact + hash",
+      "parse/normalize",
+      "durable normalized revision",
+      "eligible for snapshot"
+    ],
+    "parser_precondition": "a parser never consumes bytes not already represented by a durable raw identity",
+    "pdf_fallback": false,
+    "pdf_note": "a PDF of each statement exists but V1 is HTML-only; adding it requires a spec revision",
+    "persisted_per_response": [
+      "body bytes",
+      "request URL",
+      "final URL",
+      "redirect chain",
+      "retrieval timestamp",
+      "HTTP status",
+      "Content-Type",
+      "Content-Encoding",
+      "body SHA-256",
+      "byte length"
+    ],
+    "unexpected_media_type": "fail closed / PARSER_FAILED"
+  },
+  "redistribution": {
+    "internal_normalized_metadata_allowed": [
+      "source identity",
+      "timestamps",
+      "event type",
+      "hashes",
+      "URLs",
+      "provenance"
+    ],
+    "normalized_full_text_export": "DISABLED",
+    "raw_redistribution": "DISABLED",
+    "raw_storage": "LOCAL_RESTRICTED",
+    "release_guard": "existing repo release policy applies unchanged",
+    "why_stricter_than_evidence": "the Federal Reserve disclaimer states that, unless otherwise indicated, Board website information is in the public domain. V1 is nonetheless stricter: 6G-A does not need redistribution, and a blanket DISABLED avoids per-item 'unless otherwise indicated' rights analysis and keeps the release guard simple."
+  },
+  "retrospective_source_fit": {
+    "admission": "a historical statement may participate in RETROSPECTIVE_SOURCE only if the strict release grammar succeeds AND TimestampTrustPolicyV1 admits the quality",
+    "immediate_release_items": "strict exact retrospective admission fails or degrades per the frozen trust policy; NO timestamp is invented",
+    "never_claims": "that HyprL actually observed the statement historically",
+    "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a 'For immediate release' counterexample was verified at 2015-03-18. V1 makes NO claim that every archived statement in any interval carries an exact release time. The parser is RECORD-SPECIFIC."
+  },
+  "revision_policy": {
+    "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
+    "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
+    "reobservation_anchor": "the first successful primary statement fetch",
+    "reobservation_offsets_seconds": [
+      300,
+      3600,
+      86400,
+      604800
+    ],
+    "reobservation_rationale": "detects immediate, same-day, next-day and delayed corrections; ~4 extra requests per statement at roughly 8 statements a year is negligible",
+    "reobservation_under_ceiling": true,
+    "revision_identity": "content-aware",
+    "same_item_different_body_hash": "NEW immutable EventRevision appended",
+    "same_item_same_body_hash": "same content revision; NO duplicate revision created",
+    "unchanged_refetch": "still raw-first with auditable observation metadata; no duplicate normalized revision",
+    "upstream_immutability_assumed": false,
+    "upstream_semantics": "UNKNOWN - never treated as immutable"
+  },
+  "schema_version": "trading-lab.fomc-capture-spec.v1",
+  "scope": {
+    "explicitly_out_of_scope": [
+      "FOMC minutes",
+      "Summary of Economic Projections (SEP)",
+      "press conferences",
+      "speeches and testimony",
+      "Beige Book",
+      "FRED",
+      "all other Federal Reserve press releases",
+      "any other central bank"
+    ],
+    "in_scope": [
+      "FOMC monetary-policy statements published as official Federal Reserve press releases"
+    ],
+    "why_narrow": "first EventStore proof; one event family, deterministic, causally honest, offline-replayable"
+  },
+  "security_requirements": [
+    "HTTPS verification enabled",
+    "explicit exact-host allowlist",
+    "redirect destinations validated before being followed",
+    "bounded redirects (3)",
+    "bounded response sizes",
+    "bounded connect and read timeouts",
+    "no credentials",
+    "no cookies as a correctness dependency",
+    "XML external entity resolution disabled",
+    "no JavaScript execution",
+    "no browser",
+    "no shelling out",
+    "no network during replay"
+  ],
+  "source_health": {
+    "mappings": {
+      "client ceiling reached": "RATE_LIMITED",
+      "feed XML malformed": "PARSER_FAILED",
+      "feed fetch failed / timeout / unexpected HTTP status": "SOURCE_UNAVAILABLE",
+      "feed fetched and parsed, zero in-scope FOMC items": "EVENTS_OBSERVED_ZERO",
+      "normalization persistence failure": "no ingested_at, no EventRevision visibility",
+      "primary statement HTML malformed": "PARSER_FAILED",
+      "primary statement fetch failed": "SOURCE_UNAVAILABLE",
+      "raw integrity failure": "fail closed at verified replay",
+      "release line is 'For immediate release'": "NOT a health failure - event valid, source_available_at unavailable",
+      "release line unrecognised / malformed": "PARSER_FAILED",
+      "surface not polled this interval": "SOURCE_NOT_CHECKED"
+    },
+    "never": "a network failure is missingness, NEVER evidence of zero FOMC events. Absence is only assertable when the feed was successfully retrieved AND parsed.",
+    "record_fields": [
+      "provider_id",
+      "surface",
+      "check_at",
+      "result_state",
+      "HTTP/provenance diagnostics as policy allows"
+    ],
+    "scope_note": "a feed outage must NOT mark all Federal Reserve data globally unavailable",
+    "scoped_per_surface": true,
+    "surfaces": [
+      "discovery_feed",
+      "primary_statement"
+    ],
+    "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
+  },
+  "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
+  "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
+  "surfaces": {
+    "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
+    "allowlisted_hosts": [
+      "www.federalreserve.gov"
+    ],
+    "discovery": {
+      "media": "RSS 2.0 / XML",
+      "method": "GET",
+      "role": "LIVE DISCOVERY ONLY - never source-time authority",
+      "url": "https://www.federalreserve.gov/feeds/press_monetary.xml"
+    },
+    "forbidden": [
+      "POST",
+      "authentication",
+      "credentials",
+      "cookies as a correctness dependency",
+      "third-party hosts"
+    ],
+    "methods_allowed": [
+      "GET"
+    ],
+    "primary": {
+      "media": "HTML",
+      "method": "GET",
+      "path_constraint": "/newsevents/pressreleases/monetary<YYYYMMDD><suffix>.htm",
+      "path_constraint_role": "VALIDATION of an officially supplied link, never a construction rule",
+      "role": "PRIMARY SEMANTIC AUTHORITY - source content, date and release instant",
+      "url_source": "MUST come from an official discovery link (live feed item <link>, or an official FOMC calendar/archive link in backfill). URLs are NEVER constructed from a date."
+    }
+  },
+  "timestamps": {
+    "immediate_release": {
+      "evidence": "verified on the 2015-03-18 FOMC statement",
+      "literal": "For immediate release",
+      "not_parser_failed": "this is a recognised syntax, NOT a parse failure; the event is not corrupted merely because no clock exists",
+      "source_available_at": null,
+      "timestamp_semantics": "UNKNOWN (existing TimestampTrustPolicyV1 vocabulary; no new design vocabulary introduced)",
+      "verdict": "VALID PAGE, VALID EVENT, exact source publication instant UNAVAILABLE"
+    },
+    "ingested_at": {
+      "definition": "inherited unchanged from design rev4: the successful authoritative normalized EventStore commit boundary",
+      "failed_commit": "no ingested_at",
+      "lost_ack": "the existing committed revision remains authoritative and is rediscovered idempotently",
+      "provider_reinterpretation": "forbidden"
+    },
+    "last_update": {
+      "never_advances": "the original source availability instant",
+      "role": "site maintenance metadata, date-only",
+      "use_in_source_available_at": "FORBIDDEN"
+    },
+    "observed_at": {
+      "definition": "the instant the collector successfully receives the PRIMARY statement raw bytes used for that revision",
+      "historical_backfill": "the actual backfill collection instant; NEVER reconstructed",
+      "is_not": [
+        "feed publication time",
+        "the declared release time",
+        "the HTTP Date header",
+        "feed discovery time"
+      ]
+    },
+    "release_time": {
+      "accepted_grammar": [
+        "For release at <H>:<MM> a.m. EST",
+        "For release at <H>:<MM> p.m. EST",
+        "For release at <H>:<MM> a.m. EDT",
+        "For release at <H>:<MM> p.m. EDT"
+      ],
+      "bare_ET": "NOT ACCEPTED in V1 - no timezone guess; source_available_at unavailable",
+      "evidence": "EST verified on 2025-12-10, 2026-01-28 and 2019-01-30; EDT verified across 2016-2026 samples",
+      "literal_offsets": {
+        "EDT": "-04:00",
+        "EST": "-05:00"
+      },
+      "normalization": "HTML entities unescaped; runs of ASCII whitespace collapsed to one space; leading/trailing whitespace stripped; match is otherwise literal and case-sensitive",
+      "timezone_inference": "FORBIDDEN - the abbreviation is read from the document, never derived from the date"
+    },
+    "rss_pubdate": {
+      "authoritative_for_source_available_at": false,
+      "on_disagreement_with_primary": "record a diagnostic; NEVER silently rewrite the primary timestamp",
+      "role": "DISCOVERY METADATA / CORROBORATION ONLY",
+      "why": "semantics are not officially documented, and a GMT value alone is ambiguous with respect to local release semantics - 19:00Z is both 2:00 p.m. EST and 3:00 p.m. EDT"
+    },
+    "source_available_at": {
+      "formula": "official_statement_date + local release clock + literal EST/EDT offset, converted to UTC",
+      "is_not": "observed_at",
+      "otherwise": null,
+      "requires_all_of": [
+        "statement date parsed",
+        "strict exact release clock parsed",
+        "explicit EST or EDT parsed"
+      ],
+      "worked_example": "2026-01-28 + 2:00 p.m. + EST(-05:00) => 2026-01-28T19:00:00Z"
+    },
+    "source_date": {
+      "accepted_grammar": "US long form '<Month> <D>, <YYYY>' as printed adjacent to the statement title",
+      "authority": "the official statement page",
+      "evidence": "verified structure: date line, then 'Federal Reserve issues FOMC statement', then the release line",
+      "forbidden_sources": [
+        "Last Update",
+        "HTTP Last-Modified",
+        "HTTP Date",
+        "RSS pubDate",
+        "the URL date component"
+      ]
+    },
+    "unrecognised_release_syntax": {
+      "distinct_from": "immediate_release, which is recognised and valid",
+      "verdict": "PARSER_FAILED"
+    }
+  },
+  "url_canonicalization": {
+    "default_port_normalized": true,
+    "fragment_stripped": true,
+    "hostname_lowercased": true,
+    "https_required": true,
+    "path": "preserved verbatim",
+    "percent_decoding": "no semantic-changing percent-decoding",
+    "query": "V1 requires queryless canonical statement URLs; a query component is unexpected and fails closed",
+    "tracking_params": "never part of identity"
+  },
+  "version_policy": {
+    "incompatible_semantics_requires": "a new capture_spec_version",
+    "material_change_requires_new_hash": [
+      "poll cadence",
+      "accepted release grammar",
+      "re-observation schedule",
+      "identity policy",
+      "host allowlist",
+      "source family",
+      "raw semantics",
+      "item predicate",
+      "redistribution policy"
+    ],
+    "silent_mutation": "FORBIDDEN"
+  },
+  "visibility": {
+    "exact_timestamp_case": {
+      "durable_available_at": "max(live_observed_available_at, ingested_at)",
+      "live_observed_available_at": "max(source_available_at, observed_at)"
+    },
+    "provider_bypass": "none",
+    "unavailable_timestamp_case": {
+      "durable_available_at": "max(observed_at, ingested_at)",
+      "live_observed_available_at": "observed_at"
+    }
+  }
+}
