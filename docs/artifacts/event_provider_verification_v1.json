@@ -4,6 +4,18 @@
   "official redistribution/licence terms for EDGAR content",
   "the documented field linking an amendment to the filing it amends"
  ],
+ "design_fit_recheck": {
+  "DURABLE_OBSERVED": "supported - observed_at + commit-bound ingested_at govern live collection safely",
+  "RETROSPECTIVE_SOURCE": "weaker - no trustworthy source publication bound; date-only at best",
+  "Revision": "distinct accessions, append-only",
+  "SourceObservation": "accession-based deterministic identity",
+  "TimestampTrustPolicyV1": "acceptanceDateTime cannot earn public-availability trust; it is not a publication instant",
+  "design_change_required": false,
+  "note": "design rev4 already permits source_available_at = null with observed_at bounding, so no design change is needed",
+  "offline_replay": "supported from captured raw",
+  "raw_first": "supported",
+  "restricted_raw": "safe default"
+ },
  "design_hash": "4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689",
  "design_revision": 4,
  "evidence": [
@@ -309,12 +321,62 @@
   },
   {
    "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "acceptanceDateTime_precision_and_timezone",
+   "confidence": "HIGH",
+   "official_url": "https://data.sec.gov/submissions/",
+   "property": "acceptance_datetime_format",
    "provider": "sec_edgar",
-   "source_title": "EDGAR Application Programming Interfaces",
-   "summary": "data.sec.gov was not reachable from this environment, so the literal string format, precision and timezone of acceptanceDateTime in submissions JSON were NOT confirmed against a live response or a field-level spec. Must be established before any capture-spec freeze.",
+   "source_title": "EDGAR Submissions API (schema observed)",
+   "summary": "acceptanceDateTime is present on filings.recent and follows ISO-8601 of shape YYYY-MM-DDTHH:MM:SS.sssZ. Observed uniformly across a 400-value sample of one company's filings; no sample rows retained.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://data.sec.gov/submissions/",
+   "property": "acceptance_datetime_precision",
+   "provider": "sec_edgar",
+   "source_title": "EDGAR Submissions API (schema observed)",
+   "summary": "Millisecond field representation (.sss). Supersedes the earlier UNKNOWN, which was an environment limitation rather than a documentation gap.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
+   "property": "acceptance_datetime_semantics",
+   "provider": "sec_edgar",
+   "source_title": "SEC Financial Statement and Notes Data Sets - SUB field definitions",
+   "summary": "The corresponding documented field is defined as: \"The ACCEPTANCE date and time of the registrant's filing with the Commission. Filings accepted after 5:30pm EST are considered filed on the following business day.\" The field therefore marks ACCEPTANCE by the Commission, not public dissemination.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://data.sec.gov/submissions/",
+   "property": "acceptance_datetime_timezone",
+   "provider": "sec_edgar",
+   "source_title": "EDGAR Submissions API (schema observed)",
+   "summary": "Values carry a trailing Z (UTC) in every sampled value.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
+   "property": "acceptance_equals_public_dissemination",
+   "provider": "sec_edgar",
+   "source_title": "Determine the Status of My Filing",
+   "summary": "Acceptance is NOT proven equivalent to dissemination. Submissions transmitted after 5:30 p.m. ET \"will not be disseminated by EDGAR until the next business day\", so acceptance can precede public availability by hours. Using acceptanceDateTime as source_available_at would create lookahead for those filings.",
+   "verdict": "NOT_SUPPORTED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "MEDIUM",
+   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+   "property": "amendment_parent_pointer",
+   "provider": "sec_edgar",
+   "source_title": "EDGAR APIs / SEC documentation",
+   "summary": "No official machine-readable field linking an amendment to the filing it amends was verified. Amendment FORM TYPES (10-K/A etc.) are distinguishable, and each submission carries its own accession number, but an explicit parent pointer was not established. prevrpt is not such a pointer.",
    "verdict": "UNKNOWN"
   },
   {
@@ -325,6 +387,16 @@
    "provider": "sec_edgar",
    "source_title": "SEC filing status / form types",
    "summary": "Amendment form types (10-K/A, 10-Q/A, 8-K/A) exist and each submission receives its own accession number, implying append-only filing lineage rather than in-place mutation. The exact linkage field between an amendment and its original was not confirmed officially.",
+   "verdict": "PARTIALLY_VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+   "property": "api_update_latency_is_not_an_sla",
+   "provider": "sec_edgar",
+   "source_title": "EDGAR Application Programming Interfaces",
+   "summary": "The documented \"typical processing delay of less than a second\" describes surface UPDATE latency relative to SEC dissemination. It is guidance, not a service-level guarantee, and it is not a publication timestamp.",
    "verdict": "PARTIALLY_VERIFIED"
   },
   {
@@ -380,6 +452,16 @@
   {
    "accessed_at": "2026-09-06T00:00:00Z",
    "confidence": "HIGH",
+   "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
+   "property": "filing_date_semantics",
+   "provider": "sec_edgar",
+   "source_title": "SEC Financial Statement and Notes Data Sets",
+   "summary": "filed/filingDate is \"The date of the registrant's filing with the Commission\", a DATE (no time). Combined with the post-cutoff rule it is an ASSIGNED business date and can differ from the acceptance date. It is not an exact publication instant; at best it supports date-only conservative semantics.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
    "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
    "property": "filing_date_vs_dissemination",
    "provider": "sec_edgar",
@@ -400,12 +482,52 @@
   {
    "accessed_at": "2026-09-06T00:00:00Z",
    "confidence": "HIGH",
+   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
+   "property": "post_cutoff_dissemination_rule",
+   "provider": "sec_edgar",
+   "source_title": "Determine the Status of My Filing",
+   "summary": "\"Most live submissions that begin transmission after 5:30 p.m. ET ... will receive a filing date of 6:00 a.m. ET the next business day and will not be disseminated by EDGAR until the next business day.\" Forms 3/4/5/144 and certain MEF types are extended to 10:00 p.m. ET same-date dissemination. The rule is form-conditional and is NOT generalised here beyond the quoted scope.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
+   "property": "prevrpt_semantics",
+   "provider": "sec_edgar",
+   "source_title": "SEC Financial Statement and Notes Data Sets",
+   "summary": "prevrpt: \"Previous Report - TRUE indicates that the submission information was SUBSEQUENTLY AMENDED prior to the end cutoff date of the data set.\" Its value depends on events AFTER the filing and on the dataset cutoff, so it is future-aware and retrospective by construction. It is NOT an amendment parent pointer and MUST NOT enter a causal record or feature at the filing's historical timestamp.",
+   "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
+   "official_url": "https://data.sec.gov/submissions/",
+   "property": "public_dissemination_timestamp_per_filing",
+   "provider": "sec_edgar",
+   "source_title": "EDGAR Submissions API (field inventory)",
+   "summary": "No per-filing public-dissemination timestamp was verified on the Submissions surface. Its field inventory is acceptanceDateTime, accessionNumber, act, core_type, fileNumber, filingDate, filmNumber, form, isInlineXBRL, isXBRL, isXBRLNumeric, items, primaryDocDescription, primaryDocument, reportDate, size. This is a statement about the SELECTED surface only, not about all SEC systems.",
+   "verdict": "NOT_EXPOSED_ON_SELECTED_SURFACE"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "HIGH",
    "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
    "property": "raw_bytes_preservable",
    "provider": "sec_edgar",
    "source_title": "EDGAR APIs / Archives",
    "summary": "Static JSON and filing documents served over HTTPS from /Archives/; byte-for-byte preservation is straightforward, no JS rendering required.",
    "verdict": "VERIFIED"
+  },
+  {
+   "accessed_at": "2026-09-06T00:00:00Z",
+   "confidence": "LOW",
+   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+   "property": "redistribution_raw_filer_content",
+   "provider": "sec_edgar",
+   "source_title": "SEC.gov",
+   "summary": "Filings are third-party submissions and may embed filer-owned or third-party copyrighted material (exhibits, logos, images). No official statement establishing redistribution rights for filer-submitted content was verified. SEC-produced API metadata, filer content, HyprL normalized metadata and derived aggregates must be treated as distinct rights categories; no blanket public-domain assumption is made.",
+   "verdict": "UNKNOWN"
   },
   {
    "accessed_at": "2026-09-06T00:00:00Z",
@@ -476,7 +598,7 @@
   "backtest",
   "holdout access"
  ],
- "note": "Provider property verification against the frozen causal design. No capture spec is frozen here and no provider code exists. Absence of official documentation is recorded as UNKNOWN, never as false.",
+ "note": "Provider property verification against the frozen causal design, revision 2. Corrects a materially overstated SEC timestamp claim found by independent counter-review: acceptanceDateTime is precise but marks acceptance, not public dissemination. No capture spec is frozen and no provider code exists. Absence of official documentation is recorded as UNKNOWN, never as false.",
  "providers": {
   "bea": {
    "authentication": "36-character UserID required on every request (registration)",
@@ -542,28 +664,60 @@
    "timestamp_strength": "primary document carries 'For release at 2:00 p.m. EDT' - minute precision with timezone"
   },
   "sec_edgar": {
+   "acceptance_datetime": {
+    "format": "YYYY-MM-DDTHH:MM:SS.sssZ",
+    "is_public_dissemination": "NOT VERIFIED",
+    "precision": "millisecond",
+    "semantics": "acceptance by the Commission",
+    "timezone": "UTC (Z)"
+   },
    "authentication": "none required",
+   "blocker_classification": {
+    "B1a": "RESOLVED",
+    "B1b": "NON_BLOCKING_IF_CONSERVATIVE_POLICY_USED - design rev4 explicitly permits source_available_at = null with observed_at bounding; it does cap the causal grade",
+    "B2": "NON_BLOCKING_IF_CONSERVATIVE_POLICY_USED - raw stays LOCAL_RESTRICTED, redistribution_permitted=false by default, release guard applies",
+    "B3": "NOT_REQUIRED_FOR_6G_A_MVP - each accession is an independent immutable SourceObservation; the CaptureSpec must declare amendment_parent_lineage_available=false rather than invent one"
+   },
    "blocking_unknowns": [
-    "acceptanceDateTime literal format, precision and timezone unconfirmed (data.sec.gov unreachable here)",
-    "redistribution/licence terms not verified from an official terms page"
+    "B1a acceptanceDateTime format/precision/timezone - RESOLVED (ISO-8601, UTC, millisecond)",
+    "B1b per-filing public dissemination timestamp - NOT_EXPOSED_ON_SELECTED_SURFACE",
+    "B2 redistribution of filer-submitted raw content - UNKNOWN",
+    "B3 amendment parent pointer - UNKNOWN"
    ],
    "deterministic_identity": "accession number ##########-YY-SSSSSS, assigned by EDGAR on acceptance",
    "documented_latency": "submissions API typical processing delay < 1 second; real time as disseminated",
    "historical_archive": "bulk zips recompiled nightly; /Archives permanent",
    "machine_readable": "JSON APIs (submissions, companyconcept, companyfacts, frames) + /Archives",
-   "max_backfill_causal_grade": "B (source timestamps recoverable; historical observation time is not)",
-   "max_live_causal_grade": "A (subject to confirming acceptanceDateTime precision)",
+   "max_backfill_causal_grade": {
+    "basis": "historical backfill has no observed_at, and acceptance must not be substituted for dissemination. Only filingDate remains, which is date-only. Downgraded from the earlier B, which had assumed an exact source instant that does not exist.",
+    "grade": "D"
+   },
+   "max_live_causal_grade": {
+    "effective_live_causality": "SAFE via collector observed_at + commit-bound ingested_at under DURABLE_OBSERVED; this is honest causality but is NOT a source-declared publication instant, so it does not earn A",
+    "source_timestamp_axis": "E - no verified per-filing publication instant on the selected surface",
+    "supersedes": "the earlier claim of 'A (subject to confirming acceptanceDateTime precision)', which was materially overstated: precision was never the obstacle"
+   },
    "official": true,
+   "prevrpt_warning": "retrospective/future-aware; forbidden in causal records and features; not an amendment parent pointer",
    "primary_source": true,
    "provider_id_candidate": "sec-edgar-submissions-v1",
+   "public_dissemination_timestamp": "NOT_EXPOSED_ON_SELECTED_SURFACE (Submissions API)",
    "rate_policy": "10 requests/second, declared User-Agent with contact e-mail",
    "raw_preservable": true,
    "revision_model": "amendments are separate filings with their own accession numbers (append-only)",
-   "timestamp_caution": "filingDate is an ASSIGNED BUSINESS DATE: submissions transmitted after 5:30 p.m. ET receive a filing date of 6:00 a.m. ET the NEXT business day and are not disseminated until then. filingDate must never be used as source_available_at."
+   "safe_live_policy": {
+    "ingested_at": "commit-bound boundary per design rev4",
+    "no_derived_0600_timestamp": "a conservative next-business-day 06:00 ET bound is NOT adopted; its exact domain is not established and V1 does not invent it",
+    "observed_at": "the collector's first successful acquisition of the public resource",
+    "source_available_at": "null / unavailable - never derived from acceptance or filingDate",
+    "why_this_is_safe": "a collector cannot observe a filing before EDGAR disseminates it, so observed_at naturally prevents lookahead. DURABLE_OBSERVED then gates on max(observed_at, ingested_at), which the design explicitly supports when source_available_at is absent."
+   },
+   "timestamp_caution": "THREE separate cautions. (1) filingDate is an ASSIGNED business date, not an exact publication instant. (2) acceptanceDateTime is precise (ISO-8601, UTC, ms) but marks ACCEPTANCE, and is NOT proven equivalent to public dissemination; for post-cutoff filings acceptance precedes dissemination by hours. (3) source_available_at must therefore NOT be populated from either field as an exact dissemination instant. When no dissemination timestamp is available, the safe causal boundary is the collector's observed_at."
   }
  },
  "recommendation": {
-  "confidence": "MEDIUM_HIGH",
+  "confidence": "MEDIUM",
+  "confidence_change_reason": "lowered from MEDIUM_HIGH: the earlier recommendation partly rested on a timestamp claim that did not survive independent review",
   "consensus_gap": "No official market-consensus product was found at any of the four agencies. Consensus will require a separate, independently verified provider. This does NOT block 6G-A, whose objective is ingestion and replay, not surprise.",
   "not_first": {
    "bea": "registration required, no verified release identity, and no timezone on the schedule page",
@@ -571,8 +725,23 @@
   },
   "recommended_first_provider": "sec_edgar",
   "runner_up": "federal_reserve",
-  "runner_up_reason": "Strongest timestamp of the four - 'For release at 2:00 p.m. EDT' on the primary document - and the highest market relevance, but weaker deterministic identity (date-based URL convention) and UNKNOWN revision and rate policies.",
-  "selection_reason": "Chosen on infrastructure grounds, not predictive usefulness. SEC is the only candidate combining: no credentials at all; an agency-ASSIGNED deterministic identity (accession number) rather than a URL convention; append-only amendment semantics; a documented sub-second dissemination latency; an explicit 10 req/s and User-Agent policy; and nightly bulk archives that make deterministic offline fixtures easy. Decisively, SEC officially documents a three-way distinction between transmission, assigned filing date and dissemination - which is exactly the source_available_at semantics the design froze, and which will exercise the trust policy on a real contract rather than a hypothetical one."
+  "selection_reason": "SEC still wins, but explicitly NOT on its source timestamp - it has none that is verified. It wins on the infrastructure axes 6G-A actually has to prove: an agency-ASSIGNED deterministic identity (accession number) rather than a URL convention; append-only submissions where each accession is an independent immutable observation; a documented access contract (10 req/s, declared User-Agent); no credentials; nightly bulk archives for deterministic offline fixtures; and enough event volume to exercise the store. There is also a positive reason its timestamp weakness helps: with no dissemination instant, SEC forces 6G-A to exercise the source_available_at = null path with observed_at bounding - a path design rev4 explicitly supports and which MUST be proven to work. A provider with a perfect source timestamp would leave that path untested.",
+  "verdict_vs_previous": "CONFIRMED_WITH_LOWER_CONFIDENCE",
+  "why_not_fed_despite_better_timestamp": "The Fed has the better timestamp by a clear margin and is the right SECOND provider precisely because it exercises the source-declared-instant path. It loses first place on identity (date-based URL convention, not an agency-assigned id), on UNKNOWN revision and correction semantics, on an UNKNOWN rate/fair-access policy, and on event volume: roughly eight FOMC decisions a year is thin for shaking out an EventStore."
+ },
+ "safe_sec_v1_semantics_proposal": {
+  "acceptance_at": "acceptanceDateTime - provenance/operational metadata only, NOT an availability gate",
+  "amendment_parent": "unavailable - not claimed",
+  "filing_date": "date metadata only, NOT an exact availability gate",
+  "identity": "accessionNumber",
+  "ingested_at": "EventStore successful-commit boundary per design rev4",
+  "observed_at": "local live collector acquisition timestamp",
+  "prevrpt": "retrospective only - forbidden in causal records and features",
+  "provider": "sec_edgar",
+  "raw_policy": "locally preserved, LOCAL_RESTRICTED, redistribution_permitted=false by default",
+  "source_available_at": "null unless a future explicitly verified dissemination timestamp exists",
+  "status": "PROPOSAL ONLY - NOT A FROZEN CAPTURE SPEC",
+  "surface": "official EDGAR submissions surface"
  },
  "schema_version": "trading-lab.event-provider-verification.v1",
  "scorecard": {
@@ -619,10 +788,11 @@
    "raw_preservation": "EXCELLENT",
    "redistribution_clarity": "UNKNOWN",
    "revision_model": "UNKNOWN",
-   "timestamp_quality": "EXCELLENT"
+   "timestamp_quality": "EXCELLENT",
+   "timestamp_quality_note": "EXCELLENT stands and is now strictly better than SEC on this axis: the primary document declares 'For release at 2:00 p.m. EDT' - an actual source publication instant"
   },
   "sec_edgar": {
-   "causal_backfill_quality": "GOOD",
+   "causal_backfill_quality": "WEAK",
    "credential_friction": "EXCELLENT",
    "historical_archive": "EXCELLENT",
    "identity_quality": "EXCELLENT",
@@ -634,11 +804,14 @@
    "raw_preservation": "EXCELLENT",
    "redistribution_clarity": "UNKNOWN",
    "revision_model": "EXCELLENT",
-   "timestamp_quality": "GOOD"
+   "timestamp_quality": "WEAK",
+   "timestamp_quality_note": "downgraded from GOOD: SEC exposes no verified per-filing dissemination instant; acceptanceDateTime marks acceptance, not publication"
   }
  },
  "status": "VERIFICATION_ONLY",
+ "supersedes_verification_hash": "39c1cdeb47ea69426bece2876f770484c03ebd202c0ecab17f0548d370339541",
  "verification_date": "2026-09-06",
+ "verification_revision": 2,
  "web_source_policy": {
   "bulk_downloads": false,
   "credentials_used": false,
