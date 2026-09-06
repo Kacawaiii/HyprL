@@ -1,832 +1,1119 @@
 {
- "blocking_unknowns_for_recommended_provider": [
-  "acceptanceDateTime literal format, precision and timezone (data.sec.gov unreachable from this environment)",
-  "official redistribution/licence terms for EDGAR content",
-  "the documented field linking an amendment to the filing it amends"
- ],
- "design_fit_recheck": {
-  "DURABLE_OBSERVED": "supported - observed_at + commit-bound ingested_at govern live collection safely",
-  "RETROSPECTIVE_SOURCE": "weaker - no trustworthy source publication bound; date-only at best",
-  "Revision": "distinct accessions, append-only",
-  "SourceObservation": "accession-based deterministic identity",
-  "TimestampTrustPolicyV1": "acceptanceDateTime cannot earn public-availability trust; it is not a publication instant",
-  "design_change_required": false,
-  "note": "design rev4 already permits source_available_at = null with observed_at bounding, so no design change is needed",
-  "offline_replay": "supported from captured raw",
-  "raw_first": "supported",
-  "restricted_raw": "safe default"
- },
- "design_hash": "4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689",
- "design_revision": 4,
- "evidence": [
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
-   "property": "api_authentication",
-   "provider": "bea",
-   "source_title": "BEA API for Data Retrieval User Guide (April 20, 2026)",
-   "summary": "\"users must obtain a unique 36-character UserID by registering\"; UserID is a minimum parameter on every request. Registration required; disposable e-mail addresses rejected.",
-   "verdict": "VERIFIED"
+  "blocking_unknowns_for_recommended_provider": [
+    "F1 Federal Reserve revision/correction semantics - UNKNOWN",
+    "F2 Federal Reserve automated-access/rate contract - UNKNOWN (no robots.txt served, no documented ceiling located)",
+    "F4 release-line parsing rule and EST/EDT resolution - unspecified; all sampled items fall inside EDT"
+  ],
+  "capture_spec_readiness": {
+    "known": [
+      "provider id candidate",
+      "official surface family and scope",
+      "discovery mechanism shape",
+      "fetch mechanism shape",
+      "deterministic source identity input",
+      "source timestamp semantics",
+      "observed_at semantics",
+      "ingested_at inherited semantics",
+      "raw redistribution classification (conservative restricted)",
+      "historical/live mode"
+    ],
+    "note": "provider_selected_for_6ga = true and ready_for_capture_spec_freeze = false are both correct simultaneously",
+    "preferred_provider": "federal_reserve",
+    "ready_to_freeze": false,
+    "remaining": [
+      "exact feed URL and host allowlist",
+      "poll cadence bound/class",
+      "access/rate policy (F2)",
+      "revision/change detection policy (F1)",
+      "release-line parsing rule and EST/EDT resolution (F4)",
+      "source-health/failure semantics"
+    ],
+    "why_not": "Provider selection is now sound, but freezing is a separate gate. Of the minimum contract the design requires, the Fed still lacks: an automated-access/rate policy (F2), revision/change-detection semantics (F1), a release-line parsing and DST resolution rule (F4), a chosen poll cadence, and a frozen host allowlist and endpoint."
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
-   "property": "api_documented_limits",
-   "provider": "bea",
-   "source_title": "BEA API User Guide - API Calling Limits",
-   "summary": "Three standard limits for all accounts: 100 requests per minute, 100 MB data volume per minute, 30 errors per minute; exceeding any triggers a timeout period of about one minute.",
-   "verdict": "VERIFIED"
+  "design_fit_recheck": {
+    "DURABLE_OBSERVED": "supported - observed_at + commit-bound ingested_at govern live collection safely",
+    "RETROSPECTIVE_SOURCE": "weaker - no trustworthy source publication bound; date-only at best",
+    "Revision": "distinct accessions, append-only",
+    "SourceObservation": "accession-based deterministic identity",
+    "TimestampTrustPolicyV1": "acceptanceDateTime cannot earn public-availability trust; it is not a publication instant",
+    "design_change_required": false,
+    "note": "design rev4 already permits source_available_at = null with observed_at bounding, so no design change is needed",
+    "offline_replay": "supported from captured raw",
+    "raw_first": "supported",
+    "restricted_raw": "safe default"
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
-   "property": "api_historical_vintages",
-   "provider": "bea",
-   "source_title": "BEA API User Guide",
-   "summary": "The user guide section reviewed does not document exposure of originally-published vintages versus currently-revised values.",
-   "verdict": "UNKNOWN"
+  "design_hash": "4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689",
+  "design_revision": 4,
+  "edge_case_argument": {
+    "argument": "\"SEC is preferable because it forces 6G-A to exercise the source_available_at = null path.\"",
+    "classification": "SECONDARY_SYNTHETIC_TEST_COVERAGE_BENEFIT",
+    "reasoning": "EventStore edge and pathological paths - source_available_at null, late observed_at, failed commit, same-timestamp conflict, revision correction - are testable with deterministic synthetic fixtures. Moreover TimestampTrustPolicyV1 has four verdicts (TRUSTED_EXACT, TRUSTED_CONSERVATIVE, UNTRUSTED, UNKNOWN) and NO single real provider exercises them all, so branch coverage necessarily comes from fixtures, never from provider choice. The rationale therefore belongs to test planning and must not rank providers.",
+    "status": "WITHDRAWN from active selection reasoning",
+    "weight_in_provider_ranking": "ZERO",
+    "where_it_may_still_appear": "test planning / synthetic fixture notes only"
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.bea.gov/news/schedule",
-   "property": "consensus_expectations",
-   "provider": "bea",
-   "source_title": "BEA (statistical agency)",
-   "summary": "No official BEA market-consensus product was found; expectations would require a separate provider.",
-   "verdict": "UNKNOWN"
+  "evidence": [
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
+      "property": "api_authentication",
+      "provider": "bea",
+      "source_title": "BEA API for Data Retrieval User Guide (April 20, 2026)",
+      "summary": "\"users must obtain a unique 36-character UserID by registering\"; UserID is a minimum parameter on every request. Registration required; disposable e-mail addresses rejected.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
+      "property": "api_documented_limits",
+      "provider": "bea",
+      "source_title": "BEA API User Guide - API Calling Limits",
+      "summary": "Three standard limits for all accounts: 100 requests per minute, 100 MB data volume per minute, 30 errors per minute; exceeding any triggers a timeout period of about one minute.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
+      "property": "api_historical_vintages",
+      "provider": "bea",
+      "source_title": "BEA API User Guide",
+      "summary": "The user guide section reviewed does not document exposure of originally-published vintages versus currently-revised values.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.bea.gov/news/schedule",
+      "property": "consensus_expectations",
+      "provider": "bea",
+      "source_title": "BEA (statistical agency)",
+      "summary": "No official BEA market-consensus product was found; expectations would require a separate provider.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bea.gov/news/schedule",
+      "property": "gdp_estimate_vintages_as_distinct_events",
+      "provider": "bea",
+      "source_title": "BEA News Release Schedule",
+      "summary": "GDP Advance / Second / Third Estimate appear as separately scheduled, separately titled release events - naturally representable as append-only distinct events rather than mutations of one value.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
+      "property": "raw_bytes_preservable",
+      "provider": "bea",
+      "source_title": "BEA API",
+      "summary": "Static JSON/XML API responses; byte-for-byte preservation straightforward.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.bea.gov/news/schedule",
+      "property": "release_archive",
+      "provider": "bea",
+      "source_title": "BEA News Release Schedule / Archive",
+      "summary": "An \"Archive\" section for past news releases is linked; the depth and per-document permanence were not verified in this pass.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bea.gov/news/schedule",
+      "property": "release_schedule_time_and_timezone",
+      "provider": "bea",
+      "source_title": "BEA News Release Schedule",
+      "summary": "Times such as \"8:30 AM\" and \"10:00 AM\" are listed, but NO timezone is stated on the schedule page.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
+      "property": "response_formats",
+      "provider": "bea",
+      "source_title": "BEA API User Guide - Data Return Format",
+      "summary": "JSON or XML via the ResultFormat parameter; JSON is the default.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bls.gov/developers/api_faqs.htm",
+      "property": "api_authentication",
+      "provider": "bls",
+      "source_title": "BLS Public Data API FAQs",
+      "summary": "v1.0 is unregistered/keyless; v2.0 \"Registration is required\" and returns a key by email. Credential friction applies only to v2.0.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bls.gov/developers/api_faqs.htm",
+      "property": "api_documented_limits",
+      "provider": "bls",
+      "source_title": "BLS Public Data API FAQs",
+      "summary": "v2.0: 500 daily queries, 50 series/query, 20 years/query. v1.0: 25 daily queries, 25 series/query, 10 years/query.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.bls.gov/developers/api_faqs.htm",
+      "property": "api_historical_vintages",
+      "provider": "bls",
+      "source_title": "BLS Public Data API FAQs",
+      "summary": "No documentation found on whether the API exposes originally-published vintages or only the current (possibly revised) series. This is the central causal question for macro values.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.bls.gov/developers/api_faqs.htm",
+      "property": "api_publication_timestamp_per_value",
+      "provider": "bls",
+      "source_title": "BLS Public Data API FAQs",
+      "summary": "The FAQ does not document any per-value publication timestamp or release date. Absence of documentation only - NOT evidence it is unsupported.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.bls.gov/developers/api_faqs.htm",
+      "property": "consensus_expectations",
+      "provider": "bls",
+      "source_title": "BLS (statistical agency)",
+      "summary": "No official BLS market-consensus product was found. BLS publishes official statistics; market expectations would require a separate, independent provider. Recorded as UNKNOWN rather than NOT_SUPPORTED because absence of evidence is not proof of absence.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.bls.gov/news.release/cpi.htm",
+      "property": "document_identifier",
+      "provider": "bls",
+      "source_title": "CPI News Release",
+      "summary": "Releases carry a USDL identifier (e.g. USDL-26-1191), an agency-assigned document number usable as a deterministic identity component.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bls.gov/news.release/cpi.htm",
+      "property": "news_release_embargo_time_with_timezone",
+      "provider": "bls",
+      "source_title": "CPI News Release (news.release/cpi.htm and archived PDFs)",
+      "summary": "News release documents carry \"Transmission of material in this release is embargoed until 8:30 a.m. (ET)\" - explicit time WITH timezone on the primary document, unlike the schedule page.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.bls.gov/developers/api_faqs.htm",
+      "property": "preliminary_vs_revised_markers",
+      "provider": "bls",
+      "source_title": "BLS Public Data API FAQs",
+      "summary": "No documented field or footnote code distinguishing preliminary from revised values was found in the FAQ.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bls.gov/news.release/cpi.htm",
+      "property": "raw_bytes_preservable",
+      "provider": "bls",
+      "source_title": "BLS news releases / archives",
+      "summary": "Static HTML and PDF release documents; byte-for-byte preservation straightforward.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bls.gov/news.release/cpi.htm",
+      "property": "release_archive_preserves_original_documents",
+      "provider": "bls",
+      "source_title": "BLS archived news releases",
+      "summary": "Dated archive URLs of the form /news.release/archives/cpi_08122025.pdf preserve each release as originally published, which is the surface that can reconstruct original (unrevised) values.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.bls.gov/schedule/news_release/cpi.htm",
+      "property": "release_schedule_time_and_timezone",
+      "provider": "bls",
+      "source_title": "CPI Release Schedule",
+      "summary": "Schedule lists \"Release Time: 08:30 AM\" per reference month, but NO timezone is stated on the schedule page itself.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
+      "property": "authentication_required",
+      "provider": "federal_reserve",
+      "source_title": "Federal Reserve RSS Feeds",
+      "summary": "Public pages and feeds; no authentication encountered or documented as required.",
+      "verdict": "NOT_SUPPORTED"
+    },
+    {
+      "confidence": "MEDIUM",
+      "official_url": "https://www.federalreserve.gov/robots.txt",
+      "property": "automated_access_policy",
+      "provider": "federal_reserve",
+      "source_title": "federalreserve.gov/robots.txt",
+      "summary": "A request for /robots.txt returns the site's standard \"Page not Found\" HTML document rather than a robots file, so no crawl directives are published at that path. No documented request-rate ceiling, User-Agent requirement or automated-access policy was located on official pages in this pass. ABSENCE OF A DECLARED RESTRICTION IS NOT PERMISSION: this stays UNKNOWN and a future CaptureSpec must adopt a conservative self-imposed cadence.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+      "property": "calendar_page_states_release_times",
+      "provider": "federal_reserve",
+      "source_title": "FOMC Calendars",
+      "summary": "The FOMC calendar page does NOT state release times; the exact time lives on each statement document, not the schedule.",
+      "verdict": "NOT_SUPPORTED"
+    },
+    {
+      "confidence": "MEDIUM",
+      "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260729a.htm",
+      "property": "content_authorship",
+      "provider": "federal_reserve",
+      "source_title": "Federal Reserve issues FOMC statement (2026-07-29)",
+      "summary": "FOMC statements are Board-authored agency material published by the issuing agency itself. This is a materially clearer authorship position than SEC filings, which are THIRD-PARTY FILER submissions that may embed filer-owned or third-party copyrighted exhibits. NO official reuse/licence terms page was verified for federalreserve.gov, so NO redistribution permission is claimed - only that authorship is unambiguous and that the third-party-rights layer present in SEC filings is absent here.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "property": "deterministic_item_identity",
+      "provider": "federal_reserve",
+      "source_title": "FOMC statement URL pattern",
+      "summary": "Items are identified by an official feed-declared <guid> (see feed_item_guid) whose value is the canonical document URL, following the stable dated pattern monetary{YYYYMMDD}{a|b}{n} for both page and PDF. Deterministic, stable and parseable. The earlier framing - penalising this as \"not an agency-assigned opaque identifier\" - is WITHDRAWN as aesthetic rather than evidential: the design requires deterministic identity, not opacity.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+      "property": "discovery_model",
+      "provider": "federal_reserve",
+      "source_title": "FRB: Press Release - Monetary Policy (RSS 2.0) \u2014 discovery shape",
+      "summary": "A single ~9.6 KB official feed enumerates recent monetary-policy releases with title, link, guid, description, category and pubDate per item. For a narrow FOMC-statement V1, DISCOVERY is one fetch of one declared feed and FETCH is one static primary page - no entity index, no per-issuer fan-out, no credential. This is a materially simpler discovery surface than an entity-scoped filing history. Exact endpoint and cadence are NOT frozen here.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "property": "explicit_release_time_on_document",
+      "provider": "federal_reserve",
+      "source_title": "Federal Reserve issues FOMC statement (June 17, 2026)",
+      "summary": "The statement page and its PDF carry \"For release at 2:00 p.m. EDT\" - minute precision WITH an explicit timezone, on the primary document.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+      "property": "feed_item_guid",
+      "provider": "federal_reserve",
+      "source_title": "FRB: Press Release - Monetary Policy (RSS 2.0)",
+      "summary": "Every item in the official monetary-policy feed carries a declared <guid> element. Inspected 15/15 items: guid present on all, value equal to the item <link> (the canonical press-release URL, pattern monetary{YYYYMMDD}{a|b}.htm); no isPermaLink=\"false\" attribute is set. This is an OFFICIAL FEED-DECLARED, stable, deterministic per-item identifier and is sufficient as a SourceObservation identity input. It is NOT an agency-assigned opaque numeric id, but determinism - not opacity - is what the design requires. No stronger GUID semantics (uniqueness guarantees, mutation policy) are claimed than were observed.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "MEDIUM",
+      "official_url": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+      "property": "feed_pubdate_corroborates_release_time",
+      "provider": "federal_reserve",
+      "source_title": "FRB: Press Release - Monetary Policy (RSS 2.0) \u2014 pubDate",
+      "summary": "Each item carries an RFC-822 <pubDate> with an explicit timezone, e.g. \"Wed, 29 Jul 2026 18:00:00 GMT\". On all four FOMC statements present in the feed (2026-03-18, 2026-04-29, 2026-06-17, 2026-07-29) pubDate is 18:00:00 GMT = 14:00 EDT, matching the release line printed on those documents. It is not a hardcoded constant: a non-statement item in the same feed carries 19:00:00 GMT. CAVEAT - the feeds page documents no pubDate semantics, and every sampled item falls inside EDT, so DST handling is unverified. This is therefore recorded as CORROBORATING DISCOVERY/FEED-TIMING EVIDENCE ONLY. The authoritative source-time evidence remains the release line on the primary statement; pubDate is NOT claimed to carry universal exact-publication authority.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
+      "property": "feed_update_cadence_and_timestamp_semantics",
+      "provider": "federal_reserve",
+      "source_title": "Federal Reserve RSS Feeds",
+      "summary": "The feeds page documents no update frequency and no formal item-timestamp semantics; pubDate is therefore not established as an authoritative publication field BY CONTRACT. Empirical corroboration is recorded separately under feed_pubdate_corroborates_release_time and is not treated as documentation. F3 remains open but NON-BLOCKING: the primary statement carries its own release line, so the feed is needed for discovery, not for source_available_at.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+      "property": "historical_depth_from_calendar_page",
+      "provider": "federal_reserve",
+      "source_title": "FOMC Calendars",
+      "summary": "Materials linked from this page span 2021-2027. Deeper historical archives exist elsewhere on the site but their release-time metadata was not verified in this pass.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
+      "property": "machine_readable_feeds",
+      "provider": "federal_reserve",
+      "source_title": "Federal Reserve RSS Feeds",
+      "summary": "Official RSS/XML feeds published, including /feeds/press_all.xml and /feeds/press_monetary.xml (monetary policy press releases).",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+      "property": "minutes_release_rule",
+      "provider": "federal_reserve",
+      "source_title": "FOMC Calendars",
+      "summary": "\"The minutes of regularly scheduled meetings are released three weeks after the date of the policy decision.\"",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
+      "property": "official_feed_catalogue",
+      "provider": "federal_reserve",
+      "source_title": "Federal Reserve Board \u2014 Feeds",
+      "summary": "The official feeds page declares 31 RSS/XML feeds, including /feeds/press_monetary.xml whose channel description is \"Press releases about monetary policy from the Federal Reserve Board\", alongside /feeds/press_all.xml and topic feeds. The monetary-policy feed is thus an OFFICIALLY DECLARED, topic-scoped surface rather than an incidental endpoint.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "property": "page_update_metadata_distinct_from_release",
+      "provider": "federal_reserve",
+      "source_title": "FOMC statement page",
+      "summary": "A separate \"Last Update: June 17, 2026\" field exists, date-only. Per design section 7 this is site-maintenance metadata and must NOT be treated as publication time.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "property": "revision_correction_semantics",
+      "provider": "federal_reserve",
+      "source_title": "FOMC statement page",
+      "summary": "No official documentation found stating whether released statements can be corrected in place or how corrections would be exposed.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://data.sec.gov/submissions/",
+      "property": "acceptance_datetime_format",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Submissions API (schema observed)",
+      "summary": "acceptanceDateTime is present on filings.recent and follows ISO-8601 of shape YYYY-MM-DDTHH:MM:SS.sssZ. Observed uniformly across a 400-value sample of one company's filings; no sample rows retained.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://data.sec.gov/submissions/",
+      "property": "acceptance_datetime_precision",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Submissions API (schema observed)",
+      "summary": "Millisecond field representation (.sss). Supersedes the earlier UNKNOWN, which was an environment limitation rather than a documentation gap.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/os/accessing-edgar-data",
+      "property": "acceptance_datetime_semantics",
+      "provider": "sec_edgar",
+      "source_title": "Accessing EDGAR Data (SEC) \u2014 Business hours and dissemination",
+      "summary": "CROSS-SURFACE PROVENANCE CORRECTED. The verbatim field definition \"The ACCEPTANCE date and time of the registrant's filing with the Commission. Filings accepted after 5:30pm EST are considered filed on the following business day\" is documented for the FINANCIAL STATEMENT DATA SETS field, NOT for the Submissions API field, and is no longer relied on as sole proof for filings.recent.acceptanceDateTime. The acceptance-versus-dissemination distinction for the SELECTED Submissions surface rests instead on EDGAR operational documentation, which separates acceptance from dissemination directly. The field name and the operational rule agree, but the selected-surface semantics are therefore classified conservatively as PARTIALLY_VERIFIED rather than VERIFIED.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://data.sec.gov/submissions/",
+      "property": "acceptance_datetime_timezone",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Submissions API (schema observed)",
+      "summary": "Values carry a trailing Z (UTC) in every sampled value.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
+      "property": "acceptance_equals_public_dissemination",
+      "provider": "sec_edgar",
+      "source_title": "Determine the Status of My Filing",
+      "summary": "Acceptance is NOT proven equivalent to dissemination. Submissions transmitted after 5:30 p.m. ET \"will not be disseminated by EDGAR until the next business day\", so acceptance can precede public availability by hours. Using acceptanceDateTime as source_available_at would create lookahead for those filings.",
+      "verdict": "NOT_SUPPORTED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "amendment_parent_pointer",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR APIs / SEC documentation",
+      "summary": "No official machine-readable field linking an amendment to the filing it amends was verified. Amendment FORM TYPES (10-K/A etc.) are distinguishable, and each submission carries its own accession number, but an explicit parent pointer was not established. prevrpt is not such a pointer.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "MEDIUM",
+      "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
+      "property": "amendment_revision_semantics",
+      "provider": "sec_edgar",
+      "source_title": "SEC filing status / form types",
+      "summary": "Amendment form types (10-K/A, 10-Q/A, 8-K/A) exist and each submission receives its own accession number, implying append-only filing lineage rather than in-place mutation. The exact linkage field between an amendment and its original was not confirmed officially.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "api_update_latency_is_not_an_sla",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Application Programming Interfaces",
+      "summary": "The documented \"typical processing delay of less than a second\" describes surface UPDATE latency relative to SEC dissemination. It is guidance, not a service-level guarantee, and it is not a publication timestamp.",
+      "verdict": "PARTIALLY_VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "authentication_required",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Application Programming Interfaces",
+      "summary": "\"These APIs do not require any authentication or API keys to access.\" No credential friction.",
+      "verdict": "NOT_SUPPORTED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "bulk_archive_availability",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Application Programming Interfaces",
+      "summary": "companyfacts.zip and submissions.zip offered under /Archives/edgar/daily-index/, \"recompiled nightly\".",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/os/accessing-edgar-data",
+      "property": "business_hours_and_dissemination",
+      "provider": "sec_edgar",
+      "source_title": "Accessing EDGAR Data \u2014 Business hours and dissemination",
+      "summary": "\"EDGAR accepts new filer applications, new filings, and changes to filer data each business day, Monday through Friday, from 6:00 a.m. to 10:00 p.m., ET... Some filing submissions that begin after 5:30 p.m. ET - or 10:00 p.m. for Ownership forms 3, 4, 5 - will be disseminated the next business day, showing up in the following business day's index.\" Second independent official corroboration that ACCEPTANCE CAN PRECEDE DISSEMINATION. Note the precise scope: \"some\" submissions, keyed to when transmission BEGINS, with a form-conditional cutoff. Not generalised further.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/edgar-glossary",
+      "property": "deterministic_item_identity",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Glossary / Filer Manual",
+      "summary": "Accession number is a unique identifier assigned automatically by EDGAR to an accepted submission; format ##########-YY-SSSSSS (CIK, 2-digit year, 6-digit sequence). Not URL-derived.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "discovery_model_per_cik",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Application Programming Interfaces \u2014 data.sec.gov/submissions/",
+      "summary": "\"Each entity's current filing history is available at the following URL: https://data.sec.gov/submissions/CIK##########.json\". The Submissions endpoint is ENTITY/CIK-SCOPED and is NOT in itself a global new-filing event feed. The object carries \"at least one year's of filing or to 1,000 (whichever is more) of the most recent filings\"; older history is paginated into additional files listed in filings.files[]. DISCOVERY (learning a filing exists) is therefore a separate concern from FETCH, and for a narrow known-issuer universe discovery means polling known CIKs. No global discovery surface is asserted here.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "dissemination_latency",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Application Programming Interfaces",
+      "summary": "\"The submissions API is updated with a typical processing delay of less than a second; the xbrl APIs ... under a minute.\" JSON \"updated throughout the day, in real time, as submissions are disseminated.\"",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/os/webmaster-faq",
+      "property": "documented_rate_limit",
+      "provider": "sec_edgar",
+      "source_title": "SEC.gov Webmaster FAQ (developers)",
+      "summary": "\"Our current maximum access rate is 10 requests per second\", \"carefully monitored to preserve equitable access for all users.\"",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
+      "property": "filing_date_semantics",
+      "provider": "sec_edgar",
+      "source_title": "SEC Financial Statement and Notes Data Sets",
+      "summary": "filed/filingDate is \"The date of the registrant's filing with the Commission\", a DATE (no time). Combined with the post-cutoff rule it is an ASSIGNED business date and can differ from the acceptance date. It is not an exact publication instant; at best it supports date-only conservative semantics.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
+      "property": "filing_date_vs_dissemination",
+      "provider": "sec_edgar",
+      "source_title": "Determine the Status of My Filing",
+      "summary": "\"Most live submissions that begin transmission after 5:30 p.m. ET ... will receive a filing date of 6:00 a.m. ET the next business day and will not be disseminated by EDGAR until the next business day.\" Forms 3/4/5/144 and MEF extended to 10:00 p.m. ET same-date dissemination. EDGAR hours 6:00 a.m.-10:00 p.m. ET. filingDate is therefore an ASSIGNED BUSINESS DATE, not a publication instant.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "machine_readable_endpoints",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Application Programming Interfaces",
+      "summary": "Four JSON APIs named: submissions, companyconcept, companyfacts, frames, under data.sec.gov.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/files/company_tickers.json",
+      "property": "official_ticker_cik_mapping",
+      "provider": "sec_edgar",
+      "source_title": "SEC company_tickers.json",
+      "summary": "Official SEC-hosted ticker-to-CIK mapping, 10415 entries, records of shape {\"cik_str\": <int>, \"ticker\": <str>, \"title\": <str>}. Deterministic issuer resolution is therefore available from an official surface. Catalogue examples resolved (METADATA ONLY - the 6G-A universe is NOT frozen): AAPL 320193 Apple Inc.; MSFT 789019 MICROSOFT CORP; NVDA 1045810 NVIDIA CORP; QQQ 1067839 INVESCO QQQ TRUST, SERIES 1. Blocker B5 is RESOLVED.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/os/accessing-edgar-data",
+      "property": "post_acceptance_correction_removal",
+      "provider": "sec_edgar",
+      "source_title": "Accessing EDGAR Data \u2014 Post-acceptance corrections and deletions",
+      "summary": "\"Filings are sometimes authorized by SEC staff for removal or correction for a variety of reasons at the filer's request... Corrections processed during a given business day will be incorporated in the indexes built that evening. However, removals processed on subsequent business days will not be reflected in any previous daily, feed, or oldload index. The full and quarterly index files are rebuilt weekly.\" The SEC PUBLIC SURFACE IS THEREFORE NOT STRICTLY IMMUTABLE: a previously retrievable filing can later be corrected or removed. This does not threaten HyprL causality - HyprL raw-first history stays append-only and a later divergent or absent fetch is a NEW observation/revision state, never an overwrite - but a CaptureSpec must define re-observation and change-detection policy rather than assume upstream immutability.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
+      "property": "post_cutoff_dissemination_rule",
+      "provider": "sec_edgar",
+      "source_title": "Determine the Status of My Filing",
+      "summary": "\"Most live submissions that begin transmission after 5:30 p.m. ET ... will receive a filing date of 6:00 a.m. ET the next business day and will not be disseminated by EDGAR until the next business day.\" Forms 3/4/5/144 and certain MEF types are extended to 10:00 p.m. ET same-date dissemination. The rule is form-conditional and is NOT generalised here beyond the quoted scope.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://data.sec.gov/submissions/",
+      "property": "prevrpt_not_on_submissions_surface",
+      "provider": "sec_edgar",
+      "source_title": "SEC Submissions API \u2014 filings.recent field inventory",
+      "summary": "prevrpt is NOT a filings.recent field. The Submissions surface inventory is exactly: accessionNumber, filingDate, reportDate, acceptanceDateTime, act, form, fileNumber, filmNumber, items, core_type, size, isXBRL, isInlineXBRL, isXBRLNumeric, primaryDocument, primaryDocDescription. prevrpt belongs to the FINANCIAL STATEMENT DATA SETS, a different SEC product. Recorded to prevent cross-surface schema contamination: the prevrpt prohibition is real but applies to that dataset, not to the selected V1 surface.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
+      "property": "prevrpt_semantics",
+      "provider": "sec_edgar",
+      "source_title": "SEC Financial Statement and Notes Data Sets",
+      "summary": "prevrpt: \"Previous Report - TRUE indicates that the submission information was SUBSEQUENTLY AMENDED prior to the end cutoff date of the data set.\" Its value depends on events AFTER the filing and on the dataset cutoff, so it is future-aware and retrospective by construction. It is NOT an amendment parent pointer and MUST NOT enter a causal record or feature at the filing's historical timestamp.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://data.sec.gov/submissions/",
+      "property": "public_dissemination_timestamp_per_filing",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR Submissions API (field inventory)",
+      "summary": "No per-filing public-dissemination timestamp was verified on the Submissions surface. Its field inventory is acceptanceDateTime, accessionNumber, act, core_type, fileNumber, filingDate, filmNumber, form, isInlineXBRL, isXBRL, isXBRLNumeric, items, primaryDocDescription, primaryDocument, reportDate, size. This is a statement about the SELECTED surface only, not about all SEC systems.",
+      "verdict": "NOT_EXPOSED_ON_SELECTED_SURFACE"
+    },
+    {
+      "confidence": "HIGH",
+      "official_url": "https://data.sec.gov/submissions/CIK0001067839.json",
+      "property": "qqq_entity_semantics_differ",
+      "provider": "sec_edgar",
+      "source_title": "SEC Submissions \u2014 INVESCO QQQ TRUST, SERIES 1 (CIK 0001067839)",
+      "summary": "QQQ is NOT a normal operating corporation. Official entity metadata: entityType \"investment\", with sic, sicDescription, category, ownerOrg and stateOfIncorporation all EMPTY, fiscalYearEnd \"0930\". Its recent form population is investment-company forms - DEFA14A, 497, 485BPOS, NPORT-P, 24F-2NT, N-30B-2, NSAR-U, 497J - not the 8-K/10-K/10-Q population of an operating issuer. Issuer/event semantics are therefore NOT uniform across a mixed equity+ETF universe, and a CaptureSpec may legitimately need a narrower scope.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "raw_bytes_preservable",
+      "provider": "sec_edgar",
+      "source_title": "EDGAR APIs / Archives",
+      "summary": "Static JSON and filing documents served over HTTPS from /Archives/; byte-for-byte preservation is straightforward, no JS rendering required.",
+      "verdict": "VERIFIED"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "property": "redistribution_raw_filer_content",
+      "provider": "sec_edgar",
+      "source_title": "SEC.gov",
+      "summary": "Filings are third-party submissions and may embed filer-owned or third-party copyrighted material (exhibits, logos, images). No official statement establishing redistribution rights for filer-submitted content was verified. SEC-produced API metadata, filer content, HyprL normalized metadata and derived aggregates must be treated as distinct rights categories; no blanket public-domain assumption is made.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "LOW",
+      "official_url": "https://www.sec.gov/os/webmaster-faq",
+      "property": "redistribution_terms",
+      "provider": "sec_edgar",
+      "source_title": "SEC.gov Webmaster FAQ",
+      "summary": "No explicit redistribution/licence statement was verified in this pass. US federal agency material is commonly public domain, but that was NOT confirmed from an official terms page.",
+      "verdict": "UNKNOWN"
+    },
+    {
+      "accessed_at": "2026-09-06T00:00:00Z",
+      "confidence": "HIGH",
+      "official_url": "https://www.sec.gov/os/webmaster-faq",
+      "property": "user_agent_requirement",
+      "provider": "sec_edgar",
+      "source_title": "SEC.gov Webmaster FAQ (developers)",
+      "summary": "Declared User-Agent required, documented format: \"Sample Company Name AdminContact@<sample company domain>.com\".",
+      "verdict": "VERIFIED"
+    }
+  ],
+  "evidence_counts": {
+    "_total": 65,
+    "bea": [
+      9,
+      {
+        "PARTIALLY_VERIFIED": 2,
+        "UNKNOWN": 2,
+        "VERIFIED": 5
+      }
+    ],
+    "bls": [
+      11,
+      {
+        "PARTIALLY_VERIFIED": 2,
+        "UNKNOWN": 4,
+        "VERIFIED": 5
+      }
+    ],
+    "federal_reserve": [
+      16,
+      {
+        "NOT_SUPPORTED": 2,
+        "PARTIALLY_VERIFIED": 3,
+        "UNKNOWN": 3,
+        "VERIFIED": 8
+      }
+    ],
+    "sec_edgar": [
+      29,
+      {
+        "NOT_EXPOSED_ON_SELECTED_SURFACE": 1,
+        "NOT_SUPPORTED": 2,
+        "PARTIALLY_VERIFIED": 3,
+        "UNKNOWN": 3,
+        "VERIFIED": 20
+      }
+    ]
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bea.gov/news/schedule",
-   "property": "gdp_estimate_vintages_as_distinct_events",
-   "provider": "bea",
-   "source_title": "BEA News Release Schedule",
-   "summary": "GDP Advance / Second / Third Estimate appear as separately scheduled, separately titled release events - naturally representable as append-only distinct events rather than mutations of one value.",
-   "verdict": "VERIFIED"
+  "non_goals": [
+    "capture spec freeze",
+    "scraper",
+    "event store code",
+    "corpus capture",
+    "LLM",
+    "model",
+    "features",
+    "signal",
+    "backtest",
+    "holdout access"
+  ],
+  "note": "Provider property verification against the frozen causal design, revision 3. Rebuilds the RECOMMENDATION layer after independent counter-review R2 found it unsupported: an invalid selection rationale (the source_available_at = null \"edge case\" benefit) is withdrawn and given zero ranking weight; Fed identity is re-scored on evidence of an official feed GUID; the SEC revision model is downgraded from immutable/append-only because post-acceptance correction and removal are officially documented; discovery is added as an explicit operational axis; and evidence counts, blockers and environment wording are corrected. The recommendation is REVERSED to federal_reserve. The SEC timestamp findings of revision 2 are preserved unchanged. No capture spec is frozen and no provider code exists. Absence of official documentation is recorded as UNKNOWN, never as false.",
+  "ordered_selection_criteria": {
+    "01_source_authority": {
+      "fed": "TIER_1_OFFICIAL primary",
+      "sec": "TIER_1_OFFICIAL primary",
+      "winner": "TIE"
+    },
+    "02_timestamp_quality": {
+      "fed": "EXCELLENT - \"For release at 2:00 p.m. EDT\" on the primary document, two statements verified, feed pubDate corroborating",
+      "note": "earliest discriminating criterion, and the gap is categorical rather than marginal: SEC has no verified source publication instant at all",
+      "sec": "WEAK - no verified dissemination instant on the selected surface; backfill date-only",
+      "winner": "FED"
+    },
+    "03_deterministic_identity": {
+      "fed": "GOOD - official feed-declared <guid>, deterministic and stable",
+      "note": "real but narrow: EXCELLENT vs GOOD, not EXCELLENT vs BLOCKING",
+      "sec": "EXCELLENT - agency-assigned accession number",
+      "winner": "SEC"
+    },
+    "04_revision_semantics": {
+      "fed": "UNKNOWN - no documented correction mechanism",
+      "note": "a genuine SEC advantage and a genuine Fed risk (F1). But SEC's model is richer and MORE complex, not cleaner, which cuts against it for a first integration.",
+      "sec": "GOOD - amendments additive AND correction/removal documented",
+      "winner": "SEC"
+    },
+    "05_raw_capture_simplicity": {
+      "fed": "EXCELLENT - static XML feed + static page, no JS",
+      "sec": "EXCELLENT - static JSON + /Archives, no JS",
+      "winner": "TIE"
+    },
+    "06_legal_clarity": {
+      "fed": "Board-authored agency material; no reuse-terms page verified, so no permission claimed",
+      "note": "no legal overclaim on either side; the difference is authorship clarity, not established permission",
+      "sec": "third-party filer submissions, may embed filer-owned/third-party copyrighted exhibits; redistribution UNKNOWN",
+      "winner": "FED"
+    },
+    "07_credential_friction": {
+      "fed": "none encountered",
+      "sec": "none required",
+      "winner": "TIE"
+    },
+    "08_historical_fixtures": {
+      "fed": "GOOD - archived statements, 2021-2027 verified",
+      "note": "material for offline replay fixtures, but 6G-A needs determinism, not volume",
+      "sec": "EXCELLENT - nightly bulk zips, /Archives permanent since 1994, large volume",
+      "winner": "SEC"
+    },
+    "09_relevance": {
+      "fed": "EXCELLENT - macro, relevant to equities and crypto",
+      "sec": "GOOD - corporate/equity events",
+      "winner": "FED"
+    },
+    "10_implementation_simplicity": {
+      "fed": "one declared ~9.6 KB feed + one static page, fixed narrow universe",
+      "sec": "entity/CIK map + per-CIK JSON with pagination + /Archives fetch + UA/rate compliance + heterogeneous entity semantics (QQQ is an investment company with a different form population)",
+      "winner": "FED"
+    },
+    "_contract": "The original infrastructure-first priority ordering, preserved verbatim and unrenumbered. discovery_quality is NOT inserted into it.",
+    "_method": "Priorities, not a lexicographic algorithm. The earliest DISCRIMINATING criterion carries the most weight, but later advantages are weighed for materiality rather than discarded. The final choice may not contradict the ordering without a stated reason.",
+    "tally": {
+      "fed": [
+        "02",
+        "06",
+        "09",
+        "10"
+      ],
+      "sec": [
+        "03",
+        "04",
+        "08"
+      ],
+      "tie": [
+        "01",
+        "05",
+        "07"
+      ]
+    }
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
-   "property": "raw_bytes_preservable",
-   "provider": "bea",
-   "source_title": "BEA API",
-   "summary": "Static JSON/XML API responses; byte-for-byte preservation straightforward.",
-   "verdict": "VERIFIED"
+  "providers": {
+    "bea": {
+      "authentication": "36-character UserID required on every request (registration)",
+      "blocking_unknowns": [
+        "timezone of scheduled release times",
+        "historical vintage exposure",
+        "release document identity"
+      ],
+      "deterministic_identity": "UNKNOWN - no agency-assigned release id verified",
+      "documented_latency": "n/a - scheduled releases",
+      "historical_archive": "Archive section linked; depth unverified",
+      "machine_readable": "Data API (JSON/XML)",
+      "max_backfill_causal_grade": "C",
+      "max_live_causal_grade": "B (pending timezone and identity confirmation)",
+      "official": true,
+      "primary_source": true,
+      "provider_id_candidate": "bea-news-release-v1",
+      "rate_policy": "100 requests/min, 100 MB/min, 30 errors/min",
+      "raw_preservable": true,
+      "revision_model": "GDP Advance/Second/Third are distinct scheduled events (append-only friendly)",
+      "timestamp_strength": "schedule lists 8:30 AM / 10:00 AM with NO timezone on the page"
+    },
+    "bls": {
+      "authentication": "v1.0 keyless (25 queries/day); v2.0 registration key (500 queries/day)",
+      "blocking_unknowns": [
+        "per-value publication timestamp in API",
+        "historical vintage exposure vs currently-revised series",
+        "preliminary/revised markers"
+      ],
+      "deterministic_identity": "USDL-YY-NNNN release number + dated archive path",
+      "documented_latency": "n/a - scheduled releases",
+      "historical_archive": "dated PDF/HTML archives preserve releases as originally published",
+      "machine_readable": "Public Data API (JSON) + static news-release HTML/PDF + dated archives",
+      "max_backfill_causal_grade": "B via dated release archive; the API series alone would be D/E because a value fetched today is not the value published then",
+      "max_live_causal_grade": "A for the news-release surface (embargo instant + ET declared)",
+      "official": true,
+      "primary_source": true,
+      "provider_id_candidate": "bls-news-release-v1",
+      "rate_policy": "documented daily query limits per API version",
+      "raw_preservable": true,
+      "revision_model": "UNKNOWN at API level; original values recoverable from dated release archive",
+      "timestamp_strength": "news release document states 'embargoed until 8:30 a.m. (ET)'; the SCHEDULE page states 08:30 AM with NO timezone"
+    },
+    "federal_reserve": {
+      "authentication": "none encountered",
+      "blocker_classification": {
+        "F1": "STILL_BLOCKING_CAPTURE_SPEC - revision/correction semantics UNKNOWN; V1 change-detection policy undefined",
+        "F2": "STILL_BLOCKING_CAPTURE_SPEC - automated-access/rate contract UNKNOWN; a conservative self-imposed cadence must be chosen and recorded",
+        "F3": "NON_BLOCKING - RSS pubDate is not formally proven as universal publication authority, but it is not needed for that: the primary statement carries its own release line, so the feed serves DISCOVERY while source_available_at comes from the document",
+        "F4": "STILL_BLOCKING_CAPTURE_SPEC - release-line parsing rule and EST/EDT resolution not specified; all sampled items fall inside EDT so DST behaviour is unverified",
+        "F5": "NOT_REQUIRED_FOR_MVP - deeper pre-2021 archive depth unverified; a narrow V1 does not depend on it"
+      },
+      "blocking_unknowns": [
+        "F1 revision/correction semantics",
+        "F2 automated-access/rate contract",
+        "F4 release-line parsing and DST resolution"
+      ],
+      "causal_grade_caps": {
+        "historical_backfill": "B - archived statements carry the same declared release line, so retrospective source bounds are real rather than reconstructed",
+        "live_effective_causality": "source_available_at from the document release line AND observed_at/ingested_at independently; DURABLE_OBSERVED and RETROSPECTIVE_SOURCE both fully populated",
+        "live_source_timestamp_axis": "A - official/primary, LIVE, strong provenance, exact declared release instant at minute precision (TimestampTrustPolicyV1 trusted_requires is precision <= minute)",
+        "retrospective_source_fit": "STRONG - this is the axis on which SEC cannot compete"
+      },
+      "deterministic_identity": "official feed-declared <guid> per item (15/15 inspected), value = canonical document URL following the stable dated pattern monetary{YYYYMMDD}{a|b}{n}. Deterministic and stable; sufficient as a SourceObservation identity input. Not an agency-assigned opaque id - which the design does not require.",
+      "discovery_model": "one officially declared topic feed (/feeds/press_monetary.xml, ~9.6 KB) enumerates items with title/link/guid/pubDate/category. Discovery is a single fetch; fetch is one static primary page. No entity index, no per-issuer fan-out, no credential. Exact endpoint and cadence NOT frozen.",
+      "documented_latency": "UNKNOWN - the feeds page documents no cadence; unchanged",
+      "historical_archive": "statement pages archived and stable; calendar page links 2021-2027 verified, deeper depth unverified",
+      "machine_readable": "RSS/XML feeds incl. /feeds/press_monetary.xml",
+      "official": true,
+      "primary_source": true,
+      "provider_id_candidate": "federalreserve-press-monetary-v1",
+      "rate_policy": "UNKNOWN - no robots.txt served and no documented rate ceiling located; absence of a declared restriction is NOT permission",
+      "raw_preservable": true,
+      "redistribution_position": "Board-authored agency material - authorship unambiguous, and the third-party filer-rights layer present in SEC filings is absent. No official reuse/licence terms page verified, so no redistribution permission is claimed.",
+      "revision_model": "UNKNOWN - no documented correction semantics; raw hashing plus re-observation can detect change, but the policy is unverified",
+      "timestamp_strength": "PRIMARY AND AUTHORITATIVE: the statement document itself carries \"For release at 2:00 p.m. EDT\" - minute precision WITH explicit timezone, verified on two independent historical statements (2026-06-17, 2026-07-29). CORROBORATING ONLY: the official feed pubDate matches that instant (18:00:00 GMT) on all four FOMC statements in the feed. Under TimestampTrustPolicyV1 the document release line satisfies trusted_requires (TIER_1_OFFICIAL, precision <= minute, known timezone), so source_available_at CAN be populated. observed_at remains independent - the collector may receive later, and a schedule is never an observation."
+    },
+    "sec_edgar": {
+      "acceptance_datetime": {
+        "format": "YYYY-MM-DDTHH:MM:SS.sssZ",
+        "is_public_dissemination": "NOT VERIFIED",
+        "precision": "millisecond",
+        "semantics": "acceptance by the Commission",
+        "timezone": "UTC (Z)"
+      },
+      "authentication": "none required",
+      "blocker_classification": {
+        "B1a": "RESOLVED - acceptanceDateTime is ISO-8601 YYYY-MM-DDTHH:MM:SS.sssZ, UTC, millisecond representation. Verified on the surface itself.",
+        "B1b": "NON_BLOCKING_WITH_CONSERVATIVE_POLICY - no per-filing dissemination instant on the selected surface; design rev4 permits source_available_at = null with observed_at bounding. It does cap the causal grade.",
+        "B2": "NON_BLOCKING_WITH_CONSERVATIVE_POLICY - raw stays LOCAL_RESTRICTED, redistribution_permitted=false by default, release guard applies.",
+        "B3": "NOT_REQUIRED_FOR_MVP - each accession is an independent SourceObservation; a CaptureSpec must declare amendment_parent_lineage_available=false rather than invent one.",
+        "B4": "STILL_BLOCKING_CAPTURE_SPEC - the discovery mechanism and polling scope are not decided. A future CaptureSpec must choose among official mechanisms (known-CIK polling, an official recent-filings feed/index, or another verified SEC discovery surface). This does NOT make SEC unsuitable.",
+        "B5": "RESOLVED - official ticker/CIK mapping exists at www.sec.gov/files/company_tickers.json.",
+        "B6": "STILL_BLOCKING_CAPTURE_SPEC - post-acceptance correction/removal behaviour is documented upstream but V1 change-detection and re-observation policy is unspecified."
+      },
+      "blocking_unknowns": [
+        "B2 redistribution of filer-submitted raw content - UNKNOWN",
+        "B3 amendment parent pointer - UNKNOWN"
+      ],
+      "causal_grade_caps": {
+        "historical_backfill": "D - no historical observed_at, acceptance must not substitute for dissemination, only date-only filingDate remains",
+        "live_effective_causality": "SAFE via collector observed_at + commit-bound ingested_at under DURABLE_OBSERVED; honest causality, but not a source-declared publication instant, so it does not earn A",
+        "live_source_timestamp_axis": "E - no verified per-filing publication instant on the selected surface",
+        "retrospective_source_fit": "WEAK - the RETROSPECTIVE_SOURCE gate is source_available_at <= T, which SEC cannot populate live and can only bound date-only in backfill"
+      },
+      "deterministic_identity": "accession number ##########-YY-SSSSSS, assigned by EDGAR on acceptance",
+      "discovery_model": "Submissions endpoint is ENTITY/CIK-SCOPED (data.sec.gov/submissions/CIK##########.json) and is not in itself a global new-filing feed; filings.files[] paginates older history. DISCOVERY is therefore separate from FETCH: for a narrow known-issuer universe it means polling known CIKs, resolved through the official ticker/CIK mapping. Other official discovery surfaces exist but none is selected or frozen here.",
+      "documented_latency": "submissions API typical processing delay < 1 second; real time as disseminated",
+      "entity_mapping": "Official ticker-to-CIK mapping at www.sec.gov/files/company_tickers.json (10415 entries). Catalogue examples METADATA ONLY, universe NOT frozen: AAPL 320193, MSFT 789019, NVDA 1045810, QQQ 1067839. QQQ entityType is \"investment\" with an investment-company form population, so issuer/event semantics are not uniform across a mixed universe.",
+      "historical_archive": "bulk zips recompiled nightly; /Archives permanent",
+      "machine_readable": "JSON APIs (submissions, companyconcept, companyfacts, frames) + /Archives",
+      "official": true,
+      "prevrpt_warning": "retrospective/future-aware; forbidden in causal records and features; not an amendment parent pointer",
+      "primary_source": true,
+      "provider_id_candidate": "sec-edgar-submissions-v1",
+      "public_dissemination_timestamp": "NOT_EXPOSED_ON_SELECTED_SURFACE (Submissions API)",
+      "rate_policy": "10 requests/second, declared User-Agent with contact e-mail",
+      "raw_preservable": true,
+      "revision_model": "accession provides deterministic filing identity and amendments (10-K/A, 10-Q/A, 8-K/A) are SEPARATE filings with their own accession numbers, so amendment lineage is naturally additive. BUT the SEC also documents post-acceptance CORRECTION and REMOVAL procedures, so the public surface itself is NOT strictly immutable. A provider implementation must preserve each observation/retrieval state rather than assume upstream immutability.",
+      "safe_live_policy": {
+        "ingested_at": "commit-bound boundary per design rev4",
+        "no_derived_0600_timestamp": "a conservative next-business-day 06:00 ET bound is NOT adopted; its exact domain is not established and V1 does not invent it",
+        "observed_at": "the collector's first successful acquisition of the public resource",
+        "source_available_at": "null / unavailable - never derived from acceptance or filingDate",
+        "why_this_is_safe": "a collector cannot observe a filing before EDGAR disseminates it, so observed_at naturally prevents lookahead. DURABLE_OBSERVED then gates on max(observed_at, ingested_at), which the design explicitly supports when source_available_at is absent."
+      },
+      "timestamp_caution": "THREE separate cautions. (1) filingDate is an ASSIGNED business date, not an exact publication instant. (2) acceptanceDateTime is precise (ISO-8601, UTC, ms) but marks ACCEPTANCE, and is NOT proven equivalent to public dissemination; for post-cutoff filings acceptance precedes dissemination by hours. (3) source_available_at must therefore NOT be populated from either field as an exact dissemination instant. When no dissemination timestamp is available, the safe causal boundary is the collector's observed_at.",
+      "upstream_mutability": "DOCUMENTED. Staff-authorised removals/corrections can change what the public surface returns for an already-accepted filing. HyprL raw-first history remains append-only and immutable; a later divergent or absent fetch becomes a NEW SourceObservation/Revision state and never overwrites stored historical raw. The detection and re-observation policy is NOT specified here - see blocker B6."
+    }
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.bea.gov/news/schedule",
-   "property": "release_archive",
-   "provider": "bea",
-   "source_title": "BEA News Release Schedule / Archive",
-   "summary": "An \"Archive\" section for past news releases is linked; the depth and per-document permanence were not verified in this pass.",
-   "verdict": "PARTIALLY_VERIFIED"
+  "recommendation": {
+    "confidence": "MEDIUM",
+    "confidence_reason": "MEDIUM, not HIGH: the Fed wins the evidence comparison clearly, but two Fed properties remain UNKNOWN (F1 revision/correction semantics, F2 automated-access/rate contract) and they must be resolved before any capture spec is frozen. Confidence is about remaining unknowns, not about the ranking.",
+    "consensus_gap": "No official market-consensus product was verified on the evaluated official surfaces. Consensus will require a separate, independently verified provider. This is NOT a 6G-A blocker, whose objective is ingestion and replay, not surprise.",
+    "not_first": {
+      "bea": "registration required, no verified release identity, no timezone on the schedule page",
+      "bls": "richest macro relevance but API vintage and revision semantics undocumented, no timezone on the schedule page, and the causal surface is the dated release archive - a heavier first integration"
+    },
+    "recommended_first_provider": "federal_reserve",
+    "runner_up": "sec_edgar",
+    "sec_advantages_acknowledged": [
+      "agency-assigned accession identity is stronger than a URL-based feed GUID",
+      "richer amendment/revision ecosystem with documented correction and removal procedures, where the Fed is UNKNOWN",
+      "far larger deterministic archive and nightly bulk fixtures",
+      "an explicit documented access contract (10 requests/second, declared User-Agent), where the Fed is UNKNOWN",
+      "much higher event volume for exercising a store at scale"
+    ],
+    "selection_reason": "Both providers are TIER_1_OFFICIAL primary sources, so criterion 1 ties and the decision falls to criterion 2, timestamp quality - where the gap is categorical, not marginal. The Fed publishes an explicit source release instant on the primary document (\"For release at 2:00 p.m. EDT\", verified on two statements, corroborated by the official feed), which under TimestampTrustPolicyV1 satisfies trusted_requires and can populate source_available_at. SEC has no verified per-filing publication instant at all. That difference is not cosmetic: RETROSPECTIVE_SOURCE is one of the two MANDATORY snapshot modes and its gate is source_available_at <= T, so a SEC-first 6G-A would leave that mode without real source evidence, while the Fed populates both modes. The Fed additionally wins legal clarity (agency-authored rather than third-party filer content), relevance (macro, spanning equities and crypto), and implementation simplicity by a wide margin - one declared ~9.6 KB feed plus one static page, against an entity index, per-CIK pagination and heterogeneous issuer semantics. SEC's three wins are real but none is categorical: identity is EXCELLENT against a GOOD that is still fully deterministic; revision semantics are documented but richer and more complex, which is a burden for a first integration; and the archive advantage is volume, which 6G-A does not need in order to prove ingestion and replay.",
+    "verdict": "FED_PREFERRED",
+    "verdict_vs_previous": "REVERSED - revision 2 recommended sec_edgar; that recommendation did not survive independent counter-review",
+    "why_sec_is_still_the_right_second_provider": "SEC remains fully suitable and its research is retained in full. It is the natural 6G-B / second provider: it contributes the strongest deterministic identity, the largest offline fixture corpus, a documented access contract, and the real-world source_available_at = null path - the latter as a consequence of integrating it, never as a reason for choosing it."
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bea.gov/news/schedule",
-   "property": "release_schedule_time_and_timezone",
-   "provider": "bea",
-   "source_title": "BEA News Release Schedule",
-   "summary": "Times such as \"8:30 AM\" and \"10:00 AM\" are listed, but NO timezone is stated on the schedule page.",
-   "verdict": "PARTIALLY_VERIFIED"
+  "safe_fed_v1_semantics_proposal": {
+    "discovery": "official monetary-policy feed (/feeds/press_monetary.xml) - endpoint not frozen",
+    "fetch": "official primary FOMC statement page",
+    "identity": "official feed-declared <guid> and/or deterministic canonical source identity",
+    "ingested_at": "EventStore successful-commit boundary per design rev4",
+    "observed_at": "the collector's actual acquisition instant, independent of the declared release instant",
+    "provider": "federal_reserve",
+    "pubdate_role": "DISCOVERY and corroboration only - not authoritative source_available_at",
+    "raw_policy": "feed bytes and primary page bytes, as frozen by a future CaptureSpec; locally preserved",
+    "scope": "FOMC monetary-policy statements ONLY - explicitly NOT all Federal Reserve data or news",
+    "source_available_at": "the explicit release instant declared on the primary statement, where verified; never a schedule assumption and never the feed pubDate alone",
+    "status": "PROPOSAL ONLY - NOT A FROZEN CAPTURE SPEC"
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
-   "property": "response_formats",
-   "provider": "bea",
-   "source_title": "BEA API User Guide - Data Return Format",
-   "summary": "JSON or XML via the ResultFormat parameter; JSON is the default.",
-   "verdict": "VERIFIED"
+  "safe_sec_v1_semantics_proposal": {
+    "acceptance_at": "acceptanceDateTime - provenance/operational metadata only, NOT an availability gate",
+    "amendment_parent": "unavailable - not claimed",
+    "discovery": "UNDECIDED - see blocker B4; per-CIK polling or an official recent-filings feed/index",
+    "filing_date": "date metadata only, NOT an exact availability gate",
+    "identity": "accessionNumber",
+    "ingested_at": "EventStore successful-commit boundary per design rev4",
+    "observed_at": "local live collector acquisition timestamp",
+    "prevrpt": "retrospective only - forbidden in causal records and features",
+    "provider": "sec_edgar",
+    "raw_policy": "locally preserved, LOCAL_RESTRICTED, redistribution_permitted=false by default",
+    "source_available_at": "null unless a future explicitly verified dissemination timestamp exists",
+    "status": "PROPOSAL ONLY - NOT A FROZEN CAPTURE SPEC - retained for SEC as SECOND provider (6G-B)",
+    "surface": "official EDGAR submissions surface",
+    "upstream_change_policy": "UNDECIDED - see blocker B6; upstream correction/removal is documented and V1 re-observation policy is unspecified"
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bls.gov/developers/api_faqs.htm",
-   "property": "api_authentication",
-   "provider": "bls",
-   "source_title": "BLS Public Data API FAQs",
-   "summary": "v1.0 is unregistered/keyless; v2.0 \"Registration is required\" and returns a key by email. Credential friction applies only to v2.0.",
-   "verdict": "PARTIALLY_VERIFIED"
+  "schema_version": "trading-lab.event-provider-verification.v1",
+  "scorecard": {
+    "_discovery_quality_note": "discovery_quality is an OPERATIONAL SUPPORTING AXIS added after counter-review because CaptureSpec feasibility depends materially on it. It is NOT inserted into the frozen ten-criterion priority ordering; it informs implementation simplicity, live-capture feasibility and CaptureSpec readiness.",
+    "_scale": "EXCELLENT | GOOD | ACCEPTABLE | WEAK | UNKNOWN | BLOCKING. implementation_complexity is scored as SIMPLICITY: EXCELLENT = simplest to integrate.",
+    "bea": {
+      "causal_backfill_quality": "WEAK",
+      "credential_friction": "ACCEPTABLE",
+      "discovery_quality": "ACCEPTABLE",
+      "historical_archive": "ACCEPTABLE",
+      "identity_quality": "UNKNOWN",
+      "implementation_complexity": "ACCEPTABLE",
+      "live_capture": "ACCEPTABLE",
+      "market_relevance": "GOOD",
+      "overall": "SUITABLE_LATER",
+      "rate_access_clarity": "EXCELLENT",
+      "raw_preservation": "EXCELLENT",
+      "redistribution_clarity": "UNKNOWN",
+      "revision_model": "GOOD",
+      "timestamp_quality": "ACCEPTABLE"
+    },
+    "bls": {
+      "causal_backfill_quality": "ACCEPTABLE",
+      "credential_friction": "GOOD",
+      "discovery_quality": "ACCEPTABLE",
+      "historical_archive": "GOOD",
+      "identity_quality": "GOOD",
+      "implementation_complexity": "ACCEPTABLE",
+      "live_capture": "ACCEPTABLE",
+      "market_relevance": "EXCELLENT",
+      "overall": "SUITABLE_LATER",
+      "rate_access_clarity": "GOOD",
+      "raw_preservation": "EXCELLENT",
+      "redistribution_clarity": "UNKNOWN",
+      "revision_model": "WEAK",
+      "timestamp_quality": "GOOD"
+    },
+    "federal_reserve": {
+      "causal_backfill_quality": "GOOD",
+      "credential_friction": "EXCELLENT",
+      "discovery_quality": "EXCELLENT",
+      "historical_archive": "GOOD",
+      "identity_quality": "GOOD",
+      "identity_quality_note": "raised ACCEPTABLE -> GOOD on evidence: an official feed-declared <guid> on 15/15 inspected items. The prior penalty for lacking an opaque agency id is withdrawn as aesthetic.",
+      "implementation_complexity": "EXCELLENT",
+      "live_capture": "GOOD",
+      "market_relevance": "EXCELLENT",
+      "overall": "SUITABLE_FOR_6G_A - recommended FIRST provider",
+      "rate_access_clarity": "UNKNOWN",
+      "raw_preservation": "EXCELLENT",
+      "redistribution_clarity": "ACCEPTABLE",
+      "redistribution_clarity_note": "ACCEPTABLE not GOOD/EXCELLENT: authorship is unambiguous and the third-party filer layer is absent, but no official reuse-terms page was verified",
+      "revision_model": "UNKNOWN",
+      "timestamp_quality": "EXCELLENT"
+    },
+    "sec_edgar": {
+      "causal_backfill_quality": "WEAK",
+      "credential_friction": "EXCELLENT",
+      "discovery_quality": "ACCEPTABLE",
+      "discovery_quality_note": "per-CIK polling is workable for a narrow universe and the official ticker/CIK map exists, but discovery requires an entity-index step and no surface is selected yet",
+      "historical_archive": "EXCELLENT",
+      "identity_quality": "EXCELLENT",
+      "implementation_complexity": "ACCEPTABLE",
+      "live_capture": "EXCELLENT",
+      "market_relevance": "GOOD",
+      "overall": "SUITABLE_FOR_6G_A - recommended SECOND provider",
+      "rate_access_clarity": "EXCELLENT",
+      "raw_preservation": "EXCELLENT",
+      "redistribution_clarity": "UNKNOWN",
+      "revision_model": "GOOD",
+      "revision_model_note": "downgraded EXCELLENT -> GOOD: amendments are additive and documented, but post-acceptance correction/removal is also documented, so the surface is not immutable",
+      "timestamp_quality": "WEAK"
+    }
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bls.gov/developers/api_faqs.htm",
-   "property": "api_documented_limits",
-   "provider": "bls",
-   "source_title": "BLS Public Data API FAQs",
-   "summary": "v2.0: 500 daily queries, 50 series/query, 20 years/query. v1.0: 25 daily queries, 25 series/query, 10 years/query.",
-   "verdict": "VERIFIED"
+  "snapshot_mode_fit": {
+    "_why_this_is_not_test_coverage": "This is source evidence quality for one of the two MANDATORY snapshot modes, not branch coverage. RETROSPECTIVE_SOURCE has visibility rule source_available_at <= T and requires an explicit minimum_causal_quality. A provider that can never populate that gate degrades the mode itself.",
+    "federal_reserve": {
+      "DURABLE_OBSERVED": "FULLY SUPPORTED - observed_at + commit-bound ingested_at",
+      "RETROSPECTIVE_SOURCE": "SUPPORTED - declared release instant populates the gate; backfill grade B"
+    },
+    "sec_edgar": {
+      "DURABLE_OBSERVED": "FULLY SUPPORTED - observed_at + commit-bound ingested_at",
+      "RETROSPECTIVE_SOURCE": "WEAK - gate null live, date-only (grade D) in backfill"
+    }
   },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.bls.gov/developers/api_faqs.htm",
-   "property": "api_historical_vintages",
-   "provider": "bls",
-   "source_title": "BLS Public Data API FAQs",
-   "summary": "No documentation found on whether the API exposes originally-published vintages or only the current (possibly revised) series. This is the central causal question for macro values.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.bls.gov/developers/api_faqs.htm",
-   "property": "api_publication_timestamp_per_value",
-   "provider": "bls",
-   "source_title": "BLS Public Data API FAQs",
-   "summary": "The FAQ does not document any per-value publication timestamp or release date. Absence of documentation only - NOT evidence it is unsupported.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.bls.gov/developers/api_faqs.htm",
-   "property": "consensus_expectations",
-   "provider": "bls",
-   "source_title": "BLS (statistical agency)",
-   "summary": "No official BLS market-consensus product was found. BLS publishes official statistics; market expectations would require a separate, independent provider. Recorded as UNKNOWN rather than NOT_SUPPORTED because absence of evidence is not proof of absence.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.bls.gov/news.release/cpi.htm",
-   "property": "document_identifier",
-   "provider": "bls",
-   "source_title": "CPI News Release",
-   "summary": "Releases carry a USDL identifier (e.g. USDL-26-1191), an agency-assigned document number usable as a deterministic identity component.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bls.gov/news.release/cpi.htm",
-   "property": "news_release_embargo_time_with_timezone",
-   "provider": "bls",
-   "source_title": "CPI News Release (news.release/cpi.htm and archived PDFs)",
-   "summary": "News release documents carry \"Transmission of material in this release is embargoed until 8:30 a.m. (ET)\" - explicit time WITH timezone on the primary document, unlike the schedule page.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.bls.gov/developers/api_faqs.htm",
-   "property": "preliminary_vs_revised_markers",
-   "provider": "bls",
-   "source_title": "BLS Public Data API FAQs",
-   "summary": "No documented field or footnote code distinguishing preliminary from revised values was found in the FAQ.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bls.gov/news.release/cpi.htm",
-   "property": "raw_bytes_preservable",
-   "provider": "bls",
-   "source_title": "BLS news releases / archives",
-   "summary": "Static HTML and PDF release documents; byte-for-byte preservation straightforward.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bls.gov/news.release/cpi.htm",
-   "property": "release_archive_preserves_original_documents",
-   "provider": "bls",
-   "source_title": "BLS archived news releases",
-   "summary": "Dated archive URLs of the form /news.release/archives/cpi_08122025.pdf preserve each release as originally published, which is the surface that can reconstruct original (unrevised) values.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.bls.gov/schedule/news_release/cpi.htm",
-   "property": "release_schedule_time_and_timezone",
-   "provider": "bls",
-   "source_title": "CPI Release Schedule",
-   "summary": "Schedule lists \"Release Time: 08:30 AM\" per reference month, but NO timezone is stated on the schedule page itself.",
-   "verdict": "PARTIALLY_VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
-   "property": "authentication_required",
-   "provider": "federal_reserve",
-   "source_title": "Federal Reserve RSS Feeds",
-   "summary": "Public pages and feeds; no authentication encountered or documented as required.",
-   "verdict": "NOT_SUPPORTED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-   "property": "calendar_page_states_release_times",
-   "provider": "federal_reserve",
-   "source_title": "FOMC Calendars",
-   "summary": "The FOMC calendar page does NOT state release times; the exact time lives on each statement document, not the schedule.",
-   "verdict": "NOT_SUPPORTED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
-   "property": "deterministic_item_identity",
-   "provider": "federal_reserve",
-   "source_title": "FOMC statement URL pattern",
-   "summary": "Documents follow a date-based pattern monetary{YYYYMMDD}{a|b}{n} (page and PDF). Stable and parseable, but it is a URL/date convention rather than an agency-assigned opaque identifier like an accession number.",
-   "verdict": "PARTIALLY_VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
-   "property": "explicit_release_time_on_document",
-   "provider": "federal_reserve",
-   "source_title": "Federal Reserve issues FOMC statement (June 17, 2026)",
-   "summary": "The statement page and its PDF carry \"For release at 2:00 p.m. EDT\" - minute precision WITH an explicit timezone, on the primary document.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
-   "property": "feed_update_cadence_and_timestamp_semantics",
-   "provider": "federal_reserve",
-   "source_title": "Federal Reserve RSS Feeds",
-   "summary": "The feeds page documents no update frequency and no timestamp semantics for feed items. Item-level pubDate semantics were not officially confirmed.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-   "property": "historical_depth_from_calendar_page",
-   "provider": "federal_reserve",
-   "source_title": "FOMC Calendars",
-   "summary": "Materials linked from this page span 2021-2027. Deeper historical archives exist elsewhere on the site but their release-time metadata was not verified in this pass.",
-   "verdict": "PARTIALLY_VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.federalreserve.gov/feeds/feeds.htm",
-   "property": "machine_readable_feeds",
-   "provider": "federal_reserve",
-   "source_title": "Federal Reserve RSS Feeds",
-   "summary": "Official RSS/XML feeds published, including /feeds/press_all.xml and /feeds/press_monetary.xml (monetary policy press releases).",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-   "property": "minutes_release_rule",
-   "provider": "federal_reserve",
-   "source_title": "FOMC Calendars",
-   "summary": "\"The minutes of regularly scheduled meetings are released three weeks after the date of the policy decision.\"",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
-   "property": "page_update_metadata_distinct_from_release",
-   "provider": "federal_reserve",
-   "source_title": "FOMC statement page",
-   "summary": "A separate \"Last Update: June 17, 2026\" field exists, date-only. Per design section 7 this is site-maintenance metadata and must NOT be treated as publication time.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
-   "property": "revision_correction_semantics",
-   "provider": "federal_reserve",
-   "source_title": "FOMC statement page",
-   "summary": "No official documentation found stating whether released statements can be corrected in place or how corrections would be exposed.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://data.sec.gov/submissions/",
-   "property": "acceptance_datetime_format",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Submissions API (schema observed)",
-   "summary": "acceptanceDateTime is present on filings.recent and follows ISO-8601 of shape YYYY-MM-DDTHH:MM:SS.sssZ. Observed uniformly across a 400-value sample of one company's filings; no sample rows retained.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://data.sec.gov/submissions/",
-   "property": "acceptance_datetime_precision",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Submissions API (schema observed)",
-   "summary": "Millisecond field representation (.sss). Supersedes the earlier UNKNOWN, which was an environment limitation rather than a documentation gap.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
-   "property": "acceptance_datetime_semantics",
-   "provider": "sec_edgar",
-   "source_title": "SEC Financial Statement and Notes Data Sets - SUB field definitions",
-   "summary": "The corresponding documented field is defined as: \"The ACCEPTANCE date and time of the registrant's filing with the Commission. Filings accepted after 5:30pm EST are considered filed on the following business day.\" The field therefore marks ACCEPTANCE by the Commission, not public dissemination.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://data.sec.gov/submissions/",
-   "property": "acceptance_datetime_timezone",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Submissions API (schema observed)",
-   "summary": "Values carry a trailing Z (UTC) in every sampled value.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
-   "property": "acceptance_equals_public_dissemination",
-   "provider": "sec_edgar",
-   "source_title": "Determine the Status of My Filing",
-   "summary": "Acceptance is NOT proven equivalent to dissemination. Submissions transmitted after 5:30 p.m. ET \"will not be disseminated by EDGAR until the next business day\", so acceptance can precede public availability by hours. Using acceptanceDateTime as source_available_at would create lookahead for those filings.",
-   "verdict": "NOT_SUPPORTED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "amendment_parent_pointer",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR APIs / SEC documentation",
-   "summary": "No official machine-readable field linking an amendment to the filing it amends was verified. Amendment FORM TYPES (10-K/A etc.) are distinguishable, and each submission carries its own accession number, but an explicit parent pointer was not established. prevrpt is not such a pointer.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "MEDIUM",
-   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
-   "property": "amendment_revision_semantics",
-   "provider": "sec_edgar",
-   "source_title": "SEC filing status / form types",
-   "summary": "Amendment form types (10-K/A, 10-Q/A, 8-K/A) exist and each submission receives its own accession number, implying append-only filing lineage rather than in-place mutation. The exact linkage field between an amendment and its original was not confirmed officially.",
-   "verdict": "PARTIALLY_VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "api_update_latency_is_not_an_sla",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Application Programming Interfaces",
-   "summary": "The documented \"typical processing delay of less than a second\" describes surface UPDATE latency relative to SEC dissemination. It is guidance, not a service-level guarantee, and it is not a publication timestamp.",
-   "verdict": "PARTIALLY_VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "authentication_required",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Application Programming Interfaces",
-   "summary": "\"These APIs do not require any authentication or API keys to access.\" No credential friction.",
-   "verdict": "NOT_SUPPORTED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "bulk_archive_availability",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Application Programming Interfaces",
-   "summary": "companyfacts.zip and submissions.zip offered under /Archives/edgar/daily-index/, \"recompiled nightly\".",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/edgar-glossary",
-   "property": "deterministic_item_identity",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Glossary / Filer Manual",
-   "summary": "Accession number is a unique identifier assigned automatically by EDGAR to an accepted submission; format ##########-YY-SSSSSS (CIK, 2-digit year, 6-digit sequence). Not URL-derived.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "dissemination_latency",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Application Programming Interfaces",
-   "summary": "\"The submissions API is updated with a typical processing delay of less than a second; the xbrl APIs ... under a minute.\" JSON \"updated throughout the day, in real time, as submissions are disseminated.\"",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/os/webmaster-faq",
-   "property": "documented_rate_limit",
-   "provider": "sec_edgar",
-   "source_title": "SEC.gov Webmaster FAQ (developers)",
-   "summary": "\"Our current maximum access rate is 10 requests per second\", \"carefully monitored to preserve equitable access for all users.\"",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
-   "property": "filing_date_semantics",
-   "provider": "sec_edgar",
-   "source_title": "SEC Financial Statement and Notes Data Sets",
-   "summary": "filed/filingDate is \"The date of the registrant's filing with the Commission\", a DATE (no time). Combined with the post-cutoff rule it is an ASSIGNED business date and can differ from the acceptance date. It is not an exact publication instant; at best it supports date-only conservative semantics.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
-   "property": "filing_date_vs_dissemination",
-   "provider": "sec_edgar",
-   "source_title": "Determine the Status of My Filing",
-   "summary": "\"Most live submissions that begin transmission after 5:30 p.m. ET ... will receive a filing date of 6:00 a.m. ET the next business day and will not be disseminated by EDGAR until the next business day.\" Forms 3/4/5/144 and MEF extended to 10:00 p.m. ET same-date dissemination. EDGAR hours 6:00 a.m.-10:00 p.m. ET. filingDate is therefore an ASSIGNED BUSINESS DATE, not a publication instant.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "machine_readable_endpoints",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Application Programming Interfaces",
-   "summary": "Four JSON APIs named: submissions, companyconcept, companyfacts, frames, under data.sec.gov.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/determine-status-my-filing",
-   "property": "post_cutoff_dissemination_rule",
-   "provider": "sec_edgar",
-   "source_title": "Determine the Status of My Filing",
-   "summary": "\"Most live submissions that begin transmission after 5:30 p.m. ET ... will receive a filing date of 6:00 a.m. ET the next business day and will not be disseminated by EDGAR until the next business day.\" Forms 3/4/5/144 and certain MEF types are extended to 10:00 p.m. ET same-date dissemination. The rule is form-conditional and is NOT generalised here beyond the quoted scope.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/files/aqfsn_4.pdf",
-   "property": "prevrpt_semantics",
-   "provider": "sec_edgar",
-   "source_title": "SEC Financial Statement and Notes Data Sets",
-   "summary": "prevrpt: \"Previous Report - TRUE indicates that the submission information was SUBSEQUENTLY AMENDED prior to the end cutoff date of the data set.\" Its value depends on events AFTER the filing and on the dataset cutoff, so it is future-aware and retrospective by construction. It is NOT an amendment parent pointer and MUST NOT enter a causal record or feature at the filing's historical timestamp.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://data.sec.gov/submissions/",
-   "property": "public_dissemination_timestamp_per_filing",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR Submissions API (field inventory)",
-   "summary": "No per-filing public-dissemination timestamp was verified on the Submissions surface. Its field inventory is acceptanceDateTime, accessionNumber, act, core_type, fileNumber, filingDate, filmNumber, form, isInlineXBRL, isXBRL, isXBRLNumeric, items, primaryDocDescription, primaryDocument, reportDate, size. This is a statement about the SELECTED surface only, not about all SEC systems.",
-   "verdict": "NOT_EXPOSED_ON_SELECTED_SURFACE"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "raw_bytes_preservable",
-   "provider": "sec_edgar",
-   "source_title": "EDGAR APIs / Archives",
-   "summary": "Static JSON and filing documents served over HTTPS from /Archives/; byte-for-byte preservation is straightforward, no JS rendering required.",
-   "verdict": "VERIFIED"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-   "property": "redistribution_raw_filer_content",
-   "provider": "sec_edgar",
-   "source_title": "SEC.gov",
-   "summary": "Filings are third-party submissions and may embed filer-owned or third-party copyrighted material (exhibits, logos, images). No official statement establishing redistribution rights for filer-submitted content was verified. SEC-produced API metadata, filer content, HyprL normalized metadata and derived aggregates must be treated as distinct rights categories; no blanket public-domain assumption is made.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "LOW",
-   "official_url": "https://www.sec.gov/os/webmaster-faq",
-   "property": "redistribution_terms",
-   "provider": "sec_edgar",
-   "source_title": "SEC.gov Webmaster FAQ",
-   "summary": "No explicit redistribution/licence statement was verified in this pass. US federal agency material is commonly public domain, but that was NOT confirmed from an official terms page.",
-   "verdict": "UNKNOWN"
-  },
-  {
-   "accessed_at": "2026-09-06T00:00:00Z",
-   "confidence": "HIGH",
-   "official_url": "https://www.sec.gov/os/webmaster-faq",
-   "property": "user_agent_requirement",
-   "provider": "sec_edgar",
-   "source_title": "SEC.gov Webmaster FAQ (developers)",
-   "summary": "Declared User-Agent required, documented format: \"Sample Company Name AdminContact@<sample company domain>.com\".",
-   "verdict": "VERIFIED"
+  "status": "VERIFICATION_ONLY",
+  "supersedes_verification_hash": [
+    "39c1cdeb47ea69426bece2876f770484c03ebd202c0ecab17f0548d370339541",
+    "ed6f322fee5845da9ffaf80b6724df56c92bf233df587e74333346f4a7a13b82"
+  ],
+  "verification_date": "2026-09-06",
+  "verification_revision": 3,
+  "web_source_policy": {
+    "bulk_downloads": false,
+    "credentials_used": false,
+    "direct_http_reachability": {
+      "_note": "narrow official-only GETs succeeded (HTTP 200) for data.sec.gov and www.sec.gov; no bulk download, no rate test, no credential",
+      "verified_by_narrow_curl": true
+    },
+    "official_domains_used": [
+      "apps.bea.gov",
+      "data.sec.gov",
+      "www.bea.gov",
+      "www.bls.gov",
+      "www.federalreserve.gov",
+      "www.sec.gov"
+    ],
+    "registrations_performed": false,
+    "search_engines_used_only_to_locate_official_pages": true,
+    "secondary_sources_used_as_evidence": false,
+    "web_fetch_environment_limitation": {
+      "_note": "the WebFetch tool fails DNS/timeout for these hosts in this environment; this is a TOOL limitation and implies NO provider outage",
+      "data.sec.gov": true,
+      "www.sec.gov": true
+    }
   }
- ],
- "evidence_counts": {
-  "bea": [
-   9,
-   {
-    "PARTIALLY_VERIFIED": 2,
-    "UNKNOWN": 2,
-    "VERIFIED": 5
-   }
-  ],
-  "bls": [
-   11,
-   {
-    "PARTIALLY_VERIFIED": 2,
-    "UNKNOWN": 4,
-    "VERIFIED": 5
-   }
-  ],
-  "federal_reserve": [
-   10,
-   {
-    "NOT_SUPPORTED": 2,
-    "PARTIALLY_VERIFIED": 2,
-    "UNKNOWN": 2,
-    "VERIFIED": 4
-   }
-  ],
-  "sec_edgar": [
-   12,
-   {
-    "NOT_SUPPORTED": 1,
-    "PARTIALLY_VERIFIED": 1,
-    "UNKNOWN": 2,
-    "VERIFIED": 8
-   }
-  ]
- },
- "non_goals": [
-  "capture spec freeze",
-  "scraper",
-  "event store code",
-  "corpus capture",
-  "LLM",
-  "model",
-  "features",
-  "signal",
-  "backtest",
-  "holdout access"
- ],
- "note": "Provider property verification against the frozen causal design, revision 2. Corrects a materially overstated SEC timestamp claim found by independent counter-review: acceptanceDateTime is precise but marks acceptance, not public dissemination. No capture spec is frozen and no provider code exists. Absence of official documentation is recorded as UNKNOWN, never as false.",
- "providers": {
-  "bea": {
-   "authentication": "36-character UserID required on every request (registration)",
-   "blocking_unknowns": [
-    "timezone of scheduled release times",
-    "historical vintage exposure",
-    "release document identity"
-   ],
-   "deterministic_identity": "UNKNOWN - no agency-assigned release id verified",
-   "documented_latency": "n/a - scheduled releases",
-   "historical_archive": "Archive section linked; depth unverified",
-   "machine_readable": "Data API (JSON/XML)",
-   "max_backfill_causal_grade": "C",
-   "max_live_causal_grade": "B (pending timezone and identity confirmation)",
-   "official": true,
-   "primary_source": true,
-   "provider_id_candidate": "bea-news-release-v1",
-   "rate_policy": "100 requests/min, 100 MB/min, 30 errors/min",
-   "raw_preservable": true,
-   "revision_model": "GDP Advance/Second/Third are distinct scheduled events (append-only friendly)",
-   "timestamp_strength": "schedule lists 8:30 AM / 10:00 AM with NO timezone on the page"
-  },
-  "bls": {
-   "authentication": "v1.0 keyless (25 queries/day); v2.0 registration key (500 queries/day)",
-   "blocking_unknowns": [
-    "per-value publication timestamp in API",
-    "historical vintage exposure vs currently-revised series",
-    "preliminary/revised markers"
-   ],
-   "deterministic_identity": "USDL-YY-NNNN release number + dated archive path",
-   "documented_latency": "n/a - scheduled releases",
-   "historical_archive": "dated PDF/HTML archives preserve releases as originally published",
-   "machine_readable": "Public Data API (JSON) + static news-release HTML/PDF + dated archives",
-   "max_backfill_causal_grade": "B via dated release archive; the API series alone would be D/E because a value fetched today is not the value published then",
-   "max_live_causal_grade": "A for the news-release surface (embargo instant + ET declared)",
-   "official": true,
-   "primary_source": true,
-   "provider_id_candidate": "bls-news-release-v1",
-   "rate_policy": "documented daily query limits per API version",
-   "raw_preservable": true,
-   "revision_model": "UNKNOWN at API level; original values recoverable from dated release archive",
-   "timestamp_strength": "news release document states 'embargoed until 8:30 a.m. (ET)'; the SCHEDULE page states 08:30 AM with NO timezone"
-  },
-  "federal_reserve": {
-   "authentication": "none encountered",
-   "blocking_unknowns": [
-    "feed item timestamp semantics and update cadence",
-    "correction/revision behaviour",
-    "rate/fair-access policy"
-   ],
-   "deterministic_identity": "date-based URL convention monetary{YYYYMMDD}{a|b}{n}; not an agency-assigned opaque id",
-   "documented_latency": "UNKNOWN - feeds page documents no cadence",
-   "historical_archive": "calendar page links 2021-2027; deeper archives unverified",
-   "machine_readable": "RSS/XML feeds incl. /feeds/press_monetary.xml",
-   "max_backfill_causal_grade": "B",
-   "max_live_causal_grade": "A (release instant declared on the document itself)",
-   "official": true,
-   "primary_source": true,
-   "provider_id_candidate": "federalreserve-press-monetary-v1",
-   "rate_policy": "UNKNOWN",
-   "raw_preservable": true,
-   "revision_model": "UNKNOWN - no documented correction semantics",
-   "timestamp_strength": "primary document carries 'For release at 2:00 p.m. EDT' - minute precision with timezone"
-  },
-  "sec_edgar": {
-   "acceptance_datetime": {
-    "format": "YYYY-MM-DDTHH:MM:SS.sssZ",
-    "is_public_dissemination": "NOT VERIFIED",
-    "precision": "millisecond",
-    "semantics": "acceptance by the Commission",
-    "timezone": "UTC (Z)"
-   },
-   "authentication": "none required",
-   "blocker_classification": {
-    "B1a": "RESOLVED",
-    "B1b": "NON_BLOCKING_IF_CONSERVATIVE_POLICY_USED - design rev4 explicitly permits source_available_at = null with observed_at bounding; it does cap the causal grade",
-    "B2": "NON_BLOCKING_IF_CONSERVATIVE_POLICY_USED - raw stays LOCAL_RESTRICTED, redistribution_permitted=false by default, release guard applies",
-    "B3": "NOT_REQUIRED_FOR_6G_A_MVP - each accession is an independent immutable SourceObservation; the CaptureSpec must declare amendment_parent_lineage_available=false rather than invent one"
-   },
-   "blocking_unknowns": [
-    "B1a acceptanceDateTime format/precision/timezone - RESOLVED (ISO-8601, UTC, millisecond)",
-    "B1b per-filing public dissemination timestamp - NOT_EXPOSED_ON_SELECTED_SURFACE",
-    "B2 redistribution of filer-submitted raw content - UNKNOWN",
-    "B3 amendment parent pointer - UNKNOWN"
-   ],
-   "deterministic_identity": "accession number ##########-YY-SSSSSS, assigned by EDGAR on acceptance",
-   "documented_latency": "submissions API typical processing delay < 1 second; real time as disseminated",
-   "historical_archive": "bulk zips recompiled nightly; /Archives permanent",
-   "machine_readable": "JSON APIs (submissions, companyconcept, companyfacts, frames) + /Archives",
-   "max_backfill_causal_grade": {
-    "basis": "historical backfill has no observed_at, and acceptance must not be substituted for dissemination. Only filingDate remains, which is date-only. Downgraded from the earlier B, which had assumed an exact source instant that does not exist.",
-    "grade": "D"
-   },
-   "max_live_causal_grade": {
-    "effective_live_causality": "SAFE via collector observed_at + commit-bound ingested_at under DURABLE_OBSERVED; this is honest causality but is NOT a source-declared publication instant, so it does not earn A",
-    "source_timestamp_axis": "E - no verified per-filing publication instant on the selected surface",
-    "supersedes": "the earlier claim of 'A (subject to confirming acceptanceDateTime precision)', which was materially overstated: precision was never the obstacle"
-   },
-   "official": true,
-   "prevrpt_warning": "retrospective/future-aware; forbidden in causal records and features; not an amendment parent pointer",
-   "primary_source": true,
-   "provider_id_candidate": "sec-edgar-submissions-v1",
-   "public_dissemination_timestamp": "NOT_EXPOSED_ON_SELECTED_SURFACE (Submissions API)",
-   "rate_policy": "10 requests/second, declared User-Agent with contact e-mail",
-   "raw_preservable": true,
-   "revision_model": "amendments are separate filings with their own accession numbers (append-only)",
-   "safe_live_policy": {
-    "ingested_at": "commit-bound boundary per design rev4",
-    "no_derived_0600_timestamp": "a conservative next-business-day 06:00 ET bound is NOT adopted; its exact domain is not established and V1 does not invent it",
-    "observed_at": "the collector's first successful acquisition of the public resource",
-    "source_available_at": "null / unavailable - never derived from acceptance or filingDate",
-    "why_this_is_safe": "a collector cannot observe a filing before EDGAR disseminates it, so observed_at naturally prevents lookahead. DURABLE_OBSERVED then gates on max(observed_at, ingested_at), which the design explicitly supports when source_available_at is absent."
-   },
-   "timestamp_caution": "THREE separate cautions. (1) filingDate is an ASSIGNED business date, not an exact publication instant. (2) acceptanceDateTime is precise (ISO-8601, UTC, ms) but marks ACCEPTANCE, and is NOT proven equivalent to public dissemination; for post-cutoff filings acceptance precedes dissemination by hours. (3) source_available_at must therefore NOT be populated from either field as an exact dissemination instant. When no dissemination timestamp is available, the safe causal boundary is the collector's observed_at."
-  }
- },
- "recommendation": {
-  "confidence": "MEDIUM",
-  "confidence_change_reason": "lowered from MEDIUM_HIGH: the earlier recommendation partly rested on a timestamp claim that did not survive independent review",
-  "consensus_gap": "No official market-consensus product was found at any of the four agencies. Consensus will require a separate, independently verified provider. This does NOT block 6G-A, whose objective is ingestion and replay, not surprise.",
-  "not_first": {
-   "bea": "registration required, no verified release identity, and no timezone on the schedule page",
-   "bls": "richest macro relevance but the API's vintage and revision semantics are undocumented, and the schedule page omits a timezone; the causal surface is the dated release archive, which is a heavier first integration"
-  },
-  "recommended_first_provider": "sec_edgar",
-  "runner_up": "federal_reserve",
-  "selection_reason": "SEC still wins, but explicitly NOT on its source timestamp - it has none that is verified. It wins on the infrastructure axes 6G-A actually has to prove: an agency-ASSIGNED deterministic identity (accession number) rather than a URL convention; append-only submissions where each accession is an independent immutable observation; a documented access contract (10 req/s, declared User-Agent); no credentials; nightly bulk archives for deterministic offline fixtures; and enough event volume to exercise the store. There is also a positive reason its timestamp weakness helps: with no dissemination instant, SEC forces 6G-A to exercise the source_available_at = null path with observed_at bounding - a path design rev4 explicitly supports and which MUST be proven to work. A provider with a perfect source timestamp would leave that path untested.",
-  "verdict_vs_previous": "CONFIRMED_WITH_LOWER_CONFIDENCE",
-  "why_not_fed_despite_better_timestamp": "The Fed has the better timestamp by a clear margin and is the right SECOND provider precisely because it exercises the source-declared-instant path. It loses first place on identity (date-based URL convention, not an agency-assigned id), on UNKNOWN revision and correction semantics, on an UNKNOWN rate/fair-access policy, and on event volume: roughly eight FOMC decisions a year is thin for shaking out an EventStore."
- },
- "safe_sec_v1_semantics_proposal": {
-  "acceptance_at": "acceptanceDateTime - provenance/operational metadata only, NOT an availability gate",
-  "amendment_parent": "unavailable - not claimed",
-  "filing_date": "date metadata only, NOT an exact availability gate",
-  "identity": "accessionNumber",
-  "ingested_at": "EventStore successful-commit boundary per design rev4",
-  "observed_at": "local live collector acquisition timestamp",
-  "prevrpt": "retrospective only - forbidden in causal records and features",
-  "provider": "sec_edgar",
-  "raw_policy": "locally preserved, LOCAL_RESTRICTED, redistribution_permitted=false by default",
-  "source_available_at": "null unless a future explicitly verified dissemination timestamp exists",
-  "status": "PROPOSAL ONLY - NOT A FROZEN CAPTURE SPEC",
-  "surface": "official EDGAR submissions surface"
- },
- "schema_version": "trading-lab.event-provider-verification.v1",
- "scorecard": {
-  "bea": {
-   "causal_backfill_quality": "WEAK",
-   "credential_friction": "ACCEPTABLE",
-   "historical_archive": "ACCEPTABLE",
-   "identity_quality": "UNKNOWN",
-   "implementation_complexity": "MEDIUM",
-   "live_capture": "ACCEPTABLE",
-   "market_relevance": "GOOD",
-   "overall": "SUITABLE_LATER",
-   "rate_limit_clarity": "EXCELLENT",
-   "raw_preservation": "EXCELLENT",
-   "redistribution_clarity": "UNKNOWN",
-   "revision_model": "GOOD",
-   "timestamp_quality": "ACCEPTABLE"
-  },
-  "bls": {
-   "causal_backfill_quality": "ACCEPTABLE",
-   "credential_friction": "GOOD",
-   "historical_archive": "GOOD",
-   "identity_quality": "GOOD",
-   "implementation_complexity": "MEDIUM",
-   "live_capture": "ACCEPTABLE",
-   "market_relevance": "EXCELLENT",
-   "overall": "SUITABLE_LATER",
-   "rate_limit_clarity": "GOOD",
-   "raw_preservation": "EXCELLENT",
-   "redistribution_clarity": "UNKNOWN",
-   "revision_model": "WEAK",
-   "timestamp_quality": "GOOD"
-  },
-  "federal_reserve": {
-   "causal_backfill_quality": "GOOD",
-   "credential_friction": "EXCELLENT",
-   "historical_archive": "GOOD",
-   "identity_quality": "ACCEPTABLE",
-   "implementation_complexity": "LOW",
-   "live_capture": "GOOD",
-   "market_relevance": "EXCELLENT",
-   "overall": "SUITABLE_FOR_6G_A",
-   "rate_limit_clarity": "UNKNOWN",
-   "raw_preservation": "EXCELLENT",
-   "redistribution_clarity": "UNKNOWN",
-   "revision_model": "UNKNOWN",
-   "timestamp_quality": "EXCELLENT",
-   "timestamp_quality_note": "EXCELLENT stands and is now strictly better than SEC on this axis: the primary document declares 'For release at 2:00 p.m. EDT' - an actual source publication instant"
-  },
-  "sec_edgar": {
-   "causal_backfill_quality": "WEAK",
-   "credential_friction": "EXCELLENT",
-   "historical_archive": "EXCELLENT",
-   "identity_quality": "EXCELLENT",
-   "implementation_complexity": "LOW",
-   "live_capture": "EXCELLENT",
-   "market_relevance": "GOOD",
-   "overall": "SUITABLE_FOR_6G_A",
-   "rate_limit_clarity": "EXCELLENT",
-   "raw_preservation": "EXCELLENT",
-   "redistribution_clarity": "UNKNOWN",
-   "revision_model": "EXCELLENT",
-   "timestamp_quality": "WEAK",
-   "timestamp_quality_note": "downgraded from GOOD: SEC exposes no verified per-filing dissemination instant; acceptanceDateTime marks acceptance, not publication"
-  }
- },
- "status": "VERIFICATION_ONLY",
- "supersedes_verification_hash": "39c1cdeb47ea69426bece2876f770484c03ebd202c0ecab17f0548d370339541",
- "verification_date": "2026-09-06",
- "verification_revision": 2,
- "web_source_policy": {
-  "bulk_downloads": false,
-  "credentials_used": false,
-  "official_domains_used": [
-   "www.sec.gov",
-   "www.federalreserve.gov",
-   "www.bls.gov",
-   "www.bea.gov",
-   "apps.bea.gov"
-  ],
-  "registrations_performed": false,
-  "search_engines_used_only_to_locate_official_pages": true,
-  "secondary_sources_used_as_evidence": false,
-  "unreachable_from_this_environment": [
-   "data.sec.gov"
-  ]
- }
 }
