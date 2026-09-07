@@ -7,8 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH
-74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd
+CAPTURE SPEC HASH  (revision 2 — authoritative)
+b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8
+
+supersedes 74571bb0… (revision 1)
 
 BINDS
   event intelligence design rev4
@@ -83,7 +85,17 @@ predicate is a spec revision, not a judgement call made at runtime.
 
 ## 4. Time — the part worth getting right
 
-### The source instant
+### Two different questions
+
+Revision 1 collapsed these into one, and counter-review R1 caught it. They are
+separate, and V1 now keeps them apart by construction:
+
+| question | answered by |
+|---|---|
+| when was the **logical statement** released? | `declared_release_at` — provider metadata |
+| when did **these exact bytes** become public? | **unknown** — so `source_available_at = null` |
+
+### The declared release time
 
 The statement page carries a date line, a title and a release line in
 adjacency:
@@ -94,43 +106,98 @@ Federal Reserve issues FOMC statement
 For release at 2:00 p.m. EST
 ```
 
-So `source_available_at` composes as:
+The strict grammar is unchanged: only the four explicit forms are accepted,
+`EST → -05:00`, `EDT → -04:00`, the timezone is **read, never inferred** (`EST`
+verified on 2025-12-10, 2026-01-28 and 2019-01-30; `EDT` across 2016–2026), and
+a bare `ET` is not accepted at all.
+
+What changed is its **role**. It composes into `declared_release_at` —
 
 ```
 2026-01-28  +  14:00  +  EST(-05:00)   →   2026-01-28T19:00:00Z
 ```
 
-**The timezone is read, never inferred.** The document writes the literal
-abbreviation — `EST` verified on 2025-12-10, 2026-01-28 and 2019-01-30; `EDT`
-verified across 2016–2026 samples — so V1 accepts only the four explicit forms
-and maps `EST → -05:00`, `EDT → -04:00`. A bare `ET` is not accepted at all.
+— and that value is **non-gating provenance**. It never gates content
+visibility, and it may never be written into `source_available_at`,
+`source_updated_at`, `effective_at`, `observed_at` or `ingested_at`.
 
-### The three timestamps that are not it
+### Content availability: always null in V1
 
-`Last Update` is site maintenance metadata and can never advance availability.
-HTTP `Last-Modified` and `Date` are transport facts. And the RSS `pubDate` is
-**corroboration only** — its semantics are undocumented, and a GMT value is
-ambiguous on its own: `19:00Z` is *both* 2:00 p.m. EST and 3:00 p.m. EDT. That
-ambiguity is precisely why the document, not the feed, holds the timestamp.
+```
+content revision source_available_at = null      ← every revision, both modes,
+                                                   no exception
+```
+
+The Federal Reserve contract verified in provider revision 3 exposes **no
+revision-specific source availability timestamp**. The release line dates the
+*logical event*; it says nothing about when the byte sequence HyprL is holding
+came into existence. Assigning it to a content revision would retroproject a
+possibly-later body onto the original release instant — the HIGH that R1 found.
+
+So a content revision is bounded by what HyprL can actually prove:
+
+```
+live_observed_available_at = observed_at
+durable_available_at       = max(observed_at, ingested_at)
+```
+
+This needs **no design change**: rev4 already supports a null
+`source_available_at` bounded by `observed_at`, and V1 simply always takes that
+branch.
+
+This applies even to the *first* live body. A statement declared at 14:00:00 and
+first received at 14:00:47 cannot be proven byte-for-byte to have existed at
+14:00:00 — so it is visible from observation and commit, not from 14:00. That
+closes a subtle 47-second retroprojection.
+
+### The timestamps that are not it — and one rejected suggestion
+
+`Last Update`, HTTP `Last-Modified` and RSS `pubDate` are all barred from
+`source_available_at` **and** from `source_updated_at`, and none is vintage
+proof, revision chronology or an identity input.
+
+R1's own remedy proposed capturing `Last Update` into `source_updated_at`. That
+proposal is **rejected**. Provider revision 3 established `Last Update` as
+page-maintenance metadata, not a verified content-revision publication
+timestamp, and a wrong vintage signal is worse than an honestly declared absent
+one. `source_updated_at` stays **null** in V1.
+
+`pubDate` remains corroboration only — its semantics are undocumented, and
+`19:00Z` is ambiguous between 2:00 p.m. EST and 3:00 p.m. EDT.
 
 ### When there is no clock
 
-The 2015-03-18 statement reads **`For immediate release`**. That is a
-recognised syntax, not a malformed one, and the distinction matters:
+The 2015-03-18 statement reads **`For immediate release`**. That is a recognised
+syntax, not a malformed one:
 
-| release line | outcome |
-|---|---|
-| explicit `H:MM a.m./p.m. EST/EDT` | exact `source_available_at` |
-| `For immediate release` | **valid event**, `source_available_at = null` |
-| anything else | `PARSER_FAILED` |
+| release line | `declared_release_at` | content `source_available_at` |
+|---|---|---|
+| explicit `H:MM a.m./p.m. EST/EDT` | the composed instant | **null** |
+| `For immediate release` | **null** | **null** |
+| anything else | `PARSER_FAILED` | — |
 
-A statement is not corrupt merely because the Fed did not print a clock on it.
-It simply has no source instant, and `observed_at` bounds it alone — a path
-design rev4 already supports.
+A statement is not corrupt because the Fed did not print a clock on it.
 
-This also closes the R3 LOW finding: **V1 claims nothing about "all archived
-statements."** The parser is record-specific. Samples were verified; universal
-coverage was not, and the spec says so.
+### What retrospective mode can and cannot do
+
+```
+DURABLE_OBSERVED                        SUPPORTED
+retrospective release-time metadata     SUPPORTED
+retrospective exact-content visibility  NOT_SUPPORTED_V1
+```
+
+A backfilled body is **not** eligible to become source-visible at
+`declared_release_at`; it is visible only on its actual observed/durable
+timeline. And no trust verdict can substitute for missing vintage proof: a
+`TRUSTED_EXACT` release timestamp means *"the source reliably declares the
+logical release at T"*, **not** *"every currently fetched byte existed at T"*.
+
+There is deliberately no blanket "retrospective supported" flag anywhere in the
+spec.
+
+The raw body hash is provenance for what HyprL actually observed and when. It
+does not become proof of historical content existence merely because the same
+record also carries a `declared_release_at` recovered from the page.
 
 ## 5. Identity without trusting a URL
 
@@ -237,16 +304,26 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Eighteen cases, decided in advance
+## 11. Twenty-one cases, decided in advance
 
-`FOMC01`–`FOMC18` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC21` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
 outages, a genuinely empty poll, a failed commit after raw persistence, a lost
 ACK, and an unchanged +7 d re-check.
 
-Invariants `F01`–`F18` state the same commitments in testable form.
+Revision 2 added the three that close the R1 HIGH:
+
+| | case | outcome |
+|---|---|---|
+| `FOMC19` | body corrected upstream at 16:00, first backfilled in 2026 | at 14:30 the fetched body is **not visible**; no claim about the uncaptured original either |
+| `FOMC20` | live correction, both bodies print the same release line | neither revision inherits 14:00 |
+| `FOMC21` | first live fetch 47 s after the declared release | still `source_available_at = null` |
+
+Invariants `F01`–`F21` state the same commitments in testable form, with
+`F19` (release time is not vintage proof), `F20` (backfill content vintage) and
+`F21` (revision-specific availability) added in revision 2.
 
 ## 12. What this does not establish
 

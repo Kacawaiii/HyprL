@@ -3,22 +3,22 @@
     "FOMC01": {
       "case": "summer statement, 'For release at 2:00 p.m. EDT'",
       "source_available_at": "date + 14:00 + (-04:00) => UTC",
-      "verdict": "exact"
+      "verdict": "declared_release_at = date + 14:00 + (-04:00); content source_available_at = null"
     },
     "FOMC02": {
       "case": "winter statement, 'For release at 2:00 p.m. EST'",
       "source_available_at": "date + 14:00 + (-05:00) => UTC",
-      "verdict": "exact"
+      "verdict": "declared_release_at = date + 14:00 + (-05:00); content source_available_at = null"
     },
     "FOMC03": {
       "case": "'For immediate release'",
       "source_available_at": null,
-      "verdict": "VALID event; timestamp unavailable; NOT parser failure"
+      "verdict": "VALID event; declared_release_at = null; content source_available_at = null; NOT parser failure"
     },
     "FOMC04": {
       "case": "release line says bare 'ET'",
       "source_available_at": null,
-      "verdict": "no timezone guess; fail closed on the timestamp"
+      "verdict": "no timezone guess; declared_release_at = null; content source_available_at = null"
     },
     "FOMC05": {
       "case": "feed shows item, primary page unavailable",
@@ -26,7 +26,7 @@
     },
     "FOMC06": {
       "case": "primary page observed 90s after declared release",
-      "verdict": "source_available_at = release instant; observed_at = +90s; live_observed_available_at = max(...) = observed_at; durable gate as usual"
+      "verdict": "declared_release_at = release instant (metadata only); observed_at = +90s; source_available_at = null; durable visibility from max(observed_at, ingested_at)"
     },
     "FOMC07": {
       "case": "same GUID, identical page bytes",
@@ -42,11 +42,11 @@
     },
     "FOMC10": {
       "case": "Last Update later than release",
-      "verdict": "source_available_at unchanged; Last Update never advances availability"
+      "verdict": "Last Update is not source_available_at, not source_updated_at, not vintage proof, not revision chronology, not an identity input; declared_release_at unchanged"
     },
     "FOMC11": {
       "case": "2027 backfill of a 2026 statement",
-      "verdict": "observed_at = 2027 collection instant; RETROSPECTIVE_SOURCE may use the trusted 2026 release instant; never relabelled LIVE"
+      "verdict": "declared_release_at MAY record the trusted 2026 release metadata. observed_at = the actual 2027 fetch; ingested_at = the 2027 commit; content source_available_at = null. DURABLE_OBSERVED before 2027: ABSENT. RETROSPECTIVE_SOURCE MUST NOT expose the 2027-fetched body as content visible in 2026 - no vintage proof."
     },
     "FOMC12": {
       "case": "stored raw statement corrupt locally",
@@ -75,6 +75,18 @@
     "FOMC18": {
       "case": "re-check at +7d unchanged",
       "verdict": "no new content revision; observation metadata still auditable"
+    },
+    "FOMC19": {
+      "case": "HISTORICAL CORRECTED BODY - 14:00 original release H1; 16:00 upstream correction to H2; 2026 first HyprL backfill retrieves H2; the page still prints the original 14:00 release line",
+      "verdict": "declared_release_at = 14:00 (event metadata). H2: source_available_at = null, observed_at = the 2026 fetch, ingested_at = the 2026 commit. RETROSPECTIVE_SOURCE at 14:30: H2 NOT VISIBLE. No claim is made that H1 was available either - H1 was never captured and its vintage was never proven."
+    },
+    "FOMC20": {
+      "case": "LIVE CORRECTION RETAINING THE ORIGINAL RELEASE LINE - 14:00 release; 14:00:30 H1 captured; 16:00 recheck captures H2; both bodies print \"For release at 2:00\"",
+      "verdict": "H1 visibility bounded by its own observed_at/ingested_at; H2 visibility bounded by its own. NEITHER revision inherits 14:00 as source_available_at. declared_release_at = 14:00 is event metadata only."
+    },
+    "FOMC21": {
+      "case": "FIRST LIVE FETCH AFTER DECLARED RELEASE - declared 14:00:00, first primary receipt 14:00:47",
+      "verdict": "even the INITIAL body cannot be proven byte-for-byte to have existed at 14:00:00, so content source_available_at = null and durable visibility begins from observed/commit. This closes a subtle 47-second retroprojection."
     }
   },
   "authority_conflicts": {
@@ -115,7 +127,10 @@
       "an unchanged re-fetch",
       "a synthetic changed-content revision",
       "a synthetic malformed release line",
-      "a feed item whose primary fetch initially fails"
+      "a feed item whose primary fetch initially fails",
+      "a historical corrected body backfilled later (FOMC19)",
+      "a live correction retaining the original release line (FOMC20)",
+      "a first live fetch strictly after the declared release instant (FOMC21)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -168,7 +183,7 @@
     "F01": "Only official allowlisted Federal Reserve surfaces may contribute.",
     "F02": "RSS is discovery, never source-time authority.",
     "F03": "The primary statement page is the semantic authority.",
-    "F04": "source_available_at requires a strict explicit date PLUS an explicit EST/EDT release grammar.",
+    "F04": "declared_release_at requires a strict explicit date PLUS an explicit EST/EDT release grammar; it is NEVER a content visibility gate.",
     "F05": "No timezone is ever inferred.",
     "F06": "observed_at is the real primary-statement acquisition instant.",
     "F07": "Backfill never reconstructs observed_at.",
@@ -182,7 +197,10 @@
     "F15": "Replay is offline; no network.",
     "F16": "No market, outcome, consensus or LLM field exists in the capture layer.",
     "F17": "The CaptureSpec hash is bound into every normalized revision.",
-    "F18": "Unsupported release syntax fails closed."
+    "F18": "Unsupported release syntax fails closed.",
+    "F19": "RELEASE TIME IS NOT CONTENT-VINTAGE PROOF. A provider-declared logical release timestamp must never be used as the source availability of a captured content revision unless the provider contract proves that exact revision became available at that timestamp. For FOMC V1 no such revision-specific proof exists.",
+    "F20": "BACKFILL CONTENT VINTAGE. Historical backfill content is visible only from its actual observed/durable timeline unless exact vintage provenance exists. An original release timestamp may describe event metadata but cannot retroactively date the fetched body.",
+    "F21": "REVISION-SPECIFIC AVAILABILITY. A later observed content revision cannot inherit an earlier logical event release timestamp as its own source availability. Each revision requires its own availability evidence; absent provider evidence, source_available_at = null."
   },
   "item_predicate": {
     "evidence": "title verified on the four FOMC statement feed items and on statement pages sampled 2015-2026",
@@ -197,6 +215,24 @@
     "on_no_match": "NOT an FOMC event. No FOMC EventRevision is created. Discovery raw is still retained as provenance.",
     "primary_page_title_exact": "Federal Reserve issues FOMC statement",
     "rule": "CONJUNCTION - both must hold, on verified official fields only"
+  },
+  "mode_capabilities": {
+    "HISTORICAL_BACKFILL": {
+      "actual_observed_at": "the backfill fetch instant",
+      "content_source_available_at": null,
+      "exact_content_retrospective_source": "UNSUPPORTED_V1",
+      "exact_content_vintage_from_source": "NOT PROVEN",
+      "historical_observed_at": "UNAVAILABLE BY DEFINITION",
+      "logical_release_metadata": "SUPPORTED when the strict parser succeeds"
+    },
+    "LIVE": {
+      "content_durable_replay": "SUPPORTED",
+      "content_observed_at": "real primary fetch instant",
+      "content_source_available_at": null,
+      "exact_content_vintage_from_source": "NOT PROVEN",
+      "logical_release_metadata": "SUPPORTED when the strict parser succeeds"
+    },
+    "no_blanket_flag": "there is deliberately no ambiguous \"retrospective supported\" boolean anywhere in this spec"
   },
   "modes": {
     "HISTORICAL_BACKFILL": {
@@ -229,6 +265,11 @@
     "consensus",
     "rate-decision extraction"
   ],
+  "normalized_field_notes": {
+    "content_source_available_at": "always null in V1",
+    "declared_release_at": "provider release metadata; NEVER a revision visibility gate",
+    "source_updated_at": "always null in V1"
+  },
   "normalized_forbidden_fields": [
     "sentiment",
     "importance",
@@ -250,27 +291,31 @@
     "QT amounts"
   ],
   "normalized_minimum_fields": [
-    "provider_id",
-    "provider_class",
-    "source_tier",
+    "canonical_source_url",
+    "capture_spec_hash",
+    "capture_spec_id",
+    "content_source_available_at_always_null_in_v1",
+    "declared_release_at_nullable",
+    "declared_release_text",
+    "declared_release_trust_verdict",
     "event_family",
-    "taxonomy_type",
-    "taxonomy_version",
+    "ingested_at",
+    "observation_mode",
+    "observed_at",
+    "official_statement_date",
+    "provider_class",
+    "provider_id",
+    "raw_artifact_identities_and_hashes",
+    "revision_id",
+    "rss_guid_if_available",
     "source_item_id",
     "source_observation_id",
-    "revision_id",
-    "official_statement_date",
-    "canonical_source_url",
-    "rss_guid_if_available",
-    "source_available_at_nullable",
-    "observed_at",
-    "ingested_at",
-    "timestamp_trust_verdict",
+    "source_tier",
+    "source_updated_at_always_null_in_v1",
+    "taxonomy_type",
+    "taxonomy_version",
     "timestamp_semantics",
-    "raw_artifact_identities_and_hashes",
-    "observation_mode",
-    "capture_spec_id",
-    "capture_spec_hash"
+    "timestamp_trust_verdict"
   ],
   "parser_policy": {
     "determinism": "operates offline on locally stored raw bytes only",
@@ -337,7 +382,7 @@
     "source_tier": "TIER_1_OFFICIAL",
     "taxonomy_note": "existing frozen rev4 value reused; NO new taxonomy introduced",
     "taxonomy_type": "CENTRAL_BANK",
-    "timestamp_quality": "EXCELLENT on the primary statement when the strict release grammar matches; otherwise unavailable"
+    "timestamp_quality": "EXCELLENT for the LOGICAL RELEASE DECLARATION when the strict grammar matches. NOT a content-revision availability timestamp: no revision-specific source availability is exposed by the contract."
   },
   "raw_policy": {
     "accepted_media": {
@@ -361,6 +406,7 @@
     "hash_algorithm": "SHA-256",
     "hash_algorithm_note": "repo primitive sha256_bytes; no second digest algorithm introduced",
     "hash_before_text_decode": true,
+    "hash_is_not_vintage_proof": "the raw body hash is provenance for WHAT HYPRL ACTUALLY OBSERVED AND WHEN. It does not become proof of historical content existence merely because the same normalized record also carries a declared_release_at recovered from the page.",
     "network_repair": "FORBIDDEN",
     "order": [
       "fetch bytes",
@@ -402,11 +448,19 @@
     "why_stricter_than_evidence": "the Federal Reserve disclaimer states that, unless otherwise indicated, Board website information is in the public domain. V1 is nonetheless stricter: 6G-A does not need redistribution, and a blanket DISABLED avoids per-item 'unless otherwise indicated' rights analysis and keeps the release guard simple."
   },
   "retrospective_source_fit": {
-    "admission": "a historical statement may participate in RETROSPECTIVE_SOURCE only if the strict release grammar succeeds AND TimestampTrustPolicyV1 admits the quality",
-    "immediate_release_items": "strict exact retrospective admission fails or degrades per the frozen trust policy; NO timestamp is invented",
-    "never_claims": "that HyprL actually observed the statement historically",
-    "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a 'For immediate release' counterexample was verified at 2015-03-18. V1 makes NO claim that every archived statement in any interval carries an exact release time. The parser is RECORD-SPECIFIC."
+    "exact_content_retrospective_visibility": "NOT_SUPPORTED_V1",
+    "metadata_only_layer": "a distinct metadata-only release-fact layer may be useful later, but it would need its own schema and design. This CaptureSpec does NOT invent one.",
+    "never_claims": [
+      "that HyprL observed the statement historically",
+      "that the fetched bytes were the bytes visible at declared_release_at"
+    ],
+    "retrospective_release_time_metadata": "SUPPORTED - declared_release_at may be recorded as non-gating provenance",
+    "rule": "A content-bearing revision with observation_mode = HISTORICAL_BACKFILL is NOT eligible to become source-visible at declared_release_at. It is visible only on its actual observed/durable timeline.",
+    "trust_policy_cannot_override": "no TimestampTrustPolicyV1 verdict may substitute for missing content-vintage proof. A TRUSTED_EXACT release timestamp means \"the source reliably declares the logical release at T\" - it does NOT mean \"every currently fetched byte existed at T\".",
+    "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
+    "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
+  "revision_note": "Spec revision 2 closes the HIGH found by counter-review R1: the release line was being used as the source availability of a content revision whose bytes could postdate it. Release event time and content revision availability are now separate and cannot be conflated. No design change: content revisions use the null source_available_at branch design rev4 already supports.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -488,8 +542,12 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
+  "spec_revision": 2,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
+  "supersedes_capture_spec_hash": [
+    "74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd"
+  ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
     "allowlisted_hosts": [
@@ -521,13 +579,51 @@
     }
   },
   "timestamps": {
+    "content_source_available_at": {
+      "consequence": "revision availability is bounded by observed_at and commit-bound ingested_at, and is revision-specific",
+      "design_compatibility": "design rev4 already supports a null source_available_at bounded by observed_at; NO new design primitive is introduced",
+      "lifted_only_by": "a future CaptureSpec version carrying a VERIFIED revision-specific source availability timestamp",
+      "rule": "EVERY content-bearing EventRevision produced by this CaptureSpec has source_available_at = null, in BOTH observation modes, with NO exception - including the first live body, and including a body whose page prints an exact release line.",
+      "value_in_v1": null,
+      "why": "The Federal Reserve contract verified in provider rev3 exposes NO revision-specific source availability timestamp. The release line dates the LOGICAL EVENT, not the byte sequence HyprL holds. Assigning it to a content revision would retroproject a possibly-later body to the original release instant."
+    },
+    "declared_release_at": {
+      "derived_from": "timestamps.release_time grammar, unchanged",
+      "gates_content_visibility": false,
+      "must_not_be_written_into": [
+        "source_available_at",
+        "source_updated_at",
+        "effective_at",
+        "observed_at",
+        "ingested_at"
+      ],
+      "null_when": "the release line is \"For immediate release\", or no accepted grammar matches",
+      "nullable": true,
+      "role": "PROVIDER-DECLARED RELEASE TIME FOR THE LOGICAL EVENT - NON-GATING PROVENANCE ONLY",
+      "stored_alongside": [
+        "declared_release_text (literal matched string, non-causal provenance)",
+        "declared_release_timestamp_semantics",
+        "timestamp_trust_verdict for the RELEASE CLAIM only"
+      ],
+      "what_it_does_NOT_establish": "that the currently observed body bytes existed, or were public, at that instant",
+      "what_it_establishes": "that the source declares the logical FOMC statement released at this instant"
+    },
+    "http_last_modified": {
+      "lifted_only_by": "a provider-specific verified semantic contract, which V1 does not have",
+      "role": "non-authoritative HTTP transport provenance only",
+      "use_as_content_vintage_proof": "FORBIDDEN",
+      "use_in_source_available_at": "FORBIDDEN",
+      "use_in_source_updated_at": "FORBIDDEN"
+    },
     "immediate_release": {
+      "content_source_available_at": null,
+      "declared_release_at": null,
       "evidence": "verified on the 2015-03-18 FOMC statement",
       "literal": "For immediate release",
       "not_parser_failed": "this is a recognised syntax, NOT a parse failure; the event is not corrupted merely because no clock exists",
       "source_available_at": null,
       "timestamp_semantics": "UNKNOWN (existing TimestampTrustPolicyV1 vocabulary; no new design vocabulary introduced)",
-      "verdict": "VALID PAGE, VALID EVENT, exact source publication instant UNAVAILABLE"
+      "verdict": "VALID PAGE, VALID EVENT. No declared exact release time, and - as for every other FOMC revision in V1 - no content source availability either."
     },
     "ingested_at": {
       "definition": "inherited unchanged from design rev4: the successful authoritative normalized EventStore commit boundary",
@@ -537,8 +633,14 @@
     },
     "last_update": {
       "never_advances": "the original source availability instant",
+      "no_derived_timestamp": "no normalized causal timestamp may be derived from it",
+      "permitted_use": "optional non-causal diagnostic; if stored at all, retain only the literal display text as provenance",
       "role": "site maintenance metadata, date-only",
-      "use_in_source_available_at": "FORBIDDEN"
+      "use_as_content_vintage_proof": "FORBIDDEN",
+      "use_as_identity_input": "FORBIDDEN",
+      "use_as_revision_chronology": "FORBIDDEN",
+      "use_in_source_available_at": "FORBIDDEN",
+      "use_in_source_updated_at": "FORBIDDEN"
     },
     "observed_at": {
       "definition": "the instant the collector successfully receives the PRIMARY statement raw bytes used for that revision",
@@ -564,24 +666,15 @@
         "EST": "-05:00"
       },
       "normalization": "HTML entities unescaped; runs of ASCII whitespace collapsed to one space; leading/trailing whitespace stripped; match is otherwise literal and case-sensitive",
+      "role_in_v1": "NON-GATING provider-declared release metadata. The strict grammar is RETAINED unchanged; only its role changed - it no longer gates content revision visibility.",
       "timezone_inference": "FORBIDDEN - the abbreviation is read from the document, never derived from the date"
     },
     "rss_pubdate": {
       "authoritative_for_source_available_at": false,
       "on_disagreement_with_primary": "record a diagnostic; NEVER silently rewrite the primary timestamp",
       "role": "DISCOVERY METADATA / CORROBORATION ONLY",
+      "use_as_content_revision_availability": "FORBIDDEN - even when it equals the declared release time",
       "why": "semantics are not officially documented, and a GMT value alone is ambiguous with respect to local release semantics - 19:00Z is both 2:00 p.m. EST and 3:00 p.m. EDT"
-    },
-    "source_available_at": {
-      "formula": "official_statement_date + local release clock + literal EST/EDT offset, converted to UTC",
-      "is_not": "observed_at",
-      "otherwise": null,
-      "requires_all_of": [
-        "statement date parsed",
-        "strict exact release clock parsed",
-        "explicit EST or EDT parsed"
-      ],
-      "worked_example": "2026-01-28 + 2:00 p.m. + EST(-05:00) => 2026-01-28T19:00:00Z"
     },
     "source_date": {
       "accepted_grammar": "US long form '<Month> <D>, <YYYY>' as printed adjacent to the statement title",
@@ -594,6 +687,19 @@
         "RSS pubDate",
         "the URL date component"
       ]
+    },
+    "source_updated_at": {
+      "must_not_be_derived_from": [
+        "Last Update",
+        "HTTP Last-Modified",
+        "RSS pubDate",
+        "observed_at",
+        "declared_release_at"
+      ],
+      "note": "the R1 finding proposed populating this from the page Last Update field. That proposal is REJECTED: provider rev3 established Last Update as page-maintenance metadata, not a verified content-revision publication timestamp. A wrong vintage signal is worse than a declared absent one.",
+      "rule": "null for every FOMC content revision in V1",
+      "value_in_v1": null,
+      "why": "design rev4 offers the field, but no VERIFIED provider signal establishes the public availability time of a specific content revision. Absence recorded honestly rather than filled with a proxy."
     },
     "unrecognised_release_syntax": {
       "distinct_from": "immediate_release, which is recognised and valid",
@@ -621,19 +727,34 @@
       "source family",
       "raw semantics",
       "item predicate",
-      "redistribution policy"
+      "redistribution policy",
+      "release-time vs content-vintage separation"
     ],
     "silent_mutation": "FORBIDDEN"
   },
   "visibility": {
-    "exact_timestamp_case": {
-      "durable_available_at": "max(live_observed_available_at, ingested_at)",
-      "live_observed_available_at": "max(source_available_at, observed_at)"
+    "declared_release_at_effect": "NONE - it never alters content visibility",
+    "design_general_form": {
+      "exact_timestamp_case": "max(source_available_at, observed_at) then max(..., ingested_at)",
+      "note": "quoted from design rev4 for reference; V1 content revisions only ever use the second form",
+      "unavailable_timestamp_case": "observed_at then max(observed_at, ingested_at)"
     },
     "provider_bypass": "none",
-    "unavailable_timestamp_case": {
+    "v1_content_revisions": {
       "durable_available_at": "max(observed_at, ingested_at)",
-      "live_observed_available_at": "observed_at"
+      "live_observed_available_at": "observed_at",
+      "note": "V1 always takes the null branch; the exact-timestamp branch is unreachable for content revisions",
+      "source_available_at": null
+    },
+    "worked_example": {
+      "declared_release_at": "18:00:00Z",
+      "durable_available_at": "18:00:48Z",
+      "ingested_at": "18:00:48Z",
+      "observed_at": "18:00:47Z",
+      "snapshot_18_00_30": "ABSENT",
+      "snapshot_18_00_47_5": "ABSENT",
+      "snapshot_18_00_49": "VISIBLE",
+      "source_available_at": null
     }
   }
 }
