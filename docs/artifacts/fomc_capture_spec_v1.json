@@ -62,7 +62,7 @@
     },
     "FOMC15": {
       "case": "valid feed, zero new FOMC items",
-      "verdict": "EVENTS_OBSERVED_ZERO for that successful check interval"
+      "verdict": "EVENTS_OBSERVED_ZERO only when ALL seven preconditions hold - in particular complete deterministic classification and zero unresolved candidates - and the assertion is scoped to the V1 capture subset"
     },
     "FOMC16": {
       "case": "normalization transaction fails after raw persisted",
@@ -87,6 +87,22 @@
     "FOMC21": {
       "case": "FIRST LIVE FETCH AFTER DECLARED RELEASE - declared 14:00:00, first primary receipt 14:00:47",
       "verdict": "even the INITIAL body cannot be proven byte-for-byte to have existed at 14:00:00, so content source_available_at = null and durable visibility begins from observed/commit. This closes a subtle 47-second retroprojection."
+    },
+    "FOMC22": {
+      "case": "UNSCHEDULED MONETARY ACTION WITH A DIFFERENT TITLE - feed fetch and parse succeed; an official item is plausibly monetary/FOMC but its title differs from the frozen predicate",
+      "verdict": "NOT normalized under V1. classification = UNRESOLVED_CANDIDATE. EVENTS_OBSERVED_ZERO is PROHIBITED for that cycle. No claim is made that the event did not exist. Raw feed evidence retained. A future CaptureSpec may add the family."
+    },
+    "FOMC23": {
+      "case": "FEED TITLE MATCHES, PRIMARY PAGE TITLE DIFFERS",
+      "verdict": "discovery/primary classification CONFLICT. No normalized event, no zero assertion, and NO silent downgrade to DEFINITELY_OUT_OF_SCOPE. Diagnostic and raw provenance retained; PARSER_FAILED for that surface."
+    },
+    "FOMC24": {
+      "case": "SUCCESSFUL CYCLE WITH ZERO MATCHES AND ZERO UNRESOLVED CANDIDATES - feed raw persisted, parse succeeds, every relevant entry deterministically outside the V1 subset, no pending or failing candidate",
+      "verdict": "EVENTS_OBSERVED_ZERO PERMITTED, and explicitly scoped to the V1 capture subset - not to all FOMC monetary-policy activity."
+    },
+    "FOMC25": {
+      "case": "POSITIVE FEED CANDIDATE, PRIMARY FETCH FAILS",
+      "verdict": "no normalized event; candidate remains unresolved; SOURCE_UNAVAILABLE on the primary surface; EVENTS_OBSERVED_ZERO PROHIBITED. \"0 normalized events\" is not zero."
     }
   },
   "authority_conflicts": {
@@ -130,7 +146,10 @@
       "a feed item whose primary fetch initially fails",
       "a historical corrected body backfilled later (FOMC19)",
       "a live correction retaining the original release line (FOMC20)",
-      "a first live fetch strictly after the declared release instant (FOMC21)"
+      "a first live fetch strictly after the declared release instant (FOMC21)",
+      "an unscheduled monetary item with a differing title (FOMC22)",
+      "a feed/primary title conflict (FOMC23)",
+      "a clean zero cycle with no unresolved candidates (FOMC24)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -200,9 +219,19 @@
     "F18": "Unsupported release syntax fails closed.",
     "F19": "RELEASE TIME IS NOT CONTENT-VINTAGE PROOF. A provider-declared logical release timestamp must never be used as the source availability of a captured content revision unless the provider contract proves that exact revision became available at that timestamp. For FOMC V1 no such revision-specific proof exists.",
     "F20": "BACKFILL CONTENT VINTAGE. Historical backfill content is visible only from its actual observed/durable timeline unless exact vintage provenance exists. An original release timestamp may describe event metadata but cannot retroactively date the fetched body.",
-    "F21": "REVISION-SPECIFIC AVAILABILITY. A later observed content revision cannot inherit an earlier logical event release timestamp as its own source availability. Each revision requires its own availability evidence; absent provider evidence, source_available_at = null."
+    "F21": "REVISION-SPECIFIC AVAILABILITY. A later observed content revision cannot inherit an earlier logical event release timestamp as its own source availability. Each revision requires its own availability evidence; absent provider evidence, source_available_at = null.",
+    "F22": "ABSENCE CLAIM CANNOT EXCEED CLASSIFIER COVERAGE. An absence assertion must never cover a semantic family broader than the frozen classifier's proven coverage. Where classifier completeness is not established, zero is scoped to the capture predicate only.",
+    "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that check. No exception.",
+    "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics."
   },
   "item_predicate": {
+    "classification_states": {
+      "DEFINITELY_OUT_OF_SCOPE": "the item is excluded by a frozen deterministic negative rule that requires NO semantic guessing. V1 keeps this category deliberately NARROW.",
+      "IN_SCOPE_V1": "the exact frozen positive predicate succeeds on BOTH surfaces",
+      "UNRESOLVED_CANDIDATE": "the item appears on the official monetary-policy discovery surface, does not satisfy the positive V1 predicate, and cannot be proven outside the broader monetary/FOMC domain without semantic guessing"
+    },
+    "default_non_match": "UNRESOLVED_CANDIDATE",
+    "default_rationale": "fail closed. Unknown relevance resolves to UNRESOLVED, never to a negative. There is no frozen safe negative rule for a differently-titled official monetary item, so the default applies.",
     "evidence": "title verified on the four FOMC statement feed items and on statement pages sampled 2015-2026",
     "feed_title_exact": "Federal Reserve issues FOMC statement",
     "insufficient_alone": [
@@ -210,11 +239,14 @@
       "a feed category",
       "a date pattern"
     ],
-    "known_v1_narrowness": "an unscheduled or differently-titled FOMC action would not match and would be skipped rather than guessed. Fail-closed is deliberate; widening requires a spec revision.",
+    "known_v1_narrowness": "an unscheduled or differently-titled FOMC action is NOT captured by V1. It is recorded as an UNRESOLVED_CANDIDATE and blocks the zero assertion, rather than being silently treated as absent. Widening the positive predicate requires a spec revision.",
+    "no_broad_semantic_classifier": "V1 must NOT be widened with keyword lists, semantic similarity, an LLM, regex over body text, or hardcoded emergency-action vocabulary. Honest incompleteness beats speculative coverage.",
     "normalization": "exact match after Unicode NFC, HTML entity unescaping, and collapsing runs of ASCII whitespace to one space; comparison is case-sensitive",
-    "on_no_match": "NOT an FOMC event. No FOMC EventRevision is created. Discovery raw is still retained as provenance.",
+    "on_positive_predicate_no_match": "classification = UNRESOLVED_CANDIDATE unless an explicit frozen negative rule proves DEFINITELY_OUT_OF_SCOPE. No normalized FOMC EventRevision is created either way, but an UNRESOLVED_CANDIDATE BLOCKS any zero assertion for that cycle until it is deterministically resolved.",
     "primary_page_title_exact": "Federal Reserve issues FOMC statement",
-    "rule": "CONJUNCTION - both must hold, on verified official fields only"
+    "role": "POSITIVE CLASSIFIER FOR THE V1 SUBSET ONLY - a non-match is NOT proof that an item is not an FOMC monetary-policy event",
+    "rule": "CONJUNCTION - both must hold, on verified official fields only",
+    "superseded_rule": "rev2 said a non-match was \"NOT an FOMC event\" - a definitive negative that allowed a false zero. Withdrawn in rev3."
   },
   "mode_capabilities": {
     "HISTORICAL_BACKFILL": {
@@ -266,6 +298,8 @@
     "rate-decision extraction"
   ],
   "normalized_field_notes": {
+    "capture_scope_id": "binds the deterministic V1 capture subset so downstream cannot confuse provider family with coverage completeness",
+    "classification_state": "IN_SCOPE_V1 for any admitted revision; the other states never produce a revision",
     "content_source_available_at": "always null in V1",
     "declared_release_at": "provider release metadata; NEVER a revision visibility gate",
     "source_updated_at": "always null in V1"
@@ -292,8 +326,10 @@
   ],
   "normalized_minimum_fields": [
     "canonical_source_url",
+    "capture_scope_id",
     "capture_spec_hash",
     "capture_spec_id",
+    "classification_state",
     "content_source_available_at_always_null_in_v1",
     "declared_release_at_nullable",
     "declared_release_text",
@@ -460,7 +496,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 2 closes the HIGH found by counter-review R1: the release line was being used as the source availability of a content revision whose bytes could postdate it. Release event time and content revision availability are now separate and cannot be conflated. No design change: content revisions use the null source_available_at branch design rev4 already supports.",
+  "revision_note": "Spec revision 3 closes the MEDIUM found by counter-review R2: the declared family was broader than the classifier, so a successful poll could assert EVENTS_OBSERVED_ZERO over FOMC monetary-policy activity it could not actually classify. Classification is now three-way, a non-match defaults to UNRESOLVED_CANDIDATE and blocks zero, and every absence claim is scoped to the frozen capture predicate. Revision 2 vintage semantics are preserved unchanged. No design change: unresolved classification reuses the existing PARSER_FAILED state.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -482,6 +518,11 @@
   },
   "schema_version": "trading-lab.fomc-capture-spec.v1",
   "scope": {
+    "broad_domain": "Federal Reserve monetary-policy press-release content (the discovery surface)",
+    "capture_scope_id": "standard_fomc_statement_release_pattern_v1",
+    "coverage_claim": "ONLY_EVENTS_CONFIRMED_BY_FROZEN_V1_PREDICATE",
+    "coverage_complete_for_all_fomc_actions": false,
+    "coverage_complete_for_all_monetary_feed_items": false,
     "explicitly_out_of_scope": [
       "FOMC minutes",
       "Summary of Economic Projections (SEP)",
@@ -492,9 +533,13 @@
       "all other Federal Reserve press releases",
       "any other central bank"
     ],
+    "honest_statement": "This provider V1 does NOT claim to cover every possible FOMC action or communication. It positively classifies exactly one release pattern, and every absence claim it makes is scoped to that pattern.",
     "in_scope": [
-      "FOMC monetary-policy statements published as official Federal Reserve press releases"
+      "FOMC monetary-policy statements published as official Federal Reserve press releases AND matching the frozen positive predicate"
     ],
+    "taxonomy_event_family": "FOMC_MONETARY_POLICY_STATEMENT",
+    "taxonomy_note": "the frozen rev4 taxonomy type is retained; capture_scope_id records that V1 captures a deterministic SUB-FAMILY of it",
+    "v1_target_subset": "official items satisfying the frozen positive FOMC-statement predicate",
     "why_narrow": "first EventStore proof; one event family, deterministic, causally honest, offline-replayable"
   },
   "security_requirements": [
@@ -515,18 +560,23 @@
   "source_health": {
     "mappings": {
       "client ceiling reached": "RATE_LIMITED",
+      "decoded body exceeds the frozen size bound": "PARSER_FAILED",
       "feed XML malformed": "PARSER_FAILED",
       "feed fetch failed / timeout / unexpected HTTP status": "SOURCE_UNAVAILABLE",
-      "feed fetched and parsed, zero in-scope FOMC items": "EVENTS_OBSERVED_ZERO",
+      "feed fetched and parsed, all relevant items deterministically classified, zero IN_SCOPE_V1 admitted, zero unresolved candidates": "EVENTS_OBSERVED_ZERO",
+      "feed item cannot be deterministically classified (UNRESOLVED_CANDIDATE)": "PARSER_FAILED",
+      "feed title matches but primary page title does not (classification conflict)": "PARSER_FAILED",
       "normalization persistence failure": "no ingested_at, no EventRevision visibility",
+      "positive feed candidate but primary statement fetch failed": "SOURCE_UNAVAILABLE",
       "primary statement HTML malformed": "PARSER_FAILED",
-      "primary statement fetch failed": "SOURCE_UNAVAILABLE",
       "raw integrity failure": "fail closed at verified replay",
+      "redirect destination rejected by the allowlist": "SOURCE_UNAVAILABLE",
       "release line is 'For immediate release'": "NOT a health failure - event valid, source_available_at unavailable",
       "release line unrecognised / malformed": "PARSER_FAILED",
       "surface not polled this interval": "SOURCE_NOT_CHECKED"
     },
-    "never": "a network failure is missingness, NEVER evidence of zero FOMC events. Absence is only assertable when the feed was successfully retrieved AND parsed.",
+    "never": "a network failure is missingness, NEVER evidence of zero events. And an absence claim requires MORE than retrieval and parsing: it requires COMPLETE deterministic classification of every relevant item with zero unresolved candidates. Fetch + parse success alone is NOT sufficient to assert absence.",
+    "new_global_state_added": false,
     "record_fields": [
       "provider_id",
       "surface",
@@ -536,17 +586,19 @@
     ],
     "scope_note": "a feed outage must NOT mark all Federal Reserve data globally unavailable",
     "scoped_per_surface": true,
+    "state_reuse_note": "UNRESOLVED_CANDIDATE and classification conflict map onto the existing rev4 PARSER_FAILED state: classification is a normalization step over fetched bytes, and rev4 constrains PARSER_FAILED by name only. No sixth global state is invented. The provider-local classification outcome is carried as a diagnostic detail attached to that frozen state.",
     "surfaces": [
       "discovery_feed",
       "primary_statement"
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 2,
+  "spec_revision": 3,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
-    "74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd"
+    "74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd",
+    "b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -728,7 +780,9 @@
       "raw semantics",
       "item predicate",
       "redistribution policy",
-      "release-time vs content-vintage separation"
+      "release-time vs content-vintage separation",
+      "scope and coverage claim",
+      "zero-assertion preconditions"
     ],
     "silent_mutation": "FORBIDDEN"
   },
@@ -756,5 +810,35 @@
       "snapshot_18_00_49": "VISIBLE",
       "source_available_at": null
     }
+  },
+  "zero_assertion": {
+    "blocked_by": [
+      "an UNRESOLVED_CANDIDATE in the cycle",
+      "a candidate whose primary fetch failed",
+      "a candidate whose primary parse failed",
+      "a discovery/primary classification conflict",
+      "feed parser failure",
+      "feed source unavailable"
+    ],
+    "design_alignment": "design rev4 missingness_policy.never_encoded_as_zero = true; unresolved classification is not zero",
+    "downstream_restriction": "EVENTS_OBSERVED_ZERO from this provider MUST NOT be interpreted downstream as \"the Federal Reserve/FOMC produced no monetary-policy event\". No model or feature may treat it as a complete-world event count unless a future coverage contract establishes completeness. This binds later InformationSnapshot composition.",
+    "forbidden_wording": "never state \"zero FOMC events\" or equivalent without the capture-scope qualifier. This is a CAPTURE-SCOPE absence assertion, not a world-state one.",
+    "is_not": [
+      "zero FOMC events",
+      "no FOMC statement occurred",
+      "zero monetary-policy statements",
+      "a complete-world absence assertion"
+    ],
+    "preconditions_all_required": [
+      "1. the discovery feed fetch succeeded",
+      "2. the raw feed artefact was durably persisted",
+      "3. the feed parse succeeded",
+      "4. every feed item relevant to this capture scope was classified deterministically",
+      "5. unresolved_candidate_count = 0",
+      "6. no primary-page fetch or parse remains unresolved for a candidate that could affect the V1 result",
+      "7. the number of newly admitted IN_SCOPE_V1 events = 0"
+    ],
+    "semantic_scope": "ZERO CONFIRMED V1-SUBSET EVENTS. Precisely: \"no new events matching federal_reserve_fomc_capture_v1's frozen V1 predicate were confirmed during this successful discovery cycle.\"",
+    "state": "EVENTS_OBSERVED_ZERO"
   }
 }

@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 2 — authoritative)
-b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8
+CAPTURE SPEC HASH  (revision 3 — authoritative)
+d4242ea54afbf0b60604edc597b8bcfdcc733883b4b77ec5b0a471e52dd33d79
 
-supersedes 74571bb0… (revision 1)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2)
 
 BINDS
   event intelligence design rev4
@@ -66,6 +66,8 @@ allowlist/redirect primitive, rather than growing a second copy of it.
 
 ## 3. Deciding what is an FOMC statement
 
+### A positive classifier, not a verdict on everything else
+
 A URL containing `monetary` is not evidence. The predicate is a **conjunction**
 on verified official fields:
 
@@ -79,9 +81,75 @@ after Unicode NFC, entity unescaping and whitespace collapsing. That exact
 title was verified on the FOMC statement feed items and on statement pages
 sampled across 2015–2026.
 
-An unscheduled or differently-titled FOMC action would **not** match, and would
-be skipped rather than guessed at. That narrowness is deliberate: widening the
-predicate is a spec revision, not a judgement call made at runtime.
+Revision 2 treated a non-match as *"NOT an FOMC event"* — a definitive
+negative. Counter-review R2 showed where that leads: a successful poll could
+skip a differently-titled official monetary action and then report
+`EVENTS_OBSERVED_ZERO`, asserting an absence it had not established. The
+predicate is now what it always actually was — a **positive classifier for the
+V1 subset**, and nothing more.
+
+### Three outcomes, not two
+
+| state | meaning |
+|---|---|
+| `IN_SCOPE_V1` | the exact predicate succeeds on **both** surfaces |
+| `DEFINITELY_OUT_OF_SCOPE` | excluded by a frozen deterministic rule needing **no** semantic guessing — deliberately narrow |
+| `UNRESOLVED_CANDIDATE` | on the official monetary surface, fails the positive predicate, and cannot be proven outside the domain without guessing |
+
+**A non-match defaults to `UNRESOLVED_CANDIDATE`.** Unknown relevance resolves
+to unresolved, never to a negative — and there is no frozen safe negative rule
+for a differently-titled official monetary item, so the default is what
+actually applies in practice.
+
+No revision is created either way. The difference is that an unresolved
+candidate **blocks the zero assertion** for that cycle.
+
+V1 is deliberately not widened with keyword lists, semantic similarity, an LLM,
+regex over body text, or hardcoded emergency-action vocabulary. Honest
+incompleteness beats speculative coverage.
+
+### What the scope actually claims
+
+```
+taxonomy_event_family                          FOMC_MONETARY_POLICY_STATEMENT
+capture_scope_id                               standard_fomc_statement_release_pattern_v1
+coverage_claim                                 ONLY_EVENTS_CONFIRMED_BY_FROZEN_V1_PREDICATE
+coverage_complete_for_all_fomc_actions         false
+coverage_complete_for_all_monetary_feed_items  false
+```
+
+The frozen rev4 taxonomy type is kept; `capture_scope_id` records that V1
+captures a deterministic **sub-family** of it, and is bound into every
+normalized revision so no downstream consumer can confuse *provider family*
+with *coverage completeness*.
+
+### Zero means one specific thing
+
+`EVENTS_OBSERVED_ZERO` requires **all seven**:
+
+1. the discovery feed fetch succeeded
+2. the raw feed artefact was durably persisted
+3. the feed parse succeeded
+4. every relevant feed item was classified **deterministically**
+5. `unresolved_candidate_count = 0`
+6. no primary-page fetch or parse remains unresolved for a candidate that could affect the result
+7. newly admitted `IN_SCOPE_V1` events = 0
+
+Fetch and parse success alone is **not** sufficient. What the state asserts is:
+
+> no new events matching this spec's frozen V1 predicate were confirmed during
+> this successful discovery cycle
+
+and never *"zero FOMC events"*, *"no FOMC statement occurred"* or any
+complete-world claim. Downstream, it **may not** be read as *"the Federal
+Reserve produced no monetary-policy event"*, and no model or feature may treat
+it as a complete-world event count without a future coverage contract — a
+constraint that binds later InformationSnapshot composition.
+
+An emergency inter-meeting action is the highest-impact event class and the one
+most likely to carry a non-standard title. Under revision 3 it produces an
+unresolved candidate and blocks the zero, rather than becoming evidence of
+nothing having happened.
 
 ## 4. Time — the part worth getting right
 
@@ -304,26 +372,33 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Twenty-one cases, decided in advance
+## 11. Twenty-five cases, decided in advance
 
-`FOMC01`–`FOMC21` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
 outages, a genuinely empty poll, a failed commit after raw persistence, a lost
 ACK, and an unchanged +7 d re-check.
 
-Revision 2 added the three that close the R1 HIGH:
+Revision 2 added three that close the R1 HIGH, and revision 3 four more that
+close the R2 MEDIUM:
 
 | | case | outcome |
 |---|---|---|
 | `FOMC19` | body corrected upstream at 16:00, first backfilled in 2026 | at 14:30 the fetched body is **not visible**; no claim about the uncaptured original either |
 | `FOMC20` | live correction, both bodies print the same release line | neither revision inherits 14:00 |
 | `FOMC21` | first live fetch 47 s after the declared release | still `source_available_at = null` |
+| `FOMC22` | unscheduled monetary action, different title | unresolved candidate; **zero prohibited** |
+| `FOMC23` | feed title matches, primary title differs | conflict; no event, no zero, no silent downgrade |
+| `FOMC24` | clean cycle, no matches, no unresolved | zero **permitted**, scoped to the V1 subset |
+| `FOMC25` | positive candidate, primary fetch fails | unresolved; zero prohibited |
 
-Invariants `F01`–`F21` state the same commitments in testable form, with
-`F19` (release time is not vintage proof), `F20` (backfill content vintage) and
-`F21` (revision-specific availability) added in revision 2.
+Invariants `F01`–`F24` state the same commitments in testable form. Revision 2
+added `F19` (release time is not vintage proof), `F20` (backfill content
+vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
+(an absence claim cannot exceed classifier coverage), `F23` (an unresolved
+candidate blocks zero) and `F24` (discovery/primary conflict fails closed).
 
 ## 12. What this does not establish
 
