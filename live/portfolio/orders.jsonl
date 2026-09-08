@@ -35,3 +35,4 @@
 {"ts": "2026-09-03T22:56:51.476849+00:00", "equity": 109998.85, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
 {"ts": "2026-09-04T22:45:00.162860+00:00", "equity": 109200.27, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
 {"ts": "2026-09-07T23:15:25.872146+00:00", "equity": 109162.27, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
+{"ts": "2026-09-08T23:08:34.689003+00:00", "equity": 107706.29, "sent": 0, "failed": 0, "api_failed": 0, "blocked": 0, "deferred": 0, "skipped_short_targets": 0, "orders": [], "order_details": [], "issues": []}
