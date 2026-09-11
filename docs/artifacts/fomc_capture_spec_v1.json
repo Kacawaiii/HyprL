@@ -103,6 +103,32 @@
     "FOMC25": {
       "case": "POSITIVE FEED CANDIDATE, PRIMARY FETCH FAILS",
       "verdict": "no normalized event; candidate remains unresolved; SOURCE_UNAVAILABLE on the primary surface; EVENTS_OBSERVED_ZERO PROHIBITED. \"0 normalized events\" is not zero."
+    },
+    "FOMC26": {
+      "case": "OFFICIAL DATE CORRECTION ON SAME URL - R3/X6",
+      "initial_observation": {
+        "body_hash": "H1",
+        "canonical_primary_statement_url": "U",
+        "content_revision": "R1",
+        "event_family": "E",
+        "official_statement_date": "D1",
+        "provider_id": "P",
+        "source_item_id": "S"
+      },
+      "later_observation": {
+        "body_hash": "H2",
+        "canonical_primary_statement_url": "U",
+        "content_revision": "R2",
+        "event_family": "E",
+        "official_statement_date": "D2",
+        "provider_id": "P",
+        "source_item_id": "S"
+      },
+      "preconditions": "same P, E and U; H1 != H2; D1 != D2; both observations satisfy the existing normalization requirements",
+      "same_body_control": "identical verified primary body bytes under the SAME CaptureSpec hash MUST yield the same official_statement_date. A different date is a PARSER/NORMALIZER DETERMINISM FAILURE: FAIL CLOSED, no new content revision, no normalized overwrite.",
+      "verdict": "SAME source_item_id S; append R2 with D2; retain R1 with D1 unchanged. Date correction alone is NOT an identity conflict. No duplicate logical event, no overwrite, no retroactive visibility mutation. Both revisions retain source_available_at = null and source_updated_at = null, with their own observed_at and ingested_at.",
+      "with_guid": "same GUID on both observations: SAME S, R2 appended; existing GUID conflicts still fail closed if independently triggered",
+      "without_guid": "historical archive/backfill, no RSS GUID on either observation: SAME S, R2 appended; GUID absence does not alter identity"
     }
   },
   "authority_conflicts": {
@@ -149,7 +175,10 @@
       "a first live fetch strictly after the declared release instant (FOMC21)",
       "an unscheduled monetary item with a differing title (FOMC22)",
       "a feed/primary title conflict (FOMC23)",
-      "a clean zero cycle with no unresolved candidates (FOMC24)"
+      "a clean zero cycle with no unresolved candidates (FOMC24)",
+      "same canonical primary URL with date D1/H1 corrected to D2/H2 and the same RSS GUID: same logical item, appended revision (FOMC26)",
+      "historical archive/backfill with the same canonical primary URL and NO RSS GUID, date D1/H1 corrected to D2/H2: same logical item, appended revision (FOMC26 / R3-X6)",
+      "identical verified primary body bytes and the same CaptureSpec hash with conflicting parsed dates: fail closed, no new content revision (FOMC26 same-body control)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -174,19 +203,41 @@
     "user_agent_note": "repo convention hyprl-trading-lab-<purpose>/<version>. No personal e-mail, no secret, no browser impersonation."
   },
   "identity": {
+    "canonical_url_boundary": "FIX3 assumes the SAME canonical_primary_statement_url value under the current frozen rules. It changes no URL normalization, URL selection, redirect, alias or canonical-tag semantics; those remain outside this fix.",
     "conflict_policy": {
       "resolution": "never 'latest wins'; persist conflict diagnostics and raw provenance; no trusted normalized event until a deterministic resolution policy admits it",
       "same_guid_different_logical_item": "FAIL CLOSED - identity conflict",
       "same_logical_item_incompatible_guids_in_one_causal_state": "FAIL CLOSED - identity conflict"
     },
+    "date_correction": {
+      "downstream_dedupe": "D1 and corrected D2 are revision metadata of the SAME source_item_id; downstream MUST NOT count them as two independent logical FOMC events merely because the date changed",
+      "existing_guid_conflicts": "preserved unchanged; apply conflict_policy if independently triggered. A date correction by itself is NOT an identity conflict, and is never a reason to split the item.",
+      "revision_metadata": "official_statement_date belongs to the observed content revision. If H1/D1 becomes H2/D2 with a changed body hash, append a NEW immutable content revision under the SAME source_item_id. Retain H1/D1 intact; no overwrite. Identical-body discrepancies follow parser_policy.official_statement_date_determinism.",
+      "rule": "same provider_id + same event_family + same canonical_primary_statement_url => SAME logical source item, regardless of an official_statement_date correction",
+      "visibility": "each revision keeps source_available_at = null and source_updated_at = null, and its own actual observed_at and commit-bound ingested_at. Identity repair never rewrites observed_at, ingested_at or declared_release_at on an existing revision. D2 is metadata, not source_updated_at, correction timing or content-vintage evidence; no retroactive availability change.",
+      "with_guid": "same canonical primary URL and same RSS GUID with D1 -> D2: SAME source_item_id; append a revision if the body hash changes",
+      "without_guid": "same canonical primary URL in historical archive/backfill with no RSS GUID and D1 -> D2: SAME source_item_id; append a revision if the body hash changes. GUID absence does not alter logical identity."
+    },
+    "excluded_from_logical_identity": [
+      "official_statement_date",
+      "declared_release_at",
+      "RSS pubDate",
+      "Last Update",
+      "source_updated_at",
+      "observed_at",
+      "ingested_at",
+      "any runtime timestamp",
+      "content_hash",
+      "RSS GUID"
+    ],
     "guid_note": "historical statements may lie outside current feed depth; identity must not depend on the feed",
     "guid_required_for_backfill": false,
     "logical_item_key": [
       "provider_id",
       "event_family",
-      "official_statement_date",
       "canonical_primary_statement_url"
     ],
+    "missing_canonical_url": "FAIL CLOSED under the existing identity policy if a stable canonical primary URL cannot be established. No date fallback, no (provider_id, event_family, date) fallback and no GUID+date fallback may manufacture a logical identity.",
     "revision_id": "design rev4: derived from (observation, content_hash, gating timestamps)",
     "rss_guid_role": "OFFICIAL DISCOVERY IDENTIFIER AND PROVENANCE ONLY - not business identity, not revision identity, not proof of unchanged content",
     "rss_guid_stored": [
@@ -194,7 +245,7 @@
       "guid_is_permalink_attribute_if_present",
       "canonical_primary_link"
     ],
-    "source_item_id": "SHA256 over the canonical JSON serialization of the logical_item_key tuple",
+    "source_item_id": "SHA-256 using canonical_serialization over the ordered JSON array [provider_id, event_family, canonical_primary_statement_url], containing exactly those three string values in that order. No other field participates in the logical item hash or identity dedupe.",
     "source_observation_id": "design rev4: derived from (provider, source_item_id, content_hash); NEVER URL alone",
     "uniqueness_claim": "NOT contractually documented by the provider; identity quality remains GOOD, not EXCELLENT"
   },
@@ -207,7 +258,7 @@
     "F06": "observed_at is the real primary-statement acquisition instant.",
     "F07": "Backfill never reconstructs observed_at.",
     "F08": "Raw is made durable before any parse.",
-    "F09": "Same logical item with changed bytes appends a new revision.",
+    "F09": "Same logical item with changed bytes appends a new immutable revision. For the same provider_id, event_family and canonical_primary_statement_url, mutable content metadata corrections, including official_statement_date, MUST preserve source_item_id; the prior revision remains intact.",
     "F10": "Same bytes create no duplicate revision.",
     "F11": "Last Update never advances original source availability.",
     "F12": "The provider numeric rate limit remains UNKNOWN; the client ceiling is HyprL policy only.",
@@ -222,7 +273,8 @@
     "F21": "REVISION-SPECIFIC AVAILABILITY. A later observed content revision cannot inherit an earlier logical event release timestamp as its own source availability. Each revision requires its own availability evidence; absent provider evidence, source_available_at = null.",
     "F22": "ABSENCE CLAIM CANNOT EXCEED CLASSIFIER COVERAGE. An absence assertion must never cover a semantic family broader than the frozen classifier's proven coverage. Where classifier completeness is not established, zero is scoped to the capture predicate only.",
     "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that check. No exception.",
-    "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics."
+    "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics.",
+    "F25": "MUTABLE CONTENT METADATA MUST NOT DEFINE LOGICAL IDENTITY. Mutable statement metadata parsed from primary-page content, including official_statement_date, MUST NOT participate in source_item_id, the logical item hash or identity dedupe. With provider_id and event_family fixed and the same frozen canonical_primary_statement_url, date corrections preserve the logical item, with or without RSS GUID. Changed bytes append revisions; identical verified bytes under the same CaptureSpec hash must yield the same date, otherwise FAIL CLOSED with no new content revision and no overwrite."
   },
   "item_predicate": {
     "classification_states": {
@@ -302,6 +354,8 @@
     "classification_state": "IN_SCOPE_V1 for any admitted revision; the other states never produce a revision",
     "content_source_available_at": "always null in V1",
     "declared_release_at": "provider release metadata; NEVER a revision visibility gate",
+    "official_statement_date": "required normalized metadata of the observed content revision, NEVER logical identity. Date authority and validation remain timestamps.source_date; a date parse failure follows the existing parser/source-health policy. Removing the identity role does not make the date optional.",
+    "source_item_id": "stable logical identity from provider_id, event_family and the current canonical_primary_statement_url only; official_statement_date is separate revision metadata",
     "source_updated_at": "always null in V1"
   },
   "normalized_forbidden_fields": [
@@ -369,6 +423,10 @@
       "canonical source link"
     ],
     "llm": "FORBIDDEN anywhere in ingestion - an LLM may not decide whether something is an FOMC statement, nor its date, release time, identity, revision or source authority",
+    "official_statement_date_determinism": {
+      "failure": "PARSER/NORMALIZER DETERMINISM FAILURE is a diagnostic, not a new global source-health state. FAIL CLOSED for parser/spec inconsistency or corruption: no second content revision, no silent normalized mutation; existing raw and immutable revisions remain intact.",
+      "rule": "identical verified persisted primary raw body bytes under the SAME CaptureSpec hash MUST yield identical official_statement_date metadata. A differing date with the same verified body hash is not an upstream content revision."
+    },
     "xml": {
       "external_entity_resolution": "MUST BE DISABLED",
       "extract_only": [
@@ -496,7 +554,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 3 closes the MEDIUM found by counter-review R2: the declared family was broader than the classifier, so a successful poll could assert EVENTS_OBSERVED_ZERO over FOMC monetary-policy activity it could not actually classify. Classification is now three-way, a non-match defaults to UNRESOLVED_CANDIDATE and blocks zero, and every absence claim is scoped to the frozen capture predicate. Revision 2 vintage semantics are preserved unchanged. No design change: unresolved classification reuses the existing PARSER_FAILED state.",
+  "revision_note": "Spec revision 4 addresses the MEDIUM found by counter-review R3: official_statement_date was mutable primary-content metadata in the logical key, fragmenting the same statement on a date correction. Identity now uses provider_id, event_family and the current canonical_primary_statement_url only. The date remains required revision metadata; same-URL date corrections preserve the item with or without GUID, and identical-body date divergence fails closed. F09 is strengthened; F25 and FOMC26 bind the fix. FIX1 content-vintage and FIX2 scope/zero semantics are preserved. No design change, implementation or independent counter-review in this fix; URL, transport and scheduler semantics are unchanged and await subsequent counter-review.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -593,12 +651,13 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 3,
+  "spec_revision": 4,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
     "74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd",
-    "b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8"
+    "b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8",
+    "d4242ea54afbf0b60604edc597b8bcfdcc733883b4b77ec5b0a471e52dd33d79"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",

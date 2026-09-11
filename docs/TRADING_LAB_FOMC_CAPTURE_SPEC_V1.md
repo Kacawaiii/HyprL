@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 3 — authoritative)
-d4242ea54afbf0b60604edc597b8bcfdcc733883b4b77ec5b0a471e52dd33d79
+CAPTURE SPEC HASH  (revision 4 — authoritative)
+f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3)
 
 BINDS
   event intelligence design rev4
@@ -267,16 +267,28 @@ The raw body hash is provenance for what HyprL actually observed and when. It
 does not become proof of historical content existence merely because the same
 record also carries a `declared_release_at` recovered from the page.
 
-## 5. Identity without trusting a URL
+## 5. Logical identity across date corrections
 
 ```
-logical item key = (provider_id, event_family,
-                    official_statement_date, canonical_primary_statement_url)
-source_item_id   = SHA-256(canonical JSON of that tuple)
+logical item key = (provider_id, event_family, canonical_primary_statement_url)
+source_item_id   = SHA-256(canonical JSON array of those three string values)
 ```
 
 which then feeds design rev4's `SourceObservationId` — *(provider,
 source_item_id, content_hash)*, never a URL alone.
+
+The values are serialized in that order using the existing canonical JSON rule.
+`official_statement_date` is required normalized metadata of the observed
+content revision. It never participates in the logical item hash or identity
+dedupe. Neither do runtime timestamps, `declared_release_at`, RSS `pubDate`,
+`Last Update`, `source_updated_at`, `content_hash` or RSS GUID.
+
+Revision 4 addresses R3/X6: a corrected date on the same canonical primary URL
+must preserve the logical item. The guarantee assumes the **same existing
+canonical URL value**; URL selection, normalization, redirects, aliases and
+canonical tags are outside this fix. If that URL cannot be established, the
+existing fail-closed policy applies. Date-only, `(provider, event_family, date)`
+and GUID+date fallback identities are forbidden.
 
 The RSS `<guid>` is stored as **discovery provenance**, and is neither business
 identity nor revision identity nor proof that content is unchanged. Backfill
@@ -285,6 +297,15 @@ feed depth. Provider-side uniqueness is not contractually documented, so
 identity quality stays **GOOD**, not EXCELLENT — and both conflict directions
 (one GUID → two items, one item → incompatible GUIDs) **fail closed**. Never
 "latest wins."
+
+A date correction alone is not an identity conflict. With the same URL and
+GUID, it preserves `source_item_id`; historical archive/backfill observations
+without a GUID do so as well. Existing GUID conflict rules still apply when
+independently triggered.
+
+The date remains required for normalization, under the existing primary-page
+authority and date grammar. A date parse failure follows the existing
+parser/source-health policy. Only its identity role changes.
 
 ## 6. Revisions, without assuming the Fed never edits
 
@@ -296,6 +317,30 @@ same item, same body hash        → no duplicate revision
 same item, different body hash   → append a NEW immutable revision
 overwrite                        → forbidden, raw and normalized alike
 ```
+
+For fixed provider P and event family E, FOMC26 freezes this history:
+
+| observation | canonical URL | body hash | official date | logical item | content revision |
+|---|---|---|---|---|---|
+| O1 | U | H1 | D1 | S | R1 |
+| later O2 | U | H2 | D2 | S | R2 appended |
+
+Here H1 differs from H2 and D1 from D2. R1 retains D1 intact; R2 records D2.
+Both are revisions of S. Downstream must not count the corrected date as a
+second independent logical FOMC event.
+
+For identical verified persisted primary body bytes under the **same
+CaptureSpec hash**, the parsed date must be identical. A conflicting date is a
+parser/normalizer determinism failure: fail closed, create no second content
+revision and never silently mutate normalized state. Existing raw and
+immutable revisions remain intact; this diagnostic adds no global health state.
+
+Each revision still has `source_available_at = null`, `source_updated_at = null`
+and its own actual `observed_at` and commit-bound `ingested_at`. Identity repair
+never rewrites an existing revision's `observed_at`, `ingested_at` or
+`declared_release_at`. D2 is metadata, not proof of when a correction occurred
+or when its bytes became public. FIX1 visibility and FIX2 scope/zero semantics
+remain unchanged.
 
 Re-observation is scheduled at **+5 min, +1 h, +24 h, +7 d** after the first
 successful fetch — catching immediate, same-day, next-day and delayed
@@ -372,7 +417,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Twenty-five cases, decided in advance
+## 11. Twenty-six cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -381,8 +426,8 @@ backfill of a 2026 statement, local raw corruption, malformed XML, feed
 outages, a genuinely empty poll, a failed commit after raw persistence, a lost
 ACK, and an unchanged +7 d re-check.
 
-Revision 2 added three that close the R1 HIGH, and revision 3 four more that
-close the R2 MEDIUM:
+Revision 2 added three that close the R1 HIGH, revision 3 four more that
+close the R2 MEDIUM, and revision 4 adds the R3 date-correction case:
 
 | | case | outcome |
 |---|---|---|
@@ -393,12 +438,25 @@ close the R2 MEDIUM:
 | `FOMC23` | feed title matches, primary title differs | conflict; no event, no zero, no silent downgrade |
 | `FOMC24` | clean cycle, no matches, no unresolved | zero **permitted**, scoped to the V1 subset |
 | `FOMC25` | positive candidate, primary fetch fails | unresolved; zero prohibited |
+| `FOMC26` / R3-X6 | same canonical URL, D1/H1 corrected to D2/H2 | same logical item S; append R2, retain R1; valid with the same GUID or without any GUID |
 
-Invariants `F01`–`F24` state the same commitments in testable form. Revision 2
+FOMC26 also requires identical-body date determinism under the same spec hash:
+a conflicting date fails closed without a new content revision. Future test
+requirements explicitly include both the same-GUID case and historical
+archive/backfill with no GUID. These are requirements only; no fixture is
+created or captured here.
+
+Invariants `F01`–`F25` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
 candidate blocks zero) and `F24` (discovery/primary conflict fails closed).
+Revision 4 strengthens `F09`: metadata corrections preserve logical identity
+at the same canonical URL, while changed bytes append immutable revisions.
+New `F25` forbids mutable content metadata, including the official date, from
+defining logical identity and binds the identical-body determinism requirement.
+Independent counter-review of revision 4 remains pending; this fix authorizes
+no implementation.
 
 ## 12. What this does not establish
 
