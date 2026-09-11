@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 4 — authoritative)
-f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af
+CAPTURE SPEC HASH  (revision 5 — authoritative)
+8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4)
 
 BINDS
   event intelligence design rev4
@@ -267,11 +267,14 @@ The raw body hash is provenance for what HyprL actually observed and when. It
 does not become proof of historical content existence merely because the same
 record also carries a `declared_release_at` recovered from the page.
 
-## 5. Logical identity across date corrections
+## 5. Logical identity and discovery URL authority
 
 ```
 logical item key = (provider_id, event_family, canonical_primary_statement_url)
 source_item_id   = SHA-256(canonical JSON array of those three string values)
+
+identity_url_authority = OFFICIAL_DISCOVERY_LINK_PRE_REDIRECT
+canonical_primary_statement_url = normalize(official_discovery_link_before_redirect)
 ```
 
 which then feeds design rev4's `SourceObservationId` — *(provider,
@@ -284,11 +287,11 @@ dedupe. Neither do runtime timestamps, `declared_release_at`, RSS `pubDate`,
 `Last Update`, `source_updated_at`, `content_hash` or RSS GUID.
 
 Revision 4 addresses R3/X6: a corrected date on the same canonical primary URL
-must preserve the logical item. The guarantee assumes the **same existing
-canonical URL value**; URL selection, normalization, redirects, aliases and
-canonical tags are outside this fix. If that URL cannot be established, the
-existing fail-closed policy applies. Date-only, `(provider, event_family, date)`
-and GUID+date fallback identities are forbidden.
+must preserve the logical item. Revision 5 defines the authority of that URL:
+the official discovery link **before primary redirects**, normalized using the
+existing V1 transforms. If that URL cannot be established, the existing
+fail-closed policy applies. Date-only, `(provider, event_family, date)` and
+GUID+date fallback identities remain forbidden.
 
 The RSS `<guid>` is stored as **discovery provenance**, and is neither business
 identity nor revision identity nor proof that content is unchanged. Backfill
@@ -306,6 +309,76 @@ independently triggered.
 The date remains required for normalization, under the existing primary-page
 authority and date grammar. A date parse failure follows the existing
 parser/source-health policy. Only its identity role changes.
+
+### The discovery link is the identity input
+
+For LIVE, use the official monetary-policy RSS item's `<link>`. For
+HISTORICAL_BACKFILL, use the statement link in the official Federal Reserve
+calendar/archive. In both cases the discovery artifact must already be durable
+under existing raw-first and provenance rules. URLs are never synthesized from
+dates, and historical identity requires no GUID.
+
+The JSON freezes this conceptual order:
+
+1. Fetch and durably persist the official discovery artifact.
+2. Parse its official statement link `U_discovered`.
+3. Validate that link using existing V1 URL/security rules.
+4. Apply the existing frozen URL normalization to that link.
+5. Bind the result as `canonical_primary_statement_url`.
+6. Compute `source_item_id` from the unchanged three-field key.
+7. Perform the primary request under existing HTTP policy.
+8. Follow only redirects admitted by existing security rules.
+9. Persist the redirect chain and final URL as transport provenance.
+10. Never recompute `source_item_id` from the final URL.
+
+Computing a candidate identity does not admit an event. Primary classification,
+normalization, raw-first ordering and commit-bound visibility still apply.
+The existing normalized field `canonical_source_url` carries the identity URL;
+no field is renamed and no normalized or raw schema is expanded.
+
+### Transport and HTML URLs do not re-key items
+
+Here "canonical" means the normalized official discovery-link URL selected by
+V1. The actual request URL at each hop, ordered redirect chain and final
+allowlisted response URL are separate transport provenance. They cannot replace
+the identity URL, merge or split items, or cause an identity conflict solely
+because the redirect destination differs. Existing GUID conflicts still apply.
+
+| observed provenance | identity URL |
+|---|---|
+| feed/archive link U1 redirects to U2 | `normalize(U1)` |
+| the same U1 later redirects to U3 | the same `normalize(U1)` |
+| primary HTML declares canonical U4 | still `normalize(U1)` |
+| archive link U1 redirects to U2, with no GUID | `normalize(U1)` |
+
+An HTML `<link rel="canonical">` has no semantic or identity authority in V1
+and is not a primary semantic anchor. If retained, it is optional diagnostic
+provenance only; it authorizes no network retrieval. A mismatch alone cannot
+change identity, merge or split items, or create an identity conflict.
+
+Re-observations retain the stored U1-derived identity URL. A request may start
+from that official identity URL; its final destination that day never re-keys
+the item. With the same body, a transport change creates no content revision.
+With a changed body, the existing revision policy appends a revision under the
+same item. Recheck scheduling is unchanged.
+
+### Alias equivalence remains outside V1
+
+Different normalized discovery links remain distinct logical source items
+unless an existing conflict rule independently blocks admission. V1 claims no
+automatic alias equivalence or global deduplication across aliases. Body hash,
+date, title, HTML canonical and final redirect destination cannot merge them;
+alias equivalence needs a separately frozen policy.
+
+A discovery link changing from U1 to U2 differs from U1's redirect target
+changing. The existing item keeps its stored U1-derived identity; a newly
+discovered U2 follows existing conflict/dedupe rules. There is no identity
+rewrite or "latest URL wins" rule.
+
+This revision changes only the authority of the normalization input and its
+identity consequences. URL transforms, query/port/host validation, redirect
+security, raw/decoding/size rules, timeouts and scheduling remain unchanged and
+await the subsequent counter-review.
 
 ## 6. Revisions, without assuming the Fed never edits
 
@@ -417,7 +490,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Twenty-six cases, decided in advance
+## 11. Thirty cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -427,7 +500,8 @@ outages, a genuinely empty poll, a failed commit after raw persistence, a lost
 ACK, and an unchanged +7 d re-check.
 
 Revision 2 added three that close the R1 HIGH, revision 3 four more that
-close the R2 MEDIUM, and revision 4 adds the R3 date-correction case:
+close the R2 MEDIUM, and revision 4 adds the R3 date-correction case.
+Revision 5 adds four cases for R4's discovery-URL identity finding:
 
 | | case | outcome |
 |---|---|---|
@@ -439,14 +513,19 @@ close the R2 MEDIUM, and revision 4 adds the R3 date-correction case:
 | `FOMC24` | clean cycle, no matches, no unresolved | zero **permitted**, scoped to the V1 subset |
 | `FOMC25` | positive candidate, primary fetch fails | unresolved; zero prohibited |
 | `FOMC26` / R3-X6 | same canonical URL, D1/H1 corrected to D2/H2 | same logical item S; append R2, retain R1; valid with the same GUID or without any GUID |
+| `FOMC27` | official discovery U1 redirects to U2 | identity from `normalize(U1)`; U2 is transport provenance |
+| `FOMC28` | same U1 redirects first to U2, later to U3 | same item; unchanged body keeps revision, changed body appends revision |
+| `FOMC29` | HTML canonical U4 differs from discovery U1 | U4 has no identity authority; no re-key or automatic merge |
+| `FOMC30` | official archive U1 redirects to U2 without GUID | same pre-redirect discovery identity rule |
 
 FOMC26 also requires identical-body date determinism under the same spec hash:
 a conflicting date fails closed without a new content revision. Future test
 requirements explicitly include both the same-GUID case and historical
 archive/backfill with no GUID. These are requirements only; no fixture is
-created or captured here.
+created or captured here. FOMC27–FOMC30 are also explicit future test
+requirements, including both body-hash outcomes for FOMC28.
 
-Invariants `F01`–`F25` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F27` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -455,7 +534,9 @@ Revision 4 strengthens `F09`: metadata corrections preserve logical identity
 at the same canonical URL, while changed bytes append immutable revisions.
 New `F25` forbids mutable content metadata, including the official date, from
 defining logical identity and binds the identical-body determinism requirement.
-Independent counter-review of revision 4 remains pending; this fix authorizes
+Revision 5 adds `F26` (the official discovery URL anchors logical identity) and
+`F27` (transport redirection cannot re-key an item).
+Independent counter-review of revision 5 remains pending; this fix authorizes
 no implementation.
 
 ## 12. What this does not establish
