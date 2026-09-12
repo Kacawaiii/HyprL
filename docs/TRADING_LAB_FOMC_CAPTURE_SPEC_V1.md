@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 5 — authoritative)
-8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65
+CAPTURE SPEC HASH  (revision 6 — authoritative)
+6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5)
 
 BINDS
   event intelligence design rev4
@@ -336,6 +336,36 @@ normalization, raw-first ordering and commit-bound visibility still apply.
 The existing normalized field `canonical_source_url` carries the identity URL;
 no field is renamed and no normalized or raw schema is expanded.
 
+### HTTPS scheme admission and serialization
+
+Revision 6 fixes the scheme-casing ambiguity found at R5 point 8. Admission
+accepts only HTTPS, comparing the parsed scheme to `https` **ASCII
+case-insensitively**: map ASCII `A-Z` to `a-z` only, with no Unicode case folding
+or scheme inference. `https`, `HTTPS`, `Https`, `hTtPs` and `HtTpS` all pass the
+scheme check. `http`, `ftp`, `file`, `data`, `javascript` and an empty/missing
+scheme are rejected. There is no silent HTTP-to-HTTPS upgrade, no identity
+admission and no primary request for a rejected scheme.
+
+For the scheme component, the order is: extract the official discovery URL,
+parse it, validate HTTPS without ASCII case distinction, reject any other
+scheme, serialize exactly lowercase ASCII `https`, then apply all other
+existing URL normalization rules unchanged. Non-scheme validation remains
+mandatory; the discovery URL still supplies identity before primary redirects.
+
+FOMC31 freezes these exact strings:
+
+```
+input:     HTTPS://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm
+canonical: https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm
+```
+
+The lowercase input and mixed-case HTTPS variants produce that same canonical
+URL and, for the same provider and event family, the same `source_item_id`.
+Scheme case alone cannot create a source item, identity conflict or content
+revision. Original source spelling remains available in durable raw discovery
+provenance; those bytes are never rewritten to canonicalize the derived
+identity URL.
+
 ### Transport and HTML URLs do not re-key items
 
 Here "canonical" means the normalized official discovery-link URL selected by
@@ -375,10 +405,11 @@ changing. The existing item keeps its stored U1-derived identity; a newly
 discovered U2 follows existing conflict/dedupe rules. There is no identity
 rewrite or "latest URL wins" rule.
 
-This revision changes only the authority of the normalization input and its
-identity consequences. URL transforms, query/port/host validation, redirect
-security, raw/decoding/size rules, timeouts and scheduling remain unchanged and
-await the subsequent counter-review.
+Revision 5 fixed the authority of the normalization input; revision 6 freezes
+HTTPS scheme admission and output casing. Every other URL rule, including
+query, fragment, ports, host, path and encoding behavior, is unchanged.
+Redirect/final/HTML-canonical identity roles, raw/decoding/size rules, timeouts
+and scheduling are preserved. Full independent counter-review remains pending.
 
 ## 6. Revisions, without assuming the Fed never edits
 
@@ -490,7 +521,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Thirty cases, decided in advance
+## 11. Thirty-two cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -501,7 +532,8 @@ ACK, and an unchanged +7 d re-check.
 
 Revision 2 added three that close the R1 HIGH, revision 3 four more that
 close the R2 MEDIUM, and revision 4 adds the R3 date-correction case.
-Revision 5 adds four cases for R4's discovery-URL identity finding:
+Revision 5 adds four cases for R4's discovery-URL identity finding; revision 6
+adds HTTPS scheme convergence and non-HTTPS rejection:
 
 | | case | outcome |
 |---|---|---|
@@ -517,15 +549,19 @@ Revision 5 adds four cases for R4's discovery-URL identity finding:
 | `FOMC28` | same U1 redirects first to U2, later to U3 | same item; unchanged body keeps revision, changed body appends revision |
 | `FOMC29` | HTML canonical U4 differs from discovery U1 | U4 has no identity authority; no re-key or automatic merge |
 | `FOMC30` | official archive U1 redirects to U2 without GUID | same pre-redirect discovery identity rule |
+| `FOMC31` | uppercase/mixed-case HTTPS in the official discovery link | accepted scheme, exact lowercase `https` output, same identity as lowercase input |
+| `FOMC32` | HTTP official-host URL | reject, no upgrade, no identity admission, no primary request |
 
 FOMC26 also requires identical-body date determinism under the same spec hash:
 a conflicting date fails closed without a new content revision. Future test
 requirements explicitly include both the same-GUID case and historical
 archive/backfill with no GUID. These are requirements only; no fixture is
 created or captured here. FOMC27–FOMC30 are also explicit future test
-requirements, including both body-hash outcomes for FOMC28.
+requirements, including both body-hash outcomes for FOMC28. FOMC31/FOMC32 add
+future requirements for HTTPS case variants and rejected schemes only; no
+runtime or fixture is created here.
 
-Invariants `F01`–`F27` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F28` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -536,7 +572,9 @@ New `F25` forbids mutable content metadata, including the official date, from
 defining logical identity and binds the identical-body determinism requirement.
 Revision 5 adds `F26` (the official discovery URL anchors logical identity) and
 `F27` (transport redirection cannot re-key an item).
-Independent counter-review of revision 5 remains pending; this fix authorizes
+Revision 6 strengthens `F26` with exact lowercase ASCII `https` serialization
+and adds `F28`: HTTPS scheme case cannot alter logical identity.
+Independent counter-review of revision 6 remains pending; this fix authorizes
 no implementation.
 
 ## 12. What this does not establish

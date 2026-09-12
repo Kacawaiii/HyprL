@@ -172,6 +172,31 @@
       "observation_mode": "HISTORICAL_BACKFILL",
       "rss_guid": null,
       "verdict": "U1 comes from a durable official calendar/archive statement link, passes existing validation and normalization, and anchors source_item_id before U1 -> U2. No GUID required; no identity from U2, HTML canonical or a synthetic date-derived URL. Existing backfill visibility and admission requirements remain unchanged."
+    },
+    "FOMC31": {
+      "case": "MIXED-CASE HTTPS",
+      "discovered_url": "HTTPS://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "equivalent_scheme_spellings": [
+        "https",
+        "HTTPS",
+        "Https",
+        "hTtPs",
+        "HtTpS"
+      ],
+      "expected_identity_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "lowercase_comparison_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "preconditions": "same provider_id and event_family; only the ASCII scheme casing differs; existing official-discovery and non-scheme URL validation requirements hold",
+      "scheme_admitted": true,
+      "source_item_id_equals_lowercase_input": true,
+      "verdict": "ACCEPT HTTPS scheme using ASCII case-insensitive comparison; serialize exactly lowercase ASCII https in canonical_primary_statement_url. Every listed scheme spelling yields expected_identity_url and the SAME source_item_id. Original spelling remains in durable raw discovery provenance only. Scheme case alone causes no new source item, identity conflict or content revision; all existing primary admission requirements still apply."
+    },
+    "FOMC32": {
+      "case": "NON-HTTPS URL",
+      "discovered_url": "http://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "expected_identity_url": null,
+      "primary_request_allowed": false,
+      "source_item_id_admitted": false,
+      "verdict": "REJECT at scheme admission. NEVER silently upgrade http to https. No canonical identity URL, no source_item_id admission and no primary request. ftp, file, data, javascript and an empty/missing scheme are also rejected under scheme_admission."
     }
   },
   "authority_conflicts": {
@@ -225,7 +250,9 @@
       "official discovery link U1 redirecting to U2: identity from normalized U1 (FOMC27)",
       "same discovery U1 redirecting first to U2, later to U3: stable logical identity, with both unchanged-body and changed-body controls (FOMC28)",
       "primary HTML canonical U4 differing from discovery U1: no identity authority (FOMC29)",
-      "historical official archive link U1 redirecting to U2 without an RSS GUID: identity from normalized U1 (FOMC30)"
+      "historical official archive link U1 redirecting to U2 without an RSS GUID: identity from normalized U1 (FOMC30)",
+      "HTTPS, Https, hTtPs, HtTpS and https scheme spellings converge to the exact lowercase-https identity URL and source_item_id (FOMC31)",
+      "http and other non-HTTPS or empty/missing schemes are rejected without upgrade, source_item_id admission or primary request (FOMC32)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -354,8 +381,9 @@
     "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that check. No exception.",
     "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics.",
     "F25": "MUTABLE CONTENT METADATA MUST NOT DEFINE LOGICAL IDENTITY. Mutable statement metadata parsed from primary-page content, including official_statement_date, MUST NOT participate in source_item_id, the logical item hash or identity dedupe. With provider_id and event_family fixed and the same frozen canonical_primary_statement_url, date corrections preserve the logical item, with or without RSS GUID. Changed bytes append revisions; identical verified bytes under the same CaptureSpec hash must yield the same date, otherwise FAIL CLOSED with no new content revision and no overwrite.",
-    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID.",
-    "F27": "TRANSPORT REDIRECTION MUST NOT REKEY AN ITEM. With provider_id, event_family and the normalized official discovery URL fixed, U1 -> U2 and later U1 -> U3 MUST produce the same source_item_id from normalize(U1). Transport movement alone cannot split logical history, cause an identity conflict or create a content revision; changed bytes append revisions under the same item, and unchanged bytes do not duplicate revisions."
+    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url.",
+    "F27": "TRANSPORT REDIRECTION MUST NOT REKEY AN ITEM. With provider_id, event_family and the normalized official discovery URL fixed, U1 -> U2 and later U1 -> U3 MUST produce the same source_item_id from normalize(U1). Transport movement alone cannot split logical history, cause an identity conflict or create a content revision; changed bytes append revisions under the same item, and unchanged bytes do not duplicate revisions.",
+    "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only."
   },
   "item_predicate": {
     "classification_states": {
@@ -636,7 +664,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 5 addresses the MEDIUM found at point 6 of counter-review R4: canonical_primary_statement_url had no unique URL authority. OFFICIAL_DISCOVERY_LINK_PRE_REDIRECT now selects the input to existing URL normalization. Primary redirects, final response URLs and HTML canonical links cannot re-key items. F26/F27 and FOMC27-FOMC30 bind the fix, including historical archive discovery without GUID. No general alias resolution or global alias deduplication is claimed. FIX1 content-vintage, FIX2 scope/zero and FIX3 date-identity semantics are preserved. URL normalization transforms, redirect security, raw/decoding/size, scheduler/restart/deadline and timeout policies are unchanged. No design change, implementation or independent counter-review in this fix; full review remains pending.",
+  "revision_note": "Spec revision 6 addresses the MEDIUM found at point 8 of counter-review R5: HTTPS scheme output casing was unspecified in the identity-bearing normalized URL. Scheme admission is now explicitly ASCII case-insensitive HTTPS only, and canonical identity serialization always emits lowercase ASCII https. Other or empty/missing schemes are rejected without upgrade. Original spelling remains raw discovery provenance. F26 is strengthened; F28 and FOMC31/FOMC32 bind the fix. FIX1-FIX4 are preserved, including the official discovery URL authority before redirects. Every non-scheme URL rule, raw policy, scheduler and timeout remains unchanged. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -733,14 +761,15 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 5,
+  "spec_revision": 6,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
     "74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd",
     "b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8",
     "d4242ea54afbf0b60604edc597b8bcfdcc733883b4b77ec5b0a471e52dd33d79",
-    "f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af"
+    "f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af",
+    "8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -908,6 +937,36 @@
     "path": "preserved verbatim",
     "percent_decoding": "no semantic-changing percent-decoding",
     "query": "V1 requires queryless canonical statement URLs; a query component is unexpected and fails closed",
+    "raw_source_scheme_spelling": "PROVENANCE_ONLY - original source spelling remains available in the durable raw discovery artifact. Do not rewrite those raw bytes to canonicalize identity. The derived canonical_primary_statement_url always uses lowercase ASCII https, regardless of original scheme spelling.",
+    "scheme_admission": {
+      "comparison": "ASCII_CASE_INSENSITIVE",
+      "comparison_rule": "compare the parsed scheme to https after mapping ASCII A-Z to a-z only; no Unicode case folding or scheme inference",
+      "empty_or_missing_scheme": "REJECT",
+      "other_schemes": "REJECT",
+      "protocol": "https",
+      "rejected_scheme_examples": [
+        "http",
+        "ftp",
+        "file",
+        "data",
+        "javascript"
+      ],
+      "silent_http_to_https_upgrade": false
+    },
+    "scheme_case_identity_effect": "NONE",
+    "scheme_normalization_order": [
+      "1. extract the official discovery URL from durable discovery provenance",
+      "2. parse the URL",
+      "3. compare the parsed scheme against https ASCII case-insensitively",
+      "4. reject if the scheme is not HTTPS, including empty/missing scheme; no source_item_id admission or primary request",
+      "5. after successful HTTPS validation, serialize the identity URL scheme as exactly lowercase ASCII https",
+      "6. apply all OTHER existing V1 URL normalization rules unchanged; existing non-scheme validation requirements remain mandatory"
+    ],
+    "scheme_serialization": {
+      "canonical_output": "https",
+      "output_character_set": "ASCII_LOWERCASE",
+      "preserve_source_case_in_identity": false
+    },
     "tracking_params": "never part of identity"
   },
   "version_policy": {
