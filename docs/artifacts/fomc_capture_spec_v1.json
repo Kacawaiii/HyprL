@@ -197,6 +197,24 @@
       "primary_request_allowed": false,
       "source_item_id_admitted": false,
       "verdict": "REJECT at scheme admission. NEVER silently upgrade http to https. No canonical identity URL, no source_item_id admission and no primary request. ftp, file, data, javascript and an empty/missing scheme are also rejected under scheme_admission."
+    },
+    "FOMC33": {
+      "case": "EXPLICIT DEFAULT HTTPS PORT",
+      "discovered_url_without_port": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "discovered_url_with_explicit_443": "https://www.federalreserve.gov:443/newsevents/pressreleases/monetary20260617a.htm",
+      "expected_identity_url_for_both": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "port_admitted_for_both": true,
+      "preconditions": "same provider_id and event_family; only explicit default-port presence differs; all other existing official-discovery and URL validation requirements hold",
+      "source_item_id_equal": true,
+      "verdict": "ACCEPT both absent port and explicit decimal 443, then OMIT the port component from canonical_primary_statement_url. The identity URLs are byte-identical and yield the SAME source_item_id. Explicit default-port presence alone creates no source item, identity conflict or content revision. Original :443 spelling remains in durable raw discovery provenance only; existing primary admission requirements still apply."
+    },
+    "FOMC34": {
+      "case": "NON-DEFAULT HTTPS PORT",
+      "discovered_url": "https://www.federalreserve.gov:444/newsevents/pressreleases/monetary20260617a.htm",
+      "expected_identity_url": null,
+      "primary_request_allowed": false,
+      "source_item_id_admitted": false,
+      "verdict": "REJECT before source_item_id derivation/admission and before any primary request. NEVER strip :444 and continue or rewrite it to :443. Every other explicit non-443 port and every malformed explicit port fails closed under port_admission; no custom-port exception."
     }
   },
   "authority_conflicts": {
@@ -252,7 +270,11 @@
       "primary HTML canonical U4 differing from discovery U1: no identity authority (FOMC29)",
       "historical official archive link U1 redirecting to U2 without an RSS GUID: identity from normalized U1 (FOMC30)",
       "HTTPS, Https, hTtPs, HtTpS and https scheme spellings converge to the exact lowercase-https identity URL and source_item_id (FOMC31)",
-      "http and other non-HTTPS or empty/missing schemes are rejected without upgrade, source_item_id admission or primary request (FOMC32)"
+      "http and other non-HTTPS or empty/missing schemes are rejected without upgrade, source_item_id admission or primary request (FOMC32)",
+      "absent port and explicit decimal :443 yield byte-identical portless canonical discovery URLs and the same source_item_id, without identity conflict or content revision from port spelling alone (FOMC33)",
+      ":444 and other non-443 explicit ports, including :80, :8443, :1, :65535 and :0, are rejected before identity derivation and before any request; never stripped or rewritten to 443 (FOMC34)",
+      "malformed explicit ports fail closed, never treated as absent/default: :abc, :443abc, an explicit port delimiter with an empty token, and out-of-range decimal :65536; validate the entire token as ASCII decimal, including a leading-zero 0443 control equal to decimal 443",
+      "the same absent/443/non-443/malformed port admission applies to redirect targets before follow; admitted target :443 remains non-identifying and cannot re-key the discovered item"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -381,9 +403,10 @@
     "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that check. No exception.",
     "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics.",
     "F25": "MUTABLE CONTENT METADATA MUST NOT DEFINE LOGICAL IDENTITY. Mutable statement metadata parsed from primary-page content, including official_statement_date, MUST NOT participate in source_item_id, the logical item hash or identity dedupe. With provider_id and event_family fixed and the same frozen canonical_primary_statement_url, date corrections preserve the logical item, with or without RSS GUID. Changed bytes append revisions; identical verified bytes under the same CaptureSpec hash must yield the same date, otherwise FAIL CLOSED with no new content revision and no overwrite.",
-    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url.",
+    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url. Apply the existing hostname normalization unchanged and serialize the canonical authority WITHOUT any port component: an absent port and admitted explicit decimal 443 MUST yield the exact same identity URL. Original explicit default-port spelling MUST NOT be hashed as a port component of canonical_primary_statement_url.",
     "F27": "TRANSPORT REDIRECTION MUST NOT REKEY AN ITEM. With provider_id, event_family and the normalized official discovery URL fixed, U1 -> U2 and later U1 -> U3 MUST produce the same source_item_id from normalize(U1). Transport movement alone cannot split logical history, cause an identity conflict or create a content revision; changed bytes append revisions under the same item, and unchanged bytes do not duplicate revisions.",
-    "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only."
+    "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only.",
+    "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only."
   },
   "item_predicate": {
     "classification_states": {
@@ -664,7 +687,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 6 addresses the MEDIUM found at point 8 of counter-review R5: HTTPS scheme output casing was unspecified in the identity-bearing normalized URL. Scheme admission is now explicitly ASCII case-insensitive HTTPS only, and canonical identity serialization always emits lowercase ASCII https. Other or empty/missing schemes are rejected without upgrade. Original spelling remains raw discovery provenance. F26 is strengthened; F28 and FOMC31/FOMC32 bind the fix. FIX1-FIX4 are preserved, including the official discovery URL authority before redirects. Every non-scheme URL rule, raw policy, scheduler and timeout remains unchanged. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
+  "revision_note": "Spec revision 7 addresses ONLY the MEDIUM found at point 11 of counter-review R6: default_port_normalized did not determine the identity URL's exact port serialization. Absent port and explicit decimal 443 are admitted; canonical identity always omits the port component. Other or malformed explicit ports fail closed before identity derivation and before any request, with no stripping of custom ports or rewrite. Original explicit-port spelling remains durable raw discovery provenance. Shared URL security applies the same port admission to redirect targets, which remain non-identifying. F26 is strengthened; F29 and FOMC33/FOMC34 bind the fix. FIX1-FIX5 and all non-port URL rules, including query rejection, fragment stripping, userinfo rejection and hostname/path rules, are preserved. Raw policy, HTTP status policy, scheduler and timeouts are unchanged. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -761,7 +784,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 6,
+  "spec_revision": 7,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -769,7 +792,8 @@
     "b852b560cdc230562a593bd1124a9a1d02df29854ab3cb3445f885ccd2a992a8",
     "d4242ea54afbf0b60604edc597b8bcfdcc733883b4b77ec5b0a471e52dd33d79",
     "f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af",
-    "8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65"
+    "8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65",
+    "6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -930,13 +954,53 @@
     }
   },
   "url_canonicalization": {
+    "default_https_port_serialization": {
+      "canonical_authority": "the hostname normalized under existing V1 rules ONLY, with no port suffix",
+      "canonical_output_contains_port": false,
+      "explicit_443_removed": true,
+      "preserve_explicit_port_in_identity": false,
+      "rule": "After successful URL validation, omit the port component entirely, both when absent in the discovered URL and when explicitly equal to decimal 443. NEVER serialize :443 in canonical_primary_statement_url. This omission does NOT authorize accepting or stripping any other port."
+    },
     "default_port_normalized": true,
     "fragment_stripped": true,
     "hostname_lowercased": true,
     "https_required": true,
     "path": "preserved verbatim",
     "percent_decoding": "no semantic-changing percent-decoding",
+    "port_admission": {
+      "absent": "ACCEPT",
+      "any_other_explicit_port": "REJECT",
+      "explicit_443": "ACCEPT",
+      "explicit_port_syntax": "A present port token must consist entirely of one or more ASCII decimal digits 0-9, interpreted in base 10 with value in 0..65535. Leading zeroes do not change the decimal value; 0443 is decimal 443. No signs, whitespace, hexadecimal notation or partial-token parsing. Of syntactically valid explicit ports, ONLY value 443 is admitted.",
+      "malformed_port": "REJECT",
+      "malformed_port_rule": "An explicit port delimiter with an empty token, a non-numeric or partly numeric token, or an out-of-range value MUST fail closed. A malformed explicit port MUST NOT fall through as absent/default, even if a URL parser reports no numeric port. No library-specific exception class is prescribed.",
+      "no_request_or_identity_before_validation": true,
+      "rejected_port_examples": [
+        80,
+        444,
+        8443,
+        1,
+        65535,
+        0
+      ],
+      "scope": "Applies to every URL validated under V1's existing HTTPS/security policy, including official discovery links and EVERY redirect target BEFORE follow. Absent port or explicit decimal 443 is allowed; every other or malformed explicit port is rejected. Redirect targets remain NON-IDENTIFYING; admission never re-keys the discovered item. All other redirect/security rules are unchanged.",
+      "silent_custom_port_rewrite": false
+    },
+    "port_identity_effect": {
+      "absent_vs_explicit_443": "NONE",
+      "rule": "With provider_id, event_family and all other accepted URL components equivalent under existing rules, absent port and explicit decimal 443 yield byte-identical canonical_primary_statement_url and the SAME source_item_id. Explicit default-port presence alone creates no source item, identity conflict or content revision."
+    },
+    "port_normalization_order": [
+      "1. parse the official discovery URL under the existing URL policy; HTTPS admission remains mandatory",
+      "2. identify whether a port component is present; distinguish malformed/empty explicit port syntax from absence",
+      "3. if absent, accept the port condition without inventing an explicit port component",
+      "4. if present, validate the entire port token and parse its decimal value according to port_admission",
+      "5. reject malformed syntax or any value other than 443 BEFORE source_item_id derivation and BEFORE any request; no silent stripping or port rewrite",
+      "6. accept an explicit decimal value of 443, subject to all other existing URL validation requirements",
+      "7. serialize canonical identity authority WITHOUT a port component; keep every non-port URL normalization rule unchanged"
+    ],
     "query": "V1 requires queryless canonical statement URLs; a query component is unexpected and fails closed",
+    "raw_explicit_port_spelling": "PROVENANCE_ONLY - original discovered URL spelling, including explicit :443, remains available in the durable raw discovery artifact. NEVER mutate those raw bytes. The derived canonical identity URL omits the port; raw spelling is not canonical identity serialization.",
     "raw_source_scheme_spelling": "PROVENANCE_ONLY - original source spelling remains available in the durable raw discovery artifact. Do not rewrite those raw bytes to canonicalize identity. The derived canonical_primary_statement_url always uses lowercase ASCII https, regardless of original scheme spelling.",
     "scheme_admission": {
       "comparison": "ASCII_CASE_INSENSITIVE",

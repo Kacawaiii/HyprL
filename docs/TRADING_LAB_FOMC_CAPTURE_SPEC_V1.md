@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 6 — authoritative)
-6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4
+CAPTURE SPEC HASH  (revision 7 — authoritative)
+3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6)
 
 BINDS
   event intelligence design rev4
@@ -366,6 +366,49 @@ revision. Original source spelling remains available in durable raw discovery
 provenance; those bytes are never rewritten to canonicalize the derived
 identity URL.
 
+### HTTPS default-port admission and serialization
+
+Revision 7 fixes only the port-serialization ambiguity found at R6 point 11.
+For an otherwise valid HTTPS discovery URL, an absent port is accepted and an
+explicit decimal port equal to 443 is accepted. Every other explicit port is
+rejected, including `:80`, `:444`, `:8443`, `:1`, `:65535` and `:0`.
+
+For the port component, parse the official discovery URL, distinguish absence
+from an explicit token, validate that entire token, then admit only decimal
+443 when present. The token must contain one or more ASCII digits `0-9`, parsed
+in base 10 with value in `0..65535`; leading zeroes do not change its value
+(`0443` is decimal 443). Signs, whitespace, hexadecimal notation, partial-token
+parsing, non-numeric tokens, an empty explicit port and out-of-range values
+fail closed. Malformed explicit syntax must never become "port absent" merely
+because a parser supplies no numeric port. No library-specific exception class
+is prescribed.
+
+After successful validation, canonical identity serialization ALWAYS omits the
+port component. The authority contains only the hostname normalized by the
+existing rule, never `:443`. FOMC33 freezes the exact convergence:
+
+```
+input A:   https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm
+input B:   https://www.federalreserve.gov:443/newsevents/pressreleases/monetary20260617a.htm
+canonical: https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm
+```
+
+With the same provider and event family, both inputs yield byte-identical
+identity URLs and the same `source_item_id`. Explicit default-port presence
+alone cannot create a logical item, identity conflict or content revision.
+Original `:443` spelling remains in durable raw discovery provenance only;
+those bytes are never rewritten to canonicalize the derived identity URL.
+
+Reject non-443 or malformed ports BEFORE identity derivation and BEFORE any
+request. Never strip a custom port and continue, rewrite it to 443, or upgrade
+HTTP to HTTPS. FOMC34 freezes `:444` rejection with no identity admission or
+primary request. Scheme admission and all other validation remain mandatory.
+
+The same port admission applies to each redirect target before follow under
+the existing security policy. An admitted target with `:443` remains
+non-identifying and cannot re-key the discovery-anchored item. Redirect limits,
+host allowlisting and all other redirect semantics are unchanged.
+
 ### Transport and HTML URLs do not re-key items
 
 Here "canonical" means the normalized official discovery-link URL selected by
@@ -405,11 +448,16 @@ changing. The existing item keeps its stored U1-derived identity; a newly
 discovered U2 follows existing conflict/dedupe rules. There is no identity
 rewrite or "latest URL wins" rule.
 
-Revision 5 fixed the authority of the normalization input; revision 6 freezes
-HTTPS scheme admission and output casing. Every other URL rule, including
-query, fragment, ports, host, path and encoding behavior, is unchanged.
+Revision 5 fixed the authority of the normalization input; revision 6 froze
+HTTPS scheme admission and output casing; revision 7 makes port admission and
+default-port omission explicit. Every non-port URL rule is unchanged, including
+query rejection, fragment removal, userinfo rejection, hostname lowercasing,
+and existing host, path and encoding behavior. Trailing-dot hosts, IDNA/punycode,
+IP literals, backslashes, dot segments, duplicate slashes, percent encoding and
+trailing slashes remain outside this fix and pending independent review.
 Redirect/final/HTML-canonical identity roles, raw/decoding/size rules, timeouts
-and scheduling are preserved. Full independent counter-review remains pending.
+and scheduling are preserved. Full independent counter-review remains pending;
+no runtime or `safe_http.py` change is made here.
 
 ## 6. Revisions, without assuming the Fed never edits
 
@@ -521,7 +569,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Thirty-two cases, decided in advance
+## 11. Thirty-four cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -533,7 +581,8 @@ ACK, and an unchanged +7 d re-check.
 Revision 2 added three that close the R1 HIGH, revision 3 four more that
 close the R2 MEDIUM, and revision 4 adds the R3 date-correction case.
 Revision 5 adds four cases for R4's discovery-URL identity finding; revision 6
-adds HTTPS scheme convergence and non-HTTPS rejection:
+adds HTTPS scheme convergence and non-HTTPS rejection; revision 7 adds
+default-port convergence and non-default-port rejection:
 
 | | case | outcome |
 |---|---|---|
@@ -551,6 +600,8 @@ adds HTTPS scheme convergence and non-HTTPS rejection:
 | `FOMC30` | official archive U1 redirects to U2 without GUID | same pre-redirect discovery identity rule |
 | `FOMC31` | uppercase/mixed-case HTTPS in the official discovery link | accepted scheme, exact lowercase `https` output, same identity as lowercase input |
 | `FOMC32` | HTTP official-host URL | reject, no upgrade, no identity admission, no primary request |
+| `FOMC33` | absent port versus explicit HTTPS `:443` | same portless canonical URL and source item; no conflict or revision from port spelling alone |
+| `FOMC34` | HTTPS official-host URL with `:444` | reject before identity derivation or request; no stripping or port rewrite |
 
 FOMC26 also requires identical-body date determinism under the same spec hash:
 a conflicting date fails closed without a new content revision. Future test
@@ -559,9 +610,14 @@ archive/backfill with no GUID. These are requirements only; no fixture is
 created or captured here. FOMC27–FOMC30 are also explicit future test
 requirements, including both body-hash outcomes for FOMC28. FOMC31/FOMC32 add
 future requirements for HTTPS case variants and rejected schemes only; no
-runtime or fixture is created here.
+runtime or fixture is created here. FOMC33/FOMC34 add future requirements for
+default-port convergence and non-443 rejection. Malformed-port controls include
+`:abc`, `:443abc`, an empty explicit port, and out-of-range `:65536`, all rejected
+rather than treated as absent/default. A leading-zero `0443` control must parse
+as decimal 443 and be omitted from canonical identity. The same admission is
+required on redirect targets without changing their non-identifying role.
 
-Invariants `F01`–`F28` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F29` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -574,7 +630,10 @@ Revision 5 adds `F26` (the official discovery URL anchors logical identity) and
 `F27` (transport redirection cannot re-key an item).
 Revision 6 strengthens `F26` with exact lowercase ASCII `https` serialization
 and adds `F28`: HTTPS scheme case cannot alter logical identity.
-Independent counter-review of revision 6 remains pending; this fix authorizes
+Revision 7 strengthens `F26` with existing hostname normalization and exact
+default-port omission, and adds `F29`: explicit default HTTPS port cannot alter
+logical identity. All earlier invariants retain their commitments.
+Independent counter-review of revision 7 remains pending; this fix authorizes
 no implementation.
 
 ## 12. What this does not establish
