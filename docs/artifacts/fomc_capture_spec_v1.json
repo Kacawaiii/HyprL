@@ -215,6 +215,43 @@
       "primary_request_allowed": false,
       "source_item_id_admitted": false,
       "verdict": "REJECT before source_item_id derivation/admission and before any primary request. NEVER strip :444 and continue or rewrite it to :443. Every other explicit non-443 port and every malformed explicit port fails closed under port_admission; no custom-port exception."
+    },
+    "FOMC35": {
+      "case": "LONE PERCENT",
+      "discovered_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a%.htm",
+      "expected_identity_url": null,
+      "percent_syntax_valid": false,
+      "primary_request_allowed": false,
+      "source_item_id_admitted": false,
+      "verdict": "REJECT: the literal % does not begin % HEXDIG HEXDIG. No canonical_primary_statement_url or source_item_id is admitted and no primary request occurs. Do not preserve the malformed percent as a literal fallback or repair it. The durable discovery artifact retains the original source text unchanged."
+    },
+    "FOMC36": {
+      "case": "SHORT PERCENT ESCAPE",
+      "discovered_url": "https://www.federalreserve.gov/path%2",
+      "expected_identity_url": null,
+      "percent_syntax_valid": false,
+      "primary_request_allowed": false,
+      "source_item_id_admitted": false,
+      "verdict": "REJECT: %2 has only one following ASCII hex digit. No identity derivation/admission or request; never guess the missing nibble or decode a partial escape. Existing component restrictions also remain mandatory."
+    },
+    "FOMC37": {
+      "case": "NON-HEX PERCENT ESCAPE",
+      "discovered_url": "https://www.federalreserve.gov/path%GG",
+      "expected_identity_url": null,
+      "percent_syntax_valid": false,
+      "primary_request_allowed": false,
+      "redirect_follow_allowed": false,
+      "source_item_id_admitted": false,
+      "verdict": "REJECT: G is not an ASCII hex digit. No identity derivation/admission or request. The same URL used as a redirect target MUST be rejected before follow. Do not repair, change case and retry, or treat % literally. Existing redirect identity and security rules otherwise remain unchanged."
+    },
+    "FOMC38": {
+      "case": "VALID ESCAPE PRESERVED",
+      "discovered_url": "https://www.federalreserve.gov/path%2Fsegment",
+      "expected_path_after_syntax_gate": "/path%2Fsegment",
+      "full_url_admission": "NOT ASSERTED - this case tests percent syntax only; all other existing V1 component and primary-path restrictions still apply",
+      "gate_under_test": "PERCENT_ESCAPE_SYNTAX_ONLY",
+      "percent_syntax_valid": true,
+      "verdict": "PASS this syntax gate: %2F consists of % and two ASCII hex digits. This gate leaves the path unchanged under existing V1 path-preservation semantics; it MUST NOT decode %2F into /. No identity or request admission is implied by syntax success alone, and no equivalence with / or %2f is decided by FIX7."
     }
   },
   "authority_conflicts": {
@@ -274,7 +311,11 @@
       "absent port and explicit decimal :443 yield byte-identical portless canonical discovery URLs and the same source_item_id, without identity conflict or content revision from port spelling alone (FOMC33)",
       ":444 and other non-443 explicit ports, including :80, :8443, :1, :65535 and :0, are rejected before identity derivation and before any request; never stripped or rewritten to 443 (FOMC34)",
       "malformed explicit ports fail closed, never treated as absent/default: :abc, :443abc, an explicit port delimiter with an empty token, and out-of-range decimal :65536; validate the entire token as ASCII decimal, including a leading-zero 0443 control equal to decimal 443",
-      "the same absent/443/non-443/malformed port admission applies to redirect targets before follow; admitted target :443 remains non-identifying and cannot re-key the discovered item"
+      "the same absent/443/non-443/malformed port admission applies to redirect targets before follow; admitted target :443 remains non-identifying and cannot re-key the discovered item",
+      "malformed percent forms %, %2, %GG, %G0, %0G, %2Z, %%20, %2% and %u1234 are rejected before identity derivation/admission and before any request, without repair or literal fallback (FOMC35-FOMC37)",
+      "valid %20, %2F, %2f, %7E, %7e, %00 and %FF pass ONLY the percent-syntax gate; no decoding/re-encoding is introduced and all other existing V1 checks still apply (FOMC38)",
+      "a redirect target containing malformed percent syntax, including https://www.federalreserve.gov/path%GG, is rejected before follow and remains non-identifying (FOMC37)",
+      "scan every literal % before normalization can discard or rewrite a URL component; retain malformed source text in the durable discovery artifact without mutating raw bytes"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -403,10 +444,11 @@
     "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that check. No exception.",
     "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics.",
     "F25": "MUTABLE CONTENT METADATA MUST NOT DEFINE LOGICAL IDENTITY. Mutable statement metadata parsed from primary-page content, including official_statement_date, MUST NOT participate in source_item_id, the logical item hash or identity dedupe. With provider_id and event_family fixed and the same frozen canonical_primary_statement_url, date corrections preserve the logical item, with or without RSS GUID. Changed bytes append revisions; identical verified bytes under the same CaptureSpec hash must yield the same date, otherwise FAIL CLOSED with no new content revision and no overwrite.",
-    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url. Apply the existing hostname normalization unchanged and serialize the canonical authority WITHOUT any port component: an absent port and admitted explicit decimal 443 MUST yield the exact same identity URL. Original explicit default-port spelling MUST NOT be hashed as a port component of canonical_primary_statement_url.",
+    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url. Apply the existing hostname normalization unchanged and serialize the canonical authority WITHOUT any port component: an absent port and admitted explicit decimal 443 MUST yield the exact same identity URL. Original explicit default-port spelling MUST NOT be hashed as a port component of canonical_primary_statement_url. Any malformed percent escape makes the discovery URL inadmissible: no canonical_primary_statement_url or source_item_id may be derived/admitted from it. Validate percent syntax before normalization/identity and before any request; no repair or percent-decoding is introduced by this gate.",
     "F27": "TRANSPORT REDIRECTION MUST NOT REKEY AN ITEM. With provider_id, event_family and the normalized official discovery URL fixed, U1 -> U2 and later U1 -> U3 MUST produce the same source_item_id from normalize(U1). Transport movement alone cannot split logical history, cause an identity conflict or create a content revision; changed bytes append revisions under the same item, and unchanged bytes do not duplicate revisions.",
     "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only.",
-    "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only."
+    "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only.",
+    "F30": "MALFORMED PERCENT ESCAPES ARE REJECTED BEFORE IDENTITY OR REQUEST. Every literal % in an admitted V1 URL must begin PCT_ENCODED = % HEXDIG HEXDIG, with exactly two ASCII hex digits from 0-9, A-F or a-f. Otherwise FAIL CLOSED before canonical identity/source_item_id derivation or admission, before a primary request, and before redirect follow. This mandatory syntax gate does not decode, re-encode, repair or provide a literal-percent fallback. Valid escapes remain subject to existing component restrictions and path-preservation semantics; no new equivalence or hex-case normalization is introduced. Durable raw source text is not mutated."
   },
   "item_predicate": {
     "classification_states": {
@@ -687,7 +729,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 7 addresses ONLY the MEDIUM found at point 11 of counter-review R6: default_port_normalized did not determine the identity URL's exact port serialization. Absent port and explicit decimal 443 are admitted; canonical identity always omits the port component. Other or malformed explicit ports fail closed before identity derivation and before any request, with no stripping of custom ports or rewrite. Original explicit-port spelling remains durable raw discovery provenance. Shared URL security applies the same port admission to redirect targets, which remain non-identifying. F26 is strengthened; F29 and FOMC33/FOMC34 bind the fix. FIX1-FIX5 and all non-port URL rules, including query rejection, fragment stripping, userinfo rejection and hostname/path rules, are preserved. Raw policy, HTTP status policy, scheduler and timeouts are unchanged. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
+  "revision_note": "Spec revision 8 addresses ONLY the MEDIUM found at point 17 of counter-review R7: malformed percent escapes had no deterministic admission verdict. Every literal % must begin % followed by exactly two ASCII hex digits; otherwise reject before identity derivation/admission and before any request or redirect follow. No repair, decoding, re-encoding, new valid-escape equivalence or hex-case normalization is introduced. Original source text remains durable raw provenance. F26 is strengthened; F30 and FOMC35-FOMC38 bind the fix. FIX1-FIX6 and all existing URL transforms, component restrictions and redirect identity roles are preserved. Raw, compression, charset, HTTP status, scheduler, restart, missed-deadline and timeout semantics are untouched. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -784,7 +826,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 7,
+  "spec_revision": 8,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -793,7 +835,8 @@
     "d4242ea54afbf0b60604edc597b8bcfdcc733883b4b77ec5b0a471e52dd33d79",
     "f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af",
     "8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65",
-    "6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4"
+    "6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4",
+    "3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -965,8 +1008,56 @@
     "fragment_stripped": true,
     "hostname_lowercased": true,
     "https_required": true,
+    "malformed_percent_repair": "FORBIDDEN",
     "path": "preserved verbatim",
     "percent_decoding": "no semantic-changing percent-decoding",
+    "percent_decoding_in_fix7": false,
+    "percent_escape_syntax": {
+      "grammar": "PCT_ENCODED := '%' HEXDIG HEXDIG; HEXDIG := ASCII 0-9 / A-F / a-f",
+      "hex_alphabet": "ASCII_0_9_A_F_a_f",
+      "hex_characters": "0123456789ABCDEFabcdef",
+      "introducer": "%",
+      "malformed": "REJECT",
+      "malformed_examples": [
+        "%",
+        "%2",
+        "%G0",
+        "%0G",
+        "%GG",
+        "%2Z",
+        "%%20",
+        "%2%",
+        "%u1234"
+      ],
+      "required_hex_digits": 2,
+      "valid_syntax_examples": [
+        "%20",
+        "%2F",
+        "%2f",
+        "%7E",
+        "%7e",
+        "%00",
+        "%FF"
+      ]
+    },
+    "percent_escape_validation": {
+      "input_scope": "Every literal % in every component of the URL text supplied by existing official-discovery extraction/parsing or redirect-target handling, BEFORE any normalization can discard or rewrite a component. This is an admission gate, not a modification of durable raw discovery bytes.",
+      "malformed_effect": "FAIL CLOSED. No admitted canonical_primary_statement_url, no source_item_id derivation/admission, no primary request and no redirect follow. A malformed escape MUST NOT reach the safe request layer.",
+      "no_repair": "Never replace % with %25, strip %, decode a partial escape, guess a missing nibble, change an invalid character's case and retry, or preserve malformed % as a literal fallback.",
+      "order": [
+        "1. extract the official discovery URL from durable discovery provenance",
+        "2. parse using existing V1 URL policy",
+        "3. validate the already-frozen structural URL constraints",
+        "4. validate every literal % against percent_escape_syntax without decoding or rewriting the URL",
+        "5. if any escape is malformed, REJECT without repair",
+        "6. only after successful validation may existing normalization and identity derivation continue; all other existing admission checks still apply",
+        "7. only after successful validation may any request occur; the same percent gate is mandatory for a redirect target before it can be admitted for follow"
+      ],
+      "redirect_targets": "Apply the SAME syntax gate to each target before final URL admission and BEFORE follow. For example https://www.federalreserve.gov/path%GG is rejected before request. Targets remain non-identifying; no other redirect rule is changed.",
+      "scan_rule": "At every literal %, require the next two characters to exist and belong to hex_characters. Consume that three-character escape, then continue scanning the remaining URL text. Ordinary following characters are not part of the escape. Validate syntax only: do not decode the represented octet or rescan decoded content.",
+      "syntax_only": "PASS means only that percent syntax is valid, never that the full URL or component is admitted. %00 and %FF pass this syntax gate just as %20, %2F, %2f, %7E and %7e do; every existing V1 component/security/primary-path restriction still applies."
+    },
+    "percent_escape_validation_stage": "BEFORE_IDENTITY_AND_REQUEST",
     "port_admission": {
       "absent": "ACCEPT",
       "any_other_explicit_port": "REJECT",
@@ -1001,6 +1092,7 @@
     ],
     "query": "V1 requires queryless canonical statement URLs; a query component is unexpected and fails closed",
     "raw_explicit_port_spelling": "PROVENANCE_ONLY - original discovered URL spelling, including explicit :443, remains available in the durable raw discovery artifact. NEVER mutate those raw bytes. The derived canonical identity URL omits the port; raw spelling is not canonical identity serialization.",
+    "raw_percent_escape_text": "PROVENANCE_ONLY - malformed URL text may remain in the already-durable raw discovery artifact, unchanged. Raw preservation does not admit that URL. Reject the derived candidate; NEVER mutate raw source bytes to repair percent syntax.",
     "raw_source_scheme_spelling": "PROVENANCE_ONLY - original source spelling remains available in the durable raw discovery artifact. Do not rewrite those raw bytes to canonicalize identity. The derived canonical_primary_statement_url always uses lowercase ASCII https, regardless of original scheme spelling.",
     "scheme_admission": {
       "comparison": "ASCII_CASE_INSENSITIVE",
@@ -1031,7 +1123,9 @@
       "output_character_set": "ASCII_LOWERCASE",
       "preserve_source_case_in_identity": false
     },
-    "tracking_params": "never part of identity"
+    "tracking_params": "never part of identity",
+    "valid_percent_escape_representation": "PRESERVE_EXISTING_V1_PATH_SEMANTICS",
+    "valid_percent_escape_scope_boundary": "FIX7 validates syntax ONLY. A valid escape already admitted under REV7 retains the existing path = preserved verbatim rule; this gate introduces no decoding or re-encoding. It does NOT decide canonical equivalence or hex-case normalization for %2f versus %2F, nor equivalence of %2F with /, %7E with ~ or %2E with a dot. Encoded dot segments, duplicate/trailing slashes and other URL policies are not redesigned here."
   },
   "version_policy": {
     "incompatible_semantics_requires": "a new capture_spec_version",

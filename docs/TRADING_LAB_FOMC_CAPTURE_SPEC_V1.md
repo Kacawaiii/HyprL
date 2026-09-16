@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 7 — authoritative)
-3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e
+CAPTURE SPEC HASH  (revision 8 — authoritative)
+c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6) → 3db09125… (rev 7)
 
 BINDS
   event intelligence design rev4
@@ -409,6 +409,53 @@ the existing security policy. An admitted target with `:443` remains
 non-identifying and cannot re-key the discovery-anchored item. Redirect limits,
 host allowlisting and all other redirect semantics are unchanged.
 
+### Percent-escape syntax admission, without decoding
+
+Revision 8 fixes only the malformed-percent admission ambiguity found at R7
+point 17. Every literal `%` in a V1-admitted URL must begin this exact grammar:
+
+```
+PCT_ENCODED := "%" HEXDIG HEXDIG
+HEXDIG     := ASCII 0-9 / A-F / a-f
+```
+
+At each `%`, the next two characters must exist and be ASCII hex digits.
+Consume that three-character escape and continue scanning the remaining URL
+text; ordinary following characters are not part of that escape. No represented
+octet is decoded, and decoded content is not rescanned.
+
+`%`, `%2`, `%G0`, `%0G`, `%GG`, `%2Z`, `%%20`, `%2%` and `%u1234` are rejected.
+`%20`, `%2F`, `%2f`, `%7E`, `%7e`, `%00` and `%FF` pass THIS syntax gate only.
+Syntax success never overrides any existing component, security or primary-path
+restriction and never by itself admits an identity or a request.
+
+The relevant order is: extract the official discovery URL from durable
+provenance; parse under existing V1 policy; validate existing structural
+constraints; check every literal `%`; reject any malformed escape; only then
+continue existing normalization/identity derivation and request admission.
+The check covers every URL component before normalization can discard or
+rewrite it. Query rejection, fragment removal and userinfo rejection remain
+unchanged; none is a repair mechanism for malformed percent syntax.
+
+A malformed escape cannot produce an admitted
+`canonical_primary_statement_url` or `source_item_id` and cannot reach the safe
+request layer. For example, the discovered link ending
+`monetary20260617a%.htm` is rejected, not hashed literally. Never replace `%`
+with `%25`, strip it, decode a partial escape, guess a missing nibble, change
+an invalid character's case and retry, or use a literal-percent fallback.
+
+The same gate applies to each redirect target before final admission and
+follow: `https://www.federalreserve.gov/path%GG` is rejected before request.
+Redirect targets remain non-identifying; all other redirect rules are unchanged.
+Malformed source text may remain inside the durable raw discovery artifact.
+Those bytes are not mutated: raw provenance is not URL admission.
+
+For a valid escape already admitted under REV7, the existing path rule remains
+`PRESERVE VERBATIM`. This fix adds no decoding or re-encoding and makes no new
+decision about hex-case canonical equivalence (`%2f` versus `%2F`), `%2F` versus
+`/`, `%7E` versus `~`, or `%2E` versus `.`. FOMC38's `/path%2Fsegment` remains
+unchanged by this syntax gate; it does not assert full V1 primary-URL admission.
+
 ### Transport and HTML URLs do not re-key items
 
 Here "canonical" means the normalized official discovery-link URL selected by
@@ -449,12 +496,14 @@ discovered U2 follows existing conflict/dedupe rules. There is no identity
 rewrite or "latest URL wins" rule.
 
 Revision 5 fixed the authority of the normalization input; revision 6 froze
-HTTPS scheme admission and output casing; revision 7 makes port admission and
-default-port omission explicit. Every non-port URL rule is unchanged, including
-query rejection, fragment removal, userinfo rejection, hostname lowercasing,
-and existing host, path and encoding behavior. Trailing-dot hosts, IDNA/punycode,
-IP literals, backslashes, dot segments, duplicate slashes, percent encoding and
-trailing slashes remain outside this fix and pending independent review.
+HTTPS scheme admission and output casing; revision 7 made port admission and
+default-port omission explicit. Revision 8 adds only malformed-percent syntax
+rejection. All existing URL transforms and component restrictions are preserved,
+including query rejection, fragment removal, userinfo rejection, hostname
+lowercasing, scheme/port canonicalization and existing path semantics.
+Trailing-dot hosts, IDNA/punycode, IP literals, backslashes, dot segments,
+duplicate/trailing slashes and valid percent-escape equivalence are not changed
+by this fix. The remaining independent counter-review is not performed here.
 Redirect/final/HTML-canonical identity roles, raw/decoding/size rules, timeouts
 and scheduling are preserved. Full independent counter-review remains pending;
 no runtime or `safe_http.py` change is made here.
@@ -569,7 +618,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Thirty-four cases, decided in advance
+## 11. Thirty-eight cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -582,7 +631,8 @@ Revision 2 added three that close the R1 HIGH, revision 3 four more that
 close the R2 MEDIUM, and revision 4 adds the R3 date-correction case.
 Revision 5 adds four cases for R4's discovery-URL identity finding; revision 6
 adds HTTPS scheme convergence and non-HTTPS rejection; revision 7 adds
-default-port convergence and non-default-port rejection:
+default-port convergence and non-default-port rejection. Revision 8 adds three
+malformed-percent rejection cases and one syntax-only valid-escape control:
 
 | | case | outcome |
 |---|---|---|
@@ -602,6 +652,10 @@ default-port convergence and non-default-port rejection:
 | `FOMC32` | HTTP official-host URL | reject, no upgrade, no identity admission, no primary request |
 | `FOMC33` | absent port versus explicit HTTPS `:443` | same portless canonical URL and source item; no conflict or revision from port spelling alone |
 | `FOMC34` | HTTPS official-host URL with `:444` | reject before identity derivation or request; no stripping or port rewrite |
+| `FOMC35` | statement link ending `monetary20260617a%.htm` | reject; no canonical identity, source item or primary request |
+| `FOMC36` | `https://www.federalreserve.gov/path%2` | reject the short escape; no identity or request |
+| `FOMC37` | `https://www.federalreserve.gov/path%GG` | reject non-hex escape; also reject before redirect follow |
+| `FOMC38` | `https://www.federalreserve.gov/path%2Fsegment` | percent syntax passes, `%2F` unchanged; full URL admission not asserted |
 
 FOMC26 also requires identical-body date determinism under the same spec hash:
 a conflicting date fails closed without a new content revision. Future test
@@ -617,7 +671,14 @@ rather than treated as absent/default. A leading-zero `0443` control must parse
 as decimal 443 and be omitted from canonical identity. The same admission is
 required on redirect targets without changing their non-identifying role.
 
-Invariants `F01`–`F29` state the same commitments in testable form. Revision 2
+FOMC35–FOMC38 add future offline requirements for malformed forms `%`, `%2`,
+`%GG`, `%G0`, `%0G`, `%2Z`, `%%20`, `%2%` and `%u1234`, and valid syntax controls
+`%20`, `%2F`, `%2f`, `%7E`, `%7e`, `%00` and `%FF`. They also require malformed
+redirect-target rejection before follow, no repair or decoding, and unchanged
+raw discovery provenance. These are specification requirements only; no fixture
+or runtime is created or exercised here.
+
+Invariants `F01`–`F30` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -633,7 +694,10 @@ and adds `F28`: HTTPS scheme case cannot alter logical identity.
 Revision 7 strengthens `F26` with existing hostname normalization and exact
 default-port omission, and adds `F29`: explicit default HTTPS port cannot alter
 logical identity. All earlier invariants retain their commitments.
-Independent counter-review of revision 7 remains pending; this fix authorizes
+Revision 8 strengthens `F26` with deterministic malformed-percent rejection
+before identity and adds `F30`: malformed percent escapes are rejected before
+identity, primary request or redirect follow, without repair or decoding.
+Independent counter-review of revision 8 remains pending; this fix authorizes
 no implementation.
 
 ## 12. What this does not establish
