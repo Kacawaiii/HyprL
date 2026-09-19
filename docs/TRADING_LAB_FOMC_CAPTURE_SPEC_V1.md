@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 8 — authoritative)
-c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3
+CAPTURE SPEC HASH  (revision 9 — authoritative)
+0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6) → 3db09125… (rev 7)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6) → 3db09125… (rev 7) → c1d56f46… (rev 8)
 
 BINDS
   event intelligence design rev4
@@ -593,6 +593,57 @@ Security requirements are frozen too — XML external entity resolution
 (2 MiB feed, 5 MiB statement), bounded timeouts (10 s connect, 30 s read,
 matching the repo's existing convention), and **no network during replay**.
 
+### Decoded-body caps apply during production, not after unbounded expansion
+
+Revision 9 changes only **when** the existing decoded-body cap is enforced.
+The byte stage above stays unchanged: HTTP entity-body bytes after all
+applicable transport/content decoding required by the frozen body semantics,
+before charset/text decoding. Feed bodies remain capped at **2097152 bytes
+(2 MiB)** and statement bodies at **5242880 bytes (5 MiB)**.
+
+Decoded bytes MUST be counted incrementally from zero while they are produced.
+Before appending each decoded chunk, compare `decoded_count + len(chunk)` with
+the applicable cap. If it would exceed the cap, **abort body decoding
+immediately**, do not append excess bytes, and do not continue consuming or
+decompressing the response merely to learn its final decoded size. Otherwise,
+append and update the counter. The accepted decoded-body accumulation must
+never exceed the cap.
+
+The decoder's output production must itself be bounded incrementally: an
+unbounded `decompress_all` followed by a length check is forbidden, including
+when its already-materialized result is then divided into chunks. Library,
+bounded decoding API, buffer layout and chunk size are not prescribed. This is
+not a promise of constant memory, exact RSS, total process-memory bounds or a
+specific decompressor-internal-memory limit.
+
+The cap applies to identity, gzip, brotli or other encodings **only insofar as
+they are already admitted by V1**; this fix adds no encoding support.
+`Content-Length`, compressed length and socket-byte length do not replace
+decoded-byte counting. A missing, incorrect or misleadingly small
+`Content-Length` cannot bypass the cap. Its role remains transport provenance
+or an early rejection hint only where existing semantics permit that use.
+
+Exactly the cap passes the **size gate only**, subject to all other existing
+checks. One additional decoded byte aborts at attempted excess. Thus a 100 KiB
+compressed statement whose full expansion would be 20 MiB must stop when
+output would exceed 5 MiB, without producing/consuming the full 20 MiB first.
+MiB remains 1048576 bytes, not decimal MB.
+
+Oversize is terminal for that response's normal pipeline. It reuses the
+existing **`PARSER_FAILED`** mapping, never `EVENTS_OBSERVED_ZERO`, and reaches
+neither the charset/text decoder, XML/HTML parser nor normalizer. No
+EventRevision is created; no oversized response is persisted or admitted as a
+valid complete raw body artifact, and no successful complete-body SHA-256 is
+manufactured from an incomplete prefix. No truncation-and-parse,
+parse-first-N-MiB, best effort or partial-body replay is allowed.
+
+Transport/provenance and failure metadata may remain only as already permitted
+by the existing design; this fix defines no diagnostic hashes or partial-body
+replay format. For complete admitted bodies, the existing hashed, persisted and
+replay bytes and raw-first ordering are unchanged. These caps apply where a
+body is consumed under current V1 policy; redirect identity, validation and
+follow rules remain unchanged, with no new redirect-body parsing semantics.
+
 ## 9. Redistribution — stricter than the evidence requires
 
 R3 verified the Federal Reserve disclaimer: *"Unless otherwise indicated,
@@ -618,7 +669,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Thirty-eight cases, decided in advance
+## 11. Forty cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -632,7 +683,9 @@ close the R2 MEDIUM, and revision 4 adds the R3 date-correction case.
 Revision 5 adds four cases for R4's discovery-URL identity finding; revision 6
 adds HTTPS scheme convergence and non-HTTPS rejection; revision 7 adds
 default-port convergence and non-default-port rejection. Revision 8 adds three
-malformed-percent rejection cases and one syntax-only valid-escape control:
+malformed-percent rejection cases and one syntax-only valid-escape control.
+Revision 9 adds bounded compression-bomb rejection and exact decoded-cap
+boundaries:
 
 | | case | outcome |
 |---|---|---|
@@ -656,6 +709,8 @@ malformed-percent rejection cases and one syntax-only valid-escape control:
 | `FOMC36` | `https://www.federalreserve.gov/path%2` | reject the short escape; no identity or request |
 | `FOMC37` | `https://www.federalreserve.gov/path%GG` | reject non-hex escape; also reject before redirect follow |
 | `FOMC38` | `https://www.federalreserve.gov/path%2Fsegment` | percent syntax passes, `%2F` unchanged; full URL admission not asserted |
+| `FOMC39` | 100 KiB compressed statement with potential 20 MiB decoded output | stop at attempted excess over 5 MiB; `PARSER_FAILED`, no text decode, parse, complete body artifact/hash or revision |
+| `FOMC40` | statement 5 MiB / feed 2 MiB, then each cap + 1 byte | exact cap passes size gate only; attempted extra byte aborts decoding |
 
 FOMC26 also requires identical-body date determinism under the same spec hash:
 a conflicting date fails closed without a new content revision. Future test
@@ -678,7 +733,16 @@ redirect-target rejection before follow, no repair or decoding, and unchanged
 raw discovery provenance. These are specification requirements only; no fixture
 or runtime is created or exercised here.
 
-Invariants `F01`–`F30` state the same commitments in testable form. Revision 2
+FOMC39/FOMC40 add future offline test requirements for identity below cap,
+gzip exactly cap, cap + 1 and small-compressed/huge-decoded responses, with the
+same controls for brotli or other encodings only if already admitted. Both feed
+and statement boundaries, missing and misleadingly small `Content-Length`, and
+all terminal oversize outcomes must be checked. An instrumented test decoder
+must prove it stops at attempted excess without first producing/consuming the
+full 20 MiB; testing only the final rejection verdict is insufficient. These
+are requirements only: no fixture or implementation test is created or run here.
+
+Invariants `F01`–`F31` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -697,7 +761,11 @@ logical identity. All earlier invariants retain their commitments.
 Revision 8 strengthens `F26` with deterministic malformed-percent rejection
 before identity and adds `F30`: malformed percent escapes are rejected before
 identity, primary request or redirect follow, without repair or decoding.
-Independent counter-review of revision 8 remains pending; this fix authorizes
+Revision 9 adds `F31`: decoded-body size is enforced during bounded production,
+with immediate abort at attempted excess and no oversized or truncated body
+passed to parsing or admitted as a complete body artifact/hash or revision.
+All previous invariants remain unchanged by this fix.
+Independent counter-review of revision 9 remains pending; this fix authorizes
 no implementation.
 
 ## 12. What this does not establish

@@ -252,6 +252,49 @@
       "gate_under_test": "PERCENT_ESCAPE_SYNTAX_ONLY",
       "percent_syntax_valid": true,
       "verdict": "PASS this syntax gate: %2F consists of % and two ASCII hex digits. This gate leaves the path unchanged under existing V1 path-preservation semantics; it MUST NOT decode %2F into /. No identity or request admission is implied by syntax success alone, and no equivalence with / or %2f is decided by FIX7."
+    },
+    "FOMC39": {
+      "case": "COMPRESSION BOMB / DECODED BODY OVER LIMIT",
+      "complete_body_artifact_admitted": false,
+      "compressed_body_bytes": 102400,
+      "content_encoding": "gzip",
+      "decoded_body_limit_bytes": 5242880,
+      "full_decoded_output_consumed": false,
+      "html_parser_invoked": false,
+      "normal_complete_body_hash_created": false,
+      "normalized_revision_created": false,
+      "potential_fully_decoded_body_bytes": 20971520,
+      "source_health": "PARSER_FAILED",
+      "surface": "primary_statement",
+      "text_decoder_invoked": false,
+      "verdict": "ABORT during bounded decoded-body production as soon as output would exceed 5242880 bytes. Do not append excess bytes, finish decompression to measure 20 MiB, or invoke text decoding/parsing/normalization. No complete accepted body artifact or successful complete-body hash may be created from the incomplete prefix. Existing oversized-body PARSER_FAILED mapping applies; EVENTS_OBSERVED_ZERO is forbidden."
+    },
+    "FOMC40": {
+      "case": "EXACT LIMIT BOUNDARY",
+      "gate_under_test": "DECODED_BODY_SIZE_ONLY",
+      "outcomes": [
+        {
+          "decoded_body_bytes": 5242880,
+          "size_gate": "PASS",
+          "surface": "primary_statement"
+        },
+        {
+          "decoded_body_bytes": 5242881,
+          "size_gate": "ABORT_ON_ATTEMPTED_EXCESS",
+          "surface": "primary_statement"
+        },
+        {
+          "decoded_body_bytes": 2097152,
+          "size_gate": "PASS",
+          "surface": "discovery_feed"
+        },
+        {
+          "decoded_body_bytes": 2097153,
+          "size_gate": "ABORT_ON_ATTEMPTED_EXCESS",
+          "surface": "discovery_feed"
+        }
+      ],
+      "verdict": "A complete decoded body of exactly the configured limit passes ONLY the size gate; all other existing admission/parsing rules still apply. One additional decoded byte aborts body decoding at attempted excess, before text decoding or parsing, under the same PARSER_FAILED and no-artifact/hash/revision rules as FOMC39. MiB means 1048576 bytes, not decimal MB."
     }
   },
   "authority_conflicts": {
@@ -315,7 +358,12 @@
       "malformed percent forms %, %2, %GG, %G0, %0G, %2Z, %%20, %2% and %u1234 are rejected before identity derivation/admission and before any request, without repair or literal fallback (FOMC35-FOMC37)",
       "valid %20, %2F, %2f, %7E, %7e, %00 and %FF pass ONLY the percent-syntax gate; no decoding/re-encoding is introduced and all other existing V1 checks still apply (FOMC38)",
       "a redirect target containing malformed percent syntax, including https://www.federalreserve.gov/path%GG, is rejected before follow and remains non-identifying (FOMC37)",
-      "scan every literal % before normalization can discard or rewrite a URL component; retain malformed source text in the durable discovery artifact without mutating raw bytes"
+      "scan every literal % before normalization can discard or rewrite a URL component; retain malformed source text in the durable discovery artifact without mutating raw bytes",
+      "bounded decoded-body production for both frozen caps: identity/no compression below cap; gzip exactly cap, cap + 1 byte, and small compressed input with huge decoded output; repeat for brotli and other encodings only if already admitted by V1 (F31, FOMC39-FOMC40)",
+      "instrument the future test decoder to prove production stops at attempted excess: a 100 KiB compressed statement expanding to 20 MiB must not produce/consume the full 20 MiB before rejection at the 5 MiB cap; checking after an unbounded decoding call fails the test (FOMC39)",
+      "exact feed 2097152 and statement 5242880 decoded bytes pass the size gate only; each cap + 1 byte aborts before excess accumulation, text decoding or XML/HTML parsing (FOMC40)",
+      "missing Content-Length and misleading small Content-Length, including 100 KiB for a potential 20 MiB decoded statement, must not bypass incremental decoded-size enforcement",
+      "oversize abort retains only already-permitted failure/provenance diagnostics, never admits a complete body artifact, never creates a successful complete-body hash from a prefix, never parses a truncated body or creates an EventRevision, and maps to existing PARSER_FAILED rather than EVENTS_OBSERVED_ZERO"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -325,6 +373,51 @@
     "client_user_agent_policy": "IDENTIFYING_STANDARD_HTTP_CLIENT",
     "conditional_requests": "V1 CORRECTNESS MUST NOT DEPEND ON HTTP 304. A conditional request may never be the reason a raw artefact is missing. Any later use requires separate review.",
     "connect_timeout_seconds": 10,
+    "decoded_body_limit_enforcement": {
+      "abort_on_would_exceed": true,
+      "accepted_buffer_rule": "Start decoded_count at 0. For each incrementally produced decoded chunk, before appending, if decoded_count + len(chunk) > the applicable body limit, ABORT immediately without appending excess bytes. Otherwise append and increment decoded_count. The accepted decoded-body accumulation MUST never exceed the applicable cap.",
+      "applicable_limits": {
+        "discovery_feed": "http_policy.max_feed_body_bytes = 2097152 (2 MiB)",
+        "primary_statement": "http_policy.max_statement_body_bytes = 5242880 (5 MiB)"
+      },
+      "basis": "UNCHANGED raw_policy.bytes_semantics: HTTP entity-body bytes after all applicable transport/content decoding required by the frozen body-byte semantics, before any charset/text decoding. This rule changes WHEN the existing decoded-body limit is enforced, not the hashed/persisted/replay byte stage.",
+      "content_length_role": {
+        "missing_or_misleading_value": "The same decoded-body cap and incremental enforcement remain mandatory, including when Content-Length is absent, incorrect or smaller than decoded output.",
+        "not_authoritative_for_decoded_limit": true,
+        "permitted_role": "Transport provenance or an early rejection hint only as already permitted by existing semantics; never a substitute for decoded-byte counting. Compressed-byte length and socket-byte length are not the decoded-size authority either."
+      },
+      "continue_decoding_to_learn_final_size": "FORBIDDEN",
+      "decoded_output_production": "Decoder output production itself MUST be incrementally bounded while enforcing the applicable decoded-body cap. Checking chunks after an unbounded decoding call has already materialized the complete expansion is NOT conforming. Stop decoding immediately when further output would exceed the cap; do not continue consuming/decompressing the remainder merely to determine final size.",
+      "decompress_fully_then_check": "FORBIDDEN",
+      "encoding_scope": "The same cap applies to identity, gzip, brotli or any other encoding ONLY insofar as it is already admitted by frozen V1 semantics. FIX8 adds no encoding support. A small compressed representation cannot bypass the decoded-body limit.",
+      "incremental_counting_required": true,
+      "limit_boundary": {
+        "comparison": "decoded_size <= limit",
+        "exact_limit_allowed": true,
+        "limit_plus_one_rejected": true,
+        "pass_scope": "Size gate only; successful complete-body admission still requires every other existing V1 check.",
+        "unit": "bytes; 1 MiB = 1048576 bytes"
+      },
+      "memory_guarantee_scope": "The accepted decoded-body accumulation is bounded by the configured cap and decoded output production must stop at attempted excess. No total process-memory, constant-memory, exact RSS or decompressor-internal-memory guarantee is claimed. Library, chunk size, buffer layout and bounded decoding API are implementation choices; unbounded decompress-all followed by a size check is not.",
+      "oversized_body": {
+        "complete_body_artifact_admitted": false,
+        "failure_stage": "BOUNDED_BODY_DECODING_BEFORE_TEXT_PARSING",
+        "normal_complete_body_hash_created": false,
+        "normalized_revision_created": false,
+        "partial_body_replay": "FORBIDDEN - no incomplete prefix may be treated as a complete response, hashed as a normal successful complete body, or replayed/parsed as one. This fix introduces no partial-body replay or diagnostic hash semantics.",
+        "provenance": "Retain transport/provenance and failure metadata only as already permitted by the existing design. An oversized decoded response MUST NOT be persisted or admitted as a valid complete raw body artifact.",
+        "source_health": "PARSER_FAILED",
+        "source_health_binding": "Reuse source_health.mappings['decoded body exceeds the frozen size bound']; no new global health state. Oversize is terminal for this response's normal capture pipeline.",
+        "zero_possible": false
+      },
+      "parser_receives_oversized_body": false,
+      "pipeline_gate": "An oversized response MUST NOT reach charset/text decoding, an XML parser, an HTML parser or the normalizer. No truncation-and-continue, parse-first-N-MiB or best effort.",
+      "raw_replay_preservation": "For complete admitted bodies, existing hash bytes, persisted body bytes and offline replay input bytes remain unchanged. Raw-first persistence before parsing remains mandatory; no successful complete-body SHA-256 is manufactured from an aborted prefix.",
+      "redirect_scope": "Applies where an HTTP body is consumed under existing V1 policy. Redirect identity, validation and follow rules are unchanged; this fix introduces no redirect-body parsing semantics.",
+      "stage": "DURING_DECODED_BODY_PRODUCTION",
+      "text_decoder_receives_oversized_body": false,
+      "truncation_and_parse": "FORBIDDEN"
+    },
     "https_only": true,
     "javascript": false,
     "max_feed_body_bytes": 2097152,
@@ -448,7 +541,8 @@
     "F27": "TRANSPORT REDIRECTION MUST NOT REKEY AN ITEM. With provider_id, event_family and the normalized official discovery URL fixed, U1 -> U2 and later U1 -> U3 MUST produce the same source_item_id from normalize(U1). Transport movement alone cannot split logical history, cause an identity conflict or create a content revision; changed bytes append revisions under the same item, and unchanged bytes do not duplicate revisions.",
     "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only.",
     "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only.",
-    "F30": "MALFORMED PERCENT ESCAPES ARE REJECTED BEFORE IDENTITY OR REQUEST. Every literal % in an admitted V1 URL must begin PCT_ENCODED = % HEXDIG HEXDIG, with exactly two ASCII hex digits from 0-9, A-F or a-f. Otherwise FAIL CLOSED before canonical identity/source_item_id derivation or admission, before a primary request, and before redirect follow. This mandatory syntax gate does not decode, re-encode, repair or provide a literal-percent fallback. Valid escapes remain subject to existing component restrictions and path-preservation semantics; no new equivalence or hex-case normalization is introduced. Durable raw source text is not mutated."
+    "F30": "MALFORMED PERCENT ESCAPES ARE REJECTED BEFORE IDENTITY OR REQUEST. Every literal % in an admitted V1 URL must begin PCT_ENCODED = % HEXDIG HEXDIG, with exactly two ASCII hex digits from 0-9, A-F or a-f. Otherwise FAIL CLOSED before canonical identity/source_item_id derivation or admission, before a primary request, and before redirect follow. This mandatory syntax gate does not decode, re-encode, repair or provide a literal-percent fallback. Valid escapes remain subject to existing component restrictions and path-preservation semantics; no new equivalence or hex-case normalization is introduced. Durable raw source text is not mutated.",
+    "F31": "DECODED BODY SIZE IS ENFORCED DURING PRODUCTION. For every body consumed under V1's existing decoded-size policy, count decoded entity-body bytes incrementally from zero before charset/text decoding. Enforce the feed 2097152-byte or statement 5242880-byte cap during bounded output production, not after unbounded decompression. If the next output would exceed the cap, stop body decoding immediately, do not append excess bytes and do not continue to learn final size. Exactly the cap passes the size gate; cap + 1 rejects. Content-Length or compressed size cannot replace this gate. No oversized body or incomplete prefix reaches text decoding, XML/HTML parsing or normalization, becomes a complete admitted raw artifact or successful complete-body hash, or produces an EventRevision. Reuse PARSER_FAILED, never EVENTS_OBSERVED_ZERO. Existing successful-body hash/persistence/replay bytes and raw-first order remain unchanged."
   },
   "item_predicate": {
     "classification_states": {
@@ -729,7 +823,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 8 addresses ONLY the MEDIUM found at point 17 of counter-review R7: malformed percent escapes had no deterministic admission verdict. Every literal % must begin % followed by exactly two ASCII hex digits; otherwise reject before identity derivation/admission and before any request or redirect follow. No repair, decoding, re-encoding, new valid-escape equivalence or hex-case normalization is introduced. Original source text remains durable raw provenance. F26 is strengthened; F30 and FOMC35-FOMC38 bind the fix. FIX1-FIX6 and all existing URL transforms, component restrictions and redirect identity roles are preserved. Raw, compression, charset, HTTP status, scheduler, restart, missed-deadline and timeout semantics are untouched. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
+  "revision_note": "Spec revision 9 addresses ONLY the MEDIUM found at point 23 of counter-review R8: final decoded-body size rejection did not require bounded production during HTTP body decoding. Count decoded bytes incrementally and abort when output would exceed the unchanged feed 2 MiB / statement 5 MiB cap; unbounded decompress-all then check is forbidden. Oversize cannot reach text decoding/parsing, create an accepted complete body artifact or successful complete-body hash from a prefix, or create an EventRevision. Existing PARSER_FAILED mapping is preserved; no zero or new health enum. F31 and FOMC39-FOMC40 bind early termination and exact-cap boundaries. FIX1-FIX7, all URL and redirect rules, and the successful-body hashed/persisted/replay byte stage remain unchanged. Charset precedence, XML/HTML details, HTTP status/304, scheduler, recheck anchor, restart, missed deadlines, total request deadline and the remaining source-health matrix are not changed or counter-reviewed here. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -826,7 +920,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 8,
+  "spec_revision": 9,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -836,7 +930,8 @@
     "f0b683077f1fc953d4cf193d8867fb8c4ee75b4fff64ac079f7517cb438857af",
     "8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65",
     "6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4",
-    "3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e"
+    "3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e",
+    "c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
