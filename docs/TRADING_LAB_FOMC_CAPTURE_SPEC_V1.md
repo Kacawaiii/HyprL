@@ -7,11 +7,11 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 11 — authoritative)
-b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43
+CAPTURE SPEC HASH  (revision 12 — authoritative)
+b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
-        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 (rev 10)
+        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 (rev 11)
 
 BINDS
   event intelligence design rev4
@@ -678,6 +678,57 @@ Polling is plain elapsed-time. V1 derives no schedule from the FOMC calendar,
 the 2:00 p.m. tradition or `pubDate` — a predictive scheduler would be a second
 source of truth about time, which is the one thing this design refuses.
 
+## 7b. XML parsing has no expansion path
+
+Revision 11 forbade XML **external** entity resolution. Counter-review R11 showed
+that is not the same as being safe: a billion-laughs bomb declares only
+**internal** entities and resolves nothing externally, so the clause never fires.
+And the FIX8 decoded-body cap does not help either — its own basis says it counts
+*"HTTP entity-body bytes … before any charset/text decoding"*, so it is satisfied
+and finished before the parser starts. A ~1 KiB feed could pass the size cap,
+pass strict UTF-8, be hashed and persisted, and only then expand to gigabytes.
+
+The fix is the smallest one available: **forbid `DOCTYPE`**. That removes the
+custom entity declaration machinery entirely, so there is no expansion to bound —
+no entity-count, nesting-depth or expanded-byte caps are needed, because nothing
+can be declared in the first place.
+
+```
+DOCTYPE                        FORBIDDEN  → PARSER_FAILED
+internal DTD subset            FORBIDDEN  (follows from the above)
+external DTD                   FORBIDDEN  (stated separately)
+external general entities      FORBIDDEN
+external parameter entities    FORBIDDEN
+custom entity declarations     UNSUPPORTED
+XInclude                       FORBIDDEN  → PARSER_FAILED
+network / filesystem / URI / catalog resolution   FORBIDDEN
+second-pass expansion (resolve_entities, xinclude, load_dtd …)  FORBIDDEN
+```
+
+Three details that matter more than the list:
+
+**Rejection precedes resolution.** `<!DOCTYPE rss SYSTEM "https://evil.invalid/x.dtd">`
+is rejected *without fetching that URI*, and `file:///etc/passwd` is never
+opened. Detecting a construct by first resolving it would defeat the point.
+
+**XInclude fails closed rather than being ignored.** Leaving it as an inert
+unknown element would be library-dependent — which is the class of defect this
+whole review series keeps finding.
+
+**Detection is syntax-aware, not substring matching.** A literal `<!DOCTYPE`
+inside an XML comment is *not* a prohibited construct: `<!-- <!DOCTYPE rss> -->`
+must be accepted. `FOMC62` exists specifically to pin that down, so the policy
+cannot be read as licence to grep the raw bytes. The five built-in entities
+(`&amp; &lt; &gt; &apos; &quot;`) and numeric character references stay valid —
+they are not DTD declarations.
+
+Library defaults are **not** authoritative. No parser is pinned, but an
+implementation must explicitly ensure every line above holds.
+
+The `security_requirements` list now enumerates these separately and carries a
+note that the decoded-body caps bound **parser input only**. "XXE disabled" is
+not a sufficient summary — that shorthand is exactly what hid this gap.
+
 ## 8. Raw first, always
 
 ```
@@ -841,7 +892,7 @@ authority. Those are deterministic parses or they are nothing.
 
 ## 11. Forty-seven cases, decided in advance
 
-`FOMC01`–`FOMC56` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC62` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed

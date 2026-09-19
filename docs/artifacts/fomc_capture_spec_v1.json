@@ -401,6 +401,30 @@
     "FOMC56": {
       "case": "LAST UPDATE SAME VALUE AS OFFICIAL DATE - p.article__time reads \"January 28, 2026\" and div#lastUpdate reads \"Last Update: January 28, 2026\"",
       "verdict": "official_statement_date comes ONLY from p.article__time. An equal displayed value can never make div#lastUpdate authoritative - the distinction is structural, which is exactly why a value check would have failed to separate them on all 5 evidence samples."
+    },
+    "FOMC57": {
+      "case": "INTERNAL ENTITY BOMB - a feed body far below 2 MiB carrying <!DOCTYPE rss [ <!ENTITY a \"lol\"> <!ENTITY b \"&a;&a;...\"> ... ]> with nested internal entity declarations",
+      "verdict": "PARSER_FAILED at the forbidden-DOCTYPE security gate. No entity expansion occurs, no semantic feed parse happens, and EVENTS_OBSERVED_ZERO is blocked. The 2 MiB input cap is satisfied and irrelevant - the DOCTYPE prohibition is what stops it."
+    },
+    "FOMC58": {
+      "case": "EXTERNAL GENERAL ENTITY - <!DOCTYPE rss [ <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> ]> with &xxe; in the body",
+      "verdict": "PARSER_FAILED. No filesystem read, no substituted text, no zero. Rejection precedes any resource access."
+    },
+    "FOMC59": {
+      "case": "EXTERNAL PARAMETER ENTITY / EXTERNAL DTD CHAIN - an external parameter entity or external DTD reference",
+      "verdict": "PARSER_FAILED. No network, no local file access, no resolver invocation, no zero."
+    },
+    "FOMC60": {
+      "case": "XINCLUDE - <xi:include xmlns:xi=\"http://www.w3.org/2001/XInclude\" href=\"https://example.invalid/payload.xml\"/>",
+      "verdict": "PARSER_FAILED. No fetch and no include processing. Not treated as an inert unknown element, because that would be library-dependent."
+    },
+    "FOMC61": {
+      "case": "BUILT-IN XML ENTITY REFERENCES - valid feed content containing &amp; &lt; &gt; &apos; &quot;",
+      "verdict": "NOT rejected by FIX11. These are built-in XML references, not custom DTD entity declarations; normal XML semantics continue. Numeric character references likewise remain permitted."
+    },
+    "FOMC62": {
+      "case": "DOCTYPE-LIKE TEXT IN A COMMENT - \"<!-- <!DOCTYPE rss [ ... ]> -->\" with no actual DOCTYPE declaration",
+      "verdict": "NOT rejected. The security gate is syntax-aware, so a character sequence inside comment text is not a prohibited construct. This case exists specifically to prove the policy is not naive substring matching."
     }
   },
   "authority_conflicts": {
@@ -500,7 +524,13 @@
       "duplicate title and duplicate release anchors (FOMC49, FOMC50)",
       "a missing required anchor (FOMC51)",
       "an empty release leading segment (FOMC55)",
-      "a prefixed document <title> plus inline SVG <title> (FOMC48)"
+      "a prefixed document <title> plus inline SVG <title> (FOMC48)",
+      "an internal entity bomb well below the feed cap (FOMC57)",
+      "an external general entity referencing file:// (FOMC58)",
+      "an external parameter entity / external DTD chain (FOMC59)",
+      "an XInclude construct (FOMC60)",
+      "built-in XML entity references and numeric character references accepted (FOMC61)",
+      "DOCTYPE-like text inside an XML comment accepted (FOMC62)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -683,7 +713,9 @@
     "F32": "TEXT DECODING IS SINGLE-VALUED AND STRICT UTF-8. Both V1 XML and HTML bodies use only UTF-8, also the explicit default when signals are absent. Every recognized HTTP/BOM/document encoding signal must be UTF-8-compatible under text_decoding_v1, or cause PARSER_FAILED; labels are limited to utf-8 and utf8 after the frozen ASCII-only label normalization. No competing authority, heuristic detection, fallback decoder, lossy error handling or platform codec/alias selection. Invalid UTF-8 and unsupported BOMs fail closed. Exactly one leading UTF-8 BOM is an encoding signature omitted from semantic text, never removed from raw/hash/replay bytes. Same verified admitted bytes plus persisted relevant HTTP metadata plus the same CaptureSpec hash MUST produce the same Unicode text or PARSER_FAILED. Charset failure preserves raw provenance, creates no EventRevision and cannot establish zero for an affected feed/candidate. Existing Unicode/whitespace transformations and FIX1-FIX8 remain unchanged.",
     "F33": "HTML SEMANTIC ANCHORS ARE UNIQUE AND AUTHORITATIVE. primary_page_title is the unique h3.title within the frozen article-heading region; official_statement_date the unique p.article__time; release_line the unique p.releaseTime start element. No document-metadata, inline-SVG, global-text or traversal-order fallback may substitute. Zero or more than one match: PARSER_FAILED.",
     "F34": "RELEASE LINE EXTENT IS TOKEN-BOUND, NOT RECOVERED-DOM-BOUND. release_line consists only of the leading character-data segment following the unique p.releaseTime start tag and preceding the next markup token. Recovered descendant .textContent is forbidden as authority. This closes the observed unclosed-paragraph problem.",
-    "F35": "SEMANTIC TEXT NORMALIZATION ORDER IS SINGLE-VALUED: (1) character-reference-aware field extraction, (2) NFC, (3) ASCII-whitespace collapse, (4) U+0020 trim, (5) exact compare or strict parse. No reordering."
+    "F35": "SEMANTIC TEXT NORMALIZATION ORDER IS SINGLE-VALUED: (1) character-reference-aware field extraction, (2) NFC, (3) ASCII-whitespace collapse, (4) U+0020 trim, (5) exact compare or strict parse. No reordering.",
+    "F36": "XML DISCOVERY PARSING HAS NO DTD / CUSTOM-ENTITY / XINCLUDE EXPANSION PATH. FOMC V1 discovery XML forbids DOCTYPE and XInclude. External DTDs, external general entities and external parameter entities are never resolved. Custom internal entity declarations are unsupported because DOCTYPE is forbidden, so the billion-laughs family is rejected before expansion. Parsing performs no network or filesystem resolution. Security rejection is PARSER_FAILED and blocks EVENTS_OBSERVED_ZERO.",
+    "F37": "HTTP BODY SIZE BOUNDS AND XML EXPANSION SECURITY ARE DISTINCT. The FIX8 feed cap of 2097152 bytes applies to decoded HTTP input bytes. XML parser safety does NOT rely on that cap to bound entity or XInclude expansion; parser-level amplification mechanisms are forbidden outright by FIX11."
   },
   "item_predicate": {
     "classification_states": {
@@ -1083,15 +1115,77 @@
       }
     },
     "xml": {
-      "external_entity_resolution": "MUST BE DISABLED",
+      "external_entity_resolution": "MUST BE DISABLED - see xml_security_policy for the full frozen set; this clause alone was found insufficient by R11",
       "extract_only": [
         "guid",
         "link",
         "title",
         "pubDate as non-authoritative metadata"
       ],
+      "security_policy_ref": "parser_policy.xml_security_policy (FIX11) - authoritative and broader than the external-entity clause below",
       "unsupported_extensions": "ignored unless frozen by a spec revision",
       "xxe_note": "XML external entity expansion and network entity resolution are a security requirement, not an optimisation"
+    },
+    "xml_security_detection": {
+      "malformed_security_syntax": "malformed XML attempting to express a DOCTYPE, entity or XInclude construct falls under the existing malformed-XML policy: PARSER_FAILED, with no repair or fuzzy parsing.",
+      "naive_raw_substring_matching": "FORBIDDEN",
+      "rule": "detection must follow XML syntactic/token semantics well enough to avoid false positives. A literal \"<!DOCTYPE\" or \"<xi:include\" appearing inside an XML COMMENT or CDATA section is not itself a prohibited construct: \"<!-- <!DOCTYPE rss> -->\" must NOT be rejected merely because the character sequence occurs in comment text. This keeps FIX11 from encouraging unsafe regex parsing.",
+      "syntax_aware": true
+    },
+    "xml_security_policy": {
+      "applies_to": "the V1 RSS/XML discovery body",
+      "body_limit_relation": {
+        "caps_unchanged_by_fix11": true,
+        "feed_decoded_body_cap_bytes": 2097152,
+        "statement_decoded_body_cap_bytes": 5242880,
+        "what_the_caps_bound": "PARSER INPUT SIZE - decoded HTTP entity-body bytes, enforced incrementally during production per FIX8",
+        "what_the_caps_do_not_bound": "semantic output an XML parser could generate afterwards through DTD, entity or XInclude processing. FIX11 must NOT be read as relying on the body cap for that, and the body cap must NOT be described as bounding parser expansion."
+      },
+      "custom_entity_declarations": "UNSUPPORTED",
+      "doctype": "FORBIDDEN",
+      "doctype_rule": "any XML document containing a DOCTYPE declaration is INVALID for FOMC V1 - <!DOCTYPE rss>, <!DOCTYPE rss [...]>, <!DOCTYPE rss SYSTEM \"...\">, <!DOCTYPE rss PUBLIC \"...\">. All are PARSER_FAILED. No partial acceptance, no \"ignore the DTD and continue\", no library-default decision.",
+      "external_dtd": "FORBIDDEN",
+      "external_dtd_rule": "external DTD retrieval or resolution is forbidden independently of the DOCTYPE ban: no HTTP or HTTPS fetch, no file read, no local URI, no catalog lookup, no custom resolver. A document referencing an external DTD is PARSER_FAILED with NO resource access attempted.",
+      "external_entity_rule": "external general entities and external parameter entities are forbidden: no resolution, no substitution, no external DTD chaining, no network and no local filesystem access. This is stated explicitly rather than left to parser defaults.",
+      "external_general_entities": "FORBIDDEN",
+      "external_parameter_entities": "FORBIDDEN",
+      "external_resource_resolution": {
+        "catalog_lookup": "FORBIDDEN",
+        "custom_resolver": "FORBIDDEN",
+        "filesystem": "FORBIDDEN",
+        "network": "FORBIDDEN",
+        "uri_dereference": "FORBIDDEN"
+      },
+      "fail_before_resource_resolution": "a prohibited construct must be detected and rejected WITHOUT first resolving it. <!DOCTYPE rss SYSTEM \"https://evil.invalid/test.dtd\"> must be rejected without fetching that URI, and file:///etc/passwd must never be opened.",
+      "internal_dtd_subset": "FORBIDDEN",
+      "internal_dtd_subset_rule": "forbidden automatically because DOCTYPE is forbidden; no custom entity expansion path exists",
+      "internal_entity_expansion": "NO PERMITTED PATH. Because DOCTYPE is forbidden, no user-defined internal entity can be declared, so the billion-laughs family is rejected at the DOCTYPE gate BEFORE any expansion occurs. V1 therefore needs no entity-count, nesting-depth or expanded-byte cap: the declaration machinery is simply not admitted.",
+      "network_free_parsing": "after the HTTP body is durably available, parsing performs ZERO network requests, DNS lookups, filesystem reads, external catalog lookups or URI dereferences. The only parser input is the verified persisted XML body plus already-persisted metadata the CaptureSpec allows.",
+      "new_global_health_state": false,
+      "numeric_character_references": {
+        "note": "numeric character references remain permitted subject to valid XML and Unicode semantics",
+        "permitted_under_normal_xml_rules": true
+      },
+      "parser_library_independence": "no library is pinned. Any library is acceptable only if configured or enveloped so these frozen semantics hold. LIBRARY DEFAULTS ARE NOT AUTHORITATIVE: an implementation must explicitly ensure DOCTYPE is rejected and that external entities, external DTDs, parameter entities, XInclude and any network/local resolver are unavailable.",
+      "predefined_xml_entities": {
+        "allowed": [
+          "amp",
+          "lt",
+          "gt",
+          "apos",
+          "quot"
+        ],
+        "note": "the five built-in XML entity references are NOT custom DTD entity declarations and remain valid under normal XML parsing. FIX11 must not reject them."
+      },
+      "rejection_state": "PARSER_FAILED",
+      "rejection_timing": "XML security checks occur BEFORE feed semantic extraction can be considered successful. A document rejected for DOCTYPE, an entity feature, XInclude or an external-resource mechanism yields NO feed items, NO candidate classification and NO EVENTS_OBSERVED_ZERO.",
+      "replay": "offline replay produces exactly the same result: DOCTYPE present -> PARSER_FAILED; XInclude present -> PARSER_FAILED; external entity syntax -> PARSER_FAILED. No network or local-file attempt, so replay never becomes dependent on machine filesystem contents.",
+      "second_pass_expansion": "FORBIDDEN",
+      "second_pass_rule": "after the initial parse, no resolve_entities, xinclude/process_xinclude, load_dtd, validate-against-external-DTD or any equivalent second pass that can expand or fetch resources may run. No optional parser feature may re-enable prohibited behaviour later.",
+      "stage": "a deterministic PARSER-SECURITY GATE. The body has already passed the HTTP decoded-body cap, raw durability/hashing and the UTF-8 policy under the unchanged raw-first order; FIX11 changes none of those steps.",
+      "xinclude": "FORBIDDEN",
+      "xinclude_rule": "XInclude processing must never be invoked, and no inclusion of http://, https://, file://, a relative local path or any other URI may occur. Presence of the XInclude namespace or include construct in the discovery document is PARSER_FAILED. It is deliberately NOT left as an inert unknown element, because that would let different libraries behave differently.",
+      "zero_eligible_after_security_rejection": false
     }
   },
   "polling": {
@@ -1210,7 +1304,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 11 closes the MEDIUM found by counter-review R10, using the structural evidence captured and committed as fomc_dom_anchor_evidence_v1 (bd7d17d2, commit 1707895). The three HTML semantic anchors are now frozen to evidence-backed DOM authorities instead of three bare names, the document <title> is excluded on both prefix and non-uniqueness grounds, div#lastUpdate is excluded structurally rather than by value, the release line is extracted token-bounded because the paragraph is never closed upstream, and the normalization order is numbered. Revisions 1-10 semantics are preserved unchanged.",
+  "revision_note": "Spec revision 12 closes the MEDIUM found by counter-review R11. Revision 11 forbade XML EXTERNAL entity resolution, which does not stop an internal entity-expansion bomb: that attack declares only internal entities and resolves nothing externally. The FIX8 decoded-body cap does not help either, because it bounds HTTP input bytes before the parser runs. V1 now forbids DOCTYPE outright, which removes the custom entity declaration machinery altogether, and forbids XInclude, external DTDs, and external general and parameter entities explicitly. Detection is syntax-aware so comment text is not falsely rejected, and the built-in XML entities stay valid. Revisions 1-11 semantics are preserved unchanged.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -1261,20 +1355,35 @@
     "explicit exact-host allowlist",
     "redirect destinations validated before being followed",
     "bounded redirects (3)",
-    "bounded response sizes",
+    "decoded HTTP body size bounded incrementally during production (feed 2 MiB, statement 5 MiB)",
     "bounded connect and read timeouts",
     "no credentials",
     "no cookies as a correctness dependency",
-    "XML external entity resolution disabled",
+    "XML DOCTYPE forbidden",
+    "XML internal DTD subset forbidden",
+    "XML external DTD resolution forbidden",
+    "XML external general entities forbidden",
+    "XML external parameter entities forbidden",
+    "custom XML entity declarations unsupported, so no internal entity-expansion path exists",
+    "XInclude forbidden",
+    "XML parser network access forbidden",
+    "XML parser filesystem and resource resolution forbidden",
+    "no second-pass entity or XInclude expansion",
     "no JavaScript execution",
     "no browser",
     "no shelling out",
-    "no network during replay"
+    "no network during replay",
+    "NOTE: the decoded-body caps bound parser INPUT only; XML parser expansion safety comes from the DOCTYPE/XInclude prohibitions above, never from the size caps. \"XXE disabled\" alone is NOT a sufficient summary of this list."
   ],
   "source_health": {
     "mappings": {
       "client ceiling reached": "RATE_LIMITED",
       "decoded body exceeds the frozen size bound": "PARSER_FAILED",
+      "feed XML DOCTYPE declaration detected": "PARSER_FAILED",
+      "feed XML XInclude construct detected": "PARSER_FAILED",
+      "feed XML custom entity declaration machinery detected": "PARSER_FAILED",
+      "feed XML external or internal DTD detected or referenced": "PARSER_FAILED",
+      "feed XML external resource resolution attempted or required": "PARSER_FAILED",
       "feed XML malformed": "PARSER_FAILED",
       "feed fetch failed / timeout / unexpected HTTP status": "SOURCE_UNAVAILABLE",
       "feed fetched and parsed, all relevant items deterministically classified, zero IN_SCOPE_V1 admitted, zero unresolved candidates": "EVENTS_OBSERVED_ZERO",
@@ -1307,7 +1416,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 11,
+  "spec_revision": 12,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -1320,7 +1429,8 @@
     "3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e",
     "c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3",
     "0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8",
-    "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d"
+    "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d",
+    "b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -1628,7 +1738,9 @@
       "scope and coverage claim",
       "zero-assertion preconditions",
       "HTML semantic anchor authorities",
-      "semantic text normalization order"
+      "semantic text normalization order",
+      "XML parser security policy",
+      "XInclude and DTD admission"
     ],
     "silent_mutation": "FORBIDDEN"
   },
