@@ -7,10 +7,10 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 9 — authoritative)
-0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8
+CAPTURE SPEC HASH  (revision 10 — authoritative)
+3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6) → 3db09125… (rev 7) → c1d56f46… (rev 8)
+supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6) → 3db09125… (rev 7) → c1d56f46… (rev 8) → 0757b1f5… (rev 9)
 
 BINDS
   event intelligence design rev4
@@ -644,6 +644,71 @@ replay bytes and raw-first ordering are unchanged. These caps apply where a
 body is consumed under current V1 policy; redirect identity, validation and
 follow rules remain unchanged, with no new redirect-body parsing semantics.
 
+### Text decoding: one codec, strict UTF-8
+
+Revision 10 freezes `parser_policy.text_decoding_v1` for both RSS/XML discovery
+and primary HTML. **UTF-8 is the only codec**, and the explicit default when
+no encoding signal is present. This is a narrow V1 admission rule, not a claim
+that all Federal Reserve documents use UTF-8.
+
+There is no HTTP-versus-document authority competition. Every recognized
+encoding signal is a **consistency constraint**: all must resolve to UTF-8.
+Any unsupported, unknown, empty/malformed or conflicting declaration yields
+`PARSER_FAILED`, even if the body happens to be valid UTF-8/ASCII.
+
+For XML, recognize HTTP `Content-Type` charset, the UTF-8 BOM and the XML
+encoding declaration. For HTML, recognize HTTP charset, the UTF-8 BOM,
+`<meta charset=...>` and `<meta http-equiv="Content-Type" ... charset=...>`
+through the `content` attribute. HTML attribute names and the `http-equiv`
+value are compared ASCII case-insensitively for this purpose. All recognized
+meta declarations must be checked; there is no first-wins or last-wins rule.
+Every HTTP charset parameter must likewise pass, including multiple values.
+
+Charset labels permit only syntax-level quote removal where the metadata
+grammar allows it, trimming of surrounding ASCII whitespace permitted by that
+grammar, and ASCII `A-Z` to `a-z`. The possible trim characters are U+0009,
+U+000A, U+000C, U+000D and U+0020, restricted by the relevant metadata syntax.
+No internal-character rewriting, Unicode whitespace trimming or Unicode case
+folding is allowed. The entire normalized label must be exactly **`utf-8` or
+`utf8`**. There is no platform codec-alias lookup.
+
+After the unchanged bounded-body admission, durable persistence and byte hash,
+inspect the leading BOM and HTTP declarations. A leading `EF BB BF` is allowed;
+omit exactly one such signature from the **text-only view**, then strictly
+decode the entire remaining body as UTF-8. Validate the document's encoding
+declarations on that text before exposing it for semantic extraction or
+normalization. No declaration may select another decoder or initiate a second
+attempt. Invalid/truncated sequences, overlong encodings, encoded surrogates
+and code points above U+10FFFF fail closed.
+
+The UTF-8 signature is not exposed as semantic leading U+FEFF. Raw, hashed and
+replay bytes still contain it, and it still counts toward the byte cap. Do not
+strip another signature or later U+FEFF code point. Leading UTF-32 signatures
+`00 00 FE FF` / `FF FE 00 00` and UTF-16 signatures `FE FF` / `FF FE` are
+rejected, checking the four-byte forms before the overlapping two-byte forms.
+Never switch to a UTF-16/32 decoder.
+
+No charset heuristics, chardet, browser/locale/platform default, `errors=ignore`,
+`errors=replace`, `surrogateescape`, latin-1/windows-1252 fallback or codec
+guessing is allowed. R9's HTTP `windows-1252` / HTML `utf-8` / isolated byte
+`E9` counterexample therefore fails; it cannot decode `E9` as `é` and continue.
+
+Existing raw HTTP provenance must retain the exact relevant `Content-Type`
+field value(s), including charset spelling and duplicates, or explicitly
+record actual header absence. A missing provenance record is not equivalent
+to an absent HTTP header: fail closed, never refetch. The same verified body
+bytes, persisted relevant metadata and CaptureSpec hash must yield the same
+Unicode text or `PARSER_FAILED` offline.
+
+Charset failure retains the already-admitted raw body and its byte hash,
+creates no EventRevision, and cannot establish `EVENTS_OBSERVED_ZERO` for the
+affected feed/candidate. No new health state is introduced. This fix adds no
+Unicode normalization or whitespace transformation beyond consuming the one
+encoding signature; existing title/release transformations remain unchanged.
+XML entities/DTD/expansion, malformed HTML recovery, HTTP status/304, retries,
+rate windows, scheduling, restart/overdue handling and timeouts remain outside
+this fix. No fixture or runtime implementation is created here.
+
 ## 9. Redistribution — stricter than the evidence requires
 
 R3 verified the Federal Reserve disclaimer: *"Unless otherwise indicated,
@@ -669,7 +734,7 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Forty cases, decided in advance
+## 11. Forty-seven cases, decided in advance
 
 `FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
@@ -685,7 +750,7 @@ adds HTTPS scheme convergence and non-HTTPS rejection; revision 7 adds
 default-port convergence and non-default-port rejection. Revision 8 adds three
 malformed-percent rejection cases and one syntax-only valid-escape control.
 Revision 9 adds bounded compression-bomb rejection and exact decoded-cap
-boundaries:
+boundaries. Revision 10 adds seven strict UTF-8 decoding cases:
 
 | | case | outcome |
 |---|---|---|
@@ -711,6 +776,13 @@ boundaries:
 | `FOMC38` | `https://www.federalreserve.gov/path%2Fsegment` | percent syntax passes, `%2F` unchanged; full URL admission not asserted |
 | `FOMC39` | 100 KiB compressed statement with potential 20 MiB decoded output | stop at attempted excess over 5 MiB; `PARSER_FAILED`, no text decode, parse, complete body artifact/hash or revision |
 | `FOMC40` | statement 5 MiB / feed 2 MiB, then each cap + 1 byte | exact cap passes size gate only; attempted extra byte aborts decoding |
+| `FOMC41` | HTTP `windows-1252`, HTML meta `utf-8`, isolated `E9` | `PARSER_FAILED`; no fallback or EventRevision |
+| `FOMC42` | HTML, no charset signals, valid UTF-8 | strict UTF-8 default; text gate passes only |
+| `FOMC43` | leading UTF-8 BOM, other signals absent or compatible | text gate passes; one signature omitted from text, raw/hash bytes unchanged |
+| `FOMC44` | XML `encoding="ISO-8859-1"` | `PARSER_FAILED`; no ISO-8859-1 decoding |
+| `FOMC45` | recognized declaration of `x-unknown` | `PARSER_FAILED`; no platform alias lookup |
+| `FOMC46` | UTF-8-compatible declarations, invalid UTF-8 bytes | `PARSER_FAILED`; raw retained, no lossy replacement |
+| `FOMC47` | HTTP UTF-8, UTF-8 BOM, HTML meta utf-8, valid body | strict UTF-8 text gate passes; no competing authority |
 
 FOMC26 also requires identical-body date determinism under the same spec hash:
 a conflicting date fails closed without a new content revision. Future test
@@ -742,7 +814,17 @@ must prove it stops at attempted excess without first producing/consuming the
 full 20 MiB; testing only the final rejection verdict is insufficient. These
 are requirements only: no fixture or implementation test is created or run here.
 
-Invariants `F01`–`F31` state the same commitments in testable form. Revision 2
+FOMC41–FOMC47 add future offline requirements for XML with no declaration,
+UTF-8 or ISO-8859-1 declarations, accepted UTF-8 and rejected UTF-16/32 BOMs,
+and agreeing/conflicting HTTP and XML signals. HTML requirements cover absent
+charset, HTTP/meta signals separately and together, the `http-equiv` form,
+multiple agreeing/conflicting metas, unknown labels, invalid UTF-8 and the
+UTF-8 BOM. Label aliases/case/quoting/ASCII-space controls, exact BOM handling,
+strict byte-error rejection, preserved raw hashes and metadata-only offline
+replay must also be checked. No fixture or implementation test is created or
+run here; passing the text gate never alone admits an EventRevision.
+
+Invariants `F01`–`F32` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -765,7 +847,11 @@ Revision 9 adds `F31`: decoded-body size is enforced during bounded production,
 with immediate abort at attempted excess and no oversized or truncated body
 passed to parsing or admitted as a complete body artifact/hash or revision.
 All previous invariants remain unchanged by this fix.
-Independent counter-review of revision 9 remains pending; this fix authorizes
+Revision 10 adds `F32`: text decoding is single-valued and strict UTF-8, with
+all recognized declarations acting as consistency constraints, deterministic
+signature removal in the text view only, and replay based on unchanged body
+bytes plus persisted HTTP charset provenance. F01–F31 remain unchanged.
+Independent counter-review of revision 10 remains pending; this fix authorizes
 no implementation.
 
 ## 12. What this does not establish

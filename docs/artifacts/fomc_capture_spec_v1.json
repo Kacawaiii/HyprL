@@ -295,6 +295,76 @@
         }
       ],
       "verdict": "A complete decoded body of exactly the configured limit passes ONLY the size gate; all other existing admission/parsing rules still apply. One additional decoded byte aborts body decoding at attempted excess, before text decoding or parsing, under the same PARSER_FAILED and no-artifact/hash/revision rules as FOMC39. MiB means 1048576 bytes, not decimal MB."
+    },
+    "FOMC41": {
+      "case": "CONFLICTING HTML CHARSET",
+      "conceptual_body_octets_hex": "E9 20 within otherwise conforming HTML",
+      "html_meta_charset": "utf-8",
+      "http_content_type": "text/html; charset=windows-1252",
+      "normalized_revision_created": false,
+      "raw_preserved": true,
+      "source_health": "PARSER_FAILED",
+      "verdict": "REJECT under text_decoding_v1: the HTTP declaration is unsupported and incompatible with the HTML declaration. No authority competition, windows-1252 decoding of E9 as e-acute, fallback or EventRevision. The strict UTF-8 default cannot override an incompatible signal."
+    },
+    "FOMC42": {
+      "body_is_valid_utf8": true,
+      "case": "HTML WITHOUT CHARSET",
+      "charset_signals": [],
+      "gate_under_test": "TEXT_DECODING_ONLY",
+      "http_content_type": "text/html",
+      "selected_encoding": "UTF-8",
+      "verdict": "PASS text decoding as strict UTF-8 using the explicit V1 default, with no BOM or recognized meta declaration. This is not charset detection or fallback. Other existing parsing/admission checks remain mandatory; a text-decoding pass alone does not admit an EventRevision."
+    },
+    "FOMC43": {
+      "body_prefix_hex": "EF BB BF",
+      "case": "UTF-8 BOM",
+      "gate_under_test": "TEXT_DECODING_ONLY",
+      "other_signals": "absent or all UTF-8-compatible; remaining body is valid UTF-8",
+      "raw_preserved": true,
+      "semantic_text_includes_signature_u_feff": false,
+      "surfaces": [
+        "discovery_feed",
+        "primary_statement"
+      ],
+      "verdict": "PASS text decoding. Consume exactly one leading EF BB BF as an encoding signature for the text view only; do not expose that signature as a leading U+FEFF. The persisted/hash/replay bytes still include the original BOM. No stripping of additional body code points or new Unicode normalization."
+    },
+    "FOMC44": {
+      "case": "XML NON-UTF-8 DECLARATION",
+      "normalized_revision_created": false,
+      "raw_preserved": true,
+      "source_health": "PARSER_FAILED",
+      "verdict": "REJECT the unsupported XML encoding declaration even if the body happens to contain only valid UTF-8/ASCII bytes. Do not select ISO-8859-1, ignore the declaration or retry another decoder.",
+      "xml_encoding_declaration": "ISO-8859-1"
+    },
+    "FOMC45": {
+      "case": "UNKNOWN CHARSET",
+      "declared_charset": "x-unknown",
+      "declaration_source": "HTTP charset or any recognized XML/HTML encoding declaration",
+      "normalized_revision_created": false,
+      "raw_preserved": true,
+      "source_health": "PARSER_FAILED",
+      "verdict": "REJECT because x-unknown is not one of utf-8 or utf8 after the frozen label normalization. No platform codec/alias lookup, heuristic detection or fallback."
+    },
+    "FOMC46": {
+      "case": "INVALID UTF-8 BODY",
+      "charset_signals": "all present signals UTF-8-compatible",
+      "conceptual_invalid_octets_hex": "E9 20",
+      "normalized_revision_created": false,
+      "raw_preserved": true,
+      "source_health": "PARSER_FAILED",
+      "verdict": "REJECT invalid UTF-8 under STRICT decoding. No errors=ignore, errors=replace, surrogateescape, codec guessing or fallback. Previously admitted raw bytes and their byte hash remain unchanged; no EventRevision or zero from this failed response."
+    },
+    "FOMC47": {
+      "body_is_valid_utf8": true,
+      "body_prefix_hex": "EF BB BF",
+      "case": "CONSISTENT MULTIPLE SIGNALS",
+      "gate_under_test": "TEXT_DECODING_ONLY",
+      "html_meta_charset": "utf-8",
+      "http_content_type": "text/html; charset=UTF-8",
+      "raw_preserved": true,
+      "selected_encoding": "UTF-8",
+      "semantic_text_includes_signature_u_feff": false,
+      "verdict": "PASS strict UTF-8 text decoding: HTTP, BOM and HTML meta all agree. Consume the single leading signature only in the text view. No first-wins/last-wins choice, alternate decoder or automatic EventRevision admission."
     }
   },
   "authority_conflicts": {
@@ -363,7 +433,15 @@
       "instrument the future test decoder to prove production stops at attempted excess: a 100 KiB compressed statement expanding to 20 MiB must not produce/consume the full 20 MiB before rejection at the 5 MiB cap; checking after an unbounded decoding call fails the test (FOMC39)",
       "exact feed 2097152 and statement 5242880 decoded bytes pass the size gate only; each cap + 1 byte aborts before excess accumulation, text decoding or XML/HTML parsing (FOMC40)",
       "missing Content-Length and misleading small Content-Length, including 100 KiB for a potential 20 MiB decoded statement, must not bypass incremental decoded-size enforcement",
-      "oversize abort retains only already-permitted failure/provenance diagnostics, never admits a complete body artifact, never creates a successful complete-body hash from a prefix, never parses a truncated body or creates an EventRevision, and maps to existing PARSER_FAILED rather than EVENTS_OBSERVED_ZERO"
+      "oversize abort retains only already-permitted failure/provenance diagnostics, never admits a complete body artifact, never creates a successful complete-body hash from a prefix, never parses a truncated body or creates an EventRevision, and maps to existing PARSER_FAILED rather than EVENTS_OBSERVED_ZERO",
+      "XML UTF-8-only decoding: no declaration with valid UTF-8; UTF-8 declaration; ISO-8859-1 declaration rejected; UTF-8 BOM accepted; UTF-16 and UTF-32 BOMs rejected; HTTP UTF-8 plus XML UTF-8 accepted; HTTP non-UTF-8 plus XML UTF-8 rejected (F32, FOMC43-FOMC44)",
+      "HTML UTF-8-only decoding: no charset, HTTP UTF-8, meta charset UTF-8, and HTTP plus meta agreement accepted at the text gate; HTTP/meta conflict, non-UTF-8 meta, unknown labels and invalid UTF-8 rejected; UTF-8 BOM accepted (FOMC41-FOMC47)",
+      "recognized meta http-equiv=Content-Type charset declarations obey the same UTF-8 consistency gate; multiple meta declarations all UTF-8-compatible pass, while any incompatible/unknown declaration fails without first-wins or last-wins selection",
+      "charset labels normalize only syntax-level quoting and permitted surrounding ASCII whitespace, then ASCII A-Z to a-z; only utf-8 and utf8 are accepted. Include UTF-8/Utf8/case controls, unknown aliases, empty labels and non-ASCII lookalikes; no platform alias database",
+      "UTF-8 BOM handling is identical for XML and HTML: exactly one leading EF BB BF is omitted from the text view but retained in raw/hash/replay bytes; do not strip a subsequent U+FEFF or normalize other Unicode code points (FOMC43, FOMC47)",
+      "strict UTF-8 rejects truncated/invalid continuation sequences, overlong forms, encoded surrogates and out-of-range code points; no ignore, replace, surrogateescape, heuristic detection or second decoder (FOMC46)",
+      "replay charset decisions use the exact persisted relevant Content-Type values or recorded header absence plus the unchanged body bytes and spec hash; same inputs give the same text or PARSER_FAILED, without network metadata repair or locale/platform dependence",
+      "charset failures retain admitted raw/provenance and its byte hash, create no EventRevision, and block EVENTS_OBSERVED_ZERO for the affected feed/candidate; compatible text-gate success alone never establishes event admission"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -542,7 +620,8 @@
     "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only.",
     "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only.",
     "F30": "MALFORMED PERCENT ESCAPES ARE REJECTED BEFORE IDENTITY OR REQUEST. Every literal % in an admitted V1 URL must begin PCT_ENCODED = % HEXDIG HEXDIG, with exactly two ASCII hex digits from 0-9, A-F or a-f. Otherwise FAIL CLOSED before canonical identity/source_item_id derivation or admission, before a primary request, and before redirect follow. This mandatory syntax gate does not decode, re-encode, repair or provide a literal-percent fallback. Valid escapes remain subject to existing component restrictions and path-preservation semantics; no new equivalence or hex-case normalization is introduced. Durable raw source text is not mutated.",
-    "F31": "DECODED BODY SIZE IS ENFORCED DURING PRODUCTION. For every body consumed under V1's existing decoded-size policy, count decoded entity-body bytes incrementally from zero before charset/text decoding. Enforce the feed 2097152-byte or statement 5242880-byte cap during bounded output production, not after unbounded decompression. If the next output would exceed the cap, stop body decoding immediately, do not append excess bytes and do not continue to learn final size. Exactly the cap passes the size gate; cap + 1 rejects. Content-Length or compressed size cannot replace this gate. No oversized body or incomplete prefix reaches text decoding, XML/HTML parsing or normalization, becomes a complete admitted raw artifact or successful complete-body hash, or produces an EventRevision. Reuse PARSER_FAILED, never EVENTS_OBSERVED_ZERO. Existing successful-body hash/persistence/replay bytes and raw-first order remain unchanged."
+    "F31": "DECODED BODY SIZE IS ENFORCED DURING PRODUCTION. For every body consumed under V1's existing decoded-size policy, count decoded entity-body bytes incrementally from zero before charset/text decoding. Enforce the feed 2097152-byte or statement 5242880-byte cap during bounded output production, not after unbounded decompression. If the next output would exceed the cap, stop body decoding immediately, do not append excess bytes and do not continue to learn final size. Exactly the cap passes the size gate; cap + 1 rejects. Content-Length or compressed size cannot replace this gate. No oversized body or incomplete prefix reaches text decoding, XML/HTML parsing or normalization, becomes a complete admitted raw artifact or successful complete-body hash, or produces an EventRevision. Reuse PARSER_FAILED, never EVENTS_OBSERVED_ZERO. Existing successful-body hash/persistence/replay bytes and raw-first order remain unchanged.",
+    "F32": "TEXT DECODING IS SINGLE-VALUED AND STRICT UTF-8. Both V1 XML and HTML bodies use only UTF-8, also the explicit default when signals are absent. Every recognized HTTP/BOM/document encoding signal must be UTF-8-compatible under text_decoding_v1, or cause PARSER_FAILED; labels are limited to utf-8 and utf8 after the frozen ASCII-only label normalization. No competing authority, heuristic detection, fallback decoder, lossy error handling or platform codec/alias selection. Invalid UTF-8 and unsupported BOMs fail closed. Exactly one leading UTF-8 BOM is an encoding signature omitted from semantic text, never removed from raw/hash/replay bytes. Same verified admitted bytes plus persisted relevant HTTP metadata plus the same CaptureSpec hash MUST produce the same Unicode text or PARSER_FAILED. Charset failure preserves raw provenance, creates no EventRevision and cannot establish zero for an affected feed/candidate. Existing Unicode/whitespace transformations and FIX1-FIX8 remain unchanged."
   },
   "item_predicate": {
     "classification_states": {
@@ -677,7 +756,7 @@
     "timestamp_trust_verdict"
   ],
   "parser_policy": {
-    "determinism": "operates offline on locally stored raw bytes only",
+    "determinism": "operates offline on verified locally stored raw body bytes and the persisted relevant HTTP Content-Type provenance required by text_decoding_v1; the same bytes, metadata and CaptureSpec hash must yield the same decoded text or PARSER_FAILED. No network or machine-dependent charset selection.",
     "forbidden": [
       "browser",
       "JavaScript execution",
@@ -695,6 +774,129 @@
     "official_statement_date_determinism": {
       "failure": "PARSER/NORMALIZER DETERMINISM FAILURE is a diagnostic, not a new global source-health state. FAIL CLOSED for parser/spec inconsistency or corruption: no second content revision, no silent normalized mutation; existing raw and immutable revisions remain intact.",
       "rule": "identical verified persisted primary raw body bytes under the SAME CaptureSpec hash MUST yield identical official_statement_date metadata. A differing date with the same verified body hash is not an upstream content revision."
+    },
+    "text_decoding_v1": {
+      "applies_to": [
+        "RSS/XML discovery body",
+        "primary HTML statement body"
+      ],
+      "charset_label_policy": {
+        "accepted_labels": [
+          "utf-8",
+          "utf8"
+        ],
+        "comparison": "ASCII_CASE_INSENSITIVE",
+        "empty_or_malformed_label": "PARSER_FAILED",
+        "normalization_order": [
+          "1. extract the charset/encoding value under its metadata syntax, removing syntax-level quoting only where that syntax permits it: HTTP parameter double quotes, XML attribute single/double quotes, HTML attribute single/double quotes; unquoted values remain allowed only where their metadata syntax allows them",
+          "2. trim only surrounding ASCII whitespace permitted by that metadata syntax; the possible characters are U+0009, U+000A, U+000C, U+000D and U+0020, restricted to those the relevant syntax permits. Do not trim Unicode whitespace or alter internal label characters",
+          "3. map ASCII A-Z to a-z only; no Unicode case folding or normalization",
+          "4. accept if and only if the entire resulting label is exactly utf-8 or utf8; both name the single UTF-8 codec. Every other, empty or malformed label fails with PARSER_FAILED"
+        ],
+        "platform_alias_lookup": "FORBIDDEN",
+        "unknown": "PARSER_FAILED"
+      },
+      "decoding_errors": "STRICT",
+      "default_when_unspecified": "UTF-8",
+      "failure": {
+        "admitted_raw_and_hash_preserved": true,
+        "new_global_health_state": false,
+        "normalized_revision_created": false,
+        "semantic_parser_receives_failed_text": false,
+        "source_health": "PARSER_FAILED",
+        "triggers": [
+          "any recognized charset declaration is non-UTF-8, unknown, empty or malformed",
+          "recognized charset signals conflict",
+          "a leading UTF-16/UTF-32 BOM is present",
+          "the body is not strict UTF-8",
+          "required replay charset provenance is missing rather than recording actual header absence"
+        ],
+        "zero_policy": "This failed response cannot establish EVENTS_OBSERVED_ZERO. A failed discovery feed or affected primary candidate blocks zero under the existing completeness/unresolved-candidate rules. No broader source-health redesign."
+      },
+      "fallback_decoder": "NONE",
+      "forbidden": [
+        "heuristic charset detection or chardet",
+        "browser, locale or platform default encoding",
+        "platform codec alias database lookup",
+        "errors=ignore",
+        "errors=replace",
+        "surrogateescape",
+        "latin-1 or windows-1252 fallback",
+        "a second decoding attempt with another codec",
+        "first-wins or last-wins selection among charset declarations"
+      ],
+      "heuristic_detection": "FORBIDDEN",
+      "html_charset_policy": {
+        "all_present_signals_must_resolve_to_utf8": true,
+        "conflict": "PARSER_FAILED",
+        "default": "UTF-8",
+        "meta_charset_role": "A recognized meta charset attribute is a consistency constraint, never a decoder selector. Validate every such declaration, not just the first or last.",
+        "meta_http_equiv_role": "Recognize meta http-equiv=Content-Type with charset parameters in its content attribute as charset consistency signals. Match HTML attribute names and the http-equiv Content-Type value ASCII case-insensitively. Validate all charset values using the same label policy; this adds no semantic extraction or malformed-HTML recovery policy.",
+        "multiple_declarations": "ALL recognized declarations must resolve to UTF-8. UTF-8 plus utf8 is compatible; UTF-8 plus windows-1252, another encoding or an unknown label fails. No declaration overrides another.",
+        "non_utf8": "PARSER_FAILED",
+        "signals": [
+          "HTTP_CONTENT_TYPE_CHARSET",
+          "UTF8_BOM",
+          "META_CHARSET",
+          "META_HTTP_EQUIV_CONTENT_TYPE"
+        ],
+        "unknown": "PARSER_FAILED"
+      },
+      "http_charset_policy": {
+        "absent_parameter": "No HTTP charset signal; do not synthesize a default from HTTP libraries. The sole V1 default remains UTF-8.",
+        "all_present_charset_values_checked": true,
+        "parameter_name_comparison": "ASCII_CASE_INSENSITIVE",
+        "role": "CONSISTENCY_CONSTRAINT_ONLY - every charset parameter in the persisted Content-Type values must resolve to UTF-8 under charset_label_policy. Multiple values must all agree on UTF-8; no first-wins/last-wins rule and no alternate decoder selection."
+      },
+      "offline_replay": {
+        "charset_decision_network_free": true,
+        "inputs": [
+          "verified complete admitted body bytes, unchanged including any BOM",
+          "exact persisted relevant HTTP Content-Type field values or recorded actual header absence, as required by raw_policy.content_type_charset_provenance",
+          "the exact CaptureSpec hash bound to the revision"
+        ],
+        "missing_metadata": "FAIL CLOSED / PARSER_FAILED if required charset provenance was not preserved; never confuse missing provenance with an HTTP header that was actually absent, and never refetch metadata",
+        "rule": "Same verified body bytes plus the same persisted relevant HTTP metadata plus the same CaptureSpec hash MUST produce the same Unicode text or the same PARSER_FAILED. No network, browser, locale, platform encoding default or machine-dependent codec alias lookup."
+      },
+      "order": [
+        "1. complete the unchanged bounded HTTP body admission, durable raw-byte persistence and hashing; charset work never precedes these gates, and replay verifies those same stored bytes",
+        "2. the codec is already fixed to UTF-8, never inferred. Inspect the leading byte signature under utf8_bom and validate every persisted HTTP charset signal; any incompatible signal fails closed",
+        "3. form a text-only view omitting exactly one leading UTF-8 signature if present; strictly decode the entire remaining body as UTF-8 without fallback or lossy error handling",
+        "4. validate all recognized XML declaration or HTML meta charset signals on this strict UTF-8 text under the corresponding policy. This validation cannot switch codecs or trigger another decoding attempt; any incompatible declaration rejects the text",
+        "5. only after the entire charset/UTF-8 gate passes may text be supplied for XML/HTML semantic extraction and normalization. No semantic parser may override the codec or re-detect encoding from the original bytes"
+      ],
+      "scope_boundary": "UTF-8 ONLY is a deliberately narrow V1 admission policy, not a claim that every Federal Reserve document uses UTF-8. FIX9 adds no Unicode NFC/NFD/NFKC/NFKD or NBSP/whitespace transformation: after removing the one encoding signature, decoded code points are left to the unchanged existing parser policy. XML entities/DTD/expansion, malformed HTML recovery, HTTP status/304, retries, rate windows, scheduler, recheck anchor, restart/overdue handling and timeouts are not redesigned here.",
+      "signal_combination": "There is no charset precedence competition. Zero recognized signals selects the explicit UTF-8 default. Otherwise EVERY present recognized signal must resolve to UTF-8; any unsupported, unknown or conflicting declaration causes PARSER_FAILED even when the body bytes are otherwise valid UTF-8. A declaration may constrain admission but may never select another decoder.",
+      "strict_utf8_semantics": "Decode valid UTF-8 Unicode scalar values only. Reject invalid or truncated sequences, stray/invalid continuation bytes, overlong encodings, encoded surrogate code points and values above U+10FFFF. No skipping, replacement, surrogateescape, guessed codec or second attempt.",
+      "supported_encoding": "UTF-8",
+      "utf8_bom": {
+        "allowed_prefix_hex": "EF BB BF",
+        "consume_leading_signatures": 1,
+        "position": "absolute body-byte offset 0 only, before text decoding",
+        "raw_preserved": true,
+        "rule": "One leading EF BB BF is a UTF-8 encoding signature compatible with the sole codec. Omit exactly those three bytes from the text-only decoding view so that signature is not exposed as U+FEFF. Never mutate persisted/hash/replay bytes; the BOM still counts toward the existing decoded-body byte cap. Do not strip another BOM or any later U+FEFF code point. A non-UTF-8 declaration still causes failure even with a UTF-8 BOM.",
+        "semantic_text_includes_leading_bom": false,
+        "unsupported_prefix_action": "PARSER_FAILED - never select UTF-16 or UTF-32; inspect the listed four-byte prefixes before the overlapping two-byte prefixes",
+        "unsupported_prefixes_hex": [
+          "00 00 FE FF",
+          "FF FE 00 00",
+          "FE FF",
+          "FF FE"
+        ]
+      },
+      "xml_charset_policy": {
+        "all_present_signals_must_resolve_to_utf8": true,
+        "conflict": "PARSER_FAILED",
+        "declaration_role": "An encoding value in the XML declaration is a consistency constraint under charset_label_policy, not permission to select an XML library's own decoder. Non-UTF-8 or unknown declarations fail even if the bytes happen to be valid UTF-8/ASCII.",
+        "default": "UTF-8",
+        "non_utf8": "PARSER_FAILED",
+        "signals": [
+          "HTTP_CONTENT_TYPE_CHARSET",
+          "UTF8_BOM",
+          "XML_DECLARATION"
+        ],
+        "unknown": "PARSER_FAILED"
+      }
     },
     "xml": {
       "external_entity_resolution": "MUST BE DISABLED",
@@ -764,7 +966,8 @@
       "every scheduled re-observation"
     ],
     "bytes_semantics": "raw_body_bytes = the entity body AFTER standard HTTP content decoding; Content-Encoding retained as metadata",
-    "charset": "determined only AFTER the raw artefact exists; invalid or unexpected encoding => PARSER_FAILED; no lossy decode before hashing",
+    "charset": "ONLY parser_policy.text_decoding_v1 applies, AFTER complete bounded body admission, durable raw persistence and byte hashing. XML and HTML use STRICT UTF-8, also the explicit default; every recognized declaration must be UTF-8-compatible. Unsupported/conflicting/unknown charset, unsupported BOM or invalid UTF-8 => PARSER_FAILED with raw/hash preserved, no EventRevision and no zero from the failed feed/candidate. No fallback or lossy decoding.",
+    "content_type_charset_provenance": "The existing persisted Content-Type provenance MUST preserve the exact relevant received field value(s), including charset parameters, duplicates and source spelling, or explicitly record that the header was absent. Never replace them with a library-inferred default charset, keep only the media type, or discard a conflicting value. These values and the unchanged body bytes are required offline inputs to parser_policy.text_decoding_v1. Missing recorded provenance is not equivalent to actual header absence: fail closed, no metadata refetch. This clarifies existing HTTP provenance, not a new raw/EventStore schema.",
     "corrupt_raw_at_replay": "verified replay FAILS CLOSED (design NORMALIZED_PRESENT_RAW_CORRUPT)",
     "hash_algorithm": "SHA-256",
     "hash_algorithm_note": "repo primitive sha256_bytes; no second digest algorithm introduced",
@@ -823,7 +1026,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 9 addresses ONLY the MEDIUM found at point 23 of counter-review R8: final decoded-body size rejection did not require bounded production during HTTP body decoding. Count decoded bytes incrementally and abort when output would exceed the unchanged feed 2 MiB / statement 5 MiB cap; unbounded decompress-all then check is forbidden. Oversize cannot reach text decoding/parsing, create an accepted complete body artifact or successful complete-body hash from a prefix, or create an EventRevision. Existing PARSER_FAILED mapping is preserved; no zero or new health enum. F31 and FOMC39-FOMC40 bind early termination and exact-cap boundaries. FIX1-FIX7, all URL and redirect rules, and the successful-body hashed/persisted/replay byte stage remain unchanged. Charset precedence, XML/HTML details, HTTP status/304, scheduler, recheck anchor, restart, missed deadlines, total request deadline and the remaining source-health matrix are not changed or counter-reviewed here. No design change, runtime or safe_http edit, fixture, network or independent counter-review in this fix; full review remains pending.",
+  "revision_note": "Spec revision 10 addresses ONLY the MEDIUM found at point 5 of counter-review R9: charset authority was unspecified. XML and HTML now use STRICT UTF-8 ONLY, including the explicit default, with utf-8/utf8 as the sole labels after syntax-level quote/ASCII-whitespace handling and ASCII case folding. HTTP, BOM and recognized document declarations are consistency constraints: unsupported, unknown or conflicting signals and invalid UTF-8 yield existing PARSER_FAILED, no EventRevision and no zero from a failed feed/candidate. No heuristics, platform aliases, lossy errors or fallback. A single leading UTF-8 signature is omitted only from semantic text; raw/hash/replay bytes and bounded body production are unchanged. Exact Content-Type provenance is required for offline replay. F32 and FOMC41-FOMC47 bind the fix. FIX1-FIX8 remain intact. No new Unicode/whitespace rule, XML entity policy, HTML recovery policy, HTTP status/304 rule, retry/rate-window/scheduler/recheck/restart/overdue/timeout/DNS rule, or broader health matrix change. No design change, runtime, fixture, network or independent counter-review in this fix; full review remains pending.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -920,7 +1123,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 9,
+  "spec_revision": 10,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -931,7 +1134,8 @@
     "8a39a39a799209c7bebe6d4b6cd67a766dd930a84531db13e6fa31b91fd3aa65",
     "6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4",
     "3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e",
-    "c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3"
+    "c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3",
+    "0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
