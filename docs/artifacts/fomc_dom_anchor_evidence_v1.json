@@ -1,0 +1,538 @@
+{
+  "allowed_host": "www.federalreserve.gov",
+  "capture_spec_rev10_hash": "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d",
+  "captured_at_utc": "2026-09-19",
+  "cross_page_findings": {
+    "official_statement_date": {
+      "candidate_anchor": {
+        "container": "div#article > div.heading",
+        "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.article__time",
+        "required_class": "article__time",
+        "tag": "p"
+      },
+      "exact_one_count": 5,
+      "multi_count": 0,
+      "sample_count": 5,
+      "supported_for_fix10": true,
+      "zero_count": 0
+    },
+    "primary_page_title": {
+      "candidate_anchor": {
+        "container": "div#article > div.heading",
+        "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/h3.title",
+        "required_class": "title",
+        "tag": "h3"
+      },
+      "exact_one_count": 5,
+      "multi_count": 0,
+      "observed_text_identical_on_all_pages": "Federal Reserve issues FOMC statement",
+      "sample_count": 5,
+      "supported_for_fix10": true,
+      "zero_count": 0
+    },
+    "release_line": {
+      "CRITICAL_CAVEAT": "the p.releaseTime element is NEVER CLOSED: there is no </p>. The next markup is <ul class=\"list-unstyled\">, which implicitly closes the paragraph under WHATWG rules but NOT under a permissive parser, which keeps accumulating the share menu and the entire statement body into the element. The ELEMENT is uniquely identifiable, but its SEMANTIC TEXT EXTENT IS PARSER-DEPENDENT.",
+      "candidate_anchor": {
+        "container": "div#article > div.heading",
+        "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.releaseTime",
+        "required_class": "releaseTime",
+        "tag": "p"
+      },
+      "element_cardinality_supported": true,
+      "exact_one_count": 5,
+      "first_text_node_pattern": "the release declaration followed by ASCII whitespace (spaces and LF)",
+      "multi_count": 0,
+      "observed_first_text_node_is_stable": true,
+      "sample_count": 5,
+      "supported_for_fix10": false,
+      "why_not_supported": "a FIX10 rule of the form \"extract the semantic text of p.releaseTime\" is NOT single-valued on these real pages. A sub-rule is required, e.g. the element FIRST TEXT NODE only, up to its first child element. That sub-rule was observed stable on all 5 pages but is a spec decision, not an observation.",
+      "zero_count": 0
+    },
+    "sample_count": 5,
+    "structural_relationship": "within one container div#article > div.heading.col-xs-12.col-sm-8.col-md-8 the three nodes appear as consecutive siblings in document order: p.article__time, then h3.title, then p.releaseTime. Observed identically on all 5 pages.",
+    "years_covered": [
+      "2021",
+      "2024",
+      "2025",
+      "2026"
+    ]
+  },
+  "event_intelligence_design_hash": "4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689",
+  "evidence_id": "fomc_dom_anchor_evidence_v1",
+  "failed_attempts": [
+    {
+      "handling": "NOT used as positive structural evidence per the capture rule; no hidden retry was issued",
+      "http_status": "000 (curl transport failure, 0 bytes)",
+      "note": "discovered via the official monetary-policy feed; a single deliberate attempt was made",
+      "requested_at_utc": "2026-09-19T21:51:26Z",
+      "slug": "monetary20260916a"
+    }
+  ],
+  "fix10_readiness": {
+    "blocking_item": "release_line: the anchor element is uniquely identifiable but a text-extent sub-rule must be decided by FIX10 (first text node only). Evidence supports that sub-rule as stable; choosing it is a spec act.",
+    "official_statement_date_supported": true,
+    "overall_evidence_sufficient_for_fix10": false,
+    "primary_page_title_supported": true,
+    "release_line_supported": false,
+    "what_fix10_can_now_freeze_without_guessing": [
+      "primary_page_title := the single h3.title inside div#article > div.heading, cardinality exactly 1",
+      "official_statement_date := the single p.article__time inside the same container, cardinality exactly 1",
+      "document <title> is NOT the classifier authority (prefixed AND non-unique)",
+      "div#lastUpdate is structurally distinct and stays forbidden as a causal timestamp",
+      "release_line anchor := the single p.releaseTime in the same container, WITH an explicit text-extent rule"
+    ]
+  },
+  "limitations": [
+    "Sample is 5 pages spanning 2021-2026 and only the current page template. Structural stability outside that range is NOT established.",
+    "No \"For immediate release\" page was captured: the 2015-03-18 statement is NOT reachable from the locally cited discovery surfaces (the FOMC calendar page covers 2021-2026 only), and inventing its URL was forbidden.",
+    "The release-line text EXTENT is parser-dependent because p.releaseTime is unclosed; only its element identity and its first text node were observed stable.",
+    "Cardinality was observed, not guaranteed: the Federal Reserve documents no markup contract, so these anchors are empirical and may change without notice.",
+    "One page attempt failed at transport level (HTTP 000) and is excluded from positive evidence.",
+    "Anchor names here are structural observations for spec design. They are NOT identity inputs and must never enter source_item_id."
+  ],
+  "negative_controls": {
+    "document_title_element": {
+      "cardinality_on_page": 2,
+      "conclusion": "the document <title> is unsuitable as the classifier anchor on TWO independent grounds: its text carries a \"Federal Reserve Board - \" prefix that fails the exact predicate, and the selector is NOT unique on the page. This independently confirms the R10 MEDIUM from the network, not from memory.",
+      "differs_from_visible_title": true,
+      "is_prefixed": true,
+      "observed_text": "Federal Reserve Board - Federal Reserve issues FOMC statement",
+      "second_occurrence": "an inline SVG <title>Lock</title> inside the banner lock icon"
+    },
+    "last_update": {
+      "anchor": {
+        "class": "lastUpdate",
+        "id": "lastUpdate",
+        "tag": "div"
+      },
+      "cardinality_on_all_pages": 1,
+      "conclusion": "structurally distinct and therefore safely separable, BUT its VALUE coincided with the statement date on all 5 samples, so value comparison could never distinguish them - only structure can. It remains forbidden as a causal timestamp.",
+      "distinct_how": "it sits outside div#article, directly under div.row, whereas p.article__time sits inside div#article > div.heading",
+      "observed_value_equals_statement_date_on_all_5_samples": true,
+      "structurally_distinct_from_official_statement_date": true
+    }
+  },
+  "network_policy": {
+    "authentication": "none",
+    "cookies_required": false,
+    "hidden_retries": 0,
+    "host_contacted": [
+      "www.federalreserve.gov"
+    ],
+    "javascript_executed": false,
+    "max_redirects": 3,
+    "max_requests_in_any_rolling_60s_observed": 5,
+    "method": "GET",
+    "min_spacing_seconds_configured": 13,
+    "redirects_followed": 0,
+    "scheme": "https",
+    "search_engines_used": 0,
+    "spacing_rationale": "13s chosen so that at most 5 requests fall in any rolling 60s window. At exactly 10s spacing, 7 requests can land in a 60s window (t=0..60), which would breach the 6-per-rolling-60s ceiling.",
+    "subresources_fetched": "none - no css, image, script, font or iframe",
+    "third_party_requests": 0,
+    "total_requests": 8
+  },
+  "pages": [
+    {
+      "body_sha256": "b5a25c804596c5ba8f7fffcbed4b42e283c6fdf186293aa453e19d0e1e6aef0c",
+      "body_sha256_recomputed": "b5a25c804596c5ba8f7fffcbed4b42e283c6fdf186293aa453e19d0e1e6aef0c",
+      "body_size_bytes": 83382,
+      "content_type": "text/html",
+      "document_title": {
+        "cardinality_on_page": 2,
+        "first_exact_text": "Federal Reserve Board - Federal Reserve issues FOMC statement",
+        "note": "NON-UNIQUE: a second <title> exists inside an inline SVG banner-lock icon. Also PREFIXED with \"Federal Reserve Board - \".",
+        "second_exact_text": "Lock",
+        "selector": "title"
+      },
+      "final_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20211215a.htm",
+      "http_status": 200,
+      "last_update_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "lastUpdate",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div.lastUpdate#lastUpdate",
+          "exact_html_excerpt": "<div id=\"lastUpdate\" class=\"lastUpdate\">Last Update:\n            December 15, 2021\n        </div>",
+          "exact_text": "Last Update: December 15, 2021",
+          "excerpt_sha256": "5dabe2249f7b6330864582ad19f32d5141a5e2f23648bba6a93fb63405bd6060",
+          "id": "lastUpdate",
+          "tag": "div"
+        }
+      ],
+      "num_redirects": 0,
+      "official_statement_date_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "article__time",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.article__time",
+          "exact_html_excerpt": "<p class=\"article__time\">December 15, 2021</p>",
+          "exact_text": "December 15, 2021",
+          "excerpt_sha256": "76091fed4bcb52ff2b107bbc1f54ca8f4b7d5dc326e543d8a941c776b3de53a3",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "primary_page_title_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "title",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/h3.title",
+          "exact_html_excerpt": "<h3 class=\"title\">Federal Reserve issues FOMC statement</h3>",
+          "exact_text": "Federal Reserve issues FOMC statement",
+          "excerpt_sha256": "814ead7cbf96e6e128a32b19750703db005ea0ed5411388297dd2d92c9e694f9",
+          "id": null,
+          "tag": "h3"
+        }
+      ],
+      "release_line_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "releaseTime",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.releaseTime",
+          "exact_html_excerpt": "<p class=\"releaseTime\">For release at 2:00 p.m. EST                     \n                \n                <ul class=\"lis",
+          "exact_text": "For release at 2:00 p.m. EST                     \n                \n                ",
+          "excerpt_sha256": "777b8889ebcbd76b3eb191be2ec80d95b8c3ed0664888c9a2cbcf7f6515cb1e5",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "release_line_element_unclosed": true,
+      "release_line_first_text_node_only": "For release at 2:00 p.m. EST                     \n                \n                ",
+      "requested_at_utc": "2026-09-19T21:53:52Z",
+      "requested_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20211215a.htm",
+      "slug": "monetary20211215a"
+    },
+    {
+      "body_sha256": "32c967595bbaadb1fa5addb8b9e92e12557f39caf4ff67ea34c04f3c7fa5d30a",
+      "body_sha256_recomputed": "32c967595bbaadb1fa5addb8b9e92e12557f39caf4ff67ea34c04f3c7fa5d30a",
+      "body_size_bytes": 82347,
+      "content_type": "text/html",
+      "document_title": {
+        "cardinality_on_page": 2,
+        "first_exact_text": "Federal Reserve Board - Federal Reserve issues FOMC statement",
+        "note": "NON-UNIQUE: a second <title> exists inside an inline SVG banner-lock icon. Also PREFIXED with \"Federal Reserve Board - \".",
+        "second_exact_text": "Lock",
+        "selector": "title"
+      },
+      "final_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240320a.htm",
+      "http_status": 200,
+      "last_update_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "lastUpdate",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div.lastUpdate#lastUpdate",
+          "exact_html_excerpt": "<div id=\"lastUpdate\" class=\"lastUpdate\">Last Update:\n            March 20, 2024\n        </div>",
+          "exact_text": "Last Update: March 20, 2024",
+          "excerpt_sha256": "b8f903adc6cd366e356cb74f7dfdd8034adaeb80c3284e994b341e0861ecc9d4",
+          "id": "lastUpdate",
+          "tag": "div"
+        }
+      ],
+      "num_redirects": 0,
+      "official_statement_date_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "article__time",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.article__time",
+          "exact_html_excerpt": "<p class=\"article__time\">March 20, 2024</p>",
+          "exact_text": "March 20, 2024",
+          "excerpt_sha256": "0d0a0692b4575cfb644a70ca00b0879e9d51b734a2644662eb1367b01fec9f07",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "primary_page_title_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "title",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/h3.title",
+          "exact_html_excerpt": "<h3 class=\"title\">Federal Reserve issues FOMC statement</h3>",
+          "exact_text": "Federal Reserve issues FOMC statement",
+          "excerpt_sha256": "814ead7cbf96e6e128a32b19750703db005ea0ed5411388297dd2d92c9e694f9",
+          "id": null,
+          "tag": "h3"
+        }
+      ],
+      "release_line_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "releaseTime",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.releaseTime",
+          "exact_html_excerpt": "<p class=\"releaseTime\">For release at 2:00 p.m. EDT                     \n                \n                <ul class=\"lis",
+          "exact_text": "For release at 2:00 p.m. EDT                     \n                \n                ",
+          "excerpt_sha256": "d936e7b6d1a7f6ed23201f738ab45c8fc54b04370ce6389622c3ca22358354a4",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "release_line_element_unclosed": true,
+      "release_line_first_text_node_only": "For release at 2:00 p.m. EDT                     \n                \n                ",
+      "requested_at_utc": "2026-09-19T21:53:14Z",
+      "requested_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240320a.htm",
+      "slug": "monetary20240320a"
+    },
+    {
+      "body_sha256": "4c8d26bc810d86872663787d0511d3d9db341a085fe88523429c38dc82255186",
+      "body_sha256_recomputed": "4c8d26bc810d86872663787d0511d3d9db341a085fe88523429c38dc82255186",
+      "body_size_bytes": 82679,
+      "content_type": "text/html",
+      "document_title": {
+        "cardinality_on_page": 2,
+        "first_exact_text": "Federal Reserve Board - Federal Reserve issues FOMC statement",
+        "note": "NON-UNIQUE: a second <title> exists inside an inline SVG banner-lock icon. Also PREFIXED with \"Federal Reserve Board - \".",
+        "second_exact_text": "Lock",
+        "selector": "title"
+      },
+      "final_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20251210a.htm",
+      "http_status": 200,
+      "last_update_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "lastUpdate",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div.lastUpdate#lastUpdate",
+          "exact_html_excerpt": "<div id=\"lastUpdate\" class=\"lastUpdate\">Last Update:\n            December 10, 2025\n        </div>",
+          "exact_text": "Last Update: December 10, 2025",
+          "excerpt_sha256": "05fef2ca8c3f44dbdf1d098e81d6e89f5f11c9716ec41a25fe5b963eb535205c",
+          "id": "lastUpdate",
+          "tag": "div"
+        }
+      ],
+      "num_redirects": 0,
+      "official_statement_date_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "article__time",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.article__time",
+          "exact_html_excerpt": "<p class=\"article__time\">December 10, 2025</p>",
+          "exact_text": "December 10, 2025",
+          "excerpt_sha256": "0fb991de2bbf19356b20b6221eaacf6e12eefc9d1c017bbc413860223d429a68",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "primary_page_title_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "title",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/h3.title",
+          "exact_html_excerpt": "<h3 class=\"title\">Federal Reserve issues FOMC statement</h3>",
+          "exact_text": "Federal Reserve issues FOMC statement",
+          "excerpt_sha256": "814ead7cbf96e6e128a32b19750703db005ea0ed5411388297dd2d92c9e694f9",
+          "id": null,
+          "tag": "h3"
+        }
+      ],
+      "release_line_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "releaseTime",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.releaseTime",
+          "exact_html_excerpt": "<p class=\"releaseTime\">For release at 2:00 p.m. EST                     \n                \n                <ul class=\"lis",
+          "exact_text": "For release at 2:00 p.m. EST                     \n                \n                ",
+          "excerpt_sha256": "777b8889ebcbd76b3eb191be2ec80d95b8c3ed0664888c9a2cbcf7f6515cb1e5",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "release_line_element_unclosed": true,
+      "release_line_first_text_node_only": "For release at 2:00 p.m. EST                     \n                \n                ",
+      "requested_at_utc": "2026-09-19T21:52:23Z",
+      "requested_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20251210a.htm",
+      "slug": "monetary20251210a"
+    },
+    {
+      "body_sha256": "d63df4e805b814792bbae81deecaaba99ba24d25c832b80980071c4599229c87",
+      "body_sha256_recomputed": "d63df4e805b814792bbae81deecaaba99ba24d25c832b80980071c4599229c87",
+      "body_size_bytes": 82109,
+      "content_type": "text/html",
+      "document_title": {
+        "cardinality_on_page": 2,
+        "first_exact_text": "Federal Reserve Board - Federal Reserve issues FOMC statement",
+        "note": "NON-UNIQUE: a second <title> exists inside an inline SVG banner-lock icon. Also PREFIXED with \"Federal Reserve Board - \".",
+        "second_exact_text": "Lock",
+        "selector": "title"
+      },
+      "final_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260128a.htm",
+      "http_status": 200,
+      "last_update_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "lastUpdate",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div.lastUpdate#lastUpdate",
+          "exact_html_excerpt": "<div id=\"lastUpdate\" class=\"lastUpdate\">Last Update:\n            January 28, 2026\n        </div>",
+          "exact_text": "Last Update: January 28, 2026",
+          "excerpt_sha256": "5595fbad123613c016e1f61decc40e4fc36a14cef19bd8a1ab457f5543e57cd5",
+          "id": "lastUpdate",
+          "tag": "div"
+        }
+      ],
+      "num_redirects": 0,
+      "official_statement_date_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "article__time",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.article__time",
+          "exact_html_excerpt": "<p class=\"article__time\">January 28, 2026</p>",
+          "exact_text": "January 28, 2026",
+          "excerpt_sha256": "96f5b879a924d297c84d329aa1bd798e7864606d3107243eb6762a557b1c3407",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "primary_page_title_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "title",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/h3.title",
+          "exact_html_excerpt": "<h3 class=\"title\">Federal Reserve issues FOMC statement</h3>",
+          "exact_text": "Federal Reserve issues FOMC statement",
+          "excerpt_sha256": "814ead7cbf96e6e128a32b19750703db005ea0ed5411388297dd2d92c9e694f9",
+          "id": null,
+          "tag": "h3"
+        }
+      ],
+      "release_line_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "releaseTime",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.releaseTime",
+          "exact_html_excerpt": "<p class=\"releaseTime\">For release at 2:00 p.m. EST                     \n                \n                <ul class=\"lis",
+          "exact_text": "For release at 2:00 p.m. EST                     \n                \n                ",
+          "excerpt_sha256": "777b8889ebcbd76b3eb191be2ec80d95b8c3ed0664888c9a2cbcf7f6515cb1e5",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "release_line_element_unclosed": true,
+      "release_line_first_text_node_only": "For release at 2:00 p.m. EST                     \n                \n                ",
+      "requested_at_utc": "2026-09-19T21:51:59Z",
+      "requested_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260128a.htm",
+      "slug": "monetary20260128a"
+    },
+    {
+      "body_sha256": "2363d43290fc8de9a53a40838b27276459aaed1d0c29f35fc2c617dd46d57d71",
+      "body_sha256_recomputed": "2363d43290fc8de9a53a40838b27276459aaed1d0c29f35fc2c617dd46d57d71",
+      "body_size_bytes": 81083,
+      "content_type": "text/html",
+      "document_title": {
+        "cardinality_on_page": 2,
+        "first_exact_text": "Federal Reserve Board - Federal Reserve issues FOMC statement",
+        "note": "NON-UNIQUE: a second <title> exists inside an inline SVG banner-lock icon. Also PREFIXED with \"Federal Reserve Board - \".",
+        "second_exact_text": "Lock",
+        "selector": "title"
+      },
+      "final_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "http_status": 200,
+      "last_update_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "lastUpdate",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div.lastUpdate#lastUpdate",
+          "exact_html_excerpt": "<div id=\"lastUpdate\" class=\"lastUpdate\">Last Update:\n            June 17, 2026\n        </div>",
+          "exact_text": "Last Update: June 17, 2026",
+          "excerpt_sha256": "e140915b4110e69640958f1c953690f4ca3df10c27de8a5135959df8fdcc5169",
+          "id": "lastUpdate",
+          "tag": "div"
+        }
+      ],
+      "num_redirects": 0,
+      "official_statement_date_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "article__time",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.article__time",
+          "exact_html_excerpt": "<p class=\"article__time\">June 17, 2026</p>",
+          "exact_text": "June 17, 2026",
+          "excerpt_sha256": "4d9bd7b13efbc7214f1712757037e6924d46066a41ec94b72ede5a426c3cf631",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "primary_page_title_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "title",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/h3.title",
+          "exact_html_excerpt": "<h3 class=\"title\">Federal Reserve issues FOMC statement</h3>",
+          "exact_text": "Federal Reserve issues FOMC statement",
+          "excerpt_sha256": "814ead7cbf96e6e128a32b19750703db005ea0ed5411388297dd2d92c9e694f9",
+          "id": null,
+          "tag": "h3"
+        }
+      ],
+      "release_line_candidates": [
+        {
+          "cardinality_of_this_selector_on_page": 1,
+          "class": "releaseTime",
+          "dom_path": "html.no-js/body/div.container.container__main#content/div.row/div#article/div.heading.col-xs-12.col-sm-8.col-md-8/p.releaseTime",
+          "exact_html_excerpt": "<p class=\"releaseTime\">For release at 2:00 p.m. EDT                     \n                \n                <ul class=\"lis",
+          "exact_text": "For release at 2:00 p.m. EDT                     \n                \n                ",
+          "excerpt_sha256": "d936e7b6d1a7f6ed23201f738ab45c8fc54b04370ce6389622c3ca22358354a4",
+          "id": null,
+          "tag": "p"
+        }
+      ],
+      "release_line_element_unclosed": true,
+      "release_line_first_text_node_only": "For release at 2:00 p.m. EDT                     \n                \n                ",
+      "requested_at_utc": "2026-09-19T21:52:36Z",
+      "requested_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
+      "slug": "monetary20260617a"
+    }
+  ],
+  "provider": "federal_reserve",
+  "provider_verification_hash": "e854ddb9cc8b5bc2634fe6ca6fc793289bafd6c94bb49dde71109e1d17341034",
+  "purpose": "Supply the structural evidence that FIX10 lacked, so the three HTML semantic anchors of the FOMC CaptureSpec can be frozen without guessing. This artefact does NOT modify the CaptureSpec.",
+  "schema_version": "trading-lab.fomc-dom-anchor-evidence.v1",
+  "status": "EVIDENCE_ONLY - NO CAPTURESPEC MUTATION",
+  "text_normalization_evidence": {
+    "h3_title": {
+      "combining_characters": false,
+      "cr": false,
+      "html_entities": false,
+      "lf": false,
+      "multiple_ascii_spaces": false,
+      "nbsp": false,
+      "non_ascii": false,
+      "note": "already clean on all 5 pages; no normalization step is exercised"
+    },
+    "honesty": "no sample exercised NFC, NBSP or entity resolution in the three anchors. A normalization pipeline is still required for determinism, but this evidence does not demonstrate a need for it, and must not be cited as if it did.",
+    "p_article__time": {
+      "combining_characters": false,
+      "cr": false,
+      "html_entities": false,
+      "lf": false,
+      "multiple_ascii_spaces": false,
+      "nbsp": false,
+      "non_ascii": false,
+      "note": "already clean on all 5 pages"
+    },
+    "p_releaseTime_first_text_node": {
+      "combining_characters": false,
+      "cr": false,
+      "html_entities": false,
+      "lf": true,
+      "multiple_ascii_spaces": true,
+      "nbsp": false,
+      "non_ascii": false,
+      "note": "trailing ASCII whitespace including LF on all 5 pages, so ASCII-whitespace collapse AND trim are REQUIRED for this field"
+    },
+    "unexercised_by_this_sample": [
+      "Unicode NFC",
+      "NBSP handling",
+      "HTML character references",
+      "CR or CRLF"
+    ]
+  },
+  "url_sourcing": {
+    "locally_cited_discovery_surfaces_used": [
+      "https://www.federalreserve.gov/feeds/press_monetary.xml",
+      "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    ],
+    "locally_cited_statement_urls_reused": [
+      "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm"
+    ],
+    "other_statement_urls_origin": "hyperlinks read from the official FOMC calendar page listed above",
+    "rule": "NO URL was invented. Every statement URL came from an official discovery surface already cited in local artefacts."
+  },
+  "version": 1
+}
