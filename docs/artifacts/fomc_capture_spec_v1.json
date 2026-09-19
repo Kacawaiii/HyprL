@@ -140,6 +140,7 @@
     },
     "FOMC28": {
       "case": "REDIRECT DESTINATION CHANGES",
+      "changed_body": "append a NEW immutable content revision under SAME S according to existing revision_policy",
       "first_observation": {
         "discovered_url": "U1",
         "expected_identity_url": "normalize(U1)",
@@ -154,7 +155,6 @@
       },
       "preconditions": "same provider_id and event_family; same normalized official discovery URL; both redirect chains pass existing security rules",
       "same_body": "SAME content revision; transport movement alone creates no content revision",
-      "changed_body": "append a NEW immutable content revision under SAME S according to existing revision_policy",
       "verdict": "U1 -> U2 then U1 -> U3 keeps canonical_primary_statement_url = normalize(U1) and source_item_id = S. Record differing transport provenance. No new logical item and no identity conflict solely from the redirect-topology change; existing independent GUID conflicts still apply."
     },
     "FOMC29": {
@@ -200,8 +200,8 @@
     },
     "FOMC33": {
       "case": "EXPLICIT DEFAULT HTTPS PORT",
-      "discovered_url_without_port": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
       "discovered_url_with_explicit_443": "https://www.federalreserve.gov:443/newsevents/pressreleases/monetary20260617a.htm",
+      "discovered_url_without_port": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
       "expected_identity_url_for_both": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm",
       "port_admitted_for_both": true,
       "preconditions": "same provider_id and event_family; only explicit default-port presence differs; all other existing official-discovery and URL validation requirements hold",
@@ -338,8 +338,8 @@
     },
     "FOMC45": {
       "case": "UNKNOWN CHARSET",
-      "declared_charset": "x-unknown",
       "declaration_source": "HTTP charset or any recognized XML/HTML encoding declaration",
+      "declared_charset": "x-unknown",
       "normalized_revision_created": false,
       "raw_preserved": true,
       "source_health": "PARSER_FAILED",
@@ -365,6 +365,42 @@
       "selected_encoding": "UTF-8",
       "semantic_text_includes_signature_u_feff": false,
       "verdict": "PASS strict UTF-8 text decoding: HTTP, BOM and HTML meta all agree. Consume the single leading signature only in the text view. No first-wins/last-wins choice, alternate decoder or automatic EventRevision admission."
+    },
+    "FOMC48": {
+      "case": "DOCUMENT TITLE IS NON-AUTHORITATIVE - document <title> reads \"Federal Reserve Board - Federal Reserve issues FOMC statement\" and an inline SVG <title>Lock</title> is also present; h3.title reads \"Federal Reserve issues FOMC statement\"",
+      "verdict": "primary-page-title predicate MATCHES on the authoritative h3.title. Both <title> elements are ignored for classifier authority; the prefixed document title cannot cause a mismatch and the SVG title cannot interfere."
+    },
+    "FOMC49": {
+      "case": "DUPLICATE TITLE ANCHOR - two h3.title nodes inside the authoritative region",
+      "verdict": "PARSER_FAILED. No first/last/visible wins. No EventRevision. EVENTS_OBSERVED_ZERO blocked."
+    },
+    "FOMC50": {
+      "case": "DUPLICATE RELEASE ELEMENT - two p.releaseTime start elements inside the authoritative region",
+      "verdict": "PARSER_FAILED even if their text is identical. No first-match behaviour. No EventRevision. Zero blocked."
+    },
+    "FOMC51": {
+      "case": "MISSING REQUIRED ANCHOR - one of title/date/release absent while the page is otherwise syntactically valid",
+      "verdict": "PARSER_FAILED. No fallback to document metadata, whole-page text or any node outside the frozen region."
+    },
+    "FOMC52": {
+      "case": "ENTITY THEN NFC - authoritative text contains the semantic equivalent of \"&#101;&#769;\"",
+      "verdict": "character-reference resolution yields U+0065 U+0301, then NFC yields the canonical composed form where applicable. NFC-first is forbidden, so the outcome is order-independent only because the order is frozen."
+    },
+    "FOMC53": {
+      "case": "NBSP PRESERVED - authoritative text contains \"A&nbsp;B\"",
+      "verdict": "semantic text before comparison is A U+00A0 B. NBSP is not in the ASCII whitespace set and is NOT collapsed to U+0020. No browser-layout equivalence."
+    },
+    "FOMC54": {
+      "case": "UNCLOSED RELEASE PARAGRAPH - <p class=\"releaseTime\"> holds the release declaration, is never closed, and is followed by <ul class=\"list-unstyled\"> then the share menu and statement body",
+      "verdict": "release_line_source_text is ONLY the leading character data before <ul>. Normalized result is exactly the release declaration; no share-menu or body text is admitted. The parser DOM recovery strategy cannot alter this result. This is the real observed template on 5/5 evidence pages."
+    },
+    "FOMC55": {
+      "case": "EMPTY RELEASE LEADING TEXT - unique p.releaseTime exists but the next markup token arrives before any non-whitespace semantic character data",
+      "verdict": "PARSER_FAILED. No descendant or global fallback."
+    },
+    "FOMC56": {
+      "case": "LAST UPDATE SAME VALUE AS OFFICIAL DATE - p.article__time reads \"January 28, 2026\" and div#lastUpdate reads \"Last Update: January 28, 2026\"",
+      "verdict": "official_statement_date comes ONLY from p.article__time. An equal displayed value can never make div#lastUpdate authoritative - the distinction is structural, which is exactly why a value check would have failed to separate them on all 5 evidence samples."
     }
   },
   "authority_conflicts": {
@@ -396,6 +432,24 @@
   "capture_spec_id": "federal_reserve_fomc_capture_v1",
   "capture_spec_status": "FROZEN_PRE_IMPLEMENTATION",
   "capture_spec_version": 1,
+  "dom_anchor_evidence": {
+    "artifact_hash": "bd7d17d29c3f71efa24a503f9ffab75ff0ba2b051544dae25723daad745c6a3a",
+    "artifact_path": "docs/artifacts/fomc_dom_anchor_evidence_v1.json",
+    "commit": "1707895794c31a7ca9425f4a3dce48a6590b845c",
+    "evidence_id": "fomc_dom_anchor_evidence_v1",
+    "immediate_release_sample_observed": false,
+    "not_a_provider_contract": "the Federal Reserve publishes no markup contract. These anchors are empirical observations across the evidence sample, not a guaranteed API.",
+    "observed_template_families": 1,
+    "observed_years": [
+      "2021",
+      "2024",
+      "2025",
+      "2026"
+    ],
+    "role": "DESIGN/SPEC PROVENANCE ONLY. This hash explains why the anchors below were frozen. It is NOT an identity input: no runtime identity component is created from it, and source_item_id is unchanged.",
+    "sample_success_pages": 5,
+    "selector_status": "EMPIRICAL_FAIL_CLOSED_V1"
+  },
   "future_fixture_requirements": {
     "capture_authorization": "real historical raw fixtures may be captured only after implementation is authorised",
     "required_before_implementation_is_accepted": [
@@ -441,7 +495,12 @@
       "UTF-8 BOM handling is identical for XML and HTML: exactly one leading EF BB BF is omitted from the text view but retained in raw/hash/replay bytes; do not strip a subsequent U+FEFF or normalize other Unicode code points (FOMC43, FOMC47)",
       "strict UTF-8 rejects truncated/invalid continuation sequences, overlong forms, encoded surrogates and out-of-range code points; no ignore, replace, surrogateescape, heuristic detection or second decoder (FOMC46)",
       "replay charset decisions use the exact persisted relevant Content-Type values or recorded header absence plus the unchanged body bytes and spec hash; same inputs give the same text or PARSER_FAILED, without network metadata repair or locale/platform dependence",
-      "charset failures retain admitted raw/provenance and its byte hash, create no EventRevision, and block EVENTS_OBSERVED_ZERO for the affected feed/candidate; compatible text-gate success alone never establishes event admission"
+      "charset failures retain admitted raw/provenance and its byte hash, create no EventRevision, and block EVENTS_OBSERVED_ZERO for the affected feed/candidate; compatible text-gate success alone never establishes event admission",
+      "an unclosed p.releaseTime followed by <ul> (FOMC54)",
+      "duplicate title and duplicate release anchors (FOMC49, FOMC50)",
+      "a missing required anchor (FOMC51)",
+      "an empty release leading segment (FOMC55)",
+      "a prefixed document <title> plus inline SVG <title> (FOMC48)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -621,7 +680,10 @@
     "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only.",
     "F30": "MALFORMED PERCENT ESCAPES ARE REJECTED BEFORE IDENTITY OR REQUEST. Every literal % in an admitted V1 URL must begin PCT_ENCODED = % HEXDIG HEXDIG, with exactly two ASCII hex digits from 0-9, A-F or a-f. Otherwise FAIL CLOSED before canonical identity/source_item_id derivation or admission, before a primary request, and before redirect follow. This mandatory syntax gate does not decode, re-encode, repair or provide a literal-percent fallback. Valid escapes remain subject to existing component restrictions and path-preservation semantics; no new equivalence or hex-case normalization is introduced. Durable raw source text is not mutated.",
     "F31": "DECODED BODY SIZE IS ENFORCED DURING PRODUCTION. For every body consumed under V1's existing decoded-size policy, count decoded entity-body bytes incrementally from zero before charset/text decoding. Enforce the feed 2097152-byte or statement 5242880-byte cap during bounded output production, not after unbounded decompression. If the next output would exceed the cap, stop body decoding immediately, do not append excess bytes and do not continue to learn final size. Exactly the cap passes the size gate; cap + 1 rejects. Content-Length or compressed size cannot replace this gate. No oversized body or incomplete prefix reaches text decoding, XML/HTML parsing or normalization, becomes a complete admitted raw artifact or successful complete-body hash, or produces an EventRevision. Reuse PARSER_FAILED, never EVENTS_OBSERVED_ZERO. Existing successful-body hash/persistence/replay bytes and raw-first order remain unchanged.",
-    "F32": "TEXT DECODING IS SINGLE-VALUED AND STRICT UTF-8. Both V1 XML and HTML bodies use only UTF-8, also the explicit default when signals are absent. Every recognized HTTP/BOM/document encoding signal must be UTF-8-compatible under text_decoding_v1, or cause PARSER_FAILED; labels are limited to utf-8 and utf8 after the frozen ASCII-only label normalization. No competing authority, heuristic detection, fallback decoder, lossy error handling or platform codec/alias selection. Invalid UTF-8 and unsupported BOMs fail closed. Exactly one leading UTF-8 BOM is an encoding signature omitted from semantic text, never removed from raw/hash/replay bytes. Same verified admitted bytes plus persisted relevant HTTP metadata plus the same CaptureSpec hash MUST produce the same Unicode text or PARSER_FAILED. Charset failure preserves raw provenance, creates no EventRevision and cannot establish zero for an affected feed/candidate. Existing Unicode/whitespace transformations and FIX1-FIX8 remain unchanged."
+    "F32": "TEXT DECODING IS SINGLE-VALUED AND STRICT UTF-8. Both V1 XML and HTML bodies use only UTF-8, also the explicit default when signals are absent. Every recognized HTTP/BOM/document encoding signal must be UTF-8-compatible under text_decoding_v1, or cause PARSER_FAILED; labels are limited to utf-8 and utf8 after the frozen ASCII-only label normalization. No competing authority, heuristic detection, fallback decoder, lossy error handling or platform codec/alias selection. Invalid UTF-8 and unsupported BOMs fail closed. Exactly one leading UTF-8 BOM is an encoding signature omitted from semantic text, never removed from raw/hash/replay bytes. Same verified admitted bytes plus persisted relevant HTTP metadata plus the same CaptureSpec hash MUST produce the same Unicode text or PARSER_FAILED. Charset failure preserves raw provenance, creates no EventRevision and cannot establish zero for an affected feed/candidate. Existing Unicode/whitespace transformations and FIX1-FIX8 remain unchanged.",
+    "F33": "HTML SEMANTIC ANCHORS ARE UNIQUE AND AUTHORITATIVE. primary_page_title is the unique h3.title within the frozen article-heading region; official_statement_date the unique p.article__time; release_line the unique p.releaseTime start element. No document-metadata, inline-SVG, global-text or traversal-order fallback may substitute. Zero or more than one match: PARSER_FAILED.",
+    "F34": "RELEASE LINE EXTENT IS TOKEN-BOUND, NOT RECOVERED-DOM-BOUND. release_line consists only of the leading character-data segment following the unique p.releaseTime start tag and preceding the next markup token. Recovered descendant .textContent is forbidden as authority. This closes the observed unclosed-paragraph problem.",
+    "F35": "SEMANTIC TEXT NORMALIZATION ORDER IS SINGLE-VALUED: (1) character-reference-aware field extraction, (2) NFC, (3) ASCII-whitespace collapse, (4) U+0020 trim, (5) exact compare or strict parse. No reordering."
   },
   "item_predicate": {
     "classification_states": {
@@ -640,7 +702,7 @@
     ],
     "known_v1_narrowness": "an unscheduled or differently-titled FOMC action is NOT captured by V1. It is recorded as an UNRESOLVED_CANDIDATE and blocks the zero assertion, rather than being silently treated as absent. Widening the positive predicate requires a spec revision.",
     "no_broad_semantic_classifier": "V1 must NOT be widened with keyword lists, semantic similarity, an LLM, regex over body text, or hardcoded emergency-action vocabulary. Honest incompleteness beats speculative coverage.",
-    "normalization": "exact match after Unicode NFC, HTML entity unescaping, and collapsing runs of ASCII whitespace to one space; comparison is case-sensitive",
+    "normalization": "extract from parser_policy.primary_page_title_anchor, then apply parser_policy.semantic_text_normalization in its frozen order; comparison is exact and case-sensitive",
     "on_positive_predicate_no_match": "classification = UNRESOLVED_CANDIDATE unless an explicit frozen negative rule proves DEFINITELY_OUT_OF_SCOPE. No normalized FOMC EventRevision is created either way, but an UNRESOLVED_CANDIDATE BLOCKS any zero assertion for that cycle until it is deterministically resolved.",
     "primary_page_title_exact": "Federal Reserve issues FOMC statement",
     "role": "POSITIVE CLASSIFIER FOR THE V1 SUBSET ONLY - a non-match is NOT proof that an item is not an FOMC monetary-policy event",
@@ -756,6 +818,21 @@
     "timestamp_trust_verdict"
   ],
   "parser_policy": {
+    "anchor_cardinality_failure": {
+      "distinction": "STRUCTURAL extraction failure - anchor absent, anchor duplicated, or release leading segment absent/ambiguous - is PARSER_FAILED. A SUCCESSFUL unique extraction whose normalized title merely differs from the expected title keeps the existing FIX2 classification/conflict semantics. These must NOT be collapsed.",
+      "new_global_health_state": false,
+      "normalized_revision_created": false,
+      "state": "PARSER_FAILED",
+      "zero_policy": "any required-primary anchor or extraction failure BLOCKS EVENTS_OBSERVED_ZERO under FIX2. A broken template can never mean \"no FOMC statement\"."
+    },
+    "anchor_drift_policy": {
+      "automatic_alternative_node_search": "FORBIDDEN",
+      "heuristic_broadening": "FORBIDDEN",
+      "historical_templates": "NO claim is made that these anchors hold for 2015, 2019, all Federal Reserve history or all monetary pages. Backfill pages outside the observed template family FAIL CLOSED if the anchors do not match. FIX10 adds no legacy selector.",
+      "immediate_release_note": "no \"For immediate release\" page was captured in the evidence sample, so its DOM placement is not empirically exercised. The existing immediate-release GRAMMAR is preserved unchanged: if it appears in the SAME frozen p.releaseTime anchor the existing grammar applies; if the structure differs, fail closed rather than guess.",
+      "on_cardinality_violation": "FAIL CLOSED / PARSER_FAILED",
+      "rationale": "intentional provider drift detection: if upstream markup changes, V1 must stop rather than guess"
+    },
     "determinism": "operates offline on verified locally stored raw body bytes and the persisted relevant HTTP Content-Type provenance required by text_decoding_v1; the same bytes, metadata and CaptureSpec hash must yield the same decoded text or PARSER_FAILED. No network or machine-dependent charset selection.",
     "forbidden": [
       "browser",
@@ -764,16 +841,123 @@
       "network subresource fetches",
       "shelling out"
     ],
-    "html_semantic_anchors": [
-      "official statement date",
-      "page title / event family",
-      "release line"
-    ],
+    "html_semantic_anchors": {
+      "official_statement_date": "see parser_policy.official_statement_date_anchor",
+      "primary_page_title": "see parser_policy.primary_page_title_anchor",
+      "release_line": "see parser_policy.release_line_anchor",
+      "superseded": "rev10 listed three bare names (\"official statement date\", \"page title / event family\", \"release line\") with no DOM authority, which R10 found could make two conforming implementations classify every statement oppositely"
+    },
+    "html_semantic_region": {
+      "anchor_relation_to_heading_container": "DIRECT_CHILD",
+      "forbidden_search_scopes": [
+        "document-wide text",
+        "footer",
+        "navigation",
+        "sidebar",
+        "inline SVG",
+        "document metadata",
+        "div#lastUpdate",
+        "any node outside div#article"
+      ],
+      "heading_container": {
+        "class_token_contains": "heading",
+        "relation_to_root": "DIRECT_CHILD",
+        "tag": "div"
+      },
+      "layout_classes_not_required": "the observed heading container also carried col-xs-12 col-sm-8 col-md-8. Those are presentational and are NOT required; only the heading class token is.",
+      "relation_justification": "the evidence records the full observed path div#article / div.heading.col-xs-12.col-sm-8.col-md-8 / {h3.title | p.article__time | p.releaseTime} on 5/5 pages, so the DIRECT_CHILD relation is what the evidence proves and is not a strengthening beyond it.",
+      "root": {
+        "id": "article",
+        "tag": "div"
+      }
+    },
     "identity_url_input": "supplied by identity.identity_url_authority from durable official discovery provenance; never parsed from primary HTML as a semantic anchor. HTML canonical handling is identity.html_canonical_role.",
     "llm": "FORBIDDEN anywhere in ingestion - an LLM may not decide whether something is an FOMC statement, nor its date, release time, identity, revision or source authority",
+    "official_statement_date_anchor": {
+      "class_token_contains": "article__time",
+      "duplicate_rule": "even two identical duplicate dates are structural ambiguity -> PARSER_FAILED; no value-based dedupe",
+      "fallback": "NONE",
+      "identity_role": "UNCHANGED - remains revision metadata and NON-IDENTIFYING per FIX3",
+      "last_update_authoritative": false,
+      "last_update_forbidden_as": [
+        "official_statement_date",
+        "declared_release_at",
+        "source_available_at",
+        "source_updated_at",
+        "content vintage proof"
+      ],
+      "last_update_negative_control": "div#lastUpdate sits OUTSIDE div#article (observed directly under div.row), so it is structurally separable. Its DISPLAYED VALUE equalled the statement date on all 5 samples, so only STRUCTURE can distinguish them - a value check never could.",
+      "multiple_matches": "PARSER_FAILED",
+      "region": "html_semantic_region",
+      "required_matches": 1,
+      "tag": "p",
+      "zero_matches": "PARSER_FAILED"
+    },
     "official_statement_date_determinism": {
       "failure": "PARSER/NORMALIZER DETERMINISM FAILURE is a diagnostic, not a new global source-health state. FAIL CLOSED for parser/spec inconsistency or corruption: no second content revision, no silent normalized mutation; existing raw and immutable revisions remain intact.",
       "rule": "identical verified persisted primary raw body bytes under the SAME CaptureSpec hash MUST yield identical official_statement_date metadata. A differing date with the same verified body hash is not an upstream content revision."
+    },
+    "primary_page_title_anchor": {
+      "class_token_contains": "title",
+      "comparison": "exact string comparison against \"Federal Reserve issues FOMC statement\" after the frozen normalization pipeline. No contains, startswith, endswith, case-insensitive, fuzzy match or prefix-stripping heuristic.",
+      "document_title_authoritative": false,
+      "document_title_negative_control": "the HTML document <title> is NOT the classifier authority on two independent evidenced grounds: its observed text is \"Federal Reserve Board - Federal Reserve issues FOMC statement\", which is PREFIXED and fails the exact predicate; and the selector is NOT UNIQUE - every sampled page carried a second <title>Lock</title> inside an inline SVG banner icon. A generic <title> lookup is therefore forbidden.",
+      "document_title_permitted_use": "diagnostics/provenance only; it can neither satisfy nor break the classifier",
+      "fallback": "NONE",
+      "multiple_matches": "PARSER_FAILED",
+      "region": "html_semantic_region",
+      "required_matches": 1,
+      "tag": "h3",
+      "zero_matches": "PARSER_FAILED"
+    },
+    "release_line_anchor": {
+      "character_references": "resolved to Unicode as part of extraction, BEFORE NFC; extraction never extends through later markup because descendant text exists",
+      "class_token_contains": "releaseTime",
+      "duplicate_rule": "two p.releaseTime start tags -> PARSER_FAILED even if their text is identical; no first/last wins",
+      "empty_leading_segment": "if the unique start tag exists but no non-whitespace semantic character data precedes the first subsequent markup token: PARSER_FAILED. No fallback to descendant text and no later scan of the page.",
+      "fallback": "NONE",
+      "multiple_declarations_in_segment": "the single extracted segment must satisfy exactly one strict release declaration grammar; ambiguous or multiple independent declarations -> PARSER_FAILED, never first-match selection.",
+      "multiple_matches": "PARSER_FAILED",
+      "observed_result": "only the release declaration plus its surrounding raw whitespace; the <ul> and everything after it is excluded",
+      "recovered_dom_textcontent_authoritative": false,
+      "region": "html_semantic_region",
+      "required_start_element_matches": 1,
+      "tag": "p",
+      "text_extent": "LEADING_CHARACTER_DATA_UNTIL_NEXT_MARKUP_TOKEN",
+      "text_extent_rule": "after locating the UNIQUE p.releaseTime START TAG in the decoded HTML token stream, release_line_source_text is the concatenation of the contiguous character-data / character-reference-derived text immediately following that start tag and preceding the FIRST subsequent HTML markup token. That first markup token terminates the segment.",
+      "tokenization_requirement": "no parser library is pinned, but deterministic HTML tokenization sufficient to distinguish START TAG, CHARACTER DATA, CHARACTER REFERENCE and the next MARKUP TOKEN is required. Comments, declarations and tags after the start tag all terminate the segment. A parser that has already repaired the DOM in a way that loses this original token boundary may NOT substitute repaired .textContent. A tokenizer/event stream or an equivalent structural scan over the decoded HTML is acceptable provided these semantics are exact.",
+      "why_token_bound": "the evidence shows p.releaseTime is NEVER CLOSED: there is no </p> and the next markup is <ul class=\"list-unstyled\">. A WHATWG parser implicitly closes the paragraph there; a permissive parser does not and absorbs the share menu and the entire statement body. Defining the field by element.textContent, recursive descendant text, browser-rendered text or recovered-DOM subtree text would therefore NOT be single-valued. Token-bounded extraction removes all dependence on whether a parser closes the paragraph.",
+      "zero_matches": "PARSER_FAILED"
+    },
+    "semantic_text_normalization": {
+      "ascii_whitespace": [
+        "U+0009",
+        "U+000A",
+        "U+000C",
+        "U+000D",
+        "U+0020"
+      ],
+      "compatibility_normalization": false,
+      "entity_before_nfc": "character-reference resolution occurs BEFORE NFC. \"&#101;&#769;\" resolves to U+0065 U+0301 and then NFC yields the canonical composed form where applicable. NFC-first is FORBIDDEN: it would leave a reference-encoded decomposed sequence unnormalized and make the classifier outcome order-dependent.",
+      "evidence_note": "h3.title and p.article__time were already clean ASCII on 5/5 samples; only the release leading segment carried trailing LF and multiple spaces, so collapse and trim are REQUIRED there. NFC, NBSP and character references were NOT exercised by the sample - the pipeline is frozen for determinism, not because the sample demonstrated a need.",
+      "forbidden_transforms": [
+        "NFD",
+        "NFKC",
+        "NFKD",
+        "case folding",
+        "accent removal",
+        "locale-sensitive normalization"
+      ],
+      "nbsp_rule": "U+00A0 is NOT in the ASCII whitespace set. \"&nbsp;\" resolves to U+00A0 and is NOT collapsed to U+0020 by this pipeline. No browser-layout whitespace equivalence is introduced.",
+      "nbsp_to_ascii_space": false,
+      "order": [
+        "1. HTML_CHARACTER_REFERENCE_RESOLUTION_DURING_FIELD_EXTRACTION - extract text ONLY from the frozen field-specific source: for title and date the semantic text of the unique authoritative node; for release the token-bounded leading segment defined above",
+        "2. UNICODE_NFC",
+        "3. COLLAPSE_ASCII_WHITESPACE_TO_U0020 - every maximal run of one or more ASCII whitespace code points becomes exactly one U+0020",
+        "4. TRIM_U0020 - trim leading and trailing U+0020",
+        "5. FIELD_SPECIFIC_EXACT_COMPARE_OR_STRICT_PARSE"
+      ],
+      "order_is_mandatory": true
     },
     "text_decoding_v1": {
       "applies_to": [
@@ -1026,7 +1210,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 10 addresses ONLY the MEDIUM found at point 5 of counter-review R9: charset authority was unspecified. XML and HTML now use STRICT UTF-8 ONLY, including the explicit default, with utf-8/utf8 as the sole labels after syntax-level quote/ASCII-whitespace handling and ASCII case folding. HTTP, BOM and recognized document declarations are consistency constraints: unsupported, unknown or conflicting signals and invalid UTF-8 yield existing PARSER_FAILED, no EventRevision and no zero from a failed feed/candidate. No heuristics, platform aliases, lossy errors or fallback. A single leading UTF-8 signature is omitted only from semantic text; raw/hash/replay bytes and bounded body production are unchanged. Exact Content-Type provenance is required for offline replay. F32 and FOMC41-FOMC47 bind the fix. FIX1-FIX8 remain intact. No new Unicode/whitespace rule, XML entity policy, HTML recovery policy, HTTP status/304 rule, retry/rate-window/scheduler/recheck/restart/overdue/timeout/DNS rule, or broader health matrix change. No design change, runtime, fixture, network or independent counter-review in this fix; full review remains pending.",
+  "revision_note": "Spec revision 11 closes the MEDIUM found by counter-review R10, using the structural evidence captured and committed as fomc_dom_anchor_evidence_v1 (bd7d17d2, commit 1707895). The three HTML semantic anchors are now frozen to evidence-backed DOM authorities instead of three bare names, the document <title> is excluded on both prefix and non-uniqueness grounds, div#lastUpdate is excluded structurally rather than by value, the release line is extracted token-bounded because the paragraph is never closed upstream, and the normalization order is numbered. Revisions 1-10 semantics are preserved unchanged.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -1123,7 +1307,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 10,
+  "spec_revision": 11,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -1135,7 +1319,8 @@
     "6693a665e3aca6c1ca73c88427d5abb545d887c409b6fee0f674a95ed01cacb4",
     "3db091251be2f644164a66f87d0dd31d1280c48acfbd1d6d67d03396e0d2085e",
     "c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3",
-    "0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8"
+    "0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8",
+    "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -1254,7 +1439,7 @@
         "EDT": "-04:00",
         "EST": "-05:00"
       },
-      "normalization": "HTML entities unescaped; runs of ASCII whitespace collapsed to one space; leading/trailing whitespace stripped; match is otherwise literal and case-sensitive",
+      "normalization": "extract from parser_policy.release_line_anchor using its token-bounded text extent, then apply parser_policy.semantic_text_normalization in its frozen order; the strict release grammar is otherwise unchanged",
       "role_in_v1": "NON-GATING provider-declared release metadata. The strict grammar is RETAINED unchanged; only its role changed - it no longer gates content revision visibility.",
       "timezone_inference": "FORBIDDEN - the abbreviation is read from the document, never derived from the date"
     },
@@ -1269,6 +1454,7 @@
       "accepted_grammar": "US long form '<Month> <D>, <YYYY>' as printed adjacent to the statement title",
       "authority": "the official statement page",
       "evidence": "verified structure: date line, then 'Federal Reserve issues FOMC statement', then the release line",
+      "extraction": "parser_policy.official_statement_date_anchor (unique p.article__time in the frozen region)",
       "forbidden_sources": [
         "Last Update",
         "HTTP Last-Modified",
@@ -1440,7 +1626,9 @@
       "redistribution policy",
       "release-time vs content-vintage separation",
       "scope and coverage claim",
-      "zero-assertion preconditions"
+      "zero-assertion preconditions",
+      "HTML semantic anchor authorities",
+      "semantic text normalization order"
     ],
     "silent_mutation": "FORBIDDEN"
   },

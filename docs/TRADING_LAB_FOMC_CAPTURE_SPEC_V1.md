@@ -7,24 +7,29 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 10 — authoritative)
-3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d
+CAPTURE SPEC HASH  (revision 11 — authoritative)
+b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43
 
-supersedes 74571bb0… (rev 1) → b852b560… (rev 2) → d4242ea5… (rev 3) → f0b68307… (rev 4) → 8a39a39a… (rev 5) → 6693a665… (rev 6) → 3db09125… (rev 7) → c1d56f46… (rev 8) → 0757b1f5… (rev 9)
+supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
+        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 (rev 10)
 
 BINDS
   event intelligence design rev4
   4d0d451494b7d4b7ea50552817f035c2da1b38a234b1e5e922a9ea4263726689
   provider verification rev3
   e854ddb9cc8b5bc2634fe6ca6fc793289bafd6c94bb49dde71109e1d17341034
+  FOMC DOM anchor evidence V1
+  bd7d17d29c3f71efa24a503f9ffab75ff0ba2b051544dae25723daad745c6a3a
+  commit 1707895794c31a7ca9425f4a3dce48a6590b845c
 ```
 
 Canonical artefact: `docs/artifacts/fomc_capture_spec_v1.json`. **The JSON is
 authoritative.** Every causal and security decision lives there; this document
 explains why, and adds nothing the JSON does not already bind.
 
-This spec was built entirely from provider evidence already audited and frozen
-in revision 3. **No network request was made while writing it.**
+This spec was built from provider evidence already audited and frozen, plus the
+committed DOM anchor evidence bound above. **No network request was made while
+writing revision 11.**
 
 ---
 
@@ -77,10 +82,6 @@ AND
 primary page title      == "Federal Reserve issues FOMC statement"
 ```
 
-after Unicode NFC, entity unescaping and whitespace collapsing. That exact
-title was verified on the FOMC statement feed items and on statement pages
-sampled across 2015–2026.
-
 Revision 2 treated a non-match as *"NOT an FOMC event"* — a definitive
 negative. Counter-review R2 showed where that leads: a successful poll could
 skip a differently-titled official monetary action and then report
@@ -88,6 +89,110 @@ skip a differently-titled official monetary action and then report
 predicate is now what it always actually was — a **positive classifier for the
 V1 subset**, and nothing more.
 
+### Where those values are read from — the anchors
+
+Revision 10 named three anchors and defined none of them: `"official statement
+date"`, `"page title / event family"`, `"release line"`. R10 showed that is not
+a specification. The document `<title>` and the visible heading carry *different
+strings*, so one implementation would classify every statement and another would
+classify none — both conforming.
+
+Revision 11 freezes the anchors against committed structural evidence
+(`bd7d17d2`, 5 pages, 2021–2026):
+
+```
+div#article
+  └─ div[class token "heading"]        ← authoritative region
+       ├─ p.article__time              → official_statement_date
+       ├─ h3.title                     → primary_page_title
+       └─ p.releaseTime                → release_line (start tag)
+```
+
+Each anchor must resolve to **exactly one** node. Zero or two →
+`PARSER_FAILED`, never first-wins, last-wins, visible-wins or traversal order.
+Layout classes on the heading container (`col-xs-12 col-sm-8 col-md-8`) were
+observed but are **not** required; only the `heading` token is.
+
+**The document `<title>` is excluded on two independent grounds.** Its text is
+`Federal Reserve Board - Federal Reserve issues FOMC statement` — prefixed, so it
+fails the exact predicate. And the selector is **not unique**: every sampled page
+carries a second `<title>Lock</title>` inside an inline SVG icon. It survives as
+diagnostics only; it can neither satisfy nor break the classifier.
+
+**`div#lastUpdate` is excluded structurally, not by value.** It sits outside
+`div#article`. Its displayed value *equalled* the statement date on all five
+samples — so a value check could never have separated them. Only structure can.
+
+### The release line is token-bounded, not DOM-text-bounded
+
+The evidence turned up something that would have broken a naive freeze:
+
+```html
+<p class="releaseTime">For release at 2:00 p.m. EST
+<ul class="list-unstyled">        ← there is no </p>
+```
+
+**`p.releaseTime` is never closed.** A WHATWG parser implicitly closes the
+paragraph at `<ul>`; a permissive parser does not, and swallows the share menu
+and the entire statement body. That is not theoretical — it is why the evidence
+run's own first analysis pass found *zero* release candidates on all five pages
+while finding title and date instantly.
+
+So `release_line` is defined at the **token level**, not by DOM text:
+
+> after locating the unique `p.releaseTime` **start tag**, take the contiguous
+> character data immediately following it and preceding the **first subsequent
+> markup token**.
+
+`element.textContent`, recursive descendant text, browser-rendered text and
+recovered-DOM subtree text are all **forbidden as authority**. No parser library
+is pinned; deterministic tokenization distinguishing start tag / character data /
+character reference / next markup token is required. A parser that has already
+repaired the DOM past that boundary may not substitute its repaired text.
+
+Empty leading segment → `PARSER_FAILED`. Two independent declarations in the
+segment → `PARSER_FAILED`. Never first-match.
+
+### The normalization pipeline, in order
+
+R10 also found the transformations were listed without an order, which changes
+results. Now numbered:
+
+```
+1. extract text from the frozen field source, resolving HTML character references
+2. Unicode NFC
+3. collapse each run of ASCII whitespace (09, 0A, 0C, 0D, 20) to one U+0020
+4. trim leading/trailing U+0020
+5. exact compare, or strict grammar parse
+```
+
+**Entity resolution precedes NFC.** `&#101;&#769;` → `U+0065 U+0301` → NFC →
+composed form. NFC-first would leave a reference-encoded decomposed sequence
+unnormalized and make the outcome order-dependent.
+
+**NBSP is preserved.** `U+00A0` is not ASCII whitespace, so `&nbsp;` survives
+step 3 as `U+00A0`. No browser-layout equivalence is imported. Only NFC — never
+NFD, NFKC, NFKD, case folding or accent removal.
+
+On the evidence: `h3.title` and `p.article__time` were already clean ASCII on
+5/5; only the release segment carried trailing LF and multiple spaces, so collapse
+and trim are genuinely required there. NFC, NBSP and character references were
+**not exercised** by the sample — the pipeline is frozen for determinism, not
+because the data demanded it.
+
+### These anchors are empirical, and fail closed
+
+The Federal Reserve publishes no markup contract. The anchors hold across 5
+pages, 2021–2026, one template family. Nothing is claimed for 2015, 2019, all Fed
+history or all monetary pages, and no `For immediate release` page was captured —
+so its DOM placement is not empirically exercised, though its **grammar** is
+unchanged: same anchor, existing grammar; different structure, fail closed.
+
+If upstream markup drifts and cardinality breaks, V1 stops with `PARSER_FAILED`.
+Heuristic broadening and automatic alternative-node search are forbidden. That is
+deliberate drift detection, not a limitation to be engineered around.
+
+### Three outcomes, not two
 ### Three outcomes, not two
 
 | state | meaning |
@@ -736,7 +841,7 @@ authority. Those are deterministic parses or they are nothing.
 
 ## 11. Forty-seven cases, decided in advance
 
-`FOMC01`–`FOMC25` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC56` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
