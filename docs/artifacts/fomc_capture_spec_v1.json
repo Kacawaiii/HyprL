@@ -425,6 +425,46 @@
     "FOMC62": {
       "case": "DOCTYPE-LIKE TEXT IN A COMMENT - \"<!-- <!DOCTYPE rss [ ... ]> -->\" with no actual DOCTYPE declaration",
       "verdict": "NOT rejected. The security gate is syntax-aware, so a character sequence inside comment text is not a prohibited construct. This case exists specifically to prove the policy is not naive substring matching."
+    },
+    "FOMC63": {
+      "case": "404 WITH VALID-LOOKING STATEMENT BODY - status 404, body is valid UTF-8 with correct anchors, the exact title and a valid release line",
+      "verdict": "SOURCE_UNAVAILABLE. No HTML semantic parse, no EventRevision, no zero. Body appearance cannot override status."
+    },
+    "FOMC64": {
+      "case": "500 WITH VALID-LOOKING RSS - status 500, body is well-formed valid-looking Fed RSS",
+      "verdict": "SOURCE_UNAVAILABLE. No semantic feed success and no EVENTS_OBSERVED_ZERO."
+    },
+    "FOMC65": {
+      "case": "206 PARTIAL CONTENT - status 206, body is a syntactically valid partial statement",
+      "verdict": "SOURCE_UNAVAILABLE. No content admission, no successful body hash, no EventRevision. This is the server-declared counterpart to the client-side truncation FIX8 already forbade."
+    },
+    "FOMC66": {
+      "case": "204 NO CONTENT - status 204",
+      "verdict": "SOURCE_UNAVAILABLE. No accepted empty body, no hash, no revision, no zero."
+    },
+    "FOMC67": {
+      "case": "304 WITHOUT PRIOR BODY - status 304 and no verified prior body exists",
+      "verdict": "SOURCE_UNAVAILABLE. No body reuse, no synthesized body, no revision."
+    },
+    "FOMC68": {
+      "case": "304 WITH VERIFIED PRIOR BODY - status 304 while a verified prior complete body exists locally",
+      "verdict": "SOURCE_UNAVAILABLE anyway. V1 conditional caching and reuse remain unsupported. The prior body remains historical local data and is NOT substituted into this HTTP observation; no new EventRevision is caused by a 304."
+    },
+    "FOMC69": {
+      "case": "VALID REDIRECT CHAIN TO 200 - initial 302, then 301, then final 200, all targets valid on the allowed host",
+      "verdict": "the allowed transitions are followed and the final 200 body may enter the normal pipeline. Logical identity remains the original official discovery URL; the final URL is non-identifying provenance."
+    },
+    "FOMC70": {
+      "case": "FOURTH REDIRECT - the chain produces four redirect responses",
+      "verdict": "the first three transitions may be followed. When the response after redirect #3 is itself a redirect, that fourth target is NOT requested. SOURCE_UNAVAILABLE, no semantic body admission."
+    },
+    "FOMC71": {
+      "case": "REDIRECT WITHOUT LOCATION - an allowed redirect status such as 302 with no Location header",
+      "verdict": "SOURCE_UNAVAILABLE. The target is never guessed or reconstructed."
+    },
+    "FOMC72": {
+      "case": "CACHE VALIDATOR IS NON-CAUSAL - a response carries ETag and Last-Modified",
+      "verdict": "both may be persisted as HTTP provenance. Neither may set source_available_at, source_updated_at, declared_release_at, observed_at or ingested_at, and no content-vintage inference may be drawn."
     }
   },
   "authority_conflicts": {
@@ -530,15 +570,55 @@
       "an external parameter entity / external DTD chain (FOMC59)",
       "an XInclude construct (FOMC60)",
       "built-in XML entity references and numeric character references accepted (FOMC61)",
-      "DOCTYPE-like text inside an XML comment accepted (FOMC62)"
+      "DOCTYPE-like text inside an XML comment accepted (FOMC62)",
+      "404 and 500 responses whose bodies look like valid statements/RSS (FOMC63, FOMC64)",
+      "206 partial content, 204 no content (FOMC65, FOMC66)",
+      "304 with and without a verified prior body (FOMC67, FOMC68)",
+      "a valid 302 -> 301 -> 200 redirect chain preserving pre-redirect identity (FOMC69)",
+      "a fourth redirect whose target is never requested (FOMC70)",
+      "an allowed redirect status with no Location header (FOMC71)",
+      "ETag and Last-Modified present but never causal (FOMC72)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
   "http_policy": {
     "browser": false,
+    "cache_validators": {
+      "etag": {
+        "causal_timestamp_role": "NONE",
+        "role": "PROVENANCE_ONLY"
+      },
+      "fix1_consistency": "these validators cannot retroproject a later-fetched body; this is the same prohibition FIX1 froze for Last Update",
+      "http_date": {
+        "causal_timestamp_role": "NONE",
+        "note": "transport provenance; never content-vintage proof and never a replacement for observed_at or ingested_at",
+        "role": "PROVENANCE_ONLY"
+      },
+      "last_modified": {
+        "causal_timestamp_role": "NONE",
+        "role": "PROVENANCE_ONLY"
+      },
+      "may_be_retained_as": "exact HTTP provenance/diagnostic metadata under existing provenance semantics",
+      "must_never_become": [
+        "a request-decision input in V1",
+        "source_available_at",
+        "source_updated_at",
+        "declared_release_at",
+        "observed_at",
+        "ingested_at",
+        "content-vintage proof",
+        "historical availability proof"
+      ]
+    },
     "client_user_agent": "hyprl-trading-lab-event-capture/1.0",
     "client_user_agent_policy": "IDENTIFYING_STANDARD_HTTP_CLIENT",
-    "conditional_requests": "V1 CORRECTNESS MUST NOT DEPEND ON HTTP 304. A conditional request may never be the reason a raw artefact is missing. Any later use requires separate review.",
+    "conditional_requests": {
+      "conditional_get": "FORBIDDEN",
+      "if_modified_since": "FORBIDDEN",
+      "if_none_match": "FORBIDDEN",
+      "rule": "FOMC V1 MUST NOT send If-None-Match or If-Modified-Since, so normal compliant operation never depends on receiving a 304. If an upstream or proxy nevertheless produces one, the 304 policy applies: SOURCE_UNAVAILABLE.",
+      "superseded_wording": "rev12 said only \"V1 CORRECTNESS MUST NOT DEPEND ON HTTP 304\", which never stated what happens IF a 304 arrives. That gap is now closed."
+    },
     "connect_timeout_seconds": 10,
     "decoded_body_limit_enforcement": {
       "abort_on_would_exceed": true,
@@ -585,6 +665,67 @@
       "text_decoder_receives_oversized_body": false,
       "truncation_and_parse": "FORBIDDEN"
     },
+    "http_status_policy": {
+      "body_appearance_cannot_override_status": "a 404 body containing perfectly valid-looking FOMC HTML is SOURCE_UNAVAILABLE with no HTML semantic parse, no event and no zero. A 500 body containing well-formed valid-looking Fed RSS is SOURCE_UNAVAILABLE with no feed success and no EVENTS_OBSERVED_ZERO.",
+      "final_body_admission": {
+        "accepted_statuses": [
+          200
+        ],
+        "all_other_final_statuses": {
+          "admission": "REJECT",
+          "covers_non_exhaustively": [
+            "1xx",
+            "201-299 except 200",
+            "3xx not successfully followed as an intermediate redirect",
+            "4xx",
+            "5xx"
+          ],
+          "event_revision": false,
+          "health": "SOURCE_UNAVAILABLE",
+          "semantic_parse": false,
+          "zero_eligible": false
+        },
+        "applies_equally_to": [
+          "the monetary RSS/XML discovery feed",
+          "the primary statement HTML",
+          "scheduled statement re-observations"
+        ],
+        "rule": "a final HTTP response body is eligible for NORMAL FOMC V1 content processing IF AND ONLY IF final_status_code == 200, by EXACT equality. NOT any 2xx, NOT status < 400, NOT \"a body is present\", NOT \"the body looks valid\"."
+      },
+      "fix12_non_scope": "FIX12 does NOT decide whether a 429, 500, 503 or timeout is retried - it only freezes that if such a response is the FINAL response of the logical attempt, it is non-admitted and maps to SOURCE_UNAVAILABLE. Retry policy, and whether redirect hops or retries count toward the 6-per-minute ceiling, remain for R13.",
+      "gate_order": [
+        "1. receive response headers and status",
+        "2. record allowed transport/provenance metadata under existing semantics",
+        "3. classify the response as an intermediate allowed redirect, a final exact 200, or a non-admitted final/error response",
+        "4. ONLY a final exact 200 may enter normal complete-body acquisition, decoded-size enforcement, durable-body persistence, content hashing, text decoding and semantic parsing"
+      ],
+      "no_content": {
+        "admission": "REJECT",
+        "health": "SOURCE_UNAVAILABLE",
+        "rule": "no accepted empty body, no successful content hash representing a valid statement or feed, no EventRevision, no EVENTS_OBSERVED_ZERO",
+        "status_204": "UNSUPPORTED"
+      },
+      "non_admitted_body_rule": "a final non-200 body MUST NOT be used as parser input, and MUST NOT be hashed or persisted AS IF it were a successful admitted content body. Diagnostic transport provenance retained under existing raw primitives remains explicitly NON_ADMITTED.",
+      "not_modified": {
+        "admission": "REJECT",
+        "even_with_verified_prior_body": "conditional caching and reuse remain unsupported even when a verified prior body exists. That prior body remains historical local data and is NOT substituted into this HTTP observation.",
+        "health": "SOURCE_UNAVAILABLE",
+        "prior_body_reuse": "FORBIDDEN",
+        "rule": "V1 does NOT reuse an old body in response to 304: no body hash, no new EventRevision, no reuse of a previous body, no synthesized body and no clean zero.",
+        "status_304": "UNSUPPORTED",
+        "why": "deliberately avoids introducing a second cache/replay semantics into V1"
+      },
+      "partial_content": {
+        "admission": "REJECT",
+        "extends_fix8": "this extends FIX8's \"no incomplete prefix may be treated as a complete response\" property to SERVER-DECLARED Partial Content. FIX8 covered truncation the CLIENT causes by aborting; 206 is incompleteness the SERVER declares, and arrives complete at the transport layer.",
+        "health": "SOURCE_UNAVAILABLE",
+        "if_range": "FORBIDDEN",
+        "range_requests": "FORBIDDEN",
+        "rule": "Range retrieval is unsupported in V1 and the client MUST NOT send Range or If-Range. A 206 received unexpectedly yields no successful body hash, no semantic parser input, no EventRevision and is never interpreted as a complete response.",
+        "status_206": "UNSUPPORTED"
+      },
+      "status_200_is_not_semantic_success": "the status gate alone does NOT mean semantic success. An admitted body must still pass every existing gate: decoded-size bound, complete-body semantics, durable raw and hash, UTF-8, XML/HTML security, parser and classifier, and commit. 200 bypasses no existing validation."
+    },
     "https_only": true,
     "javascript": false,
     "max_feed_body_bytes": 2097152,
@@ -593,9 +734,49 @@
     "max_statement_body_bytes": 5242880,
     "network_during_replay": false,
     "provider_user_agent_requirement": "UNKNOWN",
+    "raw_first_and_status": {
+      "admitted_final_200": "the durable raw body exists before any normalized semantic visibility - the existing raw-first guarantee is unchanged",
+      "clarification": "raw-first does NOT mean \"parse every HTTP body regardless of status\"",
+      "diagnostic_digest_note": "if a separate low-level diagnostic transport digest already exists by design, it must not be confused with the admitted content hash",
+      "never_create_successful_content_hash_from": [
+        "a 204 empty payload",
+        "a 206 partial payload",
+        "a 304 empty payload",
+        "a 404 error body",
+        "a 500 error body",
+        "an intermediate redirect body"
+      ],
+      "non_admitted_status": "transport and status provenance may be durable under existing primitives, but there is NO admitted complete content body eligible for normal semantic replay or parsing",
+      "normal_content_hash_only_for": "a COMPLETE ADMITTED final-200 body"
+    },
     "read_timeout_note": "matches the repo convention REQUEST_TIMEOUT_SECONDS = 30",
     "read_timeout_seconds": 30,
     "redirect_chain_recorded": true,
+    "redirect_policy": {
+      "allowed_statuses": [
+        301,
+        302,
+        303,
+        307,
+        308
+      ],
+      "allowed_statuses_rule": "ONLY these intermediate redirect statuses may be FOLLOWED. A 3xx outside this set is a final non-admitted response: SOURCE_UNAVAILABLE.",
+      "body_rule": "bodies attached to intermediate 301/302/303/307/308 responses are never semantic feed or statement bodies: no XML/HTML semantic parse and no EventRevision from a redirect body. Retained transport diagnostics remain non-admitted and must never influence the classifier.",
+      "body_semantic_role": "NONE",
+      "every_target_validated_before_request": true,
+      "fourth_redirect_rule": "the fourth redirect Location target MUST NOT be requested; the logical fetch terminates with SOURCE_UNAVAILABLE",
+      "fourth_redirect_target_requested": false,
+      "identity_effect": "NONE",
+      "identity_rule": "a final 200 reached through valid redirects may enter the normal pipeline, but identity remains the FIX4 authority: the official discovery link BEFORE redirects. The final URL stays non-identifying provenance and redirects NEVER re-key source_item_id.",
+      "location_required": true,
+      "location_rule": "an allowed redirect status MUST carry a Location header that is syntactically valid under the existing URL security and canonicalization rules. Missing Location, malformed Location or an unsafe target all yield SOURCE_UNAVAILABLE. The target is NEVER guessed or reconstructed.",
+      "loop_rule": "a loop such as A -> B -> A terminates via the redirect-transition limit at the latest. No hidden automatic redirect following beyond max_followed_transitions. An implementation may detect a loop sooner only if that alters no admitted content semantics; the frozen deterministic behaviour is the transition count.",
+      "max_followed_transitions": 3,
+      "method": "GET",
+      "method_rule": "FOMC V1 requests are GET only and every followed redirect remains a GET. No POST, no body-bearing redirect semantics, no library-dependent method choice.",
+      "target_validation": "before EACH redirect follow the target must pass all V1 redirect URL security checks - HTTPS, host allowlist, userinfo, port, percent syntax and the rest - and validation occurs BEFORE the network request, so an unsafe target is never contacted",
+      "transition_semantics": "max_redirects = 3 means AT MOST THREE FOLLOWED REDIRECT TRANSITIONS after the initial request. Initial request -> redirect #1 -> follow -> redirect #2 -> follow -> redirect #3 -> follow. If the response after following redirect #3 is itself another redirect, that is redirect #4."
+    },
     "redirect_rule": "validated BEFORE being followed; destination must stay on the allowlist; off-allowlist => fail closed, host never contacted",
     "user_agent_note": "repo convention hyprl-trading-lab-<purpose>/<version>. No personal e-mail, no secret, no browser impersonation."
   },
@@ -715,7 +896,11 @@
     "F34": "RELEASE LINE EXTENT IS TOKEN-BOUND, NOT RECOVERED-DOM-BOUND. release_line consists only of the leading character-data segment following the unique p.releaseTime start tag and preceding the next markup token. Recovered descendant .textContent is forbidden as authority. This closes the observed unclosed-paragraph problem.",
     "F35": "SEMANTIC TEXT NORMALIZATION ORDER IS SINGLE-VALUED: (1) character-reference-aware field extraction, (2) NFC, (3) ASCII-whitespace collapse, (4) U+0020 trim, (5) exact compare or strict parse. No reordering.",
     "F36": "XML DISCOVERY PARSING HAS NO DTD / CUSTOM-ENTITY / XINCLUDE EXPANSION PATH. FOMC V1 discovery XML forbids DOCTYPE and XInclude. External DTDs, external general entities and external parameter entities are never resolved. Custom internal entity declarations are unsupported because DOCTYPE is forbidden, so the billion-laughs family is rejected before expansion. Parsing performs no network or filesystem resolution. Security rejection is PARSER_FAILED and blocks EVENTS_OBSERVED_ZERO.",
-    "F37": "HTTP BODY SIZE BOUNDS AND XML EXPANSION SECURITY ARE DISTINCT. The FIX8 feed cap of 2097152 bytes applies to decoded HTTP input bytes. XML parser safety does NOT rely on that cap to bound entity or XInclude expansion; parser-level amplification mechanisms are forbidden outright by FIX11."
+    "F37": "HTTP BODY SIZE BOUNDS AND XML EXPANSION SECURITY ARE DISTINCT. The FIX8 feed cap of 2097152 bytes applies to decoded HTTP input bytes. XML parser safety does NOT rely on that cap to bound entity or XInclude expansion; parser-level amplification mechanisms are forbidden outright by FIX11.",
+    "F38": "ONLY FINAL HTTP 200 CAN PRODUCE AN ADMITTED CONTENT BODY. Only exact final status 200 may enter the normal body, hash, text-decoding, parser and revision pipeline. Any other final status is non-admitted and cannot produce an EventRevision or a clean zero. Body appearance never overrides status.",
+    "F39": "PARTIAL / EMPTY / NOT-MODIFIED RESPONSES CANNOT MASQUERADE AS COMPLETE CONTENT. 206, 204 and 304 are unsupported and non-admitted in V1. No prior-body reuse on 304, no Range requests, no conditional requests, and no successful complete-body hash or revision from any of these statuses.",
+    "F40": "REDIRECT FOLLOWING IS EXPLICITLY BOUNDED AND NON-IDENTIFYING. Only 301, 302, 303, 307 and 308 may be followed, at most 3 transitions, with every target security-validated before the request. The fourth redirect target is never requested. Redirect bodies are non-semantic and identity remains the pre-redirect official discovery URL.",
+    "F41": "CACHE VALIDATORS ARE PROVENANCE, NEVER CONTENT-VINTAGE PROOF. ETag, Last-Modified and HTTP caching metadata cannot populate or infer causal content-availability timestamps. Conditional requests are disabled in V1."
   },
   "item_predicate": {
     "classification_states": {
@@ -1304,7 +1489,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 12 closes the MEDIUM found by counter-review R11. Revision 11 forbade XML EXTERNAL entity resolution, which does not stop an internal entity-expansion bomb: that attack declares only internal entities and resolves nothing externally. The FIX8 decoded-body cap does not help either, because it bounds HTTP input bytes before the parser runs. V1 now forbids DOCTYPE outright, which removes the custom entity declaration machinery altogether, and forbids XInclude, external DTDs, and external general and parameter entities explicitly. Detection is syntax-aware so comment text is not falsely rejected, and the built-in XML entities stay valid. Revisions 1-11 semantics are preserved unchanged.",
+  "revision_note": "Spec revision 13 closes the MEDIUM found by counter-review R12. Revision 12 recorded the HTTP status as provenance but never said which final status admits a body, so the raw-first order - which is status-agnostic - could be read as licence to hash, persist and parse a 404, 500 or 206 body that merely looked like a statement. V1 now admits a body IFF the final status is exactly 200. 206, 204 and 304 are unsupported, conditional requests and Range are forbidden, ETag/Last-Modified/HTTP Date are provenance only and never causal, and the redirect contract is exact: five allowed statuses, at most three followed transitions, Location required, every target validated before the request, the fourth target never requested, redirect bodies non-semantic and identity still the pre-redirect discovery URL. Revisions 1-12 semantics are preserved unchanged.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -1377,6 +1562,9 @@
   ],
   "source_health": {
     "mappings": {
+      "HTTP 204 No Content received (unsupported)": "SOURCE_UNAVAILABLE",
+      "HTTP 206 Partial Content received (unsupported)": "SOURCE_UNAVAILABLE",
+      "HTTP 304 Not Modified received (unsupported)": "SOURCE_UNAVAILABLE",
       "client ceiling reached": "RATE_LIMITED",
       "decoded body exceeds the frozen size bound": "PARSER_FAILED",
       "feed XML DOCTYPE declaration detected": "PARSER_FAILED",
@@ -1389,11 +1577,16 @@
       "feed fetched and parsed, all relevant items deterministically classified, zero IN_SCOPE_V1 admitted, zero unresolved candidates": "EVENTS_OBSERVED_ZERO",
       "feed item cannot be deterministically classified (UNRESOLVED_CANDIDATE)": "PARSER_FAILED",
       "feed title matches but primary page title does not (classification conflict)": "PARSER_FAILED",
+      "final HTTP status is not exactly 200": "SOURCE_UNAVAILABLE",
       "normalization persistence failure": "no ingested_at, no EventRevision visibility",
       "positive feed candidate but primary statement fetch failed": "SOURCE_UNAVAILABLE",
       "primary statement HTML malformed": "PARSER_FAILED",
       "raw integrity failure": "fail closed at verified replay",
+      "redirect Location missing or malformed": "SOURCE_UNAVAILABLE",
       "redirect destination rejected by the allowlist": "SOURCE_UNAVAILABLE",
+      "redirect status outside the allowed set": "SOURCE_UNAVAILABLE",
+      "redirect target rejected by URL security validation": "SOURCE_UNAVAILABLE",
+      "redirect transition limit exceeded": "SOURCE_UNAVAILABLE",
       "release line is 'For immediate release'": "NOT a health failure - event valid, source_available_at unavailable",
       "release line unrecognised / malformed": "PARSER_FAILED",
       "surface not polled this interval": "SOURCE_NOT_CHECKED"
@@ -1410,13 +1603,14 @@
     "scope_note": "a feed outage must NOT mark all Federal Reserve data globally unavailable",
     "scoped_per_surface": true,
     "state_reuse_note": "UNRESOLVED_CANDIDATE and classification conflict map onto the existing rev4 PARSER_FAILED state: classification is a normalization step over fetched bytes, and rev4 constrains PARSER_FAILED by name only. No sixth global state is invented. The provider-local classification outcome is carried as a diagnostic detail attached to that frozen state.",
+    "status_states_note": "one existing state covers every HTTP status and redirect failure: SOURCE_UNAVAILABLE. No per-status health state is introduced.",
     "surfaces": [
       "discovery_feed",
       "primary_statement"
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 12,
+  "spec_revision": 13,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -1430,7 +1624,8 @@
     "c1d56f461ae7ccb0c3537e07330a4e910ff716f3d77d079ff40dfb4b00ae46f3",
     "0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8",
     "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d",
-    "b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43"
+    "b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43",
+    "b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -1740,7 +1935,10 @@
       "HTML semantic anchor authorities",
       "semantic text normalization order",
       "XML parser security policy",
-      "XInclude and DTD admission"
+      "XInclude and DTD admission",
+      "HTTP final-status admission contract",
+      "redirect policy",
+      "conditional-request and cache-validator policy"
     ],
     "silent_mutation": "FORBIDDEN"
   },

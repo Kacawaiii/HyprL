@@ -7,11 +7,11 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 12 — authoritative)
-b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21
+CAPTURE SPEC HASH  (revision 13 — authoritative)
+67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
-        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 (rev 11)
+        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f (rev 12)
 
 BINDS
   event intelligence design rev4
@@ -678,6 +678,91 @@ Polling is plain elapsed-time. V1 derives no schedule from the FOMC calendar,
 the 2:00 p.m. tradition or `pubDate` — a predictive scheduler would be a second
 source of truth about time, which is the one thing this design refuses.
 
+## 7a. What a response must be before it counts
+
+Revision 12 recorded the HTTP status as provenance and never said which status
+admits a body. The raw-first order is status-agnostic —
+
+```
+fetch bytes → durable raw + hash → parse/normalize → durable revision → snapshot-eligible
+```
+
+— so a 404 whose body happened to be a well-formed statement page could be read
+as something to hash, persist and parse. Two conforming implementations would
+then disagree about whether an error page becomes an event.
+
+```
+admitted  ⟺  final_status_code == 200        (exact equality)
+```
+
+Not any 2xx. Not `status < 400`. Not "a body is present", and emphatically not
+"the body looks valid". **Body appearance never overrides status.** Every other
+final status is `SOURCE_UNAVAILABLE`: no parser input, no EventRevision, no clean
+zero.
+
+A 200 is a gate, not a verdict — the body still has to pass the decoded-size
+bound, durable raw and hash, UTF-8, XML/HTML security, the anchors and the
+classifier, and commit. Nothing is bypassed.
+
+### Three statuses that look admissible and are not
+
+| | policy | why it matters |
+|---|---|---|
+| `206` | UNSUPPORTED; Range and If-Range **forbidden** | arrives *complete at the transport layer* while being semantically partial |
+| `204` | UNSUPPORTED | an empty body must not become a valid content hash |
+| `304` | UNSUPPORTED; prior-body reuse **forbidden** | avoids introducing a second cache/replay semantics into V1 |
+
+The `206` case is the sharp one. FIX8 already forbade treating an incomplete
+prefix as a complete body — but that covered truncation the **client** causes by
+aborting. A `206` is incompleteness the **server** declares, and it would have
+walked through the door FIX8 thought it had closed. It is now shut from both
+sides.
+
+`304` is refused even when a verified prior body exists locally. That body stays
+historical local data; it is not substituted into this HTTP observation, and no
+revision arises from a 304. V1 also never *sends* `If-None-Match` or
+`If-Modified-Since`, so a compliant run should never see one.
+
+`ETag`, `Last-Modified` and HTTP `Date` may be kept as provenance and may never
+become `source_available_at`, `source_updated_at`, `declared_release_at`,
+`observed_at` or `ingested_at` — the same prohibition FIX1 froze for `Last
+Update`, arriving by a different route.
+
+### Redirects, counted exactly
+
+```
+allowed statuses            301 302 303 307 308  — and only these
+max followed transitions    3
+Location                    REQUIRED; never guessed or reconstructed
+every target                security-validated BEFORE the request
+fourth redirect target      NEVER requested
+redirect bodies             non-semantic
+identity effect             NONE
+```
+
+"Max 3" means three *followed transitions* after the initial request. If the
+response after following redirect #3 is itself a redirect, that is #4 — its
+target is not requested and the fetch ends `SOURCE_UNAVAILABLE`. A loop
+terminates on that count at the latest. Every hop stays a GET.
+
+A final 200 reached through a valid chain enters the pipeline normally, and
+identity is still the FIX4 authority: the official discovery link **before**
+redirects. Redirects never re-key `source_item_id`.
+
+### Raw-first, clarified rather than weakened
+
+For an admitted 200 the durable raw body still precedes any normalized
+visibility. For a non-admitted status, transport and status provenance may be
+durable, but there is **no admitted complete content body** eligible for semantic
+replay or parsing. Raw-first does not mean *parse every HTTP body regardless of
+status* — and no successful content hash is ever created from a 204, 206 or 304
+payload, an error body, or a redirect body.
+
+FIX12 deliberately decides **nothing** about retries or whether redirect hops
+count toward the request ceiling. A non-admitted response maps to
+`SOURCE_UNAVAILABLE` *if it is the final response of the logical attempt*; what
+happens before that is R13's territory.
+
 ## 7b. XML parsing has no expansion path
 
 Revision 11 forbade XML **external** entity resolution. Counter-review R11 showed
@@ -892,7 +977,7 @@ authority. Those are deterministic parses or they are nothing.
 
 ## 11. Forty-seven cases, decided in advance
 
-`FOMC01`–`FOMC62` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC72` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
