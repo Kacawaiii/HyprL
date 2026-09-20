@@ -7,11 +7,12 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 13 — authoritative)
-67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d
+CAPTURE SPEC HASH  (revision 14 — authoritative)
+bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
-        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f (rev 12)
+        → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
+        → 67e2d7d5 (rev 13)
 
 BINDS
   event intelligence design rev4
@@ -749,6 +750,65 @@ A final 200 reached through a valid chain enters the pipeline normally, and
 identity is still the FIX4 authority: the official discovery link **before**
 redirects. Redirects never re-key `source_item_id`.
 
+### Where a redirect target comes from
+
+FIX12 required a `Location`, validated every target before contacting it and
+bounded the transitions. It never said how a `Location` *value* becomes the
+absolute URL being validated — and since the URL rules require HTTPS, that gap had
+teeth:
+
+```
+GET  …/monetary20260916a.htm
+301  Location: /newsevents/pressreleases/monetary20260916b.htm   ← the ordinary case
+```
+
+One reading validates that string as-is: no scheme, HTTPS check fails, item
+permanently uncapturable. The other resolves it against the current URL, as every
+HTTP library does, and follows it. Both conformed.
+
+V1 now supports the full set of reference forms:
+
+| form | example | supported |
+|---|---|---|
+| absolute URI | `https://host/foo.htm` | yes |
+| absolute-path | `/a/b.htm` | yes |
+| relative-path | `b.htm` | yes |
+| scheme-relative | `//host/foo.htm` | yes — inherits `https` |
+| fragment-only | `#section` | yes — still a transition |
+| query-only | `?x=1` | resolvable, then refused by the query rule |
+
+```
+1. read Location
+2. trim outer HTTP OWS — SP and HTAB only
+3. reject empty
+4. parse as a URI-reference
+5. resolve against the CURRENT hop's actual request URL   (RFC 3986 semantics)
+6. apply the existing V1 URL security and canonicalization rules
+7. apply the existing fragment non-request rule
+8. request only if admitted
+```
+
+**The base advances with each hop.** `U0` → `../b/two.htm` → `U1`; then `U1`
+returning `three.htm` resolves against `U1`, not `U0`. `FOMC82` pins that down,
+because resolving everything against the original URL is the natural bug.
+
+**Resolution earns no trust.** Step 6 is unchanged — a resolved target satisfies
+exactly the same constraints as any other URL. `//evil.example/foo` resolves
+cleanly to HTTPS and is then refused by the host allowlist *before* the host is
+contacted. `http://…` is refused rather than silently upgraded. A query survives
+resolution and is then refused by the existing queryless rule — **never stripped**
+to make the target admissible. Malformed percent escapes still fail under FIX7,
+and resolution may not percent-decode ahead of that gate.
+
+Only the outer `SP`/`HTAB` of the field value are trimmed. Embedded whitespace is
+not repaired into `%20`, empty or whitespace-only `Location` is
+`SOURCE_UNAVAILABLE` with no "same URL" inference, and no browser-style repair,
+URL search or guessed scheme is permitted.
+
+Identity is untouched: resolution derives only the next `request_url` for that
+hop. `canonical_primary_statement_url` and `source_item_id` remain the
+pre-redirect official discovery link, however many relative hops intervene.
+
 ### Raw-first, clarified rather than weakened
 
 For an admitted 200 the durable raw body still precedes any normalized
@@ -977,7 +1037,7 @@ authority. Those are deterministic parses or they are nothing.
 
 ## 11. Forty-seven cases, decided in advance
 
-`FOMC01`–`FOMC72` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC82` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed

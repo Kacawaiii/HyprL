@@ -465,6 +465,46 @@
     "FOMC72": {
       "case": "CACHE VALIDATOR IS NON-CAUSAL - a response carries ETag and Last-Modified",
       "verdict": "both may be persisted as HTTP provenance. Neither may set source_available_at, source_updated_at, declared_release_at, observed_at or ingested_at, and no content-vintage inference may be drawn."
+    },
+    "FOMC73": {
+      "case": "ABSOLUTE-PATH REDIRECT - current https://www.federalreserve.gov/a/b.htm, Location: /newsevents/pressreleases/c.htm",
+      "verdict": "resolved candidate https://www.federalreserve.gov/newsevents/pressreleases/c.htm; after full V1 validation it MAY be followed. Explicitly supported."
+    },
+    "FOMC74": {
+      "case": "RELATIVE-PATH REDIRECT - current https://www.federalreserve.gov/newsevents/pressreleases/a.htm, Location: b.htm",
+      "verdict": "path merging and dot-segment removal yield https://www.federalreserve.gov/newsevents/pressreleases/b.htm, then normal validation. Explicitly supported."
+    },
+    "FOMC75": {
+      "case": "SCHEME-RELATIVE SAME HOST - Location: //www.federalreserve.gov/foo.htm over a current https URL",
+      "verdict": "network-path reference inherits scheme https, giving https://www.federalreserve.gov/foo.htm, then normal validation. Explicitly supported."
+    },
+    "FOMC76": {
+      "case": "SCHEME-RELATIVE FOREIGN HOST - Location: //evil.example/foo.htm",
+      "verdict": "resolves to https://evil.example/foo.htm, then the host allowlist REJECTS it BEFORE any request. SOURCE_UNAVAILABLE; the host is never contacted. Resolution does not grant trust."
+    },
+    "FOMC77": {
+      "case": "EMPTY LOCATION - header present but empty, or only SP/HTAB",
+      "verdict": "SOURCE_UNAVAILABLE after outer-OWS trimming. No same-URL inference, no resolution against the base, no request."
+    },
+    "FOMC78": {
+      "case": "REDIRECT WITH QUERY - Location: /foo.htm?x=1",
+      "verdict": "resolve FIRST to https://www.federalreserve.gov/foo.htm?x=1, THEN the unchanged V1 query prohibition rejects it. SOURCE_UNAVAILABLE, no request. The query is NEVER silently stripped to make the target admissible."
+    },
+    "FOMC79": {
+      "case": "FRAGMENT-ONLY REDIRECT - Location: #section",
+      "verdict": "resolves to the current absolute resource plus fragment; the existing fragment-removal rule then makes the effective request resource equal the current one. It is still a redirect transition, so FIX12's max-three limit terminates any loop. Identity unchanged. A fragment-only Location is NOT treated as missing."
+    },
+    "FOMC80": {
+      "case": "MALFORMED PERCENT IN LOCATION - Location: /foo%GG.htm",
+      "verdict": "admission fails before any request under the unchanged FIX7 percent gate. SOURCE_UNAVAILABLE."
+    },
+    "FOMC81": {
+      "case": "HTTP DOWNGRADE - Location: http://www.federalreserve.gov/foo.htm",
+      "verdict": "the absolute reference resolves as HTTP and the existing HTTPS-required rule rejects it. No auto-upgrade to HTTPS, no request. SOURCE_UNAVAILABLE."
+    },
+    "FOMC82": {
+      "case": "BASE ADVANCES PER HOP - U0 https://www.federalreserve.gov/a/one.htm, L1 ../b/two.htm -> U1 https://www.federalreserve.gov/b/two.htm; U1 returns Location: three.htm",
+      "verdict": "U2 is https://www.federalreserve.gov/b/three.htm, NOT https://www.federalreserve.gov/a/three.htm. This proves each Location resolves against the CURRENT requested hop URL rather than the original U0."
     }
   },
   "authority_conflicts": {
@@ -577,7 +617,14 @@
       "a valid 302 -> 301 -> 200 redirect chain preserving pre-redirect identity (FOMC69)",
       "a fourth redirect whose target is never requested (FOMC70)",
       "an allowed redirect status with no Location header (FOMC71)",
-      "ETag and Last-Modified present but never causal (FOMC72)"
+      "ETag and Last-Modified present but never causal (FOMC72)",
+      "absolute-path, relative-path and scheme-relative Location forms resolved and followed (FOMC73-FOMC75)",
+      "scheme-relative foreign host rejected before request (FOMC76)",
+      "empty or OWS-only Location (FOMC77)",
+      "Location carrying a query rejected without silent stripping (FOMC78)",
+      "fragment-only Location counting as a transition (FOMC79)",
+      "malformed percent and HTTP-downgrade Locations (FOMC80, FOMC81)",
+      "a two-hop relative chain proving the base advances per hop (FOMC82)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -769,7 +816,122 @@
       "identity_effect": "NONE",
       "identity_rule": "a final 200 reached through valid redirects may enter the normal pipeline, but identity remains the FIX4 authority: the official discovery link BEFORE redirects. The final URL stays non-identifying provenance and redirects NEVER re-key source_item_id.",
       "location_required": true,
-      "location_rule": "an allowed redirect status MUST carry a Location header that is syntactically valid under the existing URL security and canonicalization rules. Missing Location, malformed Location or an unsafe target all yield SOURCE_UNAVAILABLE. The target is NEVER guessed or reconstructed.",
+      "location_resolution": {
+        "algorithm": {
+          "browser_navigation_behaviour": "MUST NOT be depended on",
+          "dot_segments": "removed by the frozen reference-resolution algorithm. NO filesystem interpretation and NO local path normalization; the result is an HTTP URL passed to V1 security validation.",
+          "implementation_url_joining": "MUST NOT override these semantics",
+          "must_handle_deterministically": [
+            "absolute URI",
+            "network-path (scheme-relative) reference",
+            "absolute-path reference",
+            "relative-path reference",
+            "dot segments",
+            "fragment component",
+            "query component"
+          ],
+          "semantics": "RFC3986_REFERENCE_RESOLUTION_EQUIVALENT"
+        },
+        "base": {
+          "advances_each_hop": true,
+          "authority": "CURRENT_ACTUALLY_REQUESTED_ABSOLUTE_URL",
+          "chain_rule": "U0 requested -> Location L1 resolved against U0 -> request U1; U1 returns L2 resolved against U1 -> request U2. Later Locations are NEVER resolved against U0.",
+          "rule": "the exact absolute request URL actually used for the CURRENT HTTP hop"
+        },
+        "failure_covers": [
+          "missing Location",
+          "empty or OWS-only Location",
+          "malformed URI-reference",
+          "resolution failure",
+          "HTTP downgrade",
+          "host allowlist rejection",
+          "userinfo present",
+          "disallowed port",
+          "forbidden query component",
+          "malformed percent escape",
+          "any other existing URL-security failure"
+        ],
+        "failure_health": "SOURCE_UNAVAILABLE",
+        "fragment": {
+          "existing_rule_applies": true,
+          "must_not_affect_source_item_id": true,
+          "must_not_be_transmitted": true,
+          "must_not_hide_a_forbidden_component": "removing the fragment must never conceal an otherwise forbidden query, host or scheme - every other URL check still applies to the resolved candidate",
+          "rule": "resolution may produce a URI carrying a fragment; the already-frozen canonicalization then removes it from the actual HTTP request target. No second fragment policy is invented for redirects."
+        },
+        "identity_effect": "NONE",
+        "identity_rule": "resolution derives only the next request_url for that transport hop. It NEVER changes canonical_primary_statement_url, source_item_id or the logical identity authority, which remains the official discovery link BEFORE redirects (FIX4) even across U0 -> U1 -> U2 relative chains.",
+        "location_value_preprocessing": {
+          "automatic_percent_encoding_of_whitespace": false,
+          "empty_after_trim": "SOURCE_UNAVAILABLE",
+          "internal_whitespace_collapse": false,
+          "internal_whitespace_repair": false,
+          "trim_outer": [
+            "U+0020",
+            "U+0009"
+          ],
+          "trim_rule": "remove ONLY surrounding HTTP optional whitespace (SP U+0020 and HTAB U+0009) from the beginning and end of the field value",
+          "unicode_whitespace_trim": false,
+          "whitespace_only": "SOURCE_UNAVAILABLE"
+        },
+        "order": [
+          "1. READ_LOCATION",
+          "2. TRIM_OUTER_HTTP_OWS (SP and HTAB only)",
+          "3. REJECT_EMPTY",
+          "4. PARSE_URI_REFERENCE",
+          "5. RESOLVE_AGAINST_CURRENT_REQUEST_URL",
+          "6. APPLY_EXISTING_V1_URL_SECURITY_AND_CANONICALIZATION",
+          "7. APPLY_EXISTING_FRAGMENT_NON_REQUEST_RULE",
+          "8. REQUEST_ONLY_IF_ADMITTED"
+        ],
+        "order_rule": "security validation MUST NOT be applied to the UNRESOLVED relative text as if it were already an absolute URL. Resolution precedes validation; validation is never weakened by it.",
+        "percent_escapes": {
+          "fix7_preserved": true,
+          "rule": "reference resolution MUST NOT percent-decode before FIX7 validation, and must apply no normalization that changes logical path semantics. Malformed forms such as %, %2 or %GG fail before any request."
+        },
+        "redirect_body": "UNCHANGED from FIX12 - non-semantic. Location derivation uses response METADATA only; a redirect body can never influence the target URL, the classifier, statement content or identity.",
+        "retries_untouched": "FIX13 adds no retry rule; the existing frozen retry policy is unchanged.",
+        "security_after_resolution": {
+          "auto_upgrade_http_to_https": "FORBIDDEN",
+          "fragment_policy_preserved": true,
+          "host_allowlist_required": true,
+          "https_required": true,
+          "malformed_percent_policy_preserved": true,
+          "no_special_redirect_security_regime": "a resolved redirect target satisfies EXACTLY the same V1 constraints as any other URL. Being a redirect target grants no trust, and being absolute grants no special case.",
+          "port_policy_preserved": true,
+          "query_policy_preserved": true,
+          "query_silent_stripping": "FORBIDDEN",
+          "unsafe_target_contacted": false,
+          "userinfo_policy_preserved": true
+        },
+        "supported_reference_forms": {
+          "absolute_path_reference": true,
+          "absolute_uri": true,
+          "fragment_only_reference": true,
+          "network_path_reference": true,
+          "query_only_reference": "syntactically resolvable, then subject to the unchanged V1 query policy",
+          "relative_path_reference": true
+        },
+        "syntax": {
+          "browser_repair": "FORBIDDEN",
+          "forbidden_heuristics": [
+            "browser-style repair",
+            "URL search",
+            "concatenation heuristic",
+            "guessed scheme or host",
+            "treating arbitrary text as a path"
+          ],
+          "malformed": "SOURCE_UNAVAILABLE",
+          "must_parse_as": "exactly one URI-reference under the frozen resolution semantics",
+          "type": "URI_REFERENCE"
+        },
+        "transition_accounting": {
+          "each_followed_resolution_consumes": 1,
+          "rule": "each successfully followed Location resolution consumes exactly ONE redirect transition from FIX12's maximum of 3. A REJECTED Location causes no target request and no transition follow; the response carrying it may still be recorded as transport provenance under existing semantics."
+        },
+        "zero_eligible": false
+      },
+      "location_rule": "an allowed redirect status MUST carry a Location header. Its value is preprocessed, parsed as a URI-reference and RESOLVED against the current hop request URL per redirect_policy.location_resolution, and only the resolved absolute candidate is validated under the existing URL security and canonicalization rules. Missing Location, empty Location, a malformed reference or an unsafe resolved target all yield SOURCE_UNAVAILABLE. The target is NEVER guessed or reconstructed.",
       "loop_rule": "a loop such as A -> B -> A terminates via the redirect-transition limit at the latest. No hidden automatic redirect following beyond max_followed_transitions. An implementation may detect a loop sooner only if that alters no admitted content semantics; the frozen deterministic behaviour is the transition count.",
       "max_followed_transitions": 3,
       "method": "GET",
@@ -900,7 +1062,9 @@
     "F38": "ONLY FINAL HTTP 200 CAN PRODUCE AN ADMITTED CONTENT BODY. Only exact final status 200 may enter the normal body, hash, text-decoding, parser and revision pipeline. Any other final status is non-admitted and cannot produce an EventRevision or a clean zero. Body appearance never overrides status.",
     "F39": "PARTIAL / EMPTY / NOT-MODIFIED RESPONSES CANNOT MASQUERADE AS COMPLETE CONTENT. 206, 204 and 304 are unsupported and non-admitted in V1. No prior-body reuse on 304, no Range requests, no conditional requests, and no successful complete-body hash or revision from any of these statuses.",
     "F40": "REDIRECT FOLLOWING IS EXPLICITLY BOUNDED AND NON-IDENTIFYING. Only 301, 302, 303, 307 and 308 may be followed, at most 3 transitions, with every target security-validated before the request. The fourth redirect target is never requested. Redirect bodies are non-semantic and identity remains the pre-redirect official discovery URL.",
-    "F41": "CACHE VALIDATORS ARE PROVENANCE, NEVER CONTENT-VINTAGE PROOF. ETag, Last-Modified and HTTP caching metadata cannot populate or infer causal content-availability timestamps. Conditional requests are disabled in V1."
+    "F41": "CACHE VALIDATORS ARE PROVENANCE, NEVER CONTENT-VINTAGE PROOF. ETag, Last-Modified and HTTP caching metadata cannot populate or infer causal content-availability timestamps. Conditional requests are disabled in V1.",
+    "F42": "REDIRECT LOCATION IS RESOLVED AGAINST THE CURRENT REQUEST URL BEFORE SECURITY VALIDATION. Location is an HTTP URI-reference; relative and scheme-relative references are supported. The base is the actual absolute request URL of the CURRENT redirect hop and advances with each hop. Resolution occurs before target security validation, and the resolved absolute target must then satisfy all existing V1 URL admission rules. No browser repair, no identity effect.",
+    "F43": "REDIRECT REFERENCE RESOLUTION CANNOT WEAKEN URL SECURITY. Relative resolution may never bypass HTTPS-only, the host allowlist, the userinfo prohibition, port rules, the query prohibition, percent-escape validation or the fragment non-request semantics. An unsafe resolved target is never contacted."
   },
   "item_predicate": {
     "classification_states": {
@@ -1489,7 +1653,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 13 closes the MEDIUM found by counter-review R12. Revision 12 recorded the HTTP status as provenance but never said which final status admits a body, so the raw-first order - which is status-agnostic - could be read as licence to hash, persist and parse a 404, 500 or 206 body that merely looked like a statement. V1 now admits a body IFF the final status is exactly 200. 206, 204 and 304 are unsupported, conditional requests and Range are forbidden, ETag/Last-Modified/HTTP Date are provenance only and never causal, and the redirect contract is exact: five allowed statuses, at most three followed transitions, Location required, every target validated before the request, the fourth target never requested, redirect bodies non-semantic and identity still the pre-redirect discovery URL. Revisions 1-12 semantics are preserved unchanged.",
+  "revision_note": "Spec revision 14 closes the MEDIUM found by counter-review R13. Revision 13 required a Location, validated targets before any request and bounded transitions, but never said how a Location VALUE becomes the absolute URL being validated. Since the URL rules require HTTPS, one reading rejected every relative Location while another resolved it against the current URL as HTTP libraries do - and relative Location is the ordinary same-host case. V1 now supports absolute, absolute-path, relative-path, scheme-relative and fragment-only references, resolved per RFC 3986 semantics against the actual request URL of the current hop, which advances along the chain. Resolution happens BEFORE security validation, and validation is unchanged: a resolved target earns no trust. Revisions 1-13 semantics are preserved unchanged, retries included.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -1610,7 +1774,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 13,
+  "spec_revision": 14,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -1625,7 +1789,8 @@
     "0757b1f5c996e39aaa9a65ea9429f5ea3b14d47d81912228cbb448f40ee1b2d8",
     "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d",
     "b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43",
-    "b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21"
+    "b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21",
+    "67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -1938,7 +2103,8 @@
       "XInclude and DTD admission",
       "HTTP final-status admission contract",
       "redirect policy",
-      "conditional-request and cache-validator policy"
+      "conditional-request and cache-validator policy",
+      "redirect Location resolution semantics"
     ],
     "silent_mutation": "FORBIDDEN"
   },
