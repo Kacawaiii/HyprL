@@ -53,6 +53,118 @@
       },
       "verdict": "No new provider network attempt while exclusivity is unavailable, even after 60 seconds waiting alongside the active old issuer. Establish exclusive ownership first; only then can a new comparable-history epoch and its FULL 60-second embargo begin. No overlapping independent budgets and no new health enum."
     },
+    "FOMC101": {
+      "case": "EXACT ANCHOR TIMELINE - admitted complete primary 200, then raw durability and normalized commit at distinct instants",
+      "expected": {
+        "anchor_at": "2026-09-22T18:00:05Z",
+        "anchor_timestamp_field": "observed_at",
+        "persistent_anchor_available_after": "2026-09-22T18:00:06Z",
+        "target_times_utc": [
+          "2026-09-22T18:05:05Z",
+          "2026-09-22T19:00:05Z",
+          "2026-09-23T18:00:05Z",
+          "2026-09-29T18:00:05Z"
+        ]
+      },
+      "timeline_utc": {
+        "EventRevision_commit": "2026-09-22T18:00:07Z",
+        "body_complete_observed_at": "2026-09-22T18:00:05Z",
+        "headers": "2026-09-22T18:00:02Z",
+        "raw_observation_durable": "2026-09-22T18:00:06Z",
+        "request_start": "2026-09-22T18:00:00Z"
+      },
+      "verdict": "Anchor VALUE is 18:00:05, not request/header time, raw durability at :06 or normalized commit at :07. The durable boundary allows reliance/reconstruction of the earlier observed_at. Target times are direct original-anchor offset sums; no execution/satisfaction policy is implied."
+    },
+    "FOMC102": {
+      "case": "DECLARED RELEASE EARLIER THAN OBSERVATION",
+      "expected": {
+        "anchor_at": "2026-09-22T18:00:00Z",
+        "source_available_at": null
+      },
+      "timeline_utc": {
+        "declared_release_at": "2026-09-22T14:00:00Z",
+        "observed_at": "2026-09-22T18:00:00Z",
+        "raw_observation_durable": "2026-09-22T18:00:01Z"
+      },
+      "verdict": "Anchor is observed_at 18:00, never the declared 14:00 release or raw commit 18:00:01. No content-vintage retroprojection or source_available_at inference."
+    },
+    "FOMC103": {
+      "case": "RAW DURABLE, NORMALIZATION FAILS - final admitted primary 200 and complete body; later parser/normalization failure",
+      "expected": {
+        "EventRevision_commit_required": false,
+        "anchor_at": "2026-09-22T18:00:05Z",
+        "anchor_exists": true,
+        "failure_erases_or_reanchors": false,
+        "semantic_parse_success_required": false
+      },
+      "timeline_utc": {
+        "observed_at": "2026-09-22T18:00:05Z",
+        "raw_observation_durable": "2026-09-22T18:00:06Z"
+      },
+      "verdict": "The durable upstream content observation establishes anchor A despite downstream PARSER_FAILED/normalization failure. No normalized success is implied; existing failure/zero/retry semantics remain. FIX16 decides no later failed-item or checkpoint completion policy."
+    },
+    "FOMC104": {
+      "case": "CRASH BEFORE RAW DURABILITY - complete primary body observed transiently, but required durable raw/SourceObservation boundary never reached",
+      "expected": {
+        "anchor_at_after_restart": null,
+        "later_qualifying_durable_observation_may_establish_anchor": true,
+        "reconstructible_anchor_survives": false
+      },
+      "transient_observed_at": "2026-09-22T18:00:05Z",
+      "verdict": "No persistent anchor survives from the lost volatile observation. Do not synthesize 18:00:05 or an obligation from memory/log inference. A later qualifying durable observation may establish the first anchor using its own observed_at."
+    },
+    "FOMC105": {
+      "case": "CRASH AFTER RAW DURABILITY - crash after qualifying admitted complete primary raw/observation durability, before EventRevision commit",
+      "expected": {
+        "EventRevision_commit_required": false,
+        "first_target_utc": "2026-09-22T18:05:05Z",
+        "reconstructed_anchor_at": "2026-09-22T18:00:05Z",
+        "restart_relative_reset": false
+      },
+      "timeline_utc": {
+        "observed_at": "2026-09-22T18:00:05Z",
+        "raw_observation_durable": "2026-09-22T18:00:06Z",
+        "restart": "2026-09-22T18:02:05Z"
+      },
+      "verdict": "Reconstruct A from original durable observed_at, not raw commit, restart or a future normalization commit. Restart at A+2 minutes leaves first target A+300 unchanged; missed/overdue execution remains deferred."
+    },
+    "FOMC106": {
+      "case": "LATER CONTENT REVISION DOES NOT RESET GRID - first qualifying observation H1, later recheck observes H2 for the SAME logical source item",
+      "expected": {
+        "anchor_at": "2026-09-22T18:00:05Z",
+        "later_revision_reanchors": false,
+        "remaining_target_times_utc": [
+          "2026-09-23T18:00:05Z",
+          "2026-09-29T18:00:05Z"
+        ]
+      },
+      "initial_observation": {
+        "body_hash": "H1",
+        "observed_at": "2026-09-22T18:00:05Z",
+        "qualifying_durable": true
+      },
+      "later_observation": {
+        "body_hash": "H2",
+        "observed_at": "2026-09-22T19:00:07Z"
+      },
+      "verdict": "A new immutable content revision may be created under existing semantics, but original A and its target grid remain unchanged. The recheck observation retains its own observed_at without becoming a second anchor; no checkpoint satisfaction rule is added."
+    },
+    "FOMC107": {
+      "actual_request_start_utc": "2026-09-22T18:05:17Z",
+      "anchor_at": "2026-09-22T18:00:05Z",
+      "case": "RATE LIMITER DELAYS ACTUAL RECHECK - target A+300, physical start prevented until A+312",
+      "expected": {
+        "anchor_after_delay": "2026-09-22T18:00:05Z",
+        "other_target_times_utc": [
+          "2026-09-22T19:00:05Z",
+          "2026-09-23T18:00:05Z",
+          "2026-09-29T18:00:05Z"
+        ],
+        "rate_limiter_delay_reanchors": false
+      },
+      "target_utc": "2026-09-22T18:05:05Z",
+      "verdict": "FIX15 remains authoritative for actual start admission. Delay changes neither A nor later targets. This case does not decide whether/how the +300 obligation is overdue, satisfied, coalesced or completed."
+    },
     "FOMC11": {
       "case": "2027 backfill of a 2026 statement",
       "verdict": "declared_release_at MAY record the trusted 2026 release metadata. observed_at = the actual 2027 fetch; ingested_at = the 2027 commit; content source_available_at = null. DURABLE_OBSERVED before 2027: ABSENT. RETROSPECTIVE_SOURCE MUST NOT expose the 2027-fetched body as content visible in 2026 - no vintage proof."
@@ -1305,7 +1417,9 @@
     "F46": "PROVIDER RATE CEILING USES A ROLLING 60-SECOND PHYSICAL-START WINDOW. For candidate monotonic t, include prior admitted s iff 0 < t - s < 60; admission requires at most five such prior starts. For every admitted t, (t-60s,t] contains at most six PHYSICAL_REQUEST_ATTEMPT_START events. At t=60 after starts 0,10,20,30,40,50, start 0 is excluded and candidate 60 is admitted if spacing and epoch preconditions pass. No fixed-minute, token-bucket or leaky-bucket substitute.",
     "F47": "MINIMUM SPACING IS PROVIDER-WIDE START-TO-START. A candidate requires t - previous_start >= 10 seconds; exact equality passes. Accounting, window and spacing use the SAME PHYSICAL_REQUEST_ATTEMPT_START atomic grant-and-consume event immediately before transport invocation. Completion time cannot shift the reference. No category or redirect/recheck exemption, no stored or reusable permit and no refund after grant, including cancellation before network I/O.",
     "F48": "RATE ADMISSION IS ATOMIC AND MONOTONIC WITHIN A LIMITER EPOCH. All concurrent candidates, across every FOMC V1 category/process emitter, pass through one provider-wide atomic inspect/test/grant/register decision over comparable monotonic history before transport. Stale-state double grants and simultaneous starts are forbidden; later candidates see prior grants. UTC/NTP/manual/timezone/DST changes cannot alter elapsed admission. The coordination primitive is unspecified.",
-    "F49": "NEW LIMITER EPOCHS FAIL CONSERVATIVELY CLOSED FOR 60 SECONDS. Every fresh limiter epoch requires exclusive provider ownership and no attempt for its first 60 monotonic seconds; exact elapsed 60 passes the embargo. The epoch embargo begins only once old independent issuers can no longer initiate attempts. Independent overlapping epochs cannot both emit. After embargo, admission uses fresh current-epoch history; precise prior-epoch monotonic history is not reused and durable per-request history is not required. UTC history cannot shorten the embargo."
+    "F49": "NEW LIMITER EPOCHS FAIL CONSERVATIVELY CLOSED FOR 60 SECONDS. Every fresh limiter epoch requires exclusive provider ownership and no attempt for its first 60 monotonic seconds; exact elapsed 60 passes the embargo. The epoch embargo begins only once old independent issuers can no longer initiate attempts. Independent overlapping epochs cannot both emit. After embargo, admission uses fresh current-epoch history; precise prior-epoch monotonic history is not reused and durable per-request history is not required. UTC history cannot shorten the embargo.",
+    "F50": "REOBSERVATION GRID IS ANCHORED TO THE FIRST DURABLE PRIMARY OBSERVATION'S observed_at. For each logical FOMC source item, the original anchor is exactly observed_at of the first qualifying admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. Request/header time, raw durability commit, normalized/EventRevision commit, declared_release_at, ingested_at, limiter monotonic start and restart time cannot replace that value. Semantic parse success and EventRevision commit are not prerequisites. The anchor is immutable across later observations/revisions; targets remain original observed_at plus exactly 300,3600,86400,604800 seconds with existing precision. No source_available_at inference.",
+    "F51": "DURABILITY DETERMINES ANCHOR SURVIVAL, NOT ANCHOR TIME. A volatile observation lost before the required raw/SourceObservation durability boundary creates no reconstructible anchor. Once the qualifying observation is durable, its original observed_at remains the anchor across crashes and restarts, even before normalized commit and after downstream parser/normalization failure. No restart-relative or commit-relative re-anchoring, no inferred anchor from lost volatile state, and no later revision or limiter delay may shift the grid."
   },
   "item_predicate": {
     "classification_states": {
@@ -2097,11 +2211,11 @@
       "scheduled_recheck_get": true
     },
     "deferred_semantics": {
-      "dns_tls_header_body_timeout_coverage": "DEFERRED_TO_R16_EXISTING_TIMEOUTS_UNCHANGED",
-      "est_edt_seasonal_consistency_audit": "DEFERRED_TO_R16_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
-      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_R16",
-      "source_health_full_matrix_audit": "DEFERRED_TO_R16_EXISTING_MAPPINGS_UNCHANGED",
-      "total_request_deadline": "UNRESOLVED_FOR_R16"
+      "dns_tls_header_body_timeout_coverage": "DEFERRED_TO_R17_EXISTING_TIMEOUTS_UNCHANGED",
+      "est_edt_seasonal_consistency_audit": "DEFERRED_TO_R17_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
+      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_R17",
+      "source_health_full_matrix_audit": "DEFERRED_TO_R17_EXISTING_MAPPINGS_UNCHANGED",
+      "total_request_deadline": "UNRESOLVED_FOR_R17"
     },
     "frozen_rate_semantics": {
       "concurrent_atomic_admission": "rate_limiter.admission and rate_limiter.concurrency",
@@ -2118,7 +2232,7 @@
     "logical_fetch_is_unit": false,
     "logical_operation_rule": "A feed poll, primary statement fetch, scheduled recheck, historical retrieval or redirecting logical fetch may produce one or more physical attempts. Each attempt consumes exactly one unit; no logical operation reserves a multi-request corridor.",
     "preserved_policies": {
-      "reobservation_anchor": "the first successful primary statement fetch",
+      "reobservation_anchor": "revision_policy.reobservation_anchor and reobservation_anchor_timestamp_field: EXACT observed_at of the first qualifying durable primary content observation; FIX16 explicitly binds the formerly prose-only anchor.",
       "reobservation_offsets": "revision_policy.reobservation_offsets_seconds UNCHANGED",
       "retry_policy": "polling.retry_policy UNCHANGED",
       "scheduler": "No change to existing schedule; missed/overdue/coalescing/fairness/starvation semantics remain unresolved.",
@@ -2182,7 +2296,7 @@
         "HISTORICAL_PROVIDER_CAPTURE"
       ]
     },
-    "scope_boundary": "FIX14 accounting unit, shared provider domain, failed-start consumption and no intra-fetch bypass remain unchanged. FIX15 binds exact window, START_TO_START spacing, monotonic clock, atomic admission and conservative restart safety through rate_limiter. Scheduler, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R16; no implementation or final counter-review approval is established.",
+    "scope_boundary": "FIX14 accounting unit, shared provider domain, failed-start consumption and no intra-fetch bypass remain unchanged. FIX15 rate_limiter is unchanged. FIX16 binds the reobservation anchor to the first qualifying durable primary observation observed_at under revision_policy. Remaining scheduler, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R17; no implementation or final counter-review approval is established.",
     "source_health": {
       "attempt_failure": "Existing source_health failure mappings apply if an actual attempted request later fails.",
       "new_state": false,
@@ -2231,11 +2345,145 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 16 closes the MEDIUM confirmed by counter-review R15. FIX15 freezes one provider-wide rate-admission contract: ROLLING_PHYSICAL_START_WINDOW_V1 with 0 < t - s < 60 for prior starts, at most five prior starts before candidate t, and at most six in (t-60s,t]; START_TO_START spacing >=10 using the same PHYSICAL_REQUEST_ATTEMPT_START atomic grant-and-consume immediately before transport; one live monotonic domain, atomic admission across emitters, no stockpiled/reused permits and no post-grant refund; exclusive provider ownership plus a full 60-second monotonic embargo on every fresh limiter epoch, without prior-epoch history reconstruction. FIX1-FIX14 remain preserved. Scheduler, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R16. No runtime, fixture, capture or final implementation approval is established.",
+  "revision_note": "Spec revision 17 closes ONLY the MEDIUM found by counter-review R16: the reobservation anchor is now directly bound to observed_at of the first qualifying admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. The earlier observation timestamp is distinct from the durability boundary; raw/normalized commit, release time, ingested_at, limiter monotonic time and restart time cannot replace it. Anchor survives downstream parsing failure and is reconstructible after raw durability; lost volatile observations establish no persistent anchor. Exact existing offsets use immutable original A without rounding, recheck chaining or limiter-delay reset. FIX1-FIX15, all timestamp definitions and the REV16 rate_limiter remain unchanged. Remaining scheduler/checkpoint, deadline/stage-bound, full source-health and EST/EDT audits are deferred to R17; historical FIX15 scope references to R16 do not resolve or override these current deferrals. No runtime, fixture, capture or final implementation approval is established.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
-    "reobservation_anchor": "the first successful primary statement fetch",
+    "reobservation_anchor": {
+      "causal_scope": "This anchor is operational observation metadata, not proof of source content vintage. FOMC V1 content source_available_at remains null under FIX1. Existing raw-before-normalized visibility, observed_at and ingested_at semantics are unchanged.",
+      "clock_distinction": "The anchor is canonical UTC observed_at provenance, never the FIX15 monotonic limiter-start timestamp. Monotonic comparisons remain the rate-limiter duration policy; all REV16 rate_limiter semantics are unchanged.",
+      "declared_release_at_role": "NONE as anchor authority. Earlier declared release time remains non-gating event metadata under FIX1 and cannot retroproject the observation or schedule.",
+      "durability_requirement": {
+        "boundary": "The existing durable raw/SourceObservation persistence boundary required for deterministic reconstruction; no new persistence primitive or EventStore schema is defined.",
+        "observation_or_raw_record_must_be_durable": true,
+        "persist_original_observed_at": true,
+        "reconstruction": "After crash/restart, reconstruct the original anchor from the corresponding durable raw/SourceObservation record and its original observed_at. Raw durability time, restart time and a later normalization commit are not replacement values. Normalized EventRevision commit is not required for anchor reconstruction.",
+        "rule": "The supporting admitted complete raw body and observation provenance must be durable under existing primitives, retaining the original observed_at and association with the logical source item. Only then can this observation establish the persistent reobservation anchor.",
+        "value_vs_survival": "The anchor VALUE is observed_at; the durability boundary determines its survival/reconstructibility. These are distinct events even when their timestamp values happen to coincide."
+      },
+      "durable_observation_before_normalized_commit": {
+        "EventRevision_commit_required": false,
+        "establishes_persistent_anchor": true,
+        "reconstructible_after_crash": true,
+        "rule": "Once the qualifying raw/observation record is durable, preserve/reconstruct its original observed_at as anchor even if the process crashes before normalization commits."
+      },
+      "failed_transport_attempt": {
+        "accounting_unit_sufficient": false,
+        "establishes_anchor": false,
+        "examples": [
+          "DNS failure",
+          "connect failure",
+          "TLS failure",
+          "timeout",
+          "connection reset"
+        ],
+        "rule": "A consumed PHYSICAL_REQUEST_ATTEMPT_START unit does not establish an anchor. Qualifying complete primary content and its durable observation are required."
+      },
+      "immutability_rule": "Once original anchor A is established for a logical source item, all later observations keep their own observed_at without replacing A. H1 -> H2, later raw/normalized commits, rechecks and restarts never reset the original offset grid.",
+      "immutable_after_first_anchor": true,
+      "ingested_at_role": "NONE as anchor authority. ingested_at remains the distinct existing normalized commit-bound timestamp. Accidental equality with observed_at does not make the fields interchangeable.",
+      "later_EventRevision_commit_reanchors": false,
+      "later_observation_reanchors": false,
+      "later_raw_commit_reanchors": false,
+      "later_recheck_observation_reanchors": false,
+      "later_revision_reanchors": false,
+      "logical_item_binding": "The original logical source item under identity.source_item_id semantics; no new identity component or content-revision-specific anchor is introduced.",
+      "non_qualifying_response": {
+        "establishes_anchor": false,
+        "examples": [
+          "404",
+          "500",
+          "206",
+          "204",
+          "304",
+          "redirect failure",
+          "incomplete response",
+          "oversized aborted response"
+        ],
+        "rule": "A non-admitted response or incomplete/oversized aborted body cannot establish the anchor, even if transport/failure diagnostics are durable."
+      },
+      "offset_arithmetic": {
+        "minute_alignment": "FORBIDDEN",
+        "precision": "Preserve the existing canonical timestamp representation and precision. If observed_at carries supported sub-second precision, preserve it in every offset sum; do not truncate for scheduling. If the existing model represents whole seconds only, retain that representation. FIX16 introduces no new timestamp precision regime.",
+        "previous_recheck_chaining": "FORBIDDEN",
+        "rounding": "FORBIDDEN",
+        "rule": "For original anchor A, targets are exactly A+300, A+3600, A+86400 and A+604800 seconds by existing canonical UTC timestamp arithmetic. Each target is computed directly from A, never from a previous actual recheck or its completion.",
+        "subsecond_control_if_supported": {
+          "anchor_utc": "2026-09-22T18:00:05.250Z",
+          "offset_seconds": 300,
+          "target_utc": "2026-09-22T18:05:05.250Z"
+        },
+        "wall_clock_bucket_alignment": "FORBIDDEN"
+      },
+      "offset_base": "ORIGINAL_ANCHOR_observed_at",
+      "offsets_binding": "Exactly the unchanged revision_policy.reobservation_offsets_seconds; both representations MUST agree.",
+      "offsets_seconds": [
+        300,
+        3600,
+        86400,
+        604800
+      ],
+      "parser_failure_after_durable_raw": {
+        "anchor_exists": true,
+        "erases_anchor": false,
+        "reanchors": false,
+        "rule": "A subsequent PARSER_FAILED or normalization failure cannot erase or move the anchor established by the qualifying durable content observation. No EventRevision success is implied and existing retry policy remains authoritative; later failed-item scheduling is not redesigned."
+      },
+      "qualification": {
+        "EventRevision_commit_required": false,
+        "canonical_observed_at_required": true,
+        "complete_admitted_body_policy": "Existing bounded complete-body admission under FIX8/FIX12; no change to body production, status or raw-byte rules.",
+        "complete_body_required": true,
+        "durable_primary_observation_required": true,
+        "final_http_status_admitted": true,
+        "final_http_status_policy_binding": "http_policy.http_status_policy.final_body_admission (FIX12)",
+        "final_http_status_required": 200,
+        "rule": "ALL of final admitted HTTP 200, complete admitted primary body, its canonical observed_at and the existing durable raw/SourceObservation persistence boundary are required. Once these hold, later semantic parsing/normalization failure does not erase, postpone or replace the anchor. Anchor qualification alone admits no normalized event and does not bypass any parser, classifier, source-health or zero gate.",
+        "semantic_parse_success_required_for_anchor": false,
+        "surface": "PRIMARY_STATEMENT"
+      },
+      "rate_limiter_delay_reanchors": false,
+      "rate_limiter_independence": "A target is a scheduler target, not a guaranteed actual request-start time. FIX15 may delay actual admission without changing A or any future target. Missed/overdue execution, satisfaction and coalescing are not decided by FIX16.",
+      "restart_relative_reset": false,
+      "scope_boundary": "FIX16 binds anchor value, minimal durable qualification, reconstruction and the immutable offset grid only. It does not freeze scheduler obligation/completion transactions, missed/overdue execution, coalescing, checkpoint satisfaction, failed-recheck policy, fairness/starvation, network deadlines/stage bounds, the full source-health matrix or EST/EDT seasonal consistency. Those remain for R17.",
+      "source_available_at_effect": "NONE",
+      "source_event": "FIRST_QUALIFYING_DURABLE_PRIMARY_CONTENT_OBSERVATION",
+      "timestamp_definition_binding": "timestamps.observed_at - unchanged actual successful receipt/observation of the complete admitted PRIMARY response body. Request initiation and response headers are not this event.",
+      "timestamp_field": "observed_at",
+      "timestamp_field_binding": "revision_policy.reobservation_anchor_timestamp_field = observed_at; the timestamp_field here names exactly that same canonical field, with no alias or alternative.",
+      "timestamp_semantics": "EXACT_CANONICAL_OBSERVED_AT",
+      "value_not_replaced_by": [
+        "REQUEST_START_TIME",
+        "RESPONSE_HEADERS_TIME",
+        "RAW_DURABILITY_COMMIT_TIME",
+        "NORMALIZED_EVENTREVISION_COMMIT_TIME",
+        "declared_release_at",
+        "ingested_at",
+        "limiter_monotonic_start",
+        "restart_time"
+      ],
+      "value_rule": "For each existing logical FOMC source item, reobservation_anchor_at is EXACTLY the persisted observed_at of the first qualifying primary content observation that reaches the required existing durable raw/SourceObservation boundary. Durability establishes whether the observation can serve as the persistent anchor; it never substitutes its commit time for the earlier observed_at.",
+      "volatile_observation_before_durability": {
+        "establishes_persistent_anchor": false,
+        "reconstructible_anchor_survives_crash": false,
+        "rule": "A complete body observed only in volatile state before crash creates no surviving anchor without its required durable supporting record. Do not fabricate an anchor or obligation from memory/log inference. A later qualifying durable primary observation may establish the first persistent anchor with its own observed_at."
+      }
+    },
+    "reobservation_anchor_timestamp_field": "observed_at",
+    "reobservation_deferred_semantics": {
+      "checkpoint_satisfaction_event": "UNRESOLVED_FOR_R17",
+      "coalescing": "UNRESOLVED_FOR_R17",
+      "dns_tls_header_body_bounds": "DEFERRED_TO_R17_EXISTING_TIMEOUTS_UNCHANGED",
+      "est_edt_seasonal_consistency": "DEFERRED_TO_R17_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
+      "failed_recheck_completion_semantics": "UNRESOLVED_FOR_R17",
+      "fairness_starvation": "UNRESOLVED_FOR_R17",
+      "full_source_health_matrix": "DEFERRED_TO_R17_EXISTING_MAPPINGS_UNCHANGED",
+      "missed_checkpoint_policy": "UNRESOLVED_FOR_R17",
+      "overdue_checkpoint_policy": "UNRESOLVED_FOR_R17",
+      "scheduler_completion_durability": "UNRESOLVED_FOR_R17",
+      "scheduler_obligation_persistence_protocol": "UNRESOLVED_FOR_R17_ANCHOR_RECONSTRUCTION_ONLY_IS_FROZEN",
+      "total_network_deadline": "UNRESOLVED_FOR_R17"
+    },
     "reobservation_offsets_seconds": [
       300,
       3600,
@@ -2352,7 +2600,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 16,
+  "spec_revision": 17,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -2370,7 +2618,8 @@
     "b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21",
     "67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d",
     "bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050",
-    "49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17"
+    "49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17",
+    "6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",

@@ -7,12 +7,12 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 16 — authoritative)
-6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038
+CAPTURE SPEC HASH  (revision 17 — authoritative)
+5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
-        → 67e2d7d5 → bbc29abb → 49f8050f (rev 15)
+        → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 (rev 16)
 
 BINDS
   event intelligence design rev4
@@ -30,7 +30,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 16.**
+writing revision 17.**
 
 ---
 
@@ -649,10 +649,112 @@ never rewrites an existing revision's `observed_at`, `ingested_at` or
 or when its bytes became public. FIX1 visibility and FIX2 scope/zero semantics
 remain unchanged.
 
-Re-observation is scheduled at **+5 min, +1 h, +24 h, +7 d** after the first
-successful fetch — catching immediate, same-day, next-day and delayed
-corrections for about four extra requests per statement, at roughly eight
-statements a year.
+### The recheck anchor is exactly the original primary observed_at
+
+FIX16 replaces the ambiguous phrase "first successful primary statement fetch"
+with a direct canonical field binding:
+
+```
+revision_policy.reobservation_anchor_timestamp_field = observed_at
+revision_policy.reobservation_anchor.timestamp_field = observed_at
+source_event = FIRST_QUALIFYING_DURABLE_PRIMARY_CONTENT_OBSERVATION
+```
+
+For each existing logical FOMC source item, the original anchor `A` is exactly
+the persisted `observed_at` of the first qualifying durable primary content
+observation. `observed_at` keeps its existing meaning: actual successful receipt
+of the **complete admitted primary response body**. No timestamp alias or
+choice of another capture milestone is permitted.
+
+An observation qualifies only when all four conditions hold: final admitted HTTP
+200 under FIX12, complete admitted body under FIX8/FIX12, its canonical
+`observed_at`, and the existing durable raw/SourceObservation persistence
+boundary. A consumed request-start unit, feed observation, non-admitted response
+or durable failure diagnostic is insufficient. This introduces no new persistence
+primitive or EventStore schema.
+
+**Anchor value and anchor durability are distinct.** Durability makes the
+supporting body and observation provenance available for deterministic
+reconstruction; it preserves the earlier `observed_at` and its association with
+the logical source item. Raw commit time never replaces that value.
+
+| milestone | example UTC time | role |
+|---|---|---|
+| request start | 18:00:00 | not anchor |
+| response headers | 18:00:02 | not anchor |
+| complete admitted body received / `observed_at` | 18:00:05 | **anchor value A** |
+| qualifying raw/observation becomes durable | 18:00:06 | anchor becomes persistently available/reconstructible; A stays 18:00:05 |
+| normalized EventRevision commit | 18:00:07 | not required to establish anchor; A stays 18:00:05 |
+
+`ingested_at` remains the distinct normalized commit timestamp. It has no anchor
+authority even if it happens to equal `observed_at`. Neither `declared_release_at`
+nor restart time nor the monotonic limiter-start timestamp can replace A. A
+declared release at 14:00 followed by the first qualifying primary observation
+at 18:00 yields anchor 18:00, with no retroprojection.
+
+### Qualification survives downstream failure only after raw durability
+
+If a complete primary body is observed at 18:00:05 but a crash occurs before the
+required raw/SourceObservation durability boundary, that volatile observation
+leaves **no reconstructible anchor**. Do not fabricate its 18:00:05 timestamp or
+an obligation from memory/log inference. A later qualifying durable observation
+may establish the first persistent anchor using its own `observed_at`.
+
+If that observation becomes durable at 18:00:06, a crash before normalized commit
+leaves anchor **18:00:05 reconstructible from the durable record**. Do not shift
+it to raw commit time, restart time or a future normalization commit.
+
+Semantic parse success and normalized EventRevision commit are **not required**
+for anchor qualification. A later `PARSER_FAILED` or normalization failure does
+not erase or move an anchor established by an admitted complete, durably recorded
+primary observation. This establishes no normalized event success and bypasses
+none of the existing parser, classifier, source-health or zero gates.
+
+A 404, 500, 206, 204, 304, redirect failure, incomplete body or oversized aborted
+response cannot establish an anchor. DNS/connect/TLS failure, timeout or
+connection reset without qualifying primary content cannot establish one either.
+Existing request accounting still counts those admitted attempt starts.
+
+### The original observation fixes all target timestamps
+
+The unchanged offsets are **300, 3600, 86400 and 604800 seconds**, each added
+directly to original A. There is no rounding, minute/bucket alignment or chaining
+from a previous recheck's actual start or completion.
+
+For A = `2026-09-22T18:00:05Z`, target timestamps are exactly:
+
+```
+A + 300     = 2026-09-22T18:05:05Z
+A + 3600    = 2026-09-22T19:00:05Z
+A + 86400   = 2026-09-23T18:00:05Z
+A + 604800  = 2026-09-29T18:00:05Z
+```
+
+Existing canonical timestamp precision is preserved. If supported `observed_at`
+precision includes `18:00:05.250Z`, the +300 target is `18:05:05.250Z`; it must
+not be truncated for scheduler convenience. If the existing representation uses
+whole seconds, preserve it. FIX16 introduces no new precision regime.
+
+A is immutable for the same logical source item. Later H1 → H2 content revisions,
+raw/normalized commits and scheduled recheck observations retain their own
+timestamps without creating another anchor or resetting the grid. A restart at
+A+2 minutes leaves the first target A+300, never restart+300.
+
+FIX15's limiter may delay a target A+300 until an actual start at A+312. A and
+the other targets A+3600, A+86400 and A+604800 remain unchanged. The limiter's
+monotonic timestamp is for rate-duration comparisons; the schedule anchor is
+canonical UTC `observed_at`. The entire REV16 `rate_limiter` contract is
+unchanged.
+
+Anchor metadata is operational observation provenance, **not source content-vintage
+proof**. FOMC V1 content `source_available_at` stays null. The existing distinction
+between observed and ingested times and raw-before-normalized visibility remains.
+
+This freeze establishes anchor value, minimum durable qualification and
+reconstruction only. Scheduler obligation/completion persistence, missed/overdue
+execution, coalescing, checkpoint satisfaction, failed-recheck policy and
+fairness/starvation remain deferred to R17. No later failed-item scheduling or
+checkpoint completion policy is selected here.
 
 After +7 days, **V1 promises nothing.** That is stated as a limitation rather
 than disguised as immutability; extending the window is CaptureSpec V2.
@@ -737,9 +839,11 @@ each such attempt and pass it through the gate; accounting alone does not
 authorize a retry. No retry is free because it belongs to an earlier fetch.
 
 Every scheduled recheck attempt consumes one unit in this domain. A due recheck
-cannot bypass unavailable limiter admission. Its anchor remains **the first
-successful primary statement fetch**, with unchanged +5 min, +1 h, +24 h and
-+7 d offsets. FIX14 decides no waiting or ordering policy.
+cannot bypass unavailable limiter admission. FIX16 binds its anchor to the exact
+**`observed_at` of the first qualifying durable primary content observation** in
+§6, with unchanged +5 min, +1 h, +24 h and +7 d offsets. A limiter delay changes
+neither the anchor nor those targets; scheduler late-execution policy remains
+deferred.
 
 ### Exact rolling window and start-to-start spacing
 
@@ -880,14 +984,18 @@ when present, and the first instant with at most five active prior starts under
 `0 < t - s < 60`. Conditions are evaluated against current state at admission;
 eligibility grants neither a reservation nor a queue-service guarantee.
 
-### Scope left for R16
+### Scope left for R17
 
-Recheck anchor and offsets, retry permissions, existing source-health mappings
-and causal timestamps remain unchanged. FIX15 defines no missed/overdue,
-coalescing, schedule drift, fairness or starvation policy. Total network
-deadline, DNS/TLS/header/body timeout coverage, the general source-health matrix
-and EST/EDT seasonal-consistency audits remain deferred to R16. Connect 10 s and
-read 30 s are unchanged and not reinterpreted; no total deadline is added.
+FIX16 binds the anchor and immutable target grid as specified in §6; offsets,
+retry permissions, existing source-health mappings and causal timestamp
+definitions remain unchanged. Missed/overdue execution, coalescing, checkpoint
+satisfaction, failed-recheck completion, scheduler completion durability and
+fairness/starvation remain unresolved for R17. Total network deadline,
+DNS/TLS/header/body timeout coverage, the general source-health matrix and
+EST/EDT seasonal-consistency audits also remain deferred. Connect 10 s and read
+30 s are unchanged and not reinterpreted; no total deadline is added. Historical
+FIX15 scope wording inside the unchanged `rate_limiter` does not override these
+current deferrals.
 
 ### Accounting does not redefine observations or source health
 
@@ -1265,9 +1373,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. One hundred cases, decided in advance
+## 11. One hundred and seven cases, decided in advance
 
-`FOMC01`–`FOMC100` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC107` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -1355,7 +1463,7 @@ strict byte-error rejection, preserved raw hashes and metadata-only offline
 replay must also be checked. No fixture or implementation test is created or
 run here; passing the text gate never alone admits an EventRevision.
 
-Invariants `F01`–`F49` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F51` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -1432,10 +1540,34 @@ The corresponding new canonical adversarial cases are:
 | `FOMC99` — U0 start 200, 302 at 201, follow candidate 201 | WAIT; earliest spacing eligibility 210, subject to window |
 | `FOMC100` — old independent issuer remains active | no new independent provider attempt; establish exclusivity, then a full new-epoch embargo |
 
-Non-restart examples use the post-embargo time origin defined in §7. These are
-specification cases only; no fixture, capture or runtime is created or exercised
-here. Revision 16 is authoritative, but independent counter-review remains
-pending. FIX15 authorizes no implementation and closes no R16 question.
+Non-restart rate-limiter examples use the post-embargo time origin defined in §7.
+
+Revision 17 adds **F50 — REOBSERVATION GRID IS ANCHORED TO THE FIRST DURABLE
+PRIMARY OBSERVATION'S observed_at**: for each logical source item, exact original
+`observed_at` supplies A and every offset sum. Request/header time, raw or
+normalized commit, declared release, `ingested_at`, monotonic limiter start and
+restart time cannot replace it. Later observations and revisions cannot reset A.
+
+It also adds **F51 — DURABILITY DETERMINES ANCHOR SURVIVAL, NOT ANCHOR TIME**:
+volatile observation lost before durability establishes no reconstructible
+anchor; once durable, its original `observed_at` survives crash/restart and
+downstream parsing failure without commit-relative or restart-relative reset.
+F01–F49 retain their commitments.
+
+| case | frozen anchor verdict |
+|---|---|
+| `FOMC101` — start/header/body/raw/normalized times 18:00:00/:02/:05/:06/:07 | A=18:00:05; targets 18:05:05, 19:00:05, next day 18:00:05 and +7d 18:00:05 |
+| `FOMC102` — declared release 14:00, observed 18:00, raw durable 18:00:01 | A=18:00; no retroprojection or source availability inference |
+| `FOMC103` — complete admitted primary body observed 18:00:05, raw durable 18:00:06, then parsing/normalization fails | A exists at 18:00:05; failure does not erase or replace it; no normalized success implied |
+| `FOMC104` — transient observation 18:00:05, crash before raw/observation durability | no reconstructible anchor survives; a later qualifying durable observation may establish the first anchor |
+| `FOMC105` — raw durable 18:00:06, crash before normalized commit, restart 18:02:05 | recover A=18:00:05; first target remains 18:05:05 |
+| `FOMC106` — first H1 at A=18:00:05; later recheck H2 at 19:00:07 | same source item's A is unchanged; content revision does not reset future targets |
+| `FOMC107` — target A+300, limiter delays actual start until A+312 | A and targets A+3600/A+86400/A+604800 stay fixed; overdue/satisfaction/coalescing semantics remain deferred |
+
+These are specification cases only; no fixture, capture or runtime is created
+or exercised here. Revision 17 is authoritative, but independent counter-review
+remains pending. FIX16 authorizes no implementation and does not resolve the
+remaining R17 scheduler, deadline, source-health or EST/EDT questions.
 
 ## 12. What this does not establish
 
