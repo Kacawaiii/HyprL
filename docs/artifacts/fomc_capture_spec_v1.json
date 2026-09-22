@@ -505,6 +505,82 @@
     "FOMC82": {
       "case": "BASE ADVANCES PER HOP - U0 https://www.federalreserve.gov/a/one.htm, L1 ../b/two.htm -> U1 https://www.federalreserve.gov/b/two.htm; U1 returns Location: three.htm",
       "verdict": "U2 is https://www.federalreserve.gov/b/three.htm, NOT https://www.federalreserve.gov/a/three.htm. This proves each Location resolves against the CURRENT requested hop URL rather than the original U0."
+    },
+    "FOMC83": {
+      "case": "THREE-REQUEST REDIRECT CHAIN - GET U0 -> 302; GET U1 -> 301; GET U2 -> 200",
+      "expected_accounting": {
+        "total_units": 3,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START",
+        "units_per_attempt": [
+          1,
+          1,
+          1
+        ]
+      },
+      "verdict": "Three physical attempts, not one logical-fetch unit. U0, U1 and U2 each pass through the SAME provider gate before network side effects; final 200 admission and pre-redirect identity remain unchanged."
+    },
+    "FOMC84": {
+      "case": "MAXIMAL REDIRECT CHAIN - initial U0 plus three followed transitions to U1, U2 and U3; U3 may return redirect #4 to U4",
+      "expected_accounting": {
+        "total_units": 4,
+        "unfollowed_u4_units": 0,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START",
+        "units_per_attempt": [
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "verdict": "Four actually attempted GETs consume four units through the shared gate. If U3 proposes redirect #4, FIX12 forbids requesting U4: no fifth attempt or unit, existing SOURCE_UNAVAILABLE outcome unchanged."
+    },
+    "FOMC85": {
+      "case": "FEED THEN PRIMARY - one successful feed GET discovers one item; one primary GET follows later",
+      "expected_accounting": {
+        "scope": "FEDERAL_RESERVE_PROVIDER_V1_GLOBAL",
+        "total_units": 2,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
+      },
+      "verdict": "One feed attempt plus one primary attempt consume two units in the SAME provider domain; never one combined unit or independent feed/primary quotas."
+    },
+    "FOMC86": {
+      "case": "REDIRECT TARGET REJECTED BEFORE REQUEST - U0 returns 302 Location: //evil.example/x",
+      "expected_accounting": {
+        "rejected_target_units": 0,
+        "total_units": 1,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
+      },
+      "verdict": "U0 consumed one unit. FIX13 resolves then rejects the foreign host before contact: no physical attempt for the rejected target, no additional unit. Existing redirect rejection outcome remains unchanged."
+    },
+    "FOMC87": {
+      "case": "FAILED ATTEMPT STILL COUNTS - permission to begin a provider attempt is granted; DNS/connect/TLS/transport subsequently fails",
+      "expected_accounting": {
+        "refunded_units": 0,
+        "total_units": 1,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
+      },
+      "verdict": "The admitted start consumed one unit before network side effects, even without a successful response. No refund and no successful SourceObservation or EventRevision implied; existing failure mapping applies."
+    },
+    "FOMC88": {
+      "case": "PERMITTED LATER REATTEMPT - an earlier attempt fails; existing retry policy later permits another attempt through normal scheduling",
+      "expected_accounting": {
+        "first_attempt_units": 1,
+        "later_attempt_units": 1,
+        "scope": "FEDERAL_RESERVE_PROVIDER_V1_GLOBAL",
+        "total_units": 2,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
+      },
+      "verdict": "The first failure does not refund its unit. The separately permitted later attempt reacquires the same provider gate and consumes another unit. No free retry, new retry permission, hidden library retry or tight loop."
+    },
+    "FOMC89": {
+      "case": "RECHECK SHARES PROVIDER BUDGET - feed/primary traffic and one scheduled revision recheck are pending",
+      "expected_accounting": {
+        "recheck_units_if_attempted": 1,
+        "scope": "FEDERAL_RESERVE_PROVIDER_V1_GLOBAL",
+        "separate_recheck_quota": false,
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
+      },
+      "verdict": "The recheck shares the SAME accounting domain as feed and primary traffic. It cannot start without provider permission even when due; each actually attempted GET consumes one unit. Exact ordering, waiting and timing are outside FIX14; the first-successful-primary anchor and offsets are unchanged."
     }
   },
   "authority_conflicts": {
@@ -739,7 +815,7 @@
         ],
         "rule": "a final HTTP response body is eligible for NORMAL FOMC V1 content processing IF AND ONLY IF final_status_code == 200, by EXACT equality. NOT any 2xx, NOT status < 400, NOT \"a body is present\", NOT \"the body looks valid\"."
       },
-      "fix12_non_scope": "FIX12 does NOT decide whether a 429, 500, 503 or timeout is retried - it only freezes that if such a response is the FINAL response of the logical attempt, it is non-admitted and maps to SOURCE_UNAVAILABLE. Retry policy, and whether redirect hops or retries count toward the 6-per-minute ceiling, remain for R13.",
+      "fix12_non_scope": "FIX12 does NOT decide whether a 429, 500, 503 or timeout is retried - it only freezes that if such a response is the FINAL response of the logical attempt, it is non-admitted and maps to SOURCE_UNAVAILABLE. Existing polling.retry_policy remains authoritative and unchanged. FIX14 now binds redirect and permitted later reattempt accounting to request_accounting: one unit per admitted physical attempt start through the same provider-wide gate; exact temporal semantics remain for R15.",
       "gate_order": [
         "1. receive response headers and status",
         "2. record allowed transport/provenance metadata under existing semantics",
@@ -936,6 +1012,7 @@
       "max_followed_transitions": 3,
       "method": "GET",
       "method_rule": "FOMC V1 requests are GET only and every followed redirect remains a GET. No POST, no body-bearing redirect semantics, no library-dependent method choice.",
+      "request_accounting": "request_accounting applies independently before EVERY physical hop: a target admitted by FIX13 still must reacquire the shared provider limiter before any network side effect. HTTP auto-follow cannot bypass that gate.",
       "target_validation": "before EACH redirect follow the target must pass all V1 redirect URL security checks - HTTPS, host allowlist, userinfo, port, percent syntax and the rest - and validation occurs BEFORE the network request, so an unsafe target is never contacted",
       "transition_semantics": "max_redirects = 3 means AT MOST THREE FOLLOWED REDIRECT TRANSITIONS after the initial request. Initial request -> redirect #1 -> follow -> redirect #2 -> follow -> redirect #3 -> follow. If the response after following redirect #3 is itself another redirect, that is redirect #4."
     },
@@ -1064,7 +1141,9 @@
     "F40": "REDIRECT FOLLOWING IS EXPLICITLY BOUNDED AND NON-IDENTIFYING. Only 301, 302, 303, 307 and 308 may be followed, at most 3 transitions, with every target security-validated before the request. The fourth redirect target is never requested. Redirect bodies are non-semantic and identity remains the pre-redirect official discovery URL.",
     "F41": "CACHE VALIDATORS ARE PROVENANCE, NEVER CONTENT-VINTAGE PROOF. ETag, Last-Modified and HTTP caching metadata cannot populate or infer causal content-availability timestamps. Conditional requests are disabled in V1.",
     "F42": "REDIRECT LOCATION IS RESOLVED AGAINST THE CURRENT REQUEST URL BEFORE SECURITY VALIDATION. Location is an HTTP URI-reference; relative and scheme-relative references are supported. The base is the actual absolute request URL of the CURRENT redirect hop and advances with each hop. Resolution occurs before target security validation, and the resolved absolute target must then satisfy all existing V1 URL admission rules. No browser repair, no identity effect.",
-    "F43": "REDIRECT REFERENCE RESOLUTION CANNOT WEAKEN URL SECURITY. Relative resolution may never bypass HTTPS-only, the host allowlist, the userinfo prohibition, port rules, the query prohibition, percent-escape validation or the fragment non-request semantics. An unsafe resolved target is never contacted."
+    "F43": "REDIRECT REFERENCE RESOLUTION CANNOT WEAKEN URL SECURITY. Relative resolution may never bypass HTTPS-only, the host allowlist, the userinfo prohibition, port rules, the query prohibition, percent-escape validation or the fragment non-request semantics. An unsafe resolved target is never contacted.",
+    "F44": "PROVIDER RATE ACCOUNTING COUNTS PHYSICAL ATTEMPT STARTS, NOT LOGICAL FETCHES. Each independently attempted HTTP request under the FOMC V1 provider consumes exactly one PHYSICAL_REQUEST_ATTEMPT_START unit when permission to begin is granted, BEFORE network side effects, with no refund on failure. Feed, primary, every followed redirect, permitted later reattempt, scheduled recheck and historical provider GET all count. A logical fetch with three redirect follows consumes four units; rejected or unfollowed targets create no additional attempt or unit.",
+    "F45": "ALL FOMC V1 NETWORK CATEGORIES SHARE ONE PROVIDER ACCOUNTING DOMAIN. Every physical attempt passes through the same FEDERAL_RESERVE_PROVIDER_V1_GLOBAL accounting/limiter gate. Independent feed, primary, recheck, redirect and historical quota buckets are forbidden; redirect/retry internals and category-specific queues cannot bypass aggregate provider admission. No logical fetch reserves a multi-request corridor."
   },
   "item_predicate": {
     "classification_states": {
@@ -1539,9 +1618,12 @@
   },
   "polling": {
     "ceiling_covers": [
-      "the feed poll",
-      "occasional primary statement fetch",
-      "bounded revision re-checks"
+      "each physical feed GET attempt",
+      "each physical primary statement GET attempt",
+      "each physical redirect-follow GET attempt",
+      "each later physical reattempt explicitly permitted by polling.retry_policy",
+      "each physical scheduled revision recheck GET attempt",
+      "each physical historical GET attempt under this same CaptureSpec V1 provider client"
     ],
     "client_limit_source": "HYPRL_CONSERVATIVE_POLICY",
     "client_max_requests_per_minute": 6,
@@ -1550,6 +1632,7 @@
     "minimum_request_spacing_seconds": 10,
     "provider_automated_access_prohibition": "NOT_VERIFIED",
     "provider_rate_limit": "UNKNOWN",
+    "request_accounting": "request_accounting: PHYSICAL_REQUEST_ATTEMPT_START units in FEDERAL_RESERVE_PROVIDER_V1_GLOBAL; temporal details remain deliberately unresolved for R15.",
     "retry_policy": {
       "exponential_request_storm": false,
       "hidden_library_retries": "forbidden",
@@ -1640,6 +1723,130 @@
     "release_guard": "existing repo release policy applies unchanged",
     "why_stricter_than_evidence": "the Federal Reserve disclaimer states that, unless otherwise indicated, Board website information is in the public domain. V1 is nonetheless stricter: 6G-A does not need redistribution, and a blanket DISABLED avoids per-item 'unless otherwise indicated' rights analysis and keeps the release guard simple."
   },
+  "request_accounting": {
+    "counted_attempt_types": {
+      "feed_get": true,
+      "historical_provider_get": true,
+      "permitted_later_reattempt": true,
+      "primary_statement_get": true,
+      "redirect_follow_get": true,
+      "scheduled_recheck_get": true
+    },
+    "deferred_semantics": {
+      "concurrent_atomic_admission": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "exact_rate_window_algorithm": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "exact_rate_window_boundaries": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "exact_spacing_reference_points": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "monotonic_clock_policy": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "restart_limiter_durability": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
+      "total_request_deadline": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW"
+    },
+    "hidden_library_attempt": {
+      "forbidden": true,
+      "rule": "A library MUST NOT silently perform an extra physical network attempt. Any additional attempt must be explicitly allowed by the existing policy, exposed as a distinct attempt, admitted through the same provider limiter and charged one unit. Transparent GET retries outside this policy are non-conforming; exposing/accounting for a retry alone does not authorize it."
+    },
+    "logical_fetch_is_unit": false,
+    "logical_operation_rule": "A feed poll, primary statement fetch, scheduled recheck, historical retrieval or redirecting logical fetch may produce one or more physical attempts. Each attempt consumes exactly one unit; no logical operation reserves a multi-request corridor.",
+    "preserved_policies": {
+      "reobservation_anchor": "the first successful primary statement fetch",
+      "reobservation_offsets": "revision_policy.reobservation_offsets_seconds UNCHANGED",
+      "retry_policy": "polling.retry_policy UNCHANGED",
+      "scheduler": "No change to existing schedule; missed/overdue/coalescing/fairness/starvation semantics remain unresolved.",
+      "timeouts": "http_policy.connect_timeout_seconds = 10 and read_timeout_seconds = 30 are unchanged and not reinterpreted. No total deadline added."
+    },
+    "rate_fields": {
+      "client_max_requests_per_minute": {
+        "binding": "polling.client_max_requests_per_minute",
+        "rule": "At most six PHYSICAL_REQUEST_ATTEMPT_START units in the provider-wide domain according to the time-window algorithm to be frozen separately. FIX14 selects no window algorithm or boundary.",
+        "unit": "PHYSICAL_REQUEST_ATTEMPT_START",
+        "value": 6
+      },
+      "minimum_request_spacing_seconds": {
+        "applies_to": "PROVIDER_WIDE_PHYSICAL_ATTEMPTS",
+        "binding": "polling.minimum_request_spacing_seconds",
+        "rule": "Applies between provider-wide physical attempts, including feeds, primary fetches, redirect follows, permitted later reattempts, rechecks and historical provider capture. No category or intra-fetch exemption. Start-to-start versus completion-to-start remains deliberately unresolved for R15.",
+        "value": 10
+      }
+    },
+    "reattempt": {
+      "existing_policy_authority": "polling.retry_policy remains unchanged: hidden library retries and tight loops are forbidden; a later attempt is allowed only via the next normal discovery cycle or an allowed scheduled pending-item retry under the same provider ceiling.",
+      "free_retry": "FORBIDDEN",
+      "new_retry_permission": false,
+      "units_per_permitted_later_attempt": 1
+    },
+    "recheck": {
+      "admission_unavailable": "A due recheck cannot bypass the provider accounting gate. Exact waiting, ordering and scheduler semantics are not decided by FIX14.",
+      "due_time_exemption": false,
+      "units_per_attempt": 1
+    },
+    "redirect": {
+      "automatic_follow_bypass": "FORBIDDEN",
+      "every_followed_target_reacquires_gate": true,
+      "fourth_target_rule": "If U3 returns redirect #4 after U0 plus three followed transitions, FIX12 forbids requesting U4. Four attempted requests consume four units; U4 creates no attempt and no fifth unit.",
+      "initial_plus_three_followed_transitions_units": 4,
+      "logical_fetch_exemption": false,
+      "rule": "After existing URL validation, every allowed target that is actually attempted MUST independently reacquire permission from the SAME provider gate BEFORE network side effects. U1 and U2 in U0 -> U1 -> U2 each require a new admission; the initial admission grants no intra-fetch exemption.",
+      "three_request_chain_units": 3,
+      "unfollowed_fourth_target_units": 0
+    },
+    "rejected_target_before_attempt": {
+      "consumes_unit": false,
+      "rule": "A redirect Location rejected by FIX13 before network contact (including foreign host, bad scheme, forbidden query or malformed percent escape) creates no target attempt and consumes no additional unit. The request returning that redirect already consumed its own unit.",
+      "units": 0
+    },
+    "scope": {
+      "allowed_host": "www.federalreserve.gov",
+      "category_specific_queues": "MAY exist only if their aggregate physical starts are admitted through the same provider-wide limiter.",
+      "historical_scope": "Any historical Fed GET executed under THIS CaptureSpec V1 provider client/network policy shares this domain, one unit per physical attempt. Unrelated external research tools are outside runtime scope; no new host or URL admission is authorized.",
+      "host_allowlist_changed": false,
+      "id": "FEDERAL_RESERVE_PROVIDER_V1_GLOBAL",
+      "independent_category_buckets": "FORBIDDEN",
+      "rule": "All actual allowed FOMC V1 physical attempt starts belong to ONE logical provider-wide accounting/limiter domain. No separate six-per-minute feed, primary, recheck, redirect or historical quota; LIVE and HISTORICAL traffic under this same provider client share the domain.",
+      "shared_across": [
+        "FEED",
+        "PRIMARY",
+        "REDIRECT",
+        "REATTEMPT",
+        "RECHECK",
+        "HISTORICAL_PROVIDER_CAPTURE"
+      ]
+    },
+    "scope_boundary": "FIX14 freezes WHAT COUNTS, the shared provider accounting domain and no intra-fetch bypass only. It chooses neither rolling 60s, token bucket nor fixed minute, no window endpoints, no start/start or completion/start spacing reference, no clock policy, mutex/atomicity/interprocess lock or restart persistence/history reconstruction. Full 6-rpm/10-second correctness under concurrency or across restart is NOT yet established. R15 must audit/freeze those semantics separately.",
+    "source_health": {
+      "attempt_failure": "Existing source_health failure mappings apply if an actual attempted request later fails.",
+      "new_state": false,
+      "waiting_for_permission": "Merely waiting for future limiter permission introduces no failure state in FIX14."
+    },
+    "source_observation": {
+      "accounting_unit_is_source_observation_row": false,
+      "rule": "Provider-safety accounting exists even when an attempt fails before a successful response. Consuming a unit neither requires nor implies a successful SourceObservation or EventRevision; existing observation and revision semantics are unchanged.",
+      "successful_observation_implied": false
+    },
+    "timestamps": {
+      "accounting_start_must_not_become": [
+        "observed_at",
+        "source_available_at",
+        "ingested_at",
+        "declared_release_at"
+      ],
+      "observed_at_unchanged": true,
+      "rule": "For a successful content response, observed_at retains existing actual successful response-observation semantics; for a revision it is the successful receipt of its PRIMARY statement raw bytes. The accounting start event is not a causal timestamp replacement."
+    },
+    "transport_substages": {
+      "rule": "DNS, TCP, TLS, HTTP request write and response processing within ONE admitted attempt are not separate provider requests. DNS success plus TCP success plus TLS success plus one GET is one unit total. This defines no substage timeout semantics.",
+      "separately_counted": false
+    },
+    "unit": {
+      "cancelled_before_network_authorization_units": 0,
+      "consumption_point": "BEFORE_NETWORK_SIDE_EFFECTS",
+      "definition": "One provider-accounting unit is consumed whenever the FOMC V1 client is granted permission to begin ONE concrete outbound HTTP network attempt for one already validated request URL.",
+      "failure_rule": "Once permission to begin the attempt is granted, its unit remains consumed even after DNS failure, TCP/connect failure, TLS failure, timeout, connection reset, read failure, a non-200 final response or any other transport failure. Accounting is tied to start authorization, never successful response.",
+      "id": "PHYSICAL_REQUEST_ATTEMPT_START",
+      "refund_on_failure": false,
+      "units_per_started_attempt": 1
+    }
+  },
   "retrospective_source_fit": {
     "exact_content_retrospective_visibility": "NOT_SUPPORTED_V1",
     "metadata_only_layer": "a distinct metadata-only release-fact layer may be useful later, but it would need its own schema and design. This CaptureSpec does NOT invent one.",
@@ -1653,7 +1860,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 14 closes the MEDIUM found by counter-review R13. Revision 13 required a Location, validated targets before any request and bounded transitions, but never said how a Location VALUE becomes the absolute URL being validated. Since the URL rules require HTTPS, one reading rejected every relative Location while another resolved it against the current URL as HTTP libraries do - and relative Location is the ordinary same-host case. V1 now supports absolute, absolute-path, relative-path, scheme-relative and fragment-only references, resolved per RFC 3986 semantics against the actual request URL of the current hop, which advances along the chain. Resolution happens BEFORE security validation, and validation is unchanged: a resolved target earns no trust. Revisions 1-13 semantics are preserved unchanged, retries included.",
+  "revision_note": "Spec revision 15 closes ONLY the first MEDIUM found by counter-review R14: the six-per-minute ceiling and ten-second spacing previously named logical operations without defining a counted unit. FIX14 freezes PHYSICAL_REQUEST_ATTEMPT_START, one unit at permission to begin before network side effects with no failure refund, and ONE FEDERAL_RESERVE_PROVIDER_V1_GLOBAL domain across feed, primary, every redirect follow, permitted later reattempt, recheck and historical provider capture. No intra-fetch or library bypass. FIX1-FIX13, existing retry policy, reobservation schedule, timestamps, SourceObservation semantics, timeouts and URL admission are preserved. Exact window/spacing/clock/concurrency/restart/scheduler/deadline semantics remain unresolved for R15; no implementation or final counter-review approval is established.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -1774,7 +1981,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 14,
+  "spec_revision": 15,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -1790,7 +1997,8 @@
     "3dcf0a600797a9998651590389e6d933a8ae7dcbe832e8dff52cf0a40613509d",
     "b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43",
     "b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21",
-    "67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d"
+    "67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d",
+    "bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",

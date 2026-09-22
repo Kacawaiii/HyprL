@@ -7,12 +7,12 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 14 — authoritative)
-bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050
+CAPTURE SPEC HASH  (revision 15 — authoritative)
+49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
-        → 67e2d7d5 (rev 13)
+        → 67e2d7d5 → bbc29abb (rev 14)
 
 BINDS
   event intelligence design rev4
@@ -30,7 +30,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 11.**
+writing revision 15.**
 
 ---
 
@@ -670,10 +670,116 @@ minimum_request_spacing_seconds        10
 The Federal Reserve has **not** granted a quota of 6 rpm or any other figure.
 No published numeric limit was found, and no prohibition of automated access
 was found either — two different facts, kept apart. The ceiling is a
-conservative client policy covering the poll, occasional page fetches and
-bounded re-checks, with no burst retries and no hidden retry-library behaviour;
-on failure the collector records source health and waits for the next normal
-cycle.
+conservative client policy. Revision 14 named logical operations without
+defining a counted unit: a fetch with three redirect follows could be counted
+as either one request or four. **FIX14 freezes the physical unit and its shared
+provider domain.**
+
+### One authorized physical attempt consumes one unit
+
+The canonical unit is **`PHYSICAL_REQUEST_ATTEMPT_START`**. Exactly one unit is
+consumed when the FOMC V1 client is granted permission to begin one concrete
+outbound HTTP attempt for one already validated request URL. Permission and
+accounting occur **before any network side effect** of that attempt.
+
+Once permission to begin is granted, the unit is consumed even if DNS, TCP,
+connect, TLS, read or other transport processing fails, the connection resets,
+the attempt times out, or the final response is non-200. **Failure never refunds
+the unit.** A feed poll cancelled before network authorization consumes zero.
+
+**A logical operation is not the accounting unit.** Feed polls, primary fetches,
+scheduled rechecks, historical retrievals and redirecting logical fetches may
+each cause one or more physical attempts. Each actual feed GET, primary GET,
+redirect-follow GET, permitted later reattempt, scheduled recheck GET and
+historical provider GET consumes one unit. Feed discovery followed by one
+primary attempt therefore consumes at least two units.
+
+DNS, TCP, TLS, HTTP request write and response processing within one admitted
+attempt are transport substages, not additional requests. DNS + TCP + TLS + one
+GET consumes one unit total; this rule defines no substage timeout semantics.
+
+### One provider-wide domain, including every redirect hop
+
+`accounting_scope = FEDERAL_RESERVE_PROVIDER_V1_GLOBAL`. All actual allowed
+attempts under this CaptureSpec V1 provider client share **one logical limiter
+and accounting gate**. Independent feed, primary, recheck, redirect, reattempt
+or historical quota buckets are forbidden. Category-specific queues may exist
+only if their aggregate physical starts pass through that same provider gate.
+
+Any historical Fed GET executed under this same provider client/network policy
+shares the domain with live traffic, one unit per physical attempt. There is no
+separate live-plus-historical capacity. Unrelated external research tools are
+outside this runtime scope. The host allowlist remains exactly
+`www.federalreserve.gov`; no URL or host admission changes.
+
+Every followed redirect target must first pass existing FIX13 URL validation,
+then independently reacquire provider permission before its network attempt:
+
+```
+GET U0 → 302 → GET U1 → 301 → GET U2 → 200     3 units
+GET U0 → GET U1 → GET U2 → GET U3              4 units
+U3 proposes redirect #4 to U4                 U4 never requested; no fifth unit
+U0 returns a rejected Location               U0 = 1; rejected target = 0 units
+```
+
+A foreign host, bad scheme, forbidden query or malformed percent escape rejected
+before contact creates no target attempt and no additional unit. The request
+that returned that redirect already consumed its own unit. The same zero applies
+to the fourth redirect target that FIX12 forbids following.
+
+**No intra-fetch exemption:** a logical fetch reserves no multi-request corridor.
+U1 and U2 must each reacquire the same gate; HTTP library auto-follow cannot
+bypass it. Existing retry semantics remain authoritative: no hidden library
+retries, no tight loops, and later attempts only via the next normal discovery
+cycle or an allowed scheduled pending-item retry under the same ceiling. Any
+legitimately permitted later attempt consumes a new unit. A library must expose
+each such attempt and pass it through the gate; accounting alone does not
+authorize a retry. No retry is free because it belongs to an earlier fetch.
+
+Every scheduled recheck attempt consumes one unit in this domain. A due recheck
+cannot bypass unavailable limiter admission. Its anchor remains **the first
+successful primary statement fetch**, with unchanged +5 min, +1 h, +24 h and
++7 d offsets. FIX14 decides no waiting or ordering policy.
+
+### Rate values bind to physical attempts; temporal details remain unresolved
+
+`client_max_requests_per_minute = 6` now means at most six
+`PHYSICAL_REQUEST_ATTEMPT_START` units in the provider-wide domain according to
+the time-window algorithm to be frozen separately.
+`minimum_request_spacing_seconds = 10` applies between provider-wide physical
+attempts, with no feed, primary, redirect, reattempt, recheck or historical
+exemption. The accounting start event does not select the spacing endpoints.
+
+The canonical `request_accounting.deferred_semantics` explicitly leaves these
+questions `UNRESOLVED_FOR_NEXT_COUNTER_REVIEW` (R15):
+
+| question | FIX14 boundary |
+|---|---|
+| exact rate-window algorithm | no rolling 60s, token bucket or fixed minute selected |
+| exact window boundaries | no endpoint convention selected |
+| spacing reference points | neither start-to-start nor completion-to-start selected |
+| monotonic clock | no clock policy selected |
+| concurrent atomic admission | no mutex, atomicity or interprocess locking defined |
+| restart limiter durability | persistence/history reconstruction remains to be audited and frozen |
+| scheduler | no missed/overdue/coalescing/fairness/starvation policy change |
+| total request deadline | none added; connect 10 s and read 30 s unchanged and not reinterpreted |
+
+All actual physical starts belong to the same domain, but full 6-rpm/10-second
+correctness under concurrency or across restart is not yet established.
+
+### Accounting does not redefine observations or source health
+
+An accounting unit is not a `SourceObservation` row. An attempt can fail before
+any successful response; consuming its unit implies no successful observation
+or `EventRevision`. Their existing semantics remain unchanged.
+
+For a successful content response, `observed_at` retains actual successful
+response-observation semantics; for a revision it is receipt of the primary
+statement raw bytes used for that revision. The accounting start event becomes
+none of `observed_at`, `source_available_at`, `ingested_at` or
+`declared_release_at`. Merely waiting for future limiter permission introduces
+no failure state. An actual attempted request that later fails uses the existing
+failure mapping; no health enum is added.
 
 Polling is plain elapsed-time. V1 derives no schedule from the FOMC calendar,
 the 2:00 p.m. tradition or `pubDate` — a predictive scheduler would be a second
@@ -818,10 +924,11 @@ replay or parsing. Raw-first does not mean *parse every HTTP body regardless of
 status* — and no successful content hash is ever created from a 204, 206 or 304
 payload, an error body, or a redirect body.
 
-FIX12 deliberately decides **nothing** about retries or whether redirect hops
-count toward the request ceiling. A non-admitted response maps to
-`SOURCE_UNAVAILABLE` *if it is the final response of the logical attempt*; what
-happens before that is R13's territory.
+FIX12 itself introduced no retry policy. A non-admitted response maps to
+`SOURCE_UNAVAILABLE` *if it is the final response of the logical attempt*.
+Existing `polling.retry_policy` remains authoritative and unchanged. FIX14 now
+binds every redirect follow and permitted later reattempt to the physical unit
+and shared gate in §7; precise temporal semantics remain for R15.
 
 ## 7b. XML parsing has no expansion path
 
@@ -1035,9 +1142,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Forty-seven cases, decided in advance
+## 11. Eighty-nine cases, decided in advance
 
-`FOMC01`–`FOMC82` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC89` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -1125,7 +1232,7 @@ strict byte-error rejection, preserved raw hashes and metadata-only offline
 replay must also be checked. No fixture or implementation test is created or
 run here; passing the text gate never alone admits an EventRevision.
 
-Invariants `F01`–`F32` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F45` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -1152,8 +1259,34 @@ Revision 10 adds `F32`: text decoding is single-valued and strict UTF-8, with
 all recognized declarations acting as consistency constraints, deterministic
 signature removal in the text view only, and replay based on unchanged body
 bytes plus persisted HTTP charset provenance. F01–F31 remain unchanged.
-Independent counter-review of revision 10 remains pending; this fix authorizes
-no implementation.
+Revision 15 adds **F44 — PROVIDER RATE ACCOUNTING COUNTS PHYSICAL ATTEMPT STARTS,
+NOT LOGICAL FETCHES**: each independently attempted HTTP request consumes one
+unit before network side effects, with no refund on failure. Feed, primary,
+every followed redirect, permitted later reattempt, scheduled recheck and
+historical provider GET all count. Three redirect follows plus the initial
+request consume four units.
+
+Revision 15 also adds **F45 — ALL FOMC V1 NETWORK CATEGORIES SHARE ONE PROVIDER
+ACCOUNTING DOMAIN**: no independent feed/primary/recheck/redirect/historical
+quota buckets, and every physical attempt passes through the same gate.
+Redirect/retry internals cannot bypass it. F01–F43 and FIX1–FIX13 retain their
+commitments.
+
+The canonical JSON adds these adversarial specification cases:
+
+| case | expected accounting |
+|---|---|
+| `FOMC83` — U0 → 302, U1 → 301, U2 → 200 | 3 physical units, each through the same gate |
+| `FOMC84` — U0 plus three followed transitions to U3 | 4 units; redirect #4 target U4 never requested, no fifth unit |
+| `FOMC85` — one feed GET followed by one primary GET | 2 units in the same domain |
+| `FOMC86` — U0 returns `302 Location: //evil.example/x` | U0 = 1 unit; rejected target = 0; total 1 |
+| `FOMC87` — admitted start followed by DNS/connect/TLS/transport failure | 1 unit, no refund and no successful observation implied |
+| `FOMC88` — failed attempt then legitimately permitted later reattempt | 1 + 1 units through the same gate; existing retry policy unchanged |
+| `FOMC89` — recheck pending alongside feed/primary traffic | same provider domain; 1 unit if attempted; no separate quota or due-time bypass; ordering/timing deferred |
+
+These are specification cases only; no fixture, capture or runtime is created
+or exercised here. Revision 15 is authoritative, but independent counter-review
+remains pending. FIX14 authorizes no implementation and closes no R15 question.
 
 ## 12. What this does not establish
 
