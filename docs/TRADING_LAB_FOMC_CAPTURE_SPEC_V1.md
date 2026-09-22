@@ -7,12 +7,12 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 15 — authoritative)
-49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17
+CAPTURE SPEC HASH  (revision 16 — authoritative)
+6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
-        → 67e2d7d5 → bbc29abb (rev 14)
+        → 67e2d7d5 → bbc29abb → 49f8050f (rev 15)
 
 BINDS
   event intelligence design rev4
@@ -30,7 +30,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 15.**
+writing revision 16.**
 
 ---
 
@@ -741,31 +741,153 @@ cannot bypass unavailable limiter admission. Its anchor remains **the first
 successful primary statement fetch**, with unchanged +5 min, +1 h, +24 h and
 +7 d offsets. FIX14 decides no waiting or ordering policy.
 
-### Rate values bind to physical attempts; temporal details remain unresolved
+### Exact rolling window and start-to-start spacing
 
-`client_max_requests_per_minute = 6` now means at most six
-`PHYSICAL_REQUEST_ATTEMPT_START` units in the provider-wide domain according to
-the time-window algorithm to be frozen separately.
-`minimum_request_spacing_seconds = 10` applies between provider-wide physical
-attempts, with no feed, primary, redirect, reattempt, recheck or historical
-exemption. The accounting start event does not select the spacing endpoints.
+Revision 15 left the temporal contract unresolved. FIX15 binds it in canonical
+`rate_limiter`, while preserving FIX14's unit, shared domain and no-refund rule.
+The algorithm is **`ROLLING_PHYSICAL_START_WINDOW_V1`**, with a 60-second window
+and at most six physical starts. Fixed UTC/calendar-minute buckets, token
+buckets, leaky buckets and calendar-minute resets are forbidden.
 
-The canonical `request_accounting.deferred_semantics` explicitly leaves these
-questions `UNRESOLVED_FOR_NEXT_COUNTER_REVIEW` (R15):
+For candidate monotonic instant `t`, a prior admitted start `s` counts exactly
+when **`0 < t - s < 60`**, in seconds. Thus prior history is restricted to
+`(t-60s,t)`. The candidate is admitted by the window test only if:
 
-| question | FIX14 boundary |
-|---|---|
-| exact rate-window algorithm | no rolling 60s, token bucket or fixed minute selected |
-| exact window boundaries | no endpoint convention selected |
-| spacing reference points | neither start-to-start nor completion-to-start selected |
-| monotonic clock | no clock policy selected |
-| concurrent atomic admission | no mutex, atomicity or interprocess locking defined |
-| restart limiter durability | persistence/history reconstruction remains to be audited and frozen |
-| scheduler | no missed/overdue/coalescing/fairness/starvation policy change |
-| total request deadline | none added; connect 10 s and read 30 s unchanged and not reinterpreted |
+```
+count({s in history | 0 < t - s < 60}) <= 5
+```
 
-All actual physical starts belong to the same domain, but full 6-rpm/10-second
-correctness under concurrency or across restart is not yet established.
+After adding the candidate, **for every admitted start `t`, `(t-60s,t]` contains
+at most six admitted physical starts**. A prior start of age exactly 60 seconds
+is excluded. Do not round a candidate across a threshold or add an early-start
+tolerance.
+
+```
+prior starts: 0, 10, 20, 30, 40, 50
+candidate 60:     active prior = 10, 20, 30, 40, 50; count 5; spacing 10 → ADMITTED
+candidate 59.999: active prior = 0, 10, 20, 30, 40, 50; count 6; spacing 9.999 → WAIT
+```
+
+Unless an example explicitly uses epoch elapsed `e`, its `t=0` is an arbitrary
+origin **after the current epoch's cold-start embargo**, with exclusive provider
+ownership already established. The valid sequence `0,10,20,30,40,50,60` does not
+waive the startup rule below.
+
+Spacing is **`START_TO_START`**. With `p` the immediately previous admitted
+provider start, admission requires **`t - p >= 10` seconds**. Exact equality
+passes. No previous start in the current epoch means the spacing test passes;
+ownership and embargo still apply. Completion time has no role: if A starts at
+0 and completes at 45, B may start at 45 when the window permits. There is no
+completion-plus-10 wait to 55.
+
+### One event for accounting, window and spacing
+
+`PHYSICAL_REQUEST_ATTEMPT_START` is the **atomic provider-limiter grant-and-consume
+event immediately before transport invocation** for one validated request. It
+occurs after URL/request validation and waiting for rate permission, and before
+DNS, TCP, TLS or HTTP side effects. Accounting, window history and spacing use
+this same event and timestamp. Socket write and response completion cannot
+supply separate rate or spacing timestamps.
+
+A permit cannot be reserved, stored, transferred, reused or banked for later
+execution. Grant and consumption belong to one immediate attempt initiation.
+If the task cannot proceed after grant, its authorization is abandoned and its
+unit remains consumed; any future attempt needs fresh admission. Rescheduling
+or a new epoch cannot revive a previous grant.
+
+Cancellation after grant but before network I/O still consumes one unit. Its
+`t` remains in window and spacing history under the normal age rules. There is
+no refund and no successful observation implied. Conversely, failing admission
+creates no start, consumes no unit and causes no network side effect.
+
+### Monotonic, atomic admission across all provider emitters
+
+Within one limiter epoch, rate decisions use **`MONOTONIC_ELAPSED_TIME`** in one
+comparable domain. UTC corrections, NTP jumps, manual clock changes, timezone
+and DST have no effect. Last start at monotonic 100 and candidate at 105 still
+fail spacing after a five-minute backward UTC jump. Normal UTC request and
+observation provenance remains preserved; monotonic rate timestamps never
+become `observed_at`, `ingested_at`, `declared_release_at` or `source_available_at`.
+
+All concurrent emitters must share an atomic admission decision. After checking
+ownership and embargo, the limiter atomically inspects current history, tests
+the rolling window and spacing, and, if both pass, grants, consumes and registers
+`t` before another candidate can be granted. Only then may transport begin.
+
+Two workers cannot both read five prior starts and receive permission from that
+same stale state. One may be granted first; the other must re-evaluate updated
+history. At the same instant its spacing delta is zero and it cannot start.
+Although an equal-timestamp prior start is excluded by the strict prior-window
+predicate, the mandatory spacing test rejects that second grant.
+
+These semantics apply across processes as well as categories. An implementation
+may centralize issuance or coordinate processes, but cannot use independent
+process-local budgets. No mutex, async lock, database, file lock or IPC primitive
+is prescribed. The first worker is not specified; queue ordering and fairness
+remain outside FIX15.
+
+### Every new limiter epoch begins with a 60-second embargo
+
+**`LIMITER_EPOCH`** is one continuous provider runtime epoch with available,
+comparable monotonic start history. Prior-epoch monotonic history is not reused
+or reconstructed for admission, and durable per-request limiter history is not
+required. Safety instead requires exclusive provider ownership plus a full
+**60-second cold-start embargo**, measured in the new epoch's monotonic domain.
+
+The new admission epoch begins only after exclusive provider ownership is
+established and previous independent issuers can no longer initiate provider
+attempts. Time spent waiting alongside an independently active old issuer cannot
+count toward the new epoch's embargo. If exclusivity cannot be established, no
+new provider network attempt may start; no source-health enum is introduced.
+
+For every fresh epoch, the first admitted provider start must satisfy:
+
+```
+elapsed_since_limiter_epoch_begin >= 60 seconds
+e=2 or e=59.999   → WAIT; no provider start
+e=60.000         → embargo passes; then evaluate normal window and spacing
+```
+
+This applies to initial startup, crash recovery, clean restart and limiter
+recreation whenever a fresh non-comparable epoch begins. Neither UTC history,
+persisted request times nor apparent downtime may shorten the embargo. A new
+process cannot simply wait 60 seconds while the old independent issuer remains
+active and then open another budget. Ownership must exclude overlapping
+independent emission epochs.
+
+After the embargo, current-epoch history is empty before the first admitted
+start, then updated by each subsequent admission. Exclusive handoff ensures all
+unknown prior-epoch starts are at least 60 seconds old when the new epoch first
+admits: they are outside the strict-left window, and the 10-second spacing is
+also satisfied. No comparison between monotonic epochs is needed.
+
+### All categories wait for the same limiter
+
+Feed, primary, redirect follow, permitted later reattempt, scheduled recheck and
+historical provider capture obey the same window, spacing, clock, atomic grant
+and epoch rules. Feed start 100 followed by primary candidate 101 must wait;
+earliest spacing eligibility is 110. Redirect U0 start 200, 302 received at 201,
+follow candidate 201 must wait until at least 210. Both remain subject to the
+rolling window and ownership/epoch gates.
+
+Waiting for a full window, spacing or embargo is pending network work. It is
+not by itself `SOURCE_UNAVAILABLE`, `PARSER_FAILED` or `EVENTS_OBSERVED_ZERO`.
+No busy loop or new source-health state is required.
+
+For pending work under exclusive ownership, the earliest legal start is
+constrained together by epoch begin +60 seconds, previous start +10 seconds
+when present, and the first instant with at most five active prior starts under
+`0 < t - s < 60`. Conditions are evaluated against current state at admission;
+eligibility grants neither a reservation nor a queue-service guarantee.
+
+### Scope left for R16
+
+Recheck anchor and offsets, retry permissions, existing source-health mappings
+and causal timestamps remain unchanged. FIX15 defines no missed/overdue,
+coalescing, schedule drift, fairness or starvation policy. Total network
+deadline, DNS/TLS/header/body timeout coverage, the general source-health matrix
+and EST/EDT seasonal-consistency audits remain deferred to R16. Connect 10 s and
+read 30 s are unchanged and not reinterpreted; no total deadline is added.
 
 ### Accounting does not redefine observations or source health
 
@@ -928,7 +1050,8 @@ FIX12 itself introduced no retry policy. A non-admitted response maps to
 `SOURCE_UNAVAILABLE` *if it is the final response of the logical attempt*.
 Existing `polling.retry_policy` remains authoritative and unchanged. FIX14 now
 binds every redirect follow and permitted later reattempt to the physical unit
-and shared gate in §7; precise temporal semantics remain for R15.
+and shared gate in §7. FIX15 now freezes their rate admission there, without
+changing retry permissions or final-response admission.
 
 ## 7b. XML parsing has no expansion path
 
@@ -1142,9 +1265,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Eighty-nine cases, decided in advance
+## 11. One hundred cases, decided in advance
 
-`FOMC01`–`FOMC89` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC100` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -1232,7 +1355,7 @@ strict byte-error rejection, preserved raw hashes and metadata-only offline
 replay must also be checked. No fixture or implementation test is created or
 run here; passing the text gate never alone admits an EventRevision.
 
-Invariants `F01`–`F45` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F49` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -1284,9 +1407,35 @@ The canonical JSON adds these adversarial specification cases:
 | `FOMC88` — failed attempt then legitimately permitted later reattempt | 1 + 1 units through the same gate; existing retry policy unchanged |
 | `FOMC89` — recheck pending alongside feed/primary traffic | same provider domain; 1 unit if attempted; no separate quota or due-time bypass; ordering/timing deferred |
 
-These are specification cases only; no fixture, capture or runtime is created
-or exercised here. Revision 15 is authoritative, but independent counter-review
-remains pending. FIX14 authorizes no implementation and closes no R15 question.
+Revision 16 adds four invariants while preserving F01–F45:
+
+| invariant | frozen requirement |
+|---|---|
+| `F46` — PROVIDER RATE CEILING USES A ROLLING 60-SECOND PHYSICAL-START WINDOW | prior starts count iff `0 < t - s < 60`; at most five before the candidate, at most six in `(t-60s,t]` after admission; exact t=60 excludes start 0 |
+| `F47` — MINIMUM SPACING IS PROVIDER-WIDE START-TO-START | `t - previous_start >= 10`, equality allowed; same event for accounting/window/spacing; no category exemption, banked permits or post-grant refund |
+| `F48` — RATE ADMISSION IS ATOMIC AND MONOTONIC WITHIN A LIMITER EPOCH | shared atomic inspect/test/grant/register across emitters; monotonic comparisons; no stale-state double grant or UTC-driven early start |
+| `F49` — NEW LIMITER EPOCHS FAIL CONSERVATIVELY CLOSED FOR 60 SECONDS | exclusive ownership, full new-epoch monotonic embargo, exact 60 allowed, fresh history and no overlapping independent epochs |
+
+The corresponding new canonical adversarial cases are:
+
+| case | frozen verdict |
+|---|---|
+| `FOMC90` — prior starts 0,10,20,30,40,50; candidate 60 | 5 active prior starts, spacing 10; ADMITTED |
+| `FOMC91` — same history; candidate 59.999 | 6 active prior starts, spacing 9.999; WAIT, no start/unit |
+| `FOMC92` — previous start 100; candidate 110 | spacing passes at exact equality; other gates still apply |
+| `FOMC93` — A starts 0, completes 45; B candidate 45 | spacing passes with delta 45; no wait to completion +10; window still applies |
+| `FOMC94` — monotonic 100 → 105; UTC jumps backward five minutes | spacing fails with delta 5; wall-clock change has no rate effect |
+| `FOMC95` — two simultaneous workers, five prior starts, spacing permits | at most one same-instant grant; the second sees registration and fails spacing |
+| `FOMC96` — grant at t, cancellation before network I/O | one consumed unit; t remains in window/spacing history; no refund or reuse |
+| `FOMC97` — fresh exclusive epoch, candidates e=2 / 59.999 / 60 | first two wait; exact 60 passes embargo and normal gates on empty new-epoch history |
+| `FOMC98` — feed start 100, primary candidate 101 | WAIT; earliest spacing eligibility 110, subject to window |
+| `FOMC99` — U0 start 200, 302 at 201, follow candidate 201 | WAIT; earliest spacing eligibility 210, subject to window |
+| `FOMC100` — old independent issuer remains active | no new independent provider attempt; establish exclusivity, then a full new-epoch embargo |
+
+Non-restart examples use the post-embargo time origin defined in §7. These are
+specification cases only; no fixture, capture or runtime is created or exercised
+here. Revision 16 is authoritative, but independent counter-review remains
+pending. FIX15 authorizes no implementation and closes no R16 question.
 
 ## 12. What this does not establish
 

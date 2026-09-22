@@ -44,6 +44,15 @@
       "case": "Last Update later than release",
       "verdict": "Last Update is not source_available_at, not source_updated_at, not vintage proof, not revision chronology, not an identity input; declared_release_at unchanged"
     },
+    "FOMC100": {
+      "case": "OVERLAPPING LIMITER EPOCHS - old issuer retains independent provider emission authority while a new process seeks a fresh epoch",
+      "expected": {
+        "exclusive_ownership_required": true,
+        "new_independent_emitter_admitted": false,
+        "waiting_60_while_old_active_suffices": false
+      },
+      "verdict": "No new provider network attempt while exclusivity is unavailable, even after 60 seconds waiting alongside the active old issuer. Establish exclusive ownership first; only then can a new comparable-history epoch and its FULL 60-second embargo begin. No overlapping independent budgets and no new health enum."
+    },
     "FOMC11": {
       "case": "2027 backfill of a 2026 statement",
       "verdict": "declared_release_at MAY record the trusted 2026 release metadata. observed_at = the actual 2027 fetch; ingested_at = the 2027 commit; content source_available_at = null. DURABLE_OBSERVED before 2027: ABSENT. RETROSPECTIVE_SOURCE MUST NOT expose the 2027-fetched body as content visible in 2026 - no vintage proof."
@@ -581,6 +590,155 @@
         "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
       },
       "verdict": "The recheck shares the SAME accounting domain as feed and primary traffic. It cannot start without provider permission even when due; each actually attempted GET consumes one unit. Exact ordering, waiting and timing are outside FIX14; the first-successful-primary anchor and offsets are unchanged."
+    },
+    "FOMC90": {
+      "candidate_seconds": 60,
+      "case": "EXACT 60-SECOND BOUNDARY - prior starts 0,10,20,30,40,50; candidate 60",
+      "expected": {
+        "active_prior_count": 5,
+        "admitted": true,
+        "excluded_prior_starts_seconds": [
+          0
+        ],
+        "spacing_delta_seconds": 10,
+        "spacing_passes": true,
+        "window_passes": true
+      },
+      "preconditions": "rate_limiter.boundary_examples.time_origin: exclusive ownership and startup embargo already satisfied; t=0 is not epoch begin.",
+      "prior_starts_seconds": [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50
+      ],
+      "verdict": "Start 0 has age exactly 60 and is outside (t-60s,t). Five prior starts remain; adding candidate 60 gives six in (t-60s,t]. Exact 10-second spacing passes: ADMITTED. The sequence 0,10,20,30,40,50,60 is valid."
+    },
+    "FOMC91": {
+      "candidate_seconds": 59.999,
+      "case": "JUST BEFORE 60 - prior starts 0,10,20,30,40,50; candidate 59.999",
+      "expected": {
+        "active_prior_count": 6,
+        "admitted": false,
+        "spacing_delta_seconds": 9.999,
+        "spacing_passes": false,
+        "units_consumed": 0,
+        "window_passes": false
+      },
+      "preconditions": "Epoch ownership/embargo already satisfied as in rate_limiter.boundary_examples.time_origin.",
+      "prior_starts_seconds": [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50
+      ],
+      "verdict": "WAIT: start 0 is still active because age <60; all six prior starts count. Spacing from 50 is also <10. No physical start or consumed unit."
+    },
+    "FOMC92": {
+      "candidate_seconds": 110,
+      "case": "EXACT 10-SECOND SPACING - previous start 100; candidate 110",
+      "expected": {
+        "spacing_delta_seconds": 10,
+        "spacing_passes": true
+      },
+      "previous_start_seconds": 100,
+      "verdict": "Exact equality passes START_TO_START spacing. Actual admission additionally requires window and ownership/epoch preconditions; equality grants no exemption from those gates."
+    },
+    "FOMC93": {
+      "candidate_seconds": 45,
+      "case": "SLOW PREVIOUS RESPONSE - A starts 0, completes 45; B candidate 45",
+      "expected": {
+        "completion_plus_10_required": false,
+        "spacing_delta_seconds": 45,
+        "spacing_passes": true
+      },
+      "preconditions": "t=0 is a post-embargo origin as in rate_limiter.boundary_examples.time_origin.",
+      "previous_completion_seconds": 45,
+      "previous_start_seconds": 0,
+      "verdict": "B may start at 45 if the rolling window and ownership preconditions permit. No completion +10 wait to 55. Spacing uses the previous START event only."
+    },
+    "FOMC94": {
+      "candidate_seconds": 105,
+      "case": "WALL CLOCK JUMPS BACKWARD - monotonic previous start 100, candidate 105; UTC jumps backward five minutes",
+      "expected": {
+        "admitted": false,
+        "spacing_delta_seconds": 5,
+        "spacing_passes": false,
+        "wall_clock_rate_effect": "NONE"
+      },
+      "previous_start_seconds": 100,
+      "verdict": "WAIT: monotonic delta remains 5, so spacing fails. UTC changes neither window history nor spacing/embargo comparisons; normal UTC provenance is preserved.",
+      "wall_clock_jump_seconds": -300
+    },
+    "FOMC95": {
+      "case": "TWO SIMULTANEOUS WORKERS - five active prior starts; spacing and ownership/embargo otherwise permit; A and B request the same instant",
+      "expected": {
+        "maximum_same_instant_grants": 1,
+        "second_rechecks_registered_state": true,
+        "second_same_instant_admitted": false,
+        "second_same_instant_spacing_delta_seconds": 0
+      },
+      "verdict": "One candidate may be granted first; its registration is atomic with consumption. The other must re-evaluate updated provider history and fails spacing at the same instant. The winner is not prescribed; fairness/order are not part of this fix."
+    },
+    "FOMC96": {
+      "case": "CANCEL AFTER GRANT - one atomic slot is consumed at t, then task cancels before any network side effect",
+      "expected": {
+        "permit_reusable": false,
+        "start_retained_for_spacing": true,
+        "start_retained_for_window": true,
+        "units_consumed": 1,
+        "units_refunded": 0
+      },
+      "verdict": "The t grant remains in both histories under normal age rules. No refund or reuse; a future attempt needs fresh admission. No successful SourceObservation or EventRevision is implied."
+    },
+    "FOMC97": {
+      "candidates": [
+        {
+          "admitted": false,
+          "embargo_passes": false,
+          "epoch_elapsed_seconds": 2
+        },
+        {
+          "admitted": false,
+          "embargo_passes": false,
+          "epoch_elapsed_seconds": 59.999
+        },
+        {
+          "admitted": true,
+          "embargo_passes": true,
+          "epoch_elapsed_seconds": 60,
+          "spacing_passes": true,
+          "window_passes": true
+        }
+      ],
+      "case": "RESTART EMBARGO - new exclusive limiter epoch begins e=0 with no current-epoch starts",
+      "preconditions": "Old independent issuers cannot initiate more provider attempts; e measures elapsed time since the new epoch begins under exclusive ownership.",
+      "verdict": "No starts before 60; exact 60 passes embargo and normal gates are then evaluated on empty new-epoch history. No prior monotonic timestamp comparison or UTC fast path."
+    },
+    "FOMC98": {
+      "candidate_seconds": 101,
+      "case": "FEED THEN PRIMARY TOO QUICKLY - feed starts 100, primary candidate 101",
+      "expected": {
+        "admitted": false,
+        "earliest_spacing_eligible_seconds": 110,
+        "spacing_passes": false
+      },
+      "previous_start_seconds": 100,
+      "verdict": "WAIT. Feed and primary share the same limiter; primary is spacing-eligible no earlier than 110, subject also to the rolling window and ownership/epoch gates."
+    },
+    "FOMC99": {
+      "candidate_seconds": 201,
+      "case": "IMMEDIATE REDIRECT FOLLOW - U0 starts 200, returns 302 at 201, validated redirect target candidate at 201",
+      "expected": {
+        "admitted": false,
+        "earliest_spacing_eligible_seconds": 210,
+        "spacing_passes": false
+      },
+      "previous_start_seconds": 200,
+      "verdict": "WAIT. Redirect follow must reacquire the same provider limiter; earliest spacing eligibility is 210, subject also to the rolling window. HTTP auto-follow cannot bypass admission."
     }
   },
   "authority_conflicts": {
@@ -815,7 +973,7 @@
         ],
         "rule": "a final HTTP response body is eligible for NORMAL FOMC V1 content processing IF AND ONLY IF final_status_code == 200, by EXACT equality. NOT any 2xx, NOT status < 400, NOT \"a body is present\", NOT \"the body looks valid\"."
       },
-      "fix12_non_scope": "FIX12 does NOT decide whether a 429, 500, 503 or timeout is retried - it only freezes that if such a response is the FINAL response of the logical attempt, it is non-admitted and maps to SOURCE_UNAVAILABLE. Existing polling.retry_policy remains authoritative and unchanged. FIX14 now binds redirect and permitted later reattempt accounting to request_accounting: one unit per admitted physical attempt start through the same provider-wide gate; exact temporal semantics remain for R15.",
+      "fix12_non_scope": "FIX12 does NOT decide whether a 429, 500, 503 or timeout is retried - it only freezes that if such a response is the FINAL response of the logical attempt, it is non-admitted and maps to SOURCE_UNAVAILABLE. Existing polling.retry_policy remains authoritative and unchanged. FIX14 binds redirect and permitted later reattempt accounting to request_accounting; FIX15 rate_limiter defines their shared temporal admission, without changing retry permissions or response admission.",
       "gate_order": [
         "1. receive response headers and status",
         "2. record allowed transport/provenance metadata under existing semantics",
@@ -1143,7 +1301,11 @@
     "F42": "REDIRECT LOCATION IS RESOLVED AGAINST THE CURRENT REQUEST URL BEFORE SECURITY VALIDATION. Location is an HTTP URI-reference; relative and scheme-relative references are supported. The base is the actual absolute request URL of the CURRENT redirect hop and advances with each hop. Resolution occurs before target security validation, and the resolved absolute target must then satisfy all existing V1 URL admission rules. No browser repair, no identity effect.",
     "F43": "REDIRECT REFERENCE RESOLUTION CANNOT WEAKEN URL SECURITY. Relative resolution may never bypass HTTPS-only, the host allowlist, the userinfo prohibition, port rules, the query prohibition, percent-escape validation or the fragment non-request semantics. An unsafe resolved target is never contacted.",
     "F44": "PROVIDER RATE ACCOUNTING COUNTS PHYSICAL ATTEMPT STARTS, NOT LOGICAL FETCHES. Each independently attempted HTTP request under the FOMC V1 provider consumes exactly one PHYSICAL_REQUEST_ATTEMPT_START unit when permission to begin is granted, BEFORE network side effects, with no refund on failure. Feed, primary, every followed redirect, permitted later reattempt, scheduled recheck and historical provider GET all count. A logical fetch with three redirect follows consumes four units; rejected or unfollowed targets create no additional attempt or unit.",
-    "F45": "ALL FOMC V1 NETWORK CATEGORIES SHARE ONE PROVIDER ACCOUNTING DOMAIN. Every physical attempt passes through the same FEDERAL_RESERVE_PROVIDER_V1_GLOBAL accounting/limiter gate. Independent feed, primary, recheck, redirect and historical quota buckets are forbidden; redirect/retry internals and category-specific queues cannot bypass aggregate provider admission. No logical fetch reserves a multi-request corridor."
+    "F45": "ALL FOMC V1 NETWORK CATEGORIES SHARE ONE PROVIDER ACCOUNTING DOMAIN. Every physical attempt passes through the same FEDERAL_RESERVE_PROVIDER_V1_GLOBAL accounting/limiter gate. Independent feed, primary, recheck, redirect and historical quota buckets are forbidden; redirect/retry internals and category-specific queues cannot bypass aggregate provider admission. No logical fetch reserves a multi-request corridor.",
+    "F46": "PROVIDER RATE CEILING USES A ROLLING 60-SECOND PHYSICAL-START WINDOW. For candidate monotonic t, include prior admitted s iff 0 < t - s < 60; admission requires at most five such prior starts. For every admitted t, (t-60s,t] contains at most six PHYSICAL_REQUEST_ATTEMPT_START events. At t=60 after starts 0,10,20,30,40,50, start 0 is excluded and candidate 60 is admitted if spacing and epoch preconditions pass. No fixed-minute, token-bucket or leaky-bucket substitute.",
+    "F47": "MINIMUM SPACING IS PROVIDER-WIDE START-TO-START. A candidate requires t - previous_start >= 10 seconds; exact equality passes. Accounting, window and spacing use the SAME PHYSICAL_REQUEST_ATTEMPT_START atomic grant-and-consume event immediately before transport invocation. Completion time cannot shift the reference. No category or redirect/recheck exemption, no stored or reusable permit and no refund after grant, including cancellation before network I/O.",
+    "F48": "RATE ADMISSION IS ATOMIC AND MONOTONIC WITHIN A LIMITER EPOCH. All concurrent candidates, across every FOMC V1 category/process emitter, pass through one provider-wide atomic inspect/test/grant/register decision over comparable monotonic history before transport. Stale-state double grants and simultaneous starts are forbidden; later candidates see prior grants. UTC/NTP/manual/timezone/DST changes cannot alter elapsed admission. The coordination primitive is unspecified.",
+    "F49": "NEW LIMITER EPOCHS FAIL CONSERVATIVELY CLOSED FOR 60 SECONDS. Every fresh limiter epoch requires exclusive provider ownership and no attempt for its first 60 monotonic seconds; exact elapsed 60 passes the embargo. The epoch embargo begins only once old independent issuers can no longer initiate attempts. Independent overlapping epochs cannot both emit. After embargo, admission uses fresh current-epoch history; precise prior-epoch monotonic history is not reused and durable per-request history is not required. UTC history cannot shorten the embargo."
   },
   "item_predicate": {
     "classification_states": {
@@ -1632,7 +1794,7 @@
     "minimum_request_spacing_seconds": 10,
     "provider_automated_access_prohibition": "NOT_VERIFIED",
     "provider_rate_limit": "UNKNOWN",
-    "request_accounting": "request_accounting: PHYSICAL_REQUEST_ATTEMPT_START units in FEDERAL_RESERVE_PROVIDER_V1_GLOBAL; temporal details remain deliberately unresolved for R15.",
+    "request_accounting": "request_accounting: PHYSICAL_REQUEST_ATTEMPT_START units in FEDERAL_RESERVE_PROVIDER_V1_GLOBAL; rate_limiter freezes rolling-window, spacing, monotonic, atomic admission and epoch semantics.",
     "retry_policy": {
       "exponential_request_storm": false,
       "hidden_library_retries": "forbidden",
@@ -1658,6 +1820,208 @@
     "taxonomy_note": "existing frozen rev4 value reused; NO new taxonomy introduced",
     "taxonomy_type": "CENTRAL_BANK",
     "timestamp_quality": "EXCELLENT for the LOGICAL RELEASE DECLARATION when the strict grammar matches. NOT a content-revision availability timestamp: no revision-specific source availability is exposed by the contract."
+  },
+  "rate_limiter": {
+    "active_prior_start_rule": {
+      "admission_inequality": "count({s in history | 0 < t - s < 60}) <= 5",
+      "candidate": "t is the proposed PHYSICAL_REQUEST_ATTEMPT_START instant in the current limiter epoch monotonic domain; s ranges over prior admitted starts in that same domain.",
+      "equal_timestamp_prior": "A previously granted start at the same t cannot permit another start: provider-wide atomic registration makes it the previous_start and t - previous_start = 0 fails the mandatory spacing test.",
+      "equivalent_candidate_window": "(t-60s,t]",
+      "exact_comparisons": "A prior start of age exactly 60 seconds is excluded; age strictly below 60 and strictly above zero is included. Do not round a candidate across either the window or spacing threshold or apply an early-admission tolerance.",
+      "exact_left_boundary_excluded": true,
+      "include_if": [
+        "t - s > 0",
+        "t - s < 60"
+      ],
+      "max_active_prior_starts": 5,
+      "post_admission_property": "For every admitted start t, the interval (t-60s,t] contains at most six admitted PHYSICAL_REQUEST_ATTEMPT_START events.",
+      "prior_interval": "(t-60s,t)"
+    },
+    "admission": {
+      "atomic_steps": [
+        "1. Inspect the current provider-wide admitted-start history and obtain candidate monotonic instant t for this decision.",
+        "2. Test count({s in history | 0 < t - s < 60}) <= 5.",
+        "3. Test t - previous_start >= 10, or pass spacing if no previous admitted start exists in this epoch.",
+        "4. Only if all preconditions and both tests pass, atomically grant, consume exactly one unit and register t in window/spacing history before another candidate can be granted.",
+        "5. Immediately initiate this attempt through the transport; no DNS/TCP/TLS/HTTP side effect precedes registration."
+      ],
+      "cancel_after_grant": "The consumed unit is not refunded even if cancellation occurs before network I/O. Its t remains in the rolling-window and spacing histories under their normal age rules; no successful SourceObservation or EventRevision is implied.",
+      "consume_before_network_side_effects": true,
+      "event": "PHYSICAL_REQUEST_ATTEMPT_START",
+      "failed_admission": "No grant means no physical attempt start, no network side effect and no consumed unit; pending work may be considered again when all conditions permit.",
+      "immediate_initiation": "A grant is not a detachable permit. It belongs to one immediate physical-attempt initiation. If the task cannot proceed after grant, abandon that authorization while keeping its consumed start; a future attempt must obtain a fresh admission. Waiting, rescheduling or another epoch cannot revive a previous grant.",
+      "permit_operations_forbidden": [
+        "reserve in advance",
+        "store",
+        "transfer",
+        "reuse",
+        "bank for later execution"
+      ],
+      "permit_stockpiling": "FORBIDDEN",
+      "preconditions": "Request/URL validation and any waiting precede the grant. Exclusive provider ownership and elapsed_since_limiter_epoch_begin >= 60 MUST hold before a candidate can be granted.",
+      "provider_wide_atomic": true,
+      "refund_after_grant": false,
+      "semantic_instant": "The atomic provider-limiter grant-and-consume event immediately before transport invocation for ONE validated request. This is the SAME event/timestamp for physical accounting, rolling-window history and start-to-start spacing; neither response completion nor socket write supplies a separate rate timestamp.",
+      "stale_state_double_grant": "FORBIDDEN",
+      "units_per_grant": 1
+    },
+    "algorithm": {
+      "accounting_scope": "FEDERAL_RESERVE_PROVIDER_V1_GLOBAL",
+      "alternative_algorithms": "FORBIDDEN - no fixed UTC/calendar-minute bucket, token bucket or leaky bucket; no calendar-minute reset.",
+      "counted_event": "PHYSICAL_REQUEST_ATTEMPT_START",
+      "id": "ROLLING_PHYSICAL_START_WINDOW_V1",
+      "max_starts": 6,
+      "window_seconds": 60
+    },
+    "boundary_examples": {
+      "candidate_59_999": {
+        "active_prior_count": 6,
+        "admitted": false,
+        "candidate_seconds": 59.999,
+        "prior_starts_seconds": [
+          0,
+          10,
+          20,
+          30,
+          40,
+          50
+        ],
+        "spacing_delta_seconds": 9.999,
+        "verdict": "WAIT - both window and spacing fail; no start and no accounting unit consumed."
+      },
+      "starts_0_10_20_30_40_50_candidate_60": {
+        "active_prior_count": 5,
+        "active_prior_starts_seconds": [
+          10,
+          20,
+          30,
+          40,
+          50
+        ],
+        "admitted": true,
+        "candidate_seconds": 60,
+        "excluded_prior_starts_seconds": [
+          0
+        ],
+        "prior_starts_seconds": [
+          0,
+          10,
+          20,
+          30,
+          40,
+          50
+        ],
+        "spacing_delta_seconds": 10,
+        "valid_sequence_seconds": [
+          0,
+          10,
+          20,
+          30,
+          40,
+          50,
+          60
+        ]
+      },
+      "time_origin": "Unless an example explicitly uses epoch elapsed e, t=0 is an arbitrary origin AFTER the current epoch cold-start embargo, with exclusive ownership already established. Example starts at t=0 do not bypass startup embargo."
+    },
+    "categories": {
+      "feed": "SAME_LIMITER",
+      "historical": "SAME_LIMITER",
+      "primary": "SAME_LIMITER",
+      "reattempt": "SAME_LIMITER",
+      "recheck": "SAME_LIMITER",
+      "redirect": "SAME_LIMITER"
+    },
+    "category_rules": {
+      "feed_primary": "Feed start at 100 and immediate statement discovery cannot permit primary start before 110, subject also to the rolling window.",
+      "historical": "Historical provider capture under this same CaptureSpec/client follows the identical limiter and has no separate capacity or fast lane.",
+      "reattempt": "Existing polling.retry_policy is unchanged. Each legitimately permitted later attempt obtains a fresh admission; no hidden transport retry or free retry.",
+      "recheck": "Being due grants no immediate network permission. Recheck work must wait until limiter conditions pass; no overdue or queue scheduling policy is defined here.",
+      "redirect": "Every validated redirect-follow GET independently reacquires this same rolling-window, start-spacing, monotonic and atomic provider gate; no immediate auto-follow bypass."
+    },
+    "clock": {
+      "live_elapsed_source": "MONOTONIC",
+      "monotonic_timestamp_must_not_become": [
+        "observed_at",
+        "ingested_at",
+        "declared_release_at",
+        "source_available_at"
+      ],
+      "rate_clock": "MONOTONIC_ELAPSED_TIME",
+      "rule": "All live window, spacing and embargo elapsed comparisons use one comparable monotonic domain within the limiter epoch. Wall UTC remains recorded request/observation provenance under existing causal semantics only; it cannot accelerate or reset rate admission.",
+      "same_domain_for_all_epoch_starts": true,
+      "unaffected_by": [
+        "UTC correction",
+        "NTP jump",
+        "manual wall-clock adjustment",
+        "timezone",
+        "DST"
+      ],
+      "wall_clock_for_rate_admission": "FORBIDDEN",
+      "wall_clock_provenance_preserved": true
+    },
+    "concurrency": {
+      "implementation_primitive": "UNSPECIFIED",
+      "independent_provider_budgets": "FORBIDDEN",
+      "overlapping_uncoordinated_emitters": "FORBIDDEN",
+      "ownership_failure": "If exclusive provider admission ownership cannot be established, no provider network attempt may start. Fail closed operationally without adding a source-health enum.",
+      "rule": "All concurrent FOMC V1 emitters, including multiple processes, must share the same provider-wide atomic admission semantics and comparable current-epoch history. A centralized issuer or coordinated interprocess admission may provide this; category/process separation cannot create independent capacity. No mutex, async lock, database, file lock or IPC primitive is prescribed.",
+      "simultaneous_workers": "With five active prior starts and spacing otherwise permitting, at most one simultaneous candidate is admitted first. After its registration the other candidate MUST evaluate updated state; a same-instant candidate fails spacing with delta zero. No simultaneous provider starts."
+    },
+    "limiter_epoch": {
+      "after_embargo": "Current-epoch history is empty before its first admitted start. At elapsed 60 seconds, embargo passes; normal rolling-window and spacing admission then applies. Subsequent starts update the fresh monotonic history.",
+      "applies_on": [
+        "initial process/runtime startup",
+        "crash recovery",
+        "clean restart",
+        "provider limiter recreation with a fresh non-comparable monotonic epoch"
+      ],
+      "cold_start_embargo_seconds": 60,
+      "definition": "One continuous provider runtime epoch in which all admitted-start monotonic history is available and comparable in one domain.",
+      "durable_per_request_history_required": false,
+      "embargo_admission_inequality": "elapsed_since_limiter_epoch_begin >= 60",
+      "epoch_begin": "The new admission epoch begins only after exclusive provider ownership is established and previous independent issuers can no longer initiate provider attempts. Time waiting while an old independent issuer retains emission authority cannot count toward the new epoch embargo.",
+      "exact_60_seconds_embargo_passes": true,
+      "exclusive_provider_ownership_required": true,
+      "first_start_before_embargo": "FORBIDDEN",
+      "id": "LIMITER_EPOCH",
+      "monotonic_history_comparable_within_epoch": true,
+      "no_cross_epoch_reconstruction": "Do not compare or reuse precise prior-epoch monotonic timestamps for admission. No precise elapsed history is reconstructed from a new epoch. Safety uses exclusive provider ownership plus the FULL 60-second embargo measured in the NEW epoch.",
+      "overlapping_independent_epochs_allowed": false,
+      "ownership_continuity": "A new process must not wait out an embargo in parallel with an independently active old issuer and then begin a separate budget. Ownership must exclude overlapping independent admission epochs; if that cannot be established, no new provider attempt. A fresh non-comparable epoch after ownership is re-established receives its full embargo.",
+      "prior_epoch_monotonic_history_reused": false,
+      "safety_argument": "Exclusive handoff prevents further starts from the old epoch. After 60 new-epoch monotonic seconds every unknown prior-epoch start is at least 60 seconds old and outside the strict-left rolling window. The embargo also exceeds the 10-second spacing requirement; no cross-epoch timestamp comparison or durable request-start history is required.",
+      "wall_utc_shortcut": "FORBIDDEN - UTC history, persisted request times or an apparent long downtime cannot shorten or bypass the embargo."
+    },
+    "scope_boundary": "FIX15 freezes the complete provider rate-admission contract only. It does not define recheck missed/overdue/coalescing/drift/fairness/starvation policy, network-operation total deadline, DNS/TLS/header/body timeout coverage, the general source-health matrix or EST/EDT seasonal consistency. Those audits remain for R16; current scheduler, timestamp, retry, source-health and connect/read timeout semantics are preserved.",
+    "spacing": {
+      "admission_inequality": "t - previous_start >= 10",
+      "category_exemptions": "NONE",
+      "comparison": "GREATER_THAN_OR_EQUAL",
+      "completion_time_role": "NONE - completion time does not set or shift the spacing reference. A starts at 0, completes at 45, B candidate at 45: spacing passes with delta 45, subject to the rolling-window condition. No completion + 10 rule.",
+      "exact_10_seconds_allowed": true,
+      "no_previous_start": "Spacing passes when current-epoch history has no admitted start; exclusive ownership and cold-start embargo still MUST pass.",
+      "previous_start": "The immediately previous admitted provider-wide PHYSICAL_REQUEST_ATTEMPT_START in this epoch, including a grant followed by cancellation or transport failure.",
+      "reference": "START_TO_START",
+      "same_event_as_accounting": "PHYSICAL_REQUEST_ATTEMPT_START",
+      "seconds": 10
+    },
+    "wait_semantics": {
+      "busy_loop_required": false,
+      "description": "Work remains pending; this is not a source-health classification or a new enum.",
+      "earliest_eligible_start": "With ownership established, pending work is constrained by epoch_begin + 60 seconds, previous_start + 10 seconds if present, and the first instant with at most five active prior starts under 0 < t - s < 60. All conditions must hold together and be evaluated against current state at admission. Eligibility is not a reservation or a promise of queue ordering/service.",
+      "limiter_wait_is_source_failure": false,
+      "must_not_by_itself_become": [
+        "SOURCE_UNAVAILABLE",
+        "PARSER_FAILED",
+        "EVENTS_OBSERVED_ZERO"
+      ],
+      "reasons": [
+        "window full",
+        "spacing not yet satisfied",
+        "cold-start embargo active"
+      ]
+    }
   },
   "raw_policy": {
     "accepted_media": {
@@ -1733,14 +2097,19 @@
       "scheduled_recheck_get": true
     },
     "deferred_semantics": {
-      "concurrent_atomic_admission": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "exact_rate_window_algorithm": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "exact_rate_window_boundaries": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "exact_spacing_reference_points": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "monotonic_clock_policy": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "restart_limiter_durability": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW",
-      "total_request_deadline": "UNRESOLVED_FOR_NEXT_COUNTER_REVIEW"
+      "dns_tls_header_body_timeout_coverage": "DEFERRED_TO_R16_EXISTING_TIMEOUTS_UNCHANGED",
+      "est_edt_seasonal_consistency_audit": "DEFERRED_TO_R16_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
+      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_R16",
+      "source_health_full_matrix_audit": "DEFERRED_TO_R16_EXISTING_MAPPINGS_UNCHANGED",
+      "total_request_deadline": "UNRESOLVED_FOR_R16"
+    },
+    "frozen_rate_semantics": {
+      "concurrent_atomic_admission": "rate_limiter.admission and rate_limiter.concurrency",
+      "exact_rate_window_algorithm": "rate_limiter.algorithm",
+      "exact_rate_window_boundaries": "rate_limiter.active_prior_start_rule",
+      "exact_spacing_reference_points": "rate_limiter.spacing",
+      "monotonic_clock_policy": "rate_limiter.clock",
+      "restart_limiter_durability": "rate_limiter.limiter_epoch: exclusive ownership plus full 60-second cold-start embargo, with no required durable prior-epoch request history"
     },
     "hidden_library_attempt": {
       "forbidden": true,
@@ -1758,17 +2127,18 @@
     "rate_fields": {
       "client_max_requests_per_minute": {
         "binding": "polling.client_max_requests_per_minute",
-        "rule": "At most six PHYSICAL_REQUEST_ATTEMPT_START units in the provider-wide domain according to the time-window algorithm to be frozen separately. FIX14 selects no window algorithm or boundary.",
+        "rule": "At most six PHYSICAL_REQUEST_ATTEMPT_START events in (t-60s,t] for every admitted t, under rate_limiter.algorithm and active_prior_start_rule. Prior starts count iff 0 < t - s < 60; at most five may precede the candidate. No fixed-minute reset or bucket alternative.",
         "unit": "PHYSICAL_REQUEST_ATTEMPT_START",
         "value": 6
       },
       "minimum_request_spacing_seconds": {
         "applies_to": "PROVIDER_WIDE_PHYSICAL_ATTEMPTS",
         "binding": "polling.minimum_request_spacing_seconds",
-        "rule": "Applies between provider-wide physical attempts, including feeds, primary fetches, redirect follows, permitted later reattempts, rechecks and historical provider capture. No category or intra-fetch exemption. Start-to-start versus completion-to-start remains deliberately unresolved for R15.",
+        "rule": "Provider-wide START_TO_START: t - previous_start >= 10 seconds using the SAME PHYSICAL_REQUEST_ATTEMPT_START event as accounting/window history; equality passes and completion time is irrelevant. rate_limiter.spacing applies to every counted category with no intra-fetch exemption.",
         "value": 10
       }
     },
+    "rate_limiter_binding": "rate_limiter is authoritative for the temporal, atomic and epoch semantics of the unchanged PHYSICAL_REQUEST_ATTEMPT_START accounting unit.",
     "reattempt": {
       "existing_policy_authority": "polling.retry_policy remains unchanged: hidden library retries and tight loops are forbidden; a later attempt is allowed only via the next normal discovery cycle or an allowed scheduled pending-item retry under the same provider ceiling.",
       "free_retry": "FORBIDDEN",
@@ -1812,7 +2182,7 @@
         "HISTORICAL_PROVIDER_CAPTURE"
       ]
     },
-    "scope_boundary": "FIX14 freezes WHAT COUNTS, the shared provider accounting domain and no intra-fetch bypass only. It chooses neither rolling 60s, token bucket nor fixed minute, no window endpoints, no start/start or completion/start spacing reference, no clock policy, mutex/atomicity/interprocess lock or restart persistence/history reconstruction. Full 6-rpm/10-second correctness under concurrency or across restart is NOT yet established. R15 must audit/freeze those semantics separately.",
+    "scope_boundary": "FIX14 accounting unit, shared provider domain, failed-start consumption and no intra-fetch bypass remain unchanged. FIX15 binds exact window, START_TO_START spacing, monotonic clock, atomic admission and conservative restart safety through rate_limiter. Scheduler, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R16; no implementation or final counter-review approval is established.",
     "source_health": {
       "attempt_failure": "Existing source_health failure mappings apply if an actual attempted request later fails.",
       "new_state": false,
@@ -1844,6 +2214,7 @@
       "failure_rule": "Once permission to begin the attempt is granted, its unit remains consumed even after DNS failure, TCP/connect failure, TLS failure, timeout, connection reset, read failure, a non-200 final response or any other transport failure. Accounting is tied to start authorization, never successful response.",
       "id": "PHYSICAL_REQUEST_ATTEMPT_START",
       "refund_on_failure": false,
+      "start_event_binding": "rate_limiter.admission.semantic_instant: atomic grant-and-consume immediately before transport invocation, after request validation and waiting, before network side effects. The same monotonic event supplies accounting, window and spacing.",
       "units_per_started_attempt": 1
     }
   },
@@ -1860,7 +2231,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 15 closes ONLY the first MEDIUM found by counter-review R14: the six-per-minute ceiling and ten-second spacing previously named logical operations without defining a counted unit. FIX14 freezes PHYSICAL_REQUEST_ATTEMPT_START, one unit at permission to begin before network side effects with no failure refund, and ONE FEDERAL_RESERVE_PROVIDER_V1_GLOBAL domain across feed, primary, every redirect follow, permitted later reattempt, recheck and historical provider capture. No intra-fetch or library bypass. FIX1-FIX13, existing retry policy, reobservation schedule, timestamps, SourceObservation semantics, timeouts and URL admission are preserved. Exact window/spacing/clock/concurrency/restart/scheduler/deadline semantics remain unresolved for R15; no implementation or final counter-review approval is established.",
+  "revision_note": "Spec revision 16 closes the MEDIUM confirmed by counter-review R15. FIX15 freezes one provider-wide rate-admission contract: ROLLING_PHYSICAL_START_WINDOW_V1 with 0 < t - s < 60 for prior starts, at most five prior starts before candidate t, and at most six in (t-60s,t]; START_TO_START spacing >=10 using the same PHYSICAL_REQUEST_ATTEMPT_START atomic grant-and-consume immediately before transport; one live monotonic domain, atomic admission across emitters, no stockpiled/reused permits and no post-grant refund; exclusive provider ownership plus a full 60-second monotonic embargo on every fresh limiter epoch, without prior-epoch history reconstruction. FIX1-FIX14 remain preserved. Scheduler, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R16. No runtime, fixture, capture or final implementation approval is established.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -1981,7 +2352,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 15,
+  "spec_revision": 16,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -1998,7 +2369,8 @@
     "b9ad3c4494f4909493edf74ff2ad8a6ab10d964c3db10336427c78f454cdde43",
     "b6772a2faaa37f9e08541242d2129b1a7f90b29f25e47163091c60404e6ede21",
     "67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d",
-    "bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050"
+    "bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050",
+    "49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
