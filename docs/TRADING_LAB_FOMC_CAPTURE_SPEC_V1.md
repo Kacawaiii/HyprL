@@ -7,12 +7,12 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 17 — authoritative)
-5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7
+CAPTURE SPEC HASH  (revision 18 — authoritative)
+dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
-        → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 (rev 16)
+        → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30 (rev 17)
 
 BINDS
   event intelligence design rev4
@@ -30,7 +30,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 17.**
+writing revision 18.**
 
 ---
 
@@ -750,11 +750,80 @@ Anchor metadata is operational observation provenance, **not source content-vint
 proof**. FOMC V1 content `source_available_at` stays null. The existing distinction
 between observed and ingested times and raw-before-normalized visibility remains.
 
-This freeze establishes anchor value, minimum durable qualification and
-reconstruction only. Scheduler obligation/completion persistence, missed/overdue
-execution, coalescing, checkpoint satisfaction, failed-recheck policy and
-fairness/starvation remain deferred to R17. No later failed-item scheduling or
-checkpoint completion policy is selected here.
+### A durable anchor entails four logical obligations
+
+FIX17 defines `REOBSERVATION_OBLIGATION_SET_V1`. Once the original qualifying
+FIX16 anchor A is durable for logical source item S, exactly these four logical
+obligations exist:
+
+```
+O(S,A) = {(S,A,300), (S,A,3600), (S,A,86400), (S,A,604800)}
+due_at(S,A,offset) = A + offset seconds
+obligation_birth_event = DURABLE_REOBSERVATION_ANCHOR_EXISTS
+```
+
+No separate scheduler write, registration marker, parsing success or normalized
+EventRevision commit gates their logical existence. The durable original anchor
+and frozen offsets are the authority. A scheduler row may cache membership or
+serve as an execution index; its absence cannot remove an obligation.
+
+`REOBSERVATION_OBLIGATION_KEY_V1` is the ordered semantic tuple
+`(source_item_id, original_reobservation_anchor_observed_at, offset_seconds)`.
+The item identity is unchanged. A is exclusively that item's original FIX16
+anchor, never a later observation or a cache-provided replacement. Existing
+canonical timestamp precision is preserved. Physical row IDs or tuple encodings
+are implementation choices. Content hash, EventRevision/SourceObservation IDs,
+worker/restart IDs and CaptureSpec hash are not additional tuple components.
+
+The four keys belong to one immutable grid across repeated same-body observations,
+H1 → H2, parser recovery and restart. Two distinct source items with the same A
+have eight distinct obligations. Four counts logical identities across statuses;
+it does not mean four pending jobs, four rows or four immediate HTTP requests.
+
+### Crash recovery derives membership from durable anchors
+
+If A=`18:00:05` is durable at `18:00:06`, a crash at `18:00:06.001` before any
+scheduler row still leaves all four logical obligations reconstructible. Their
+targets remain `18:05:05`, `19:00:05`, next day `18:00:05` and +7d `18:00:05`.
+If the observation is lost before anchor durability, no obligation set survives
+from it; a later qualifying durable observation may establish the first grid.
+Parser failure after qualifying raw durability leaves the four obligations intact
+without implying normalized success.
+
+On startup/recovery, every durable anchor governed by V1 must yield its complete
+logical set, independently of scheduler rows or normalized revisions. On-demand
+derivation or reconciliation/materialization is allowed. Missing, partial,
+duplicate or conflicting cache values cannot change the authoritative set:
+
+| materialization | logical membership with durable (S,A) |
+|---|---|
+| zero rows | all four obligations |
+| rows for 300 and 3600 only | all four; 86400 and 604800 still exist |
+| four correct rows | the same four |
+| a repeated 300 row | one logical 300 member; four total |
+
+Repeated, interrupted or concurrent reconstruction, including retry after lost
+materialization-write ACK, yields the same keys. No atomic anchor-plus-four-rows
+transaction or particular storage primitive is required. Rows without supporting
+durable anchor provenance cannot create obligations. All four identities remain
+derivable even after their due times; no overdue execution verdict follows.
+
+The cache rule concerns membership, identity and target only. Reconstruction
+neither assigns nor resets status, proves satisfaction, nor authorizes execution.
+Completion evidence is not declared disposable; its persistence and merging
+remain unresolved. No corruption-repair procedure is specified.
+
+Derivation itself needs no network and creates no observation, revision,
+accounting debit, limiter permit or retry permission. Keys and due times are
+operational metadata; they do not supply causal timestamps or source-vintage
+proof. Existing provenance binds the governing CaptureSpec semantics; future
+implementation uses its authoritative final hash. FIX17 adds no runtime migration
+or cross-version reconciliation policy and no pre-implementation identity churn.
+
+Only birth, logical identity and crash reconstruction are newly frozen. Missed/
+overdue execution, coalescing, satisfaction, failed rechecks, completion durability
+and fairness/starvation remain deferred to R18, as do network deadlines/stage
+bounds, the full source-health matrix and EST/EDT seasonality.
 
 After +7 days, **V1 promises nothing.** That is stated as a limitation rather
 than disguised as immutability; extending the window is CaptureSpec V2.
@@ -984,13 +1053,14 @@ when present, and the first instant with at most five active prior starts under
 `0 < t - s < 60`. Conditions are evaluated against current state at admission;
 eligibility grants neither a reservation nor a queue-service guarantee.
 
-### Scope left for R17
+### Scope left for R18
 
-FIX16 binds the anchor and immutable target grid as specified in §6; offsets,
-retry permissions, existing source-health mappings and causal timestamp
-definitions remain unchanged. Missed/overdue execution, coalescing, checkpoint
+FIX16 binds the anchor and immutable target grid; FIX17 derives the four logical
+obligations and their stable identities as specified in §6. Offsets, retry
+permissions, existing source-health mappings and causal timestamp definitions
+remain unchanged. Missed/overdue execution, coalescing, checkpoint
 satisfaction, failed-recheck completion, scheduler completion durability and
-fairness/starvation remain unresolved for R17. Total network deadline,
+fairness/starvation remain unresolved for R18. Total network deadline,
 DNS/TLS/header/body timeout coverage, the general source-health matrix and
 EST/EDT seasonal-consistency audits also remain deferred. Connect 10 s and read
 30 s are unchanged and not reinterpreted; no total deadline is added. Historical
@@ -1373,9 +1443,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. One hundred and seven cases, decided in advance
+## 11. One hundred and fifteen cases, decided in advance
 
-`FOMC01`–`FOMC107` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC115` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -1463,7 +1533,7 @@ strict byte-error rejection, preserved raw hashes and metadata-only offline
 replay must also be checked. No fixture or implementation test is created or
 run here; passing the text gate never alone admits an EventRevision.
 
-Invariants `F01`–`F51` state the same commitments in testable form. Revision 2
+Invariants `F01`–`F53` state the same commitments in testable form. Revision 2
 added `F19` (release time is not vintage proof), `F20` (backfill content
 vintage) and `F21` (revision-specific availability); revision 3 adds `F22`
 (an absence claim cannot exceed classifier coverage), `F23` (an unresolved
@@ -1564,10 +1634,26 @@ F01–F49 retain their commitments.
 | `FOMC106` — first H1 at A=18:00:05; later recheck H2 at 19:00:07 | same source item's A is unchanged; content revision does not reset future targets |
 | `FOMC107` — target A+300, limiter delays actual start until A+312 | A and targets A+3600/A+86400/A+604800 stay fixed; overdue/satisfaction/coalescing semantics remain deferred |
 
+Revision 18 adds **F52 — DURABLE REOBSERVATION ANCHOR IMPLIES FOUR REQUIRED
+LOGICAL OBLIGATIONS** and **F53 — REOBSERVATION OBLIGATION IDENTITY IS DERIVED
+AND IDEMPOTENT**. F01–F51 and all earlier case verdicts retain their commitments.
+
+| case | frozen logical-obligation verdict |
+|---|---|
+| `FOMC108` — anchor durable, crash before any scheduler row | exactly four keys and original A+offset targets reconstructed |
+| `FOMC109` — only 300 and 3600 materialized | all four logical obligations exist |
+| `FOMC110` — 300 materialized twice | one logical 300 obligation; four total |
+| `FOMC111` — reconstruction performed three times | same four keys each time; repeated/concurrent recovery and lost materialization ACK add none |
+| `FOMC112` — H1 followed by H2 | same original anchor and four keys; same-body reobservation and parser recovery likewise add no grid |
+| `FOMC113` — qualifying primary raw durable, then parser failure | four obligations exist; no EventRevision success implied |
+| `FOMC114` — crash before anchor durability | zero reconstructible obligations from that lost observation |
+| `FOMC115` — S1 and S2 share A | four per item, eight total; no collision |
+
 These are specification cases only; no fixture, capture or runtime is created
-or exercised here. Revision 17 is authoritative, but independent counter-review
-remains pending. FIX16 authorizes no implementation and does not resolve the
-remaining R17 scheduler, deadline, source-health or EST/EDT questions.
+or exercised here. Revision 18 is authoritative, but independent counter-review
+remains pending. FIX17 authorizes no implementation and does not resolve the
+remaining R18 scheduler execution/completion, deadline, source-health or EST/EDT
+questions.
 
 ## 12. What this does not establish
 

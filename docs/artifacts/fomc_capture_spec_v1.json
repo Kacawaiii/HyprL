@@ -165,9 +165,222 @@
       "target_utc": "2026-09-22T18:05:05Z",
       "verdict": "FIX15 remains authoritative for actual start admission. Delay changes neither A nor later targets. This case does not decide whether/how the +300 obligation is overdue, satisfied, coalesced or completed."
     },
+    "FOMC108": {
+      "case": "CRASH BEFORE SCHEDULER MATERIALIZATION",
+      "expected": {
+        "due_at_utc": [
+          "2026-09-22T18:05:05Z",
+          "2026-09-22T19:00:05Z",
+          "2026-09-23T18:00:05Z",
+          "2026-09-29T18:00:05Z"
+        ],
+        "logical_keys": [
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            300
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            3600
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            86400
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            604800
+          ]
+        ],
+        "logical_obligations": 4
+      },
+      "scheduler_rows": 0,
+      "source_item_id": "S1",
+      "timeline_utc": {
+        "anchor_durable": "2026-09-22T18:00:06Z",
+        "crash": "2026-09-22T18:00:06.001Z",
+        "observed_at": "2026-09-22T18:00:05Z"
+      },
+      "verdict": "The durable original anchor entails all four keys without a scheduler write. Recovery reconstructs the complete same set even before normalized commit. No execution or status verdict is implied."
+    },
+    "FOMC109": {
+      "case": "PARTIAL MATERIALIZATION",
+      "durable_original_anchor": "2026-09-22T18:00:05Z",
+      "expected": {
+        "logical_obligations": 4,
+        "logical_offsets_seconds": [
+          300,
+          3600,
+          86400,
+          604800
+        ],
+        "unmaterialized_offsets_still_exist": [
+          86400,
+          604800
+        ]
+      },
+      "materialized_offsets_seconds": [
+        300,
+        3600
+      ],
+      "source_item_id": "S1",
+      "verdict": "Two persisted rows do not mean only two obligations or a fully registered partial grid. All four logical members derive from the durable anchor; reconciliation does not decide or reset status."
+    },
     "FOMC11": {
       "case": "2027 backfill of a 2026 statement",
       "verdict": "declared_release_at MAY record the trusted 2026 release metadata. observed_at = the actual 2027 fetch; ingested_at = the 2027 commit; content source_available_at = null. DURABLE_OBSERVED before 2027: ABSENT. RETROSPECTIVE_SOURCE MUST NOT expose the 2027-fetched body as content visible in 2026 - no vintage proof."
+    },
+    "FOMC110": {
+      "case": "DUPLICATE MATERIALIZATION",
+      "durable_original_anchor": "2026-09-22T18:00:05Z",
+      "expected": {
+        "logical_300_obligations": 1,
+        "logical_obligations": 4
+      },
+      "materialized_offsets_seconds": [
+        300,
+        300,
+        3600,
+        86400,
+        604800
+      ],
+      "source_item_id": "S1",
+      "verdict": "Repeated rows for the same tuple denote one logical checkpoint. Materialized row IDs cannot multiply members. No physical corruption-repair or completion-merge policy is selected."
+    },
+    "FOMC111": {
+      "case": "REPEATED RECOVERY",
+      "durable_original_anchor": "2026-09-22T18:00:05Z",
+      "expected": {
+        "additional_logical_obligations": 0,
+        "logical_keys_after_each_run": [
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            300
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            3600
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            86400
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            604800
+          ]
+        ],
+        "logical_obligations_after_each_run": 4
+      },
+      "recovery_runs": 3,
+      "source_item_id": "S1",
+      "verdict": "Each run reconstructs the same four keys; no restart-specific identity. The same logical convergence holds for simultaneous reconstructors and retry after a lost materialization-write ACK, without exactly-once dispatch or status assumptions."
+    },
+    "FOMC112": {
+      "case": "H1 -> H2 DOES NOT CREATE SECOND GRID",
+      "expected": {
+        "logical_keys": [
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            300
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            3600
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            86400
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            604800
+          ]
+        ],
+        "logical_obligations": 4,
+        "new_grid": false,
+        "original_anchor": "2026-09-22T18:00:05Z"
+      },
+      "initial_durable_observation": {
+        "body_hash": "H1",
+        "observed_at": "2026-09-22T18:00:05Z"
+      },
+      "later_observation": {
+        "body_hash": "H2",
+        "observed_at": "2026-09-22T19:00:07Z"
+      },
+      "source_item_id": "S1",
+      "verdict": "Later H2 does not supply a new anchor component. Repeated same-body H1 observations and later parser recovery likewise preserve these same four keys. Content revision handling remains unchanged."
+    },
+    "FOMC113": {
+      "case": "PARSER FAILURE AFTER DURABLE PRIMARY RAW",
+      "expected": {
+        "EventRevision_success_implied": false,
+        "logical_keys": [
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            300
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            3600
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            86400
+          ],
+          [
+            "S1",
+            "2026-09-22T18:00:05Z",
+            604800
+          ]
+        ],
+        "logical_obligations": 4
+      },
+      "later_parser_failure": true,
+      "observed_at": "2026-09-22T18:00:05Z",
+      "qualifying_complete_final_200_primary_observation_durable": true,
+      "source_item_id": "S1",
+      "verdict": "The qualifying durable FIX16 anchor suffices; parser success and EventRevision commit are not birth gates. This makes no failed-recheck execution or completion decision."
+    },
+    "FOMC114": {
+      "case": "VOLATILE OBSERVATION LOST",
+      "crash_before_anchor_durability": true,
+      "expected": {
+        "later_qualifying_durable_observation_may_create_first_grid": true,
+        "reconstructible_obligations_from_lost_observation": 0
+      },
+      "source_item_id": "S1",
+      "transient_observed_at": "2026-09-22T18:00:05Z",
+      "verdict": "No supporting durable anchor means no reconstructible grid from that observation. A later qualifying durable primary observation may establish the original anchor with its own observed_at."
+    },
+    "FOMC115": {
+      "case": "TWO ITEMS SAME ANCHOR TIME",
+      "durable_original_anchors": {
+        "S1": "2026-09-22T18:00:05Z",
+        "S2": "2026-09-22T18:00:05Z"
+      },
+      "expected": {
+        "identity_collision": false,
+        "logical_obligations_per_item": 4,
+        "total_logical_obligations": 8
+      },
+      "verdict": "Distinct existing source_item_id values keep the two four-member sets disjoint, despite equal anchor timestamps. Deduplication on timestamp/offset alone is nonconforming."
     },
     "FOMC12": {
       "case": "stored raw statement corrupt locally",
@@ -1419,7 +1632,9 @@
     "F48": "RATE ADMISSION IS ATOMIC AND MONOTONIC WITHIN A LIMITER EPOCH. All concurrent candidates, across every FOMC V1 category/process emitter, pass through one provider-wide atomic inspect/test/grant/register decision over comparable monotonic history before transport. Stale-state double grants and simultaneous starts are forbidden; later candidates see prior grants. UTC/NTP/manual/timezone/DST changes cannot alter elapsed admission. The coordination primitive is unspecified.",
     "F49": "NEW LIMITER EPOCHS FAIL CONSERVATIVELY CLOSED FOR 60 SECONDS. Every fresh limiter epoch requires exclusive provider ownership and no attempt for its first 60 monotonic seconds; exact elapsed 60 passes the embargo. The epoch embargo begins only once old independent issuers can no longer initiate attempts. Independent overlapping epochs cannot both emit. After embargo, admission uses fresh current-epoch history; precise prior-epoch monotonic history is not reused and durable per-request history is not required. UTC history cannot shorten the embargo.",
     "F50": "REOBSERVATION GRID IS ANCHORED TO THE FIRST DURABLE PRIMARY OBSERVATION'S observed_at. For each logical FOMC source item, the original anchor is exactly observed_at of the first qualifying admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. Request/header time, raw durability commit, normalized/EventRevision commit, declared_release_at, ingested_at, limiter monotonic start and restart time cannot replace that value. Semantic parse success and EventRevision commit are not prerequisites. The anchor is immutable across later observations/revisions; targets remain original observed_at plus exactly 300,3600,86400,604800 seconds with existing precision. No source_available_at inference.",
-    "F51": "DURABILITY DETERMINES ANCHOR SURVIVAL, NOT ANCHOR TIME. A volatile observation lost before the required raw/SourceObservation durability boundary creates no reconstructible anchor. Once the qualifying observation is durable, its original observed_at remains the anchor across crashes and restarts, even before normalized commit and after downstream parser/normalization failure. No restart-relative or commit-relative re-anchoring, no inferred anchor from lost volatile state, and no later revision or limiter delay may shift the grid."
+    "F51": "DURABILITY DETERMINES ANCHOR SURVIVAL, NOT ANCHOR TIME. A volatile observation lost before the required raw/SourceObservation durability boundary creates no reconstructible anchor. Once the qualifying observation is durable, its original observed_at remains the anchor across crashes and restarts, even before normalized commit and after downstream parser/normalization failure. No restart-relative or commit-relative re-anchoring, no inferred anchor from lost volatile state, and no later revision or limiter delay may shift the grid.",
+    "F52": "DURABLE REOBSERVATION ANCHOR IMPLIES FOUR REQUIRED LOGICAL OBLIGATIONS. At the existing qualifying original anchor durability boundary, exactly four logical obligations exist for offsets 300,3600,86400,604800 and targets original observed_at plus offset. No scheduler-specific write or normalized EventRevision commit is required for logical existence. Missing or partial materialization and crash after anchor durability cannot erase them; without a qualifying durable anchor no set can be derived from a lost volatile observation. This freezes membership, not execution or completion.",
+    "F53": "REOBSERVATION OBLIGATION IDENTITY IS DERIVED AND IDEMPOTENT. The authoritative logical key is (source_item_id, original_reobservation_anchor_observed_at, offset_seconds), using exclusively the original FIX16 anchor and one of the four fixed offsets. Repeated/concurrent recovery, materialization, lost materialization ACK, same-body reobservation, parser recovery and H1 -> H2 cannot add logical checkpoints or a second grid. Duplicate rows denote the same member; different source items with equal anchor times remain distinct. Physical encoding and status/completion semantics are not prescribed."
   },
   "item_predicate": {
     "classification_states": {
@@ -2211,11 +2426,11 @@
       "scheduled_recheck_get": true
     },
     "deferred_semantics": {
-      "dns_tls_header_body_timeout_coverage": "DEFERRED_TO_R17_EXISTING_TIMEOUTS_UNCHANGED",
-      "est_edt_seasonal_consistency_audit": "DEFERRED_TO_R17_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
-      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_R17",
-      "source_health_full_matrix_audit": "DEFERRED_TO_R17_EXISTING_MAPPINGS_UNCHANGED",
-      "total_request_deadline": "UNRESOLVED_FOR_R17"
+      "dns_tls_header_body_timeout_coverage": "DEFERRED_TO_R18_EXISTING_TIMEOUTS_UNCHANGED",
+      "est_edt_seasonal_consistency_audit": "DEFERRED_TO_R18_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
+      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_R18",
+      "source_health_full_matrix_audit": "DEFERRED_TO_R18_EXISTING_MAPPINGS_UNCHANGED",
+      "total_request_deadline": "UNRESOLVED_FOR_R18"
     },
     "frozen_rate_semantics": {
       "concurrent_atomic_admission": "rate_limiter.admission and rate_limiter.concurrency",
@@ -2235,7 +2450,7 @@
       "reobservation_anchor": "revision_policy.reobservation_anchor and reobservation_anchor_timestamp_field: EXACT observed_at of the first qualifying durable primary content observation; FIX16 explicitly binds the formerly prose-only anchor.",
       "reobservation_offsets": "revision_policy.reobservation_offsets_seconds UNCHANGED",
       "retry_policy": "polling.retry_policy UNCHANGED",
-      "scheduler": "No change to existing schedule; missed/overdue/coalescing/fairness/starvation semantics remain unresolved.",
+      "scheduler": "Existing anchor, offsets, target grid and retry permissions remain unchanged. FIX17 revision_policy.reobservation_obligations freezes derived logical membership/identity/recovery only; missed/overdue/coalescing/satisfaction/completion/fairness/starvation remain unresolved for R18.",
       "timeouts": "http_policy.connect_timeout_seconds = 10 and read_timeout_seconds = 30 are unchanged and not reinterpreted. No total deadline added."
     },
     "rate_fields": {
@@ -2296,7 +2511,7 @@
         "HISTORICAL_PROVIDER_CAPTURE"
       ]
     },
-    "scope_boundary": "FIX14 accounting unit, shared provider domain, failed-start consumption and no intra-fetch bypass remain unchanged. FIX15 rate_limiter is unchanged. FIX16 binds the reobservation anchor to the first qualifying durable primary observation observed_at under revision_policy. Remaining scheduler, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R17; no implementation or final counter-review approval is established.",
+    "scope_boundary": "FIX14 accounting and FIX15 rate_limiter remain unchanged. FIX16 anchor semantics remain unchanged; FIX17 revision_policy.reobservation_obligations derives the four logical obligations durably from that anchor. Remaining scheduler execution/completion, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R18; no implementation or final counter-review approval is established.",
     "source_health": {
       "attempt_failure": "Existing source_health failure mappings apply if an actual attempted request later fails.",
       "new_state": false,
@@ -2345,7 +2560,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 17 closes ONLY the MEDIUM found by counter-review R16: the reobservation anchor is now directly bound to observed_at of the first qualifying admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. The earlier observation timestamp is distinct from the durability boundary; raw/normalized commit, release time, ingested_at, limiter monotonic time and restart time cannot replace it. Anchor survives downstream parsing failure and is reconstructible after raw durability; lost volatile observations establish no persistent anchor. Exact existing offsets use immutable original A without rounding, recheck chaining or limiter-delay reset. FIX1-FIX15, all timestamp definitions and the REV16 rate_limiter remain unchanged. Remaining scheduler/checkpoint, deadline/stage-bound, full source-health and EST/EDT audits are deferred to R17; historical FIX15 scope references to R16 do not resolve or override these current deferrals. No runtime, fixture, capture or final implementation approval is established.",
+  "revision_note": "Spec revision 18 closes ONLY the R17 MEDIUM concerning obligation birth/recovery, with its tightly coupled logical identity. FIX17 makes the durable original FIX16 anchor and fixed offsets the authority for exactly four derived logical obligations, independent of absent/partial/duplicate scheduler materialization. The tuple (source_item_id, original anchor observed_at, offset_seconds) is deterministic and idempotent across crash/restart, concurrent recovery, repeated observations and content revisions. Membership reconstruction establishes no status, satisfaction, completion or execution permission. FIX1-FIX16 remain preserved, including raw-first causality, all timestamp definitions, original anchor qualification/precision, identity, retry policy and the entire REV16 rate_limiter. Remaining scheduler execution/completion, deadline/stage-bound, full source-health and EST/EDT semantics remain deferred to R18; historical FIX15 scope references do not override current deferrals. No runtime, capture, fixture, migration or final implementation approval is established.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -2445,7 +2660,7 @@
       "rate_limiter_delay_reanchors": false,
       "rate_limiter_independence": "A target is a scheduler target, not a guaranteed actual request-start time. FIX15 may delay actual admission without changing A or any future target. Missed/overdue execution, satisfaction and coalescing are not decided by FIX16.",
       "restart_relative_reset": false,
-      "scope_boundary": "FIX16 binds anchor value, minimal durable qualification, reconstruction and the immutable offset grid only. It does not freeze scheduler obligation/completion transactions, missed/overdue execution, coalescing, checkpoint satisfaction, failed-recheck policy, fairness/starvation, network deadlines/stage bounds, the full source-health matrix or EST/EDT seasonal consistency. Those remain for R17.",
+      "scope_boundary": "FIX16 binds anchor value, minimal durable qualification, reconstruction and the immutable offset grid. FIX17 reobservation_obligations binds the derived logical obligation set and its identity/reconstruction without requiring scheduler writes. Scheduler completion durability, missed/overdue execution, coalescing, satisfaction, failed-recheck policy, fairness/starvation, network deadlines/stage bounds, full source-health matrix and EST/EDT seasonal consistency remain for R18.",
       "source_available_at_effect": "NONE",
       "source_event": "FIRST_QUALIFYING_DURABLE_PRIMARY_CONTENT_OBSERVATION",
       "timestamp_definition_binding": "timestamps.observed_at - unchanged actual successful receipt/observation of the complete admitted PRIMARY response body. Request initiation and response headers are not this event.",
@@ -2471,18 +2686,117 @@
     },
     "reobservation_anchor_timestamp_field": "observed_at",
     "reobservation_deferred_semantics": {
-      "checkpoint_satisfaction_event": "UNRESOLVED_FOR_R17",
-      "coalescing": "UNRESOLVED_FOR_R17",
-      "dns_tls_header_body_bounds": "DEFERRED_TO_R17_EXISTING_TIMEOUTS_UNCHANGED",
-      "est_edt_seasonal_consistency": "DEFERRED_TO_R17_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
-      "failed_recheck_completion_semantics": "UNRESOLVED_FOR_R17",
-      "fairness_starvation": "UNRESOLVED_FOR_R17",
-      "full_source_health_matrix": "DEFERRED_TO_R17_EXISTING_MAPPINGS_UNCHANGED",
-      "missed_checkpoint_policy": "UNRESOLVED_FOR_R17",
-      "overdue_checkpoint_policy": "UNRESOLVED_FOR_R17",
-      "scheduler_completion_durability": "UNRESOLVED_FOR_R17",
-      "scheduler_obligation_persistence_protocol": "UNRESOLVED_FOR_R17_ANCHOR_RECONSTRUCTION_ONLY_IS_FROZEN",
-      "total_network_deadline": "UNRESOLVED_FOR_R17"
+      "checkpoint_satisfaction_event": "UNRESOLVED_FOR_R18",
+      "coalescing": "UNRESOLVED_FOR_R18",
+      "dns_tls_header_body_bounds": "DEFERRED_TO_R18_EXISTING_TIMEOUTS_UNCHANGED",
+      "est_edt_seasonal_consistency": "DEFERRED_TO_R18_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
+      "failed_recheck_completion_semantics": "UNRESOLVED_FOR_R18",
+      "fairness_starvation": "UNRESOLVED_FOR_R18",
+      "full_source_health_matrix": "DEFERRED_TO_R18_EXISTING_MAPPINGS_UNCHANGED",
+      "missed_checkpoint_policy": "UNRESOLVED_FOR_R18",
+      "overdue_checkpoint_policy": "UNRESOLVED_FOR_R18",
+      "scheduler_completion_durability": "UNRESOLVED_FOR_R18",
+      "total_network_deadline": "UNRESOLVED_FOR_R18"
+    },
+    "reobservation_obligations": {
+      "authority": {
+        "durable_anchor_plus_frozen_offsets": true,
+        "rule": "The sole authority for obligation membership is the existing logical source item and its original qualifying durable FIX16 anchor plus the frozen offsets. Scheduler rows cannot establish, replace or erase that anchor, add members outside its derived set, or remove members. Rows without supporting qualifying durable anchor provenance cannot create an obligation.",
+        "scheduler_materialization_is_authoritative": false
+      },
+      "birth": {
+        "rule": "At the existing FIX16 boundary where the first qualifying primary observation makes original anchor A durably reconstructible for logical source item S, all four logical obligations exist and are required by this spec. There is no state with a qualifying durable anchor and an empty required logical set. No semantic parse success, normalized EventRevision commit or scheduler registration is an additional birth gate.",
+        "separate_scheduler_write_required_for_logical_existence": false,
+        "trigger": "DURABLE_REOBSERVATION_ANCHOR_EXISTS"
+      },
+      "cardinality_per_source_anchor": {
+        "exactly": 4,
+        "meaning": "Exactly four unique logical obligation identities across all statuses; not a count of pending/executable jobs, materialized rows or physical HTTP requests. Only the original FIX16 anchor may supply A for a given S.",
+        "set_definition": "O(S,A) = {(S,A,o) | o in {300,3600,86400,604800}}"
+      },
+      "crash_after_anchor_durability_before_materialization": {
+        "reconstructible_obligations": 4,
+        "rule": "Crash immediately after the qualifying anchor is durable, before any scheduler-specific write, cannot lose any logical member. Reconstruct all four original keys and A+offset targets."
+      },
+      "crash_before_anchor_durability": {
+        "reconstructible_obligations": 0,
+        "rule": "No obligation set is derivable from a volatile observation lost before the FIX16 durable boundary. A later first qualifying durable primary observation may establish the original anchor and its four obligations."
+      },
+      "deferred_semantics": {
+        "coalescing": "UNRESOLVED_FOR_R18",
+        "completion_durability": "UNRESOLVED_FOR_R18",
+        "failed_recheck": "UNRESOLVED_FOR_R18",
+        "fairness_starvation": "UNRESOLVED_FOR_R18",
+        "missed_checkpoint_policy": "UNRESOLVED_FOR_R18",
+        "overdue_execution": "UNRESOLVED_FOR_R18",
+        "satisfaction_boundary": "UNRESOLVED_FOR_R18"
+      },
+      "due_at": {
+        "precision_binding": "revision_policy.reobservation_anchor.offset_arithmetic.precision",
+        "rule": "due_at(S,A,o) = A + o seconds, directly from original observed_at under unchanged reobservation_anchor.offset_arithmetic. Recovery, materialization and execution times never shift A or any target."
+      },
+      "logical_identity": {
+        "fields": [
+          "source_item_id",
+          "original_reobservation_anchor_observed_at",
+          "offset_seconds"
+        ],
+        "id": "REOBSERVATION_OBLIGATION_KEY_V1",
+        "not_identity_inputs": [
+          "content_hash",
+          "EventRevision ID",
+          "SourceObservation ID",
+          "scheduler row ID",
+          "worker ID",
+          "restart epoch",
+          "CaptureSpec hash"
+        ],
+        "rule": "The ordered tuple (S,A,o) is the authoritative logical identity, with S from unchanged identity.source_item_id, A exclusively the ONE original durable FIX16 reobservation anchor for S, and o one of the frozen offsets. Logical equality is equality of these three canonical values. A is not a caller-selected later observation or cache timestamp. Preserve existing canonical timestamp representation/precision; no rounding.",
+        "same_timestamp_distinct_source_items": "S1 != S2 with identical A still yields disjoint sets of four keys, eight total.",
+        "storage_encoding": "UNSPECIFIED - an implementation may encode/hash the tuple or use another physical row ID, but physical IDs cannot change tuple equality."
+      },
+      "materialization": {
+        "absence_does_not_remove_logical_obligation": true,
+        "duplicate_row_does_not_create_new_logical_obligation": true,
+        "role": "CACHE_OR_EXECUTION_INDEX",
+        "rule": "Materialized membership is an optional cache/index/queue aid. With a durable anchor, zero rows, two rows, four correct rows or duplicate rows all represent the same four logical obligations. Existing rows must reconcile to derived keys and targets; missing rows do not authorize missing logical work, and conflicting cache values have no authority over the original anchor or derived set. No corruption-repair procedure or storage primitive is prescribed.",
+        "status_boundary": "The cache rule concerns membership, identity and target only. Derivation/reconciliation neither assigns nor resets status, establishes satisfaction, nor authorizes execution. It does not make completion evidence disposable. Status/completion persistence and merging remain unresolved for R18."
+      },
+      "model": {
+        "id": "REOBSERVATION_OBLIGATION_SET_V1"
+      },
+      "offsets_binding": "Exactly revision_policy.reobservation_offsets_seconds and reobservation_anchor.offsets_seconds; all representations MUST agree.",
+      "offsets_seconds": [
+        300,
+        3600,
+        86400,
+        604800
+      ],
+      "parser_failure_after_durable_anchor": {
+        "EventRevision_success_implied": false,
+        "obligations_exist": true,
+        "rule": "A later parser/normalization failure cannot erase the four obligations entailed by a qualifying durable anchor. No parsing success or EventRevision commit is implied; failed-recheck/execution policy remains deferred."
+      },
+      "provenance_and_rate_boundary": "Obligation keys, target times and materialization are operational metadata, not observed content or source-vintage evidence. Derivation creates no SourceObservation or EventRevision and changes no observed_at, ingested_at or source_available_at. It performs no HTTP attempt, consumes no request unit and grants no limiter permit or retry permission. Actual permitted attempts remain subject to unchanged FIX14/FIX15 and polling.retry_policy.",
+      "reconstruction": {
+        "deterministic": true,
+        "elapsed_time": "All four identities remain logically derivable even when recovery occurs after one or every due_at. This determines existence only, not overdue execution, satisfaction, completion or retention of physical rows.",
+        "idempotent": true,
+        "network_request_required_for_derivation": false,
+        "repeated_interrupted_concurrent_recovery": "Repeated, interrupted or concurrent reconstructors derive the same four logical keys and targets. Repeated insertions or retry after a lost materialization-write ACK cannot create a fifth logical member or a second grid.",
+        "required_after_restart": true,
+        "rule": "On startup/recovery, every durable anchor governed by this V1 spec MUST yield its complete exact logical set. Discovery/derivation cannot depend on existing scheduler rows, a registration marker or a normalized EventRevision. Deterministic on-demand derivation, reconciliation/materialization or an equivalent mechanism is allowed; the resulting set is not optional.",
+        "scheduler_rows_required": false,
+        "separate_atomic_four_row_transaction_required": false
+      },
+      "revision_behavior": {
+        "later_content_revision_creates_new_grid": false,
+        "parser_recovery_creates_new_grid": false,
+        "repeated_same_content_creates_new_grid": false,
+        "rule": "H1 -> H2, repeated H1 observations, later parse success and restart preserve original S,A and the same four keys. SourceObservation multiplicity is independent of obligation-grid identity. Existing source identity and immutable raw/EventRevision semantics are unchanged."
+      },
+      "scope_boundary": "FIX17 freezes logical obligation birth, identity, cardinality and crash reconstruction only. Four logical obligations do not imply four HTTP GETs, immediate execution, exactly-once dispatch or any status transition. Missed/overdue, coalescing, satisfaction, failed-recheck behavior, completion durability, fairness/starvation, network deadlines/stage bounds, full source-health mapping and EST/EDT seasonality remain deferred to R18.",
+      "spec_binding": "The anchor/grid is governed by the CaptureSpec semantics recorded under existing provenance conventions. The future implementation binds records to its authoritative final spec hash. CaptureSpec hash is not added to this logical tuple. FIX17 introduces no runtime migration, cross-version reconciliation or identity churn from pre-implementation spec revisions."
     },
     "reobservation_offsets_seconds": [
       300,
@@ -2600,7 +2914,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 17,
+  "spec_revision": 18,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -2619,7 +2933,8 @@
     "67e2d7d557d7f612b7dba9af82b988b0b71271754d920eb99d75a2d997eac34d",
     "bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050",
     "49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17",
-    "6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038"
+    "6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038",
+    "5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
