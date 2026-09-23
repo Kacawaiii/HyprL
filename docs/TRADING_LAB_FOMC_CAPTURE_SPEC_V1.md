@@ -7,12 +7,13 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 18 — authoritative)
-dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d
+CAPTURE SPEC HASH  (revision 19 — authoritative)
+83df6d2dcee58073bc4775b296b58f8b4384de4311328892a8f2cd7f445eb5fe
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
-        → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30 (rev 17)
+        → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30
+        → dd0cff22 (rev 18)
 
 BINDS
   event intelligence design rev4
@@ -30,7 +31,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 18.**
+writing revision 19.**
 
 ---
 
@@ -231,7 +232,7 @@ with *coverage completeness*.
 
 ### Zero means one specific thing
 
-`EVENTS_OBSERVED_ZERO` requires **all seven**:
+`EVENTS_OBSERVED_ZERO` requires **all ten**:
 
 1. the discovery feed fetch succeeded
 2. the raw feed artefact was durably persisted
@@ -240,6 +241,9 @@ with *coverage completeness*.
 5. `unresolved_candidate_count = 0`
 6. no primary-page fetch or parse remains unresolved for a candidate that could affect the result
 7. newly admitted `IN_SCOPE_V1` events = 0
+8. every relevant candidate's primary acquisition in the cycle has concluded — none pending, waiting for the limiter or in flight
+9. every relevant item listed by the cycle's feed that has a durable primary observation — from this cycle or an earlier one — has durably concluded its classification and, if in scope, its revision commit
+10. no relevant source failure, parser failure, raw persistence failure, deadline expiry or unclassified item exists in the cycle
 
 Fetch and parse success alone is **not** sufficient. What the state asserts is:
 
@@ -256,6 +260,20 @@ An emergency inter-meeting action is the highest-impact event class and the one
 most likely to carry a non-standard title. Under revision 3 it produces an
 unresolved candidate and blocks the zero, rather than becoming evidence of
 nothing having happened.
+
+A LIVE **cycle** is one feed poll plus the primary acquisitions of the relevant
+unanchored candidates it lists; its zero decision waits until all of them, and
+their classification and commit, have concluded. Candidate outcomes are
+independent: if the feed lists three candidates and two primary fetches succeed
+while one fails, the two are kept, the third stays unresolved with
+`SOURCE_UNAVAILABLE`, and the cycle cannot be zero. There is no all-or-nothing
+rollback. An item already classified by an earlier successful parse stays
+classified when a later recheck fails; an item never successfully classified
+blocks zero in every cycle that lists it. A failed commit of an in-scope
+candidate blocks zero rather than silently lowering the admitted count to 0.
+Every cycle that lists an item whose acquisition is still pending or in flight
+waits for that shared acquisition; if it admits an event, all of those cycles
+are non-zero. A cycle interrupted by a restart can never be zero.
 
 ## 4. Time — the part worth getting right
 
@@ -284,6 +302,29 @@ The strict grammar is unchanged: only the four explicit forms are accepted,
 `EST → -05:00`, `EDT → -04:00`, the timezone is **read, never inferred** (`EST`
 verified on 2025-12-10, 2026-01-28 and 2019-01-30; `EDT` across 2016–2026), and
 a bare `ET` is not accepted at all.
+
+Revision 19 freezes what happens when the printed label looks wrong for the
+season (`LITERAL_ZONE_LABEL_V1`): **nothing is corrected.** `EST` is always
+UTC−05:00 and `EDT` always UTC−04:00, whatever the date:
+
+```
+2026-07-15  +  2:00 p.m. EST   →   2026-07-15T19:00:00Z     (no rewrite to EDT)
+2026-01-15  +  2:00 p.m. EDT   →   2026-01-15T18:00:00Z     (no rewrite to EST)
+```
+
+No America/New_York rule is consulted, so conversion needs no timezone
+database and replays identically everywhere. An implementation may attach a
+non-causal "seasonally unusual" diagnostic, but it is optional, never changes
+the value and never rejects the page. Any other label — `ET`, `Eastern`,
+`local time`, or no zone — matches no grammar: `declared_release_at` is null, no
+zone is guessed, and the page is `PARSER_FAILED` — first failure wins, so
+no revision is created. Only the recognised `For immediate release` yields a
+revision with a null `declared_release_at`. The season never changes the trust
+verdict either.
+
+The clock is strict too: the hour is 1–12 without a leading zero, minutes are
+two digits, `12 a.m.` is 00 and `12 p.m.` is noon, so `12:30 p.m. EDT` on
+2026-06-17 is `16:30:00Z`. Anything else is unrecognised.
 
 What changed is its **role**. It composes into `declared_release_at` —
 
@@ -806,12 +847,13 @@ Repeated, interrupted or concurrent reconstruction, including retry after lost
 materialization-write ACK, yields the same keys. No atomic anchor-plus-four-rows
 transaction or particular storage primitive is required. Rows without supporting
 durable anchor provenance cannot create obligations. All four identities remain
-derivable even after their due times; no overdue execution verdict follows.
+derivable even after their due times; their status is derived as described
+below.
 
 The cache rule concerns membership, identity and target only. Reconstruction
-neither assigns nor resets status, proves satisfaction, nor authorizes execution.
-Completion evidence is not declared disposable; its persistence and merging
-remain unresolved. No corruption-repair procedure is specified.
+by itself neither assigns nor resets status, proves satisfaction, nor
+authorizes execution. Status comes from durable observation records, as frozen
+next. No corruption-repair procedure is specified.
 
 Derivation itself needs no network and creates no observation, revision,
 accounting debit, limiter permit or retry permission. Keys and due times are
@@ -820,10 +862,80 @@ proof. Existing provenance binds the governing CaptureSpec semantics; future
 implementation uses its authoritative final hash. FIX17 adds no runtime migration
 or cross-version reconciliation policy and no pre-implementation identity churn.
 
-Only birth, logical identity and crash reconstruction are newly frozen. Missed/
-overdue execution, coalescing, satisfaction, failed rechecks, completion durability
-and fairness/starvation remain deferred to R18, as do network deadlines/stage
-bounds, the full source-health matrix and EST/EDT seasonality.
+### An obligation is pending until a real observation satisfies it
+
+Revision 19 (`REOBSERVATION_SCHEDULER_POLICY_V1`) gives each obligation exactly
+two logical states, `PENDING` and `SATISFIED`. `PENDING_NOT_DUE` and
+`PENDING_DUE` are merely views of `PENDING` against the clock. There is no
+`MISSED`, `EXPIRED` or `FAILED` obligation: a failed attempt is a health
+outcome, not an obligation status, and passing `due_at` ends nothing.
+
+The status is **derived, never remembered**:
+
+```
+(S, A, o) is SATISFIED  ⇔  some qualifying observation R of S has R.observed_at ≥ A + o
+```
+
+A qualifying observation is exactly what could have been an anchor: final
+exact 200, complete admitted primary body, canonical `observed_at`, durable
+per-response raw/observation record tied to S. Every admitted response keeps
+its own per-response record, even when its bytes match an earlier one, so
+satisfaction is keyed to that record — not to the content-derived observation
+id, and not to an `EventRevision`.
+
+Everything else follows from that one rule:
+
+| situation | result |
+|---|---|
+| collector offline across O300's due time | still required; eligible after restart; the eventual observation keeps its real `observed_at` — nothing backdated |
+| O300, O3600, O86400 all overdue | **one** real current fetch satisfies all three; O604800 waits for its own `due_at`; no catch-up GETs, no claim about the past |
+| observation at A+4000 | satisfies O300 and O3600, not O86400 |
+| observation at 18:30, O3600 due 19:00 | satisfies nothing for O3600 — no early credit |
+| limiter delays O300 to A+312 | satisfied; lateness is not failure; no target moves |
+| same bytes H1 again | satisfied; no new revision |
+| changed bytes H2 | satisfied at raw durability; the new revision follows downstream |
+| durable body, then parser failure | satisfied; health `PARSER_FAILED`; no normalized success |
+| DNS/TCP/TLS failure, timeout, redirect failure, non-200, truncation, oversize | still `PENDING` |
+
+Because offsets increase, the satisfied set is always a prefix of the grid. The
+anchor observation itself (`observed_at = A`) satisfies nothing. `observed_at`,
+A and `due_at` are pinned to UTC **microseconds** (clock reading truncated), and
+every comparison is exact, so two implementations can never disagree on whether
+19:00:05.300 satisfies a target of 19:00:05.700.
+
+### Retrying, and surviving crashes
+
+Reobservation work is per item, not per obligation. An item is eligible when it
+has a `PENDING_DUE` obligation, no fetch of it is in flight, and it is not in
+retry backoff. After a fetch fails, the item waits **60 seconds from the
+failure** — the existing discovery cadence — on the limiter's monotonic clock.
+Then it is eligible again. There is no cap and no give-up. A page that fails
+permanently is therefore retried about once a minute, within the provider
+ceiling, until it works. That cost is stated rather than hidden. A new limiter
+epoch forgets backoff, because its 60-second embargo already covers it.
+
+On restart, status is recomputed from the durable anchor and durable
+observation records before anything is dispatched. A durable reobservation
+followed by a crash before any "done" marker is therefore already satisfied, and
+refetching it is forbidden. The same holds after a lost ACK: resolve the
+uncertainty by reading local durable state, never by asking the Fed again. An
+observation lost *before* durability never existed, and a new real fetch is
+correct. Completion rows may exist as caches, but a row cannot satisfy anything
+alone and a missing row cannot un-satisfy. A new epoch recovers only after the
+previous emitter's attempts have all ended and their outcomes are durable or
+abandoned, so a late write from the old process cannot cause a duplicate GET.
+
+Processing a durable observation — decoding, parsing, classification and, if in
+scope, the revision commit — must always reach a durable conclusion. It runs
+straight after durability, again at every recovery for anything unfinished, and
+exactly 60 s after a failed local commit, repeated until it concludes. It is
+offline and never touches the Fed. The revision for a body hash comes from the
+earliest durable observation carrying it; a later same-hash fetch never creates a
+second revision, and never cancels one that is still owed.
+
+Once an item is anchored, discovery never fetches its primary page again; every
+later primary GET of it is reobservation work. Once O604800 is satisfied, the
+item generates no further traffic.
 
 After +7 days, **V1 promises nothing.** That is stated as a limitation rather
 than disguised as immutability; extending the window is CaptureSpec V2.
@@ -911,8 +1023,8 @@ Every scheduled recheck attempt consumes one unit in this domain. A due recheck
 cannot bypass unavailable limiter admission. FIX16 binds its anchor to the exact
 **`observed_at` of the first qualifying durable primary content observation** in
 §6, with unchanged +5 min, +1 h, +24 h and +7 d offsets. A limiter delay changes
-neither the anchor nor those targets; scheduler late-execution policy remains
-deferred.
+neither the anchor nor those targets; late execution is frozen by revision 19
+in §6.
 
 ### Exact rolling window and start-to-start spacing
 
@@ -1053,19 +1165,58 @@ when present, and the first instant with at most five active prior starts under
 `0 < t - s < 60`. Conditions are evaluated against current state at admission;
 eligibility grants neither a reservation nor a queue-service guarantee.
 
-### Scope left for R18
+### Which work gets the next grant
 
-FIX16 binds the anchor and immutable target grid; FIX17 derives the four logical
-obligations and their stable identities as specified in §6. Offsets, retry
-permissions, existing source-health mappings and causal timestamp definitions
-remain unchanged. Missed/overdue execution, coalescing, checkpoint
-satisfaction, failed-recheck completion, scheduler completion durability and
-fairness/starvation remain unresolved for R18. Total network deadline,
-DNS/TLS/header/body timeout coverage, the general source-health matrix and
-EST/EDT seasonal-consistency audits also remain deferred. Connect 10 s and read
-30 s are unchanged and not reinterpreted; no total deadline is added. Historical
-FIX15 scope wording inside the unchanged `rate_limiter` does not override these
-current deferrals.
+FIX15 decides **when** a start may happen; revision 19 decides **which** work
+takes it (`ELIGIBLE_CLASS_ALTERNATION_V1`). Work falls into three classes, all
+sharing the one limiter:
+
+| class | work |
+|---|---|
+| `FEED_DISCOVERY` | the LIVE feed poll; first primary fetch of an unanchored candidate |
+| `REOBSERVATION` | every later primary fetch of an anchored item |
+| `HISTORICAL_BACKFILL` | operator-run archive pages and their unanchored candidates |
+
+At each grant, a redirect follow of an in-flight fetch goes first. Otherwise the
+scheduler takes the next class in the cycle order after the last one served,
+skipping classes with nothing eligible. With two busy classes this is strict
+alternation, and a class with no work does not use up its turn. Each epoch starts
+as if `HISTORICAL_BACKFILL` had just been served, so the feed wins the first
+contested grant.
+
+Only a feed item whose title is exactly `Federal Reserve issues FOMC statement`
+and whose link passes validation gets a primary fetch. Every other item is
+classified from the feed alone, with no GET, no anchor and no rechecks. In
+backfill there is no feed title: every calendar/archive link that passes
+validation, including the `monetary<YYYYMMDD>` path constraint, is fetched
+whatever its link text.
+There the official link stands in for the feed conjunct, and the exact primary
+title still decides. Whatever the discovery side said is recorded once, when the
+item is first acquired. Every later observation of the item is classified
+against that record plus its own page title, so an edited or vanished feed title
+never re-classifies it — an anchored item's classification in every later
+cycle is its recorded state, meaning its *first* successful classification; later
+changed-content outcomes are revision or health outcomes only. Backfill never
+asserts zero. Inside
+`FEED_DISCOVERY`, the candidates of the latest successful feed poll are fetched
+before the next poll. A failed candidate is retried when a later successful
+poll still lists it, and once more after a restart; restart-derived fetches
+belong to no old cycle. The feed polls every 60 s, measured start to
+start, with at most one poll pending and no catch-up polls. Inside
+`REOBSERVATION`, items not yet fetched in this epoch go first, oldest `due_at`
+first. Items already fetched are ordered least-recently-fetched first, so a
+permanently failing page cannot crowd out healthy rechecks. Ties break on
+`source_item_id`.
+
+Scheduling is work-conserving: if work is eligible and the limiter would admit
+a start, the start happens. Idling, serializing fetches or capping concurrency
+below what the limiter allows is non-conforming; the only in-flight limits are one
+feed poll and one fetch per item.
+
+So neither class can starve the other while the limiter keeps granting. Queue
+pressure and restarts can never delete required work either: rechecks are
+re-derived from durable anchors, the poll from its cadence, and candidates from
+the latest durable feed observation.
 
 ### Accounting does not redefine observations or source health
 
@@ -1226,10 +1377,65 @@ payload, an error body, or a redirect body.
 
 FIX12 itself introduced no retry policy. A non-admitted response maps to
 `SOURCE_UNAVAILABLE` *if it is the final response of the logical attempt*.
-Existing `polling.retry_policy` remains authoritative and unchanged. FIX14 now
-binds every redirect follow and permitted later reattempt to the physical unit
-and shared gate in §7. FIX15 now freezes their rate admission there, without
-changing retry permissions or final-response admission.
+Existing `polling.retry_policy` remains authoritative; revision 19 binds its
+timing (§6, §7). FIX14 binds every redirect follow and permitted later
+reattempt to the physical unit and shared gate in §7, and FIX15 freezes their
+rate admission there, without changing retry permissions or final-response
+admission.
+
+### Every physical attempt ends within 60 seconds
+
+A connect timeout of 10 s and a read timeout of 30 s do not bound an attempt: a
+server that sends one byte every 29 s never trips either. It never triggers the
+body cap within any useful time either. Revision 19 adds
+`PHYSICAL_ATTEMPT_TOTAL_DEADLINE_V1`:
+
+```
+total_deadline_seconds   60
+clock                    monotonic (the limiter's epoch domain)
+begins_at                PHYSICAL_REQUEST_ATTEMPT_START — the grant, after all limiter waiting
+activity_independent     true — arriving bytes never reset it
+covers                   DNS, TCP, TLS, request write, headers, body, content decoding
+```
+
+Connect 10 s still bounds each TCP connection attempt. Read 30 s is an
+inactivity bound on every blocking socket read or write, including the TLS
+handshake and the header wait. The earliest limit wins, and none extends the
+total. DNS has no separate limit, but it is inside the 60 s: if a resolver
+cannot be interrupted, the implementation must cut the attempt off externally
+and discard any late answer. Local persistence, hashing and parsing come after
+the network phase and are outside the deadline.
+
+Each redirect follow is its own physical attempt with its own fresh 60 s,
+starting at its own grant. Limiter waiting between hops counts against no
+attempt. Resolved addresses are tried one at a time in resolver order — no
+parallel racing — inside the same attempt and deadline, from one lookup covering
+IPv4 and IPv6. With at most four attempts, a logical fetch is network-active for at
+most 240 s.
+
+On expiry the attempt is aborted, and nothing it received is admitted: no
+complete-body hash, no parser, no revision, no anchor, no satisfied obligation,
+no refunded unit. The surface is `SOURCE_UNAVAILABLE`, zero is blocked, and a
+recheck stays pending.
+
+### Every failure has one health state
+
+Revision 19 completes `source_health.mappings` without adding a state to the
+rev4 vocabulary. Processing runs in a fixed order, and the first failing stage
+decides:
+
+| failure | state |
+|---|---|
+| DNS, TCP/connect, TLS, read timeout, total deadline, truncation, content-coding error, redirect failure/limit, final non-200 | `SOURCE_UNAVAILABLE` |
+| oversize, media type, charset, invalid UTF-8, XML security/syntax, feed structure, HTML anchors, date, release line (incl. unsupported zone label), classification conflict | `PARSER_FAILED` |
+| raw digest mismatch at replay | fail closed (`NORMALIZED_PRESENT_RAW_CORRUPT`), no network repair |
+| raw persistence failure | no provider health claim; the response counts as never observed; zero blocked |
+| revision commit failure | no `ingested_at`, no visibility; zero blocked |
+| waiting for the limiter | not a failure; `RATE_LIMITED` is at most a non-material diagnostic |
+| cancellation after grant | no provider health claim; unit consumed; not qualifying; zero blocked |
+
+A recheck failure is recorded on `primary_statement` only and never marks the
+feed or the provider unavailable.
 
 ## 7b. XML parsing has no expansion path
 
@@ -1443,9 +1649,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. One hundred and fifteen cases, decided in advance
+## 11. One hundred and thirty-five cases, decided in advance
 
-`FOMC01`–`FOMC115` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC135` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -1583,7 +1789,7 @@ The canonical JSON adds these adversarial specification cases:
 | `FOMC86` — U0 returns `302 Location: //evil.example/x` | U0 = 1 unit; rejected target = 0; total 1 |
 | `FOMC87` — admitted start followed by DNS/connect/TLS/transport failure | 1 unit, no refund and no successful observation implied |
 | `FOMC88` — failed attempt then legitimately permitted later reattempt | 1 + 1 units through the same gate; existing retry policy unchanged |
-| `FOMC89` — recheck pending alongside feed/primary traffic | same provider domain; 1 unit if attempted; no separate quota or due-time bypass; ordering/timing deferred |
+| `FOMC89` — recheck pending alongside feed/primary traffic | same provider domain; 1 unit if attempted; no separate quota or due-time bypass; ordering per `FOMC126` |
 
 Revision 16 adds four invariants while preserving F01–F45:
 
@@ -1632,7 +1838,7 @@ F01–F49 retain their commitments.
 | `FOMC104` — transient observation 18:00:05, crash before raw/observation durability | no reconstructible anchor survives; a later qualifying durable observation may establish the first anchor |
 | `FOMC105` — raw durable 18:00:06, crash before normalized commit, restart 18:02:05 | recover A=18:00:05; first target remains 18:05:05 |
 | `FOMC106` — first H1 at A=18:00:05; later recheck H2 at 19:00:07 | same source item's A is unchanged; content revision does not reset future targets |
-| `FOMC107` — target A+300, limiter delays actual start until A+312 | A and targets A+3600/A+86400/A+604800 stay fixed; overdue/satisfaction/coalescing semantics remain deferred |
+| `FOMC107` — target A+300, limiter delays actual start until A+312 | A and targets A+3600/A+86400/A+604800 stay fixed; satisfaction of the late observation per `FOMC118` |
 
 Revision 18 adds **F52 — DURABLE REOBSERVATION ANCHOR IMPLIES FOUR REQUIRED
 LOGICAL OBLIGATIONS** and **F53 — REOBSERVATION OBLIGATION IDENTITY IS DERIVED
@@ -1649,11 +1855,40 @@ AND IDEMPOTENT**. F01–F51 and all earlier case verdicts retain their commitmen
 | `FOMC114` — crash before anchor durability | zero reconstructible obligations from that lost observation |
 | `FOMC115` — S1 and S2 share A | four per item, eight total; no collision |
 
+Revision 19 adds **F54–F62**, closing the remaining runtime semantics. They
+cover past-due obligations, coalescing, the durable-observation satisfaction
+boundary, failed attempts, crash/ACK reconstruction, class fairness, the 60 s
+physical-attempt deadline, failure-blocks-zero and literal EST/EDT. F01–F53 and
+every earlier verdict keep their commitments; `FOMC04`, `FOMC89`, `FOMC105` and
+`FOMC107` now point to the rules that complete them.
+
+| case | frozen verdict |
+|---|---|
+| `FOMC116` — offline across O300's due time, restart later | still `PENDING_DUE`; real later observation; no backdating |
+| `FOMC117` — O300/O3600/O86400 overdue, one fetch at A+2d | one logical fetch satisfies all three; O604800 pending |
+| `FOMC118` — limiter delays O300 to A+312 | satisfied; no drift |
+| `FOMC119` — observation at A+1800 | O300 satisfied; O3600 stays pending |
+| `FOMC120` — same H1 recheck | satisfied; no new revision |
+| `FOMC121` — H2 durable, crash before revision commit | satisfied; revision appended idempotently after recovery |
+| `FOMC122` — durable recheck, anchor absent in HTML | satisfied; `PARSER_FAILED`; no revision |
+| `FOMC123` — 500, or deadline expiry | pending; `SOURCE_UNAVAILABLE`; eligible 60 s after the failure |
+| `FOMC124` — crash after durable recheck, before marker | satisfied on recovery; no duplicate GET |
+| `FOMC125` — lost ACK | same satisfied set; no GET from ACK loss |
+| `FOMC126` — feed vs persistent recheck backlog | strict alternation; nothing starves |
+| `FOMC127` — one byte every 29 s | aborted at 60 s; nothing admitted |
+| `FOMC128` — DNS hang | aborted at 60 s; late answer discarded |
+| `FOMC129` — TLS hang | inactivity 30 s or total 60 s; `SOURCE_UNAVAILABLE` |
+| `FOMC130` — header hang | inactivity 30 s or total 60 s; `SOURCE_UNAVAILABLE` |
+| `FOMC131` — 2 of 3 candidates succeed | 2 kept; no rollback; zero impossible |
+| `FOMC132` — July, `EST` | 19:00Z; no seasonal rewrite |
+| `FOMC133` — January, `EDT` | 18:00Z; no seasonal rewrite |
+| `FOMC134` — `ET`, `Eastern`, `local time`, no zone | no guess; `PARSER_FAILED` |
+| `FOMC135` — corrupt raw at replay | fail closed offline; no refetch; obligations unchanged |
+
 These are specification cases only; no fixture, capture or runtime is created
-or exercised here. Revision 18 is authoritative, but independent counter-review
-remains pending. FIX17 authorizes no implementation and does not resolve the
-remaining R18 scheduler execution/completion, deadline, source-health or EST/EDT
-questions.
+or exercised here. Revision 19 is authoritative. It closes every runtime
+question previously deferred to R18, but an independent global counter-review
+of it is still pending and no implementation is authorized.
 
 ## 12. What this does not establish
 

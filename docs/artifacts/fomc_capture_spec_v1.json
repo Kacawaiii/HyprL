@@ -18,7 +18,7 @@
     "FOMC04": {
       "case": "release line says bare 'ET'",
       "source_available_at": null,
-      "verdict": "no timezone guess; declared_release_at = null; content source_available_at = null"
+      "verdict": "no timezone guess; declared_release_at = null; content source_available_at = null; unsupported zone label -> PARSER_FAILED under timestamps.unrecognised_release_syntax (see FOMC134)"
     },
     "FOMC05": {
       "case": "feed shows item, primary page unavailable",
@@ -126,7 +126,7 @@
         "raw_observation_durable": "2026-09-22T18:00:06Z",
         "restart": "2026-09-22T18:02:05Z"
       },
-      "verdict": "Reconstruct A from original durable observed_at, not raw commit, restart or a future normalization commit. Restart at A+2 minutes leaves first target A+300 unchanged; missed/overdue execution remains deferred."
+      "verdict": "Reconstruct A from original durable observed_at, not raw commit, restart or a future normalization commit. Restart at A+2 minutes leaves first target A+300 unchanged; overdue execution follows revision_policy.reobservation_scheduler (FOMC116)."
     },
     "FOMC106": {
       "case": "LATER CONTENT REVISION DOES NOT RESET GRID - first qualifying observation H1, later recheck observes H2 for the SAME logical source item",
@@ -163,7 +163,7 @@
         "rate_limiter_delay_reanchors": false
       },
       "target_utc": "2026-09-22T18:05:05Z",
-      "verdict": "FIX15 remains authoritative for actual start admission. Delay changes neither A nor later targets. This case does not decide whether/how the +300 obligation is overdue, satisfied, coalesced or completed."
+      "verdict": "FIX15 remains authoritative for actual start admission. Delay changes neither A nor later targets. Satisfaction of the late qualifying observation follows revision_policy.reobservation_scheduler (FOMC118)."
     },
     "FOMC108": {
       "case": "CRASH BEFORE SCHEDULER MATERIALIZATION",
@@ -382,13 +382,219 @@
       },
       "verdict": "Distinct existing source_item_id values keep the two four-member sets disjoint, despite equal anchor timestamps. Deduplication on timestamp/offset alone is nonconforming."
     },
+    "FOMC116": {
+      "anchor_at": "2026-09-22T18:00:05Z",
+      "case": "MISSED O300 - collector offline from A+1min until A+30min, restart after due_at",
+      "expected": {
+        "O300_status_after_restart": "PENDING_DUE",
+        "due_at_O300": "2026-09-22T18:05:05Z",
+        "synthetic_observation": false,
+        "terminal_missed_state": false
+      },
+      "verdict": "O300 stays required and its item becomes eligible after restart subject to selection and the FIX15 embargo. The eventual reobservation carries its own real observed_at; no backdating."
+    },
+    "FOMC117": {
+      "anchor_at": "2026-09-22T18:00:05Z",
+      "case": "O300, O3600 AND O86400 ALL OVERDUE - restart at A+2d, one qualifying reobservation R at 2026-09-24T18:10:00Z",
+      "expected": {
+        "O604800_due": "2026-09-29T18:00:05Z",
+        "logical_fetches": 1,
+        "pending": [
+          604800
+        ],
+        "physical_catch_up_gets": 0,
+        "satisfied": [
+          300,
+          3600,
+          86400
+        ]
+      },
+      "verdict": "One real current observation satisfies all three due obligations; it claims no earlier source state. O604800 waits for its own due_at."
+    },
+    "FOMC118": {
+      "anchor_at": "2026-09-22T18:00:05Z",
+      "case": "LATE O300 FROM LIMITER - due A+300, FIX15 first grant at A+312, qualifying R observed at A+313",
+      "expected": {
+        "O300": "SATISFIED",
+        "O3600_due": "2026-09-22T19:00:05Z",
+        "limiter_wait_is_failure": false,
+        "target_drift": false
+      },
+      "verdict": "Late-but-qualifying observation satisfies O300; lateness is not failure and no target moves."
+    },
+    "FOMC119": {
+      "anchor_at": "2026-09-22T18:00:05Z",
+      "case": "NO EARLY SATISFACTION - qualifying R at A+1800 (18:30:05Z)",
+      "expected": {
+        "O300": "SATISFIED",
+        "O3600": "PENDING",
+        "O3600_pre_satisfied": false
+      },
+      "verdict": "R.observed_at < A+3600, so O3600 stays PENDING and needs a later qualifying observation."
+    },
     "FOMC12": {
       "case": "stored raw statement corrupt locally",
       "verdict": "verified replay FAILS CLOSED; no network repair"
     },
+    "FOMC120": {
+      "case": "SAME-CONTENT RECHECK - due O300, qualifying R with body hash H1 equal to the anchor body",
+      "expected": {
+        "O300": "SATISFIED",
+        "new_EventRevision": false,
+        "new_per_response_record": true
+      },
+      "verdict": "Content change is not required. R is a valid observation with its own observed_at; no revision is added."
+    },
+    "FOMC121": {
+      "case": "CHANGED-CONTENT RECHECK - qualifying R with H2 durable, crash before normalized revision commit",
+      "expected": {
+        "H2_revision_after_recovery": "appended under existing rules, idempotently",
+        "O300": "SATISFIED",
+        "satisfaction_waits_for_EventRevision": false
+      },
+      "verdict": "Satisfaction occurs at the durable source-observation boundary; normalization is downstream and is completed from durable bytes at recovery under revision_policy.reobservation_scheduler.post_durable_processing."
+    },
+    "FOMC122": {
+      "case": "DURABLE RECHECK THEN PARSER FAILURE - final 200, complete body, durable per-response record, HTML anchor absent",
+      "expected": {
+        "EventRevision": false,
+        "normalized_success": false,
+        "obligation": "SATISFIED",
+        "primary_health": "PARSER_FAILED"
+      },
+      "verdict": "The source was re-observed, so the obligation is satisfied; processing failure is recorded separately and blocks zero where relevant."
+    },
+    "FOMC123": {
+      "case": "RECHECK FAILS - HTTP 500 final, and separately a 60-second deadline expiry",
+      "expected": {
+        "health": "SOURCE_UNAVAILABLE",
+        "hidden_retry": false,
+        "next_eligible": "terminal outcome + 60 s (monotonic)",
+        "obligation": "PENDING",
+        "units_consumed": 1
+      },
+      "verdict": "Failure neither satisfies nor erases the obligation; retry follows failed_attempt_retry with no tight loop."
+    },
+    "FOMC124": {
+      "case": "CRASH AFTER DURABLE RECHECK BEFORE COMPLETION MARKER - R at A+301 durable, crash, restart",
+      "expected": {
+        "O300_after_recovery": "SATISFIED",
+        "duplicate_provider_get": false
+      },
+      "verdict": "Status is derived from the durable qualifying record; the missing marker has no authority."
+    },
+    "FOMC125": {
+      "case": "LOST ACK - durable write of R and completion cache succeed, caller loses ACK",
+      "expected": {
+        "duplicate_EventRevision": false,
+        "provider_get_due_to_ack_loss": false,
+        "satisfied_set": "identical after recovery"
+      },
+      "verdict": "Recovery reads durable state; ACK loss alone never causes a network request."
+    },
+    "FOMC126": {
+      "case": "FEED VERSUS PERSISTENT RECHECK BACKLOG - 10 items with PENDING_DUE obligations, some permanently failing, while LIVE feed polls keep becoming due",
+      "expected": {
+        "class_order_when_both_eligible": "FEED_DISCOVERY and REOBSERVATION strictly alternate",
+        "failing_items_block_others": false,
+        "feed_starved": false,
+        "limiter_changed": false,
+        "recheck_starved": false
+      },
+      "verdict": "ELIGIBLE_CLASS_ALTERNATION_V1 plus least-recently-dispatched ordering serves every class and item after finitely many grants; FIX15 still decides when grants exist."
+    },
+    "FOMC127": {
+      "case": "SLOW DRIP - final 200 headers, then one decoded body byte every 29 s forever",
+      "expected": {
+        "attempt_ends_by_elapsed_seconds": 60,
+        "body_admitted": false,
+        "health": "SOURCE_UNAVAILABLE",
+        "parser": false,
+        "read_timeout_fires": false
+      },
+      "verdict": "The activity-independent total deadline aborts the attempt; no partial body is admitted."
+    },
+    "FOMC128": {
+      "case": "DNS HANG - resolver never returns",
+      "expected": {
+        "attempt_ends_by_elapsed_seconds": 60,
+        "health": "SOURCE_UNAVAILABLE",
+        "late_resolution_used": false,
+        "units_consumed": 1
+      },
+      "verdict": "DNS is inside the total deadline; a blocking resolver is bounded externally and its late answer discarded."
+    },
+    "FOMC129": {
+      "case": "TLS HANG - TCP connects, TLS handshake stalls",
+      "expected": {
+        "attempt_ends_no_later_than_elapsed_seconds": 60,
+        "handshake_inactivity_bound_seconds": 30,
+        "health": "SOURCE_UNAVAILABLE"
+      },
+      "verdict": "A silent handshake trips the 30 s inactivity bound; a drip-fed handshake is cut at the 60 s total deadline. Either way SOURCE_UNAVAILABLE."
+    },
     "FOMC13": {
       "case": "feed XML malformed",
       "verdict": "PARSER_FAILED; NOT zero events"
+    },
+    "FOMC130": {
+      "case": "HEADER HANG - server accepts the request and never sends a status line; and a variant sending one header byte every 29 s",
+      "expected": {
+        "attempt_ends_no_later_than_elapsed_seconds": 60,
+        "health": "SOURCE_UNAVAILABLE",
+        "silent_variant_inactivity_bound_seconds": 30
+      },
+      "verdict": "Header wait is bounded by inactivity and by the total deadline, whichever expires first."
+    },
+    "FOMC131": {
+      "case": "PARTIAL DISCOVERY CYCLE - feed succeeds with 3 relevant candidates; 2 primary acquisitions succeed, 1 fails",
+      "expected": {
+        "EVENTS_OBSERVED_ZERO": false,
+        "cycle_waits_for": "all 3 acquisitions and their post-durable processing",
+        "failed_candidate": "unresolved, SOURCE_UNAVAILABLE on primary_statement",
+        "rollback": false,
+        "successes_retained": 2
+      },
+      "verdict": "No all-or-nothing cycle; zero is impossible for the cycle."
+    },
+    "FOMC132": {
+      "case": "JULY EST - July 15, 2026, 'For release at 2:00 p.m. EST'",
+      "expected": {
+        "declared_release_at": "2026-07-15T19:00:00Z",
+        "parser_failed": false,
+        "seasonal_rewrite": false
+      },
+      "verdict": "Literal UTC-05:00; the label is followed, not corrected."
+    },
+    "FOMC133": {
+      "case": "JANUARY EDT - January 15, 2026, 'For release at 2:00 p.m. EDT'",
+      "expected": {
+        "declared_release_at": "2026-01-15T18:00:00Z",
+        "parser_failed": false,
+        "seasonal_rewrite": false
+      },
+      "verdict": "Literal UTC-04:00; no America/New_York rule is consulted."
+    },
+    "FOMC134": {
+      "case": "UNSUPPORTED ZONE LABEL - release line with 'ET', 'Eastern', 'local time' or no zone",
+      "expected": {
+        "EventRevision": false,
+        "declared_release_at": null,
+        "health": "PARSER_FAILED",
+        "zone_guess": false
+      },
+      "verdict": "No accepted grammar matches; fail closed without guessing."
+    },
+    "FOMC135": {
+      "case": "CORRUPT RAW AT REPLAY - persisted body digest mismatch",
+      "expected": {
+        "network_repair": false,
+        "obligation_status_changed": false,
+        "parser": false,
+        "replay": "FAIL_CLOSED",
+        "zero": false
+      },
+      "verdict": "Replay fails closed offline; corruption never triggers a provider refetch or re-opens a satisfied obligation."
     },
     "FOMC14": {
       "case": "feed HTTP failure",
@@ -914,7 +1120,7 @@
         "separate_recheck_quota": false,
         "unit": "PHYSICAL_REQUEST_ATTEMPT_START"
       },
-      "verdict": "The recheck shares the SAME accounting domain as feed and primary traffic. It cannot start without provider permission even when due; each actually attempted GET consumes one unit. Exact ordering, waiting and timing are outside FIX14; the first-successful-primary anchor and offsets are unchanged."
+      "verdict": "The recheck shares the SAME accounting domain as feed and primary traffic. It cannot start without provider permission even when due; each actually attempted GET consumes one unit. Ordering is frozen by revision_policy.reobservation_scheduler.selection (FOMC126); the first-successful-primary anchor and offsets are unchanged."
     },
     "FOMC90": {
       "candidate_seconds": 60,
@@ -1183,7 +1389,12 @@
       "Location carrying a query rejected without silent stripping (FOMC78)",
       "fragment-only Location counting as a transition (FOMC79)",
       "malformed percent and HTTP-downgrade Locations (FOMC80, FOMC81)",
-      "a two-hop relative chain proving the base advances per hop (FOMC82)"
+      "a two-hop relative chain proving the base advances per hop (FOMC82)",
+      "a synthetic scheduler clock proving missed/overdue survival and coalescing (FOMC116-FOMC119)",
+      "same-body, changed-body and parser-failure reobservations proving satisfaction at the durable observation boundary (FOMC120-FOMC122)",
+      "a crash after durable reobservation before the completion cache, and a lost ACK, proving no duplicate GET (FOMC124-FOMC125)",
+      "a local synthetic slow-drip, DNS-hang, TLS-hang and header-hang server proving the 60-second physical-attempt deadline (FOMC127-FOMC130)",
+      "a feed-plus-recheck backlog proving ELIGIBLE_CLASS_ALTERNATION_V1 (FOMC126)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -1339,6 +1550,65 @@
     "max_redirects_note": "tightens urllib's default of 10; must be enforced explicitly",
     "max_statement_body_bytes": 5242880,
     "network_during_replay": false,
+    "physical_attempt_deadline": {
+      "activity_independent": true,
+      "address_policy": "Resolved addresses are tried SEQUENTIALLY in resolver order, one TCP connection attempt at a time, each bounded by connect_timeout_seconds, all inside the same 60 s total deadline; the first established connection is used. No parallel or racing connection attempts (no Happy Eyeballs). All address attempts belong to ONE physical attempt and one unit. Resolution is one lookup with unspecified address family (IPv4 and IPv6), used in the order returned by the platform resolver.",
+      "begins_at": "PHYSICAL_REQUEST_ATTEMPT_START - the FIX15 grant-and-consume instant immediately before transport invocation",
+      "boundary": "An attempt succeeds at the network level only if its terminal network event occurs at monotonic elapsed e < 60 s from begins_at. At e = 60 s every unfinished attempt is expired.",
+      "clock": "MONOTONIC - the rate_limiter.clock domain of the current limiter epoch; wall-clock changes cannot shorten or extend it",
+      "covers": [
+        "DNS resolution",
+        "TCP connection establishment, including every resolved-address attempt",
+        "TLS handshake including certificate and hostname verification",
+        "HTTP request write",
+        "status line and header wait",
+        "body transfer",
+        "content decoding required to produce admitted decoded body bytes"
+      ],
+      "ends_at": "The network phase of an attempt ends when (a) the complete decoded body of a final exact-200 response is available, (b) the response is classified as an intermediate redirect or non-admitted final response, or (c) the attempt fails. Draining or discarding a non-admitted body stays inside the same deadline and is never admitted.",
+      "enforcement": "If a library cannot enforce a stage within the total deadline (for example a blocking resolver), the implementation MUST enforce the deadline externally: at expiry the attempt is terminated, any late resolver result is discarded and never used to connect, no further network I/O is performed for the attempt, and no byte received after expiry is admitted.",
+      "excluded_before_start": [
+        "URL validation",
+        "selection",
+        "limiter waiting",
+        "cold-start embargo"
+      ],
+      "expiry": {
+        "EventRevision_created": false,
+        "abort_active_attempt": true,
+        "anchor_established": false,
+        "hidden_retry": "FORBIDDEN",
+        "obligation_satisfied": false,
+        "parser_invoked": false,
+        "partial_body_admitted": false,
+        "persisted_as_admitted_body": false,
+        "reobservation": "obligation stays PENDING; retry per revision_policy.reobservation_scheduler.failed_attempt_retry",
+        "source_health": "SOURCE_UNAVAILABLE for the attempted surface",
+        "successful_content_hash_created": false,
+        "unit_refunded": false,
+        "zero": "blocked for the affected feed cycle or candidate"
+      },
+      "extended_by_redirect": false,
+      "id": "PHYSICAL_ATTEMPT_TOTAL_DEADLINE_V1",
+      "limiter_wait_included": false,
+      "post_network_stages": "Durable persistence, hashing, text decoding, parsing, classification, normalization and commit are local stages outside this deadline and perform no network I/O.",
+      "redirects": {
+        "logical_fetch_deadline": "No additional logical-fetch deadline. Every attempt is individually bounded and at most 4 exist, so no active network attempt runs forever; limiter waits are finite while FIX15 grants.",
+        "max_network_active_seconds_per_logical_fetch": 240,
+        "max_physical_attempts_per_logical_fetch": 4,
+        "rule": "Each redirect-follow request is its own PHYSICAL_REQUEST_ATTEMPT_START with its own fresh 60-second deadline beginning at its own grant. Limiter waiting between attempts is counted against no attempt."
+      },
+      "reset_on_received_bytes": false,
+      "slow_drip": "A server sending one decoded byte every 29 s never trips the 30 s inactivity bound, but the attempt is aborted at elapsed 60 s. No complete body is admitted.",
+      "stage_limits": {
+        "classification_invariance": "Whichever limit fires, the outcome class is the same: SOURCE_UNAVAILABLE, no admission.",
+        "connect_timeout_seconds": "http_policy.connect_timeout_seconds = 10, unchanged: bounds each TCP connection establishment attempt",
+        "dns": "No separate DNS limit; DNS is bounded by the total deadline.",
+        "earliest_limit_wins": "Every applicable limit is enforced; whichever expires first ends the attempt. Stage limits never extend the total deadline.",
+        "read_timeout_seconds": "http_policy.read_timeout_seconds = 30, unchanged: an INACTIVITY bound on each individual blocking socket read or write, including TLS handshake I/O, status/header wait and each body read"
+      },
+      "total_deadline_seconds": 60
+    },
     "provider_user_agent_requirement": "UNKNOWN",
     "raw_first_and_status": {
       "admitted_final_200": "the durable raw body exists before any normalized semantic visibility - the existing raw-first guarantee is unchanged",
@@ -1355,7 +1625,7 @@
       "non_admitted_status": "transport and status provenance may be durable under existing primitives, but there is NO admitted complete content body eligible for normal semantic replay or parsing",
       "normal_content_hash_only_for": "a COMPLETE ADMITTED final-200 body"
     },
-    "read_timeout_note": "matches the repo convention REQUEST_TIMEOUT_SECONDS = 30",
+    "read_timeout_note": "matches the repo convention REQUEST_TIMEOUT_SECONDS = 30; an inactivity bound whose coverage is frozen in http_policy.physical_attempt_deadline.stage_limits",
     "read_timeout_seconds": 30,
     "redirect_chain_recorded": true,
     "redirect_policy": {
@@ -1634,9 +1904,19 @@
     "F50": "REOBSERVATION GRID IS ANCHORED TO THE FIRST DURABLE PRIMARY OBSERVATION'S observed_at. For each logical FOMC source item, the original anchor is exactly observed_at of the first qualifying admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. Request/header time, raw durability commit, normalized/EventRevision commit, declared_release_at, ingested_at, limiter monotonic start and restart time cannot replace that value. Semantic parse success and EventRevision commit are not prerequisites. The anchor is immutable across later observations/revisions; targets remain original observed_at plus exactly 300,3600,86400,604800 seconds with existing precision. No source_available_at inference.",
     "F51": "DURABILITY DETERMINES ANCHOR SURVIVAL, NOT ANCHOR TIME. A volatile observation lost before the required raw/SourceObservation durability boundary creates no reconstructible anchor. Once the qualifying observation is durable, its original observed_at remains the anchor across crashes and restarts, even before normalized commit and after downstream parser/normalization failure. No restart-relative or commit-relative re-anchoring, no inferred anchor from lost volatile state, and no later revision or limiter delay may shift the grid.",
     "F52": "DURABLE REOBSERVATION ANCHOR IMPLIES FOUR REQUIRED LOGICAL OBLIGATIONS. At the existing qualifying original anchor durability boundary, exactly four logical obligations exist for offsets 300,3600,86400,604800 and targets original observed_at plus offset. No scheduler-specific write or normalized EventRevision commit is required for logical existence. Missing or partial materialization and crash after anchor durability cannot erase them; without a qualifying durable anchor no set can be derived from a lost volatile observation. This freezes membership, not execution or completion.",
-    "F53": "REOBSERVATION OBLIGATION IDENTITY IS DERIVED AND IDEMPOTENT. The authoritative logical key is (source_item_id, original_reobservation_anchor_observed_at, offset_seconds), using exclusively the original FIX16 anchor and one of the four fixed offsets. Repeated/concurrent recovery, materialization, lost materialization ACK, same-body reobservation, parser recovery and H1 -> H2 cannot add logical checkpoints or a second grid. Duplicate rows denote the same member; different source items with equal anchor times remain distinct. Physical encoding and status/completion semantics are not prescribed."
+    "F53": "REOBSERVATION OBLIGATION IDENTITY IS DERIVED AND IDEMPOTENT. The authoritative logical key is (source_item_id, original_reobservation_anchor_observed_at, offset_seconds), using exclusively the original FIX16 anchor and one of the four fixed offsets. Repeated/concurrent recovery, materialization, lost materialization ACK, same-body reobservation, parser recovery and H1 -> H2 cannot add logical checkpoints or a second grid. Duplicate rows denote the same member; different source items with equal anchor times remain distinct. Physical encoding and status/completion semantics are not prescribed.",
+    "F54": "PAST-DUE OBLIGATIONS REMAIN REQUIRED. A PENDING reobservation obligation stays required after due_at, with no MISSED, EXPIRED, FAILED or other terminal state from lateness or failure. After downtime it becomes eligible subject to selection and FIX15, and is satisfied only by a real later observation with its own observed_at; no backdating, synthesis or due_at rewrite, and late execution never shifts any target.",
+    "F55": "ONE DURABLE REOBSERVATION MAY SATISFY ALL DUE OBLIGATIONS FOR ITS ITEM. A qualifying observation R of S satisfies exactly the obligations of S with due_at <= R.observed_at, never those with a later due_at and never another item's. Several overdue obligations produce one logical fetch, not catch-up GETs, and satisfaction claims no earlier source state.",
+    "F56": "OBLIGATION SATISFACTION OCCURS AT THE DURABLE SOURCE OBSERVATION BOUNDARY. Satisfaction requires a per-response record of an admitted final exact-200 complete primary response with canonical observed_at that reached durable raw/SourceObservation persistence. Changed content, parse success, a new EventRevision and normalized commit are not required; a durable observation followed by parser failure satisfies the obligation while health records PARSER_FAILED.",
+    "F57": "FAILED ATTEMPTS DO NOT SATISFY OR ERASE OBLIGATIONS. Transport, deadline, redirect, non-200, incomplete, content-coding, oversize, persistence-loss and cancellation outcomes leave the obligation PENDING. The item is eligible again 60 seconds after the terminal outcome, with no cap, no hidden retry and no tight loop.",
+    "F58": "SATISFACTION IS CRASH- AND ACK-RECONSTRUCTIBLE. Obligation status is derived only from the durable anchor and durable qualifying observation records. Completion rows are caches; losing a marker or an ACK never causes a provider request, and a volatile observation lost before durability satisfies nothing.",
+    "F59": "FEED AND REOBSERVATION WORK CANNOT STARVE EACH OTHER. All work shares the FIX15 limiter. ELIGIBLE_CLASS_ALTERNATION_V1 rotates among classes with eligible work, and least-recently-dispatched ordering within REOBSERVATION prevents failing items from starving others. Queue pressure or restart never deletes required work.",
+    "F60": "EVERY PHYSICAL NETWORK ATTEMPT HAS A 60-SECOND ACTIVITY-INDEPENDENT TOTAL DEADLINE. It starts at PHYSICAL_REQUEST_ATTEMPT_START after limiter waiting, is monotonic, never resets on received bytes, and covers DNS, TCP, TLS, request write, headers, body and content decoding. Connect 10 s and read-inactivity 30 s still apply and the earliest limit wins. Each redirect-follow attempt has its own deadline. Expiry admits nothing and maps to SOURCE_UNAVAILABLE.",
+    "F61": "SOURCE FAILURES AND PARSER FAILURES BLOCK CLEAN ZERO. Every failure maps deterministically, first failing stage wins, to existing rev4 states. Within a cycle (zero_assertion.cycle_definition), any relevant pending acquisition, source failure, parser failure, persistence failure, deadline expiry, unfinished commit or unclassified item blocks EVENTS_OBSERVED_ZERO; successful candidates of a partial cycle are retained without rollback.",
+    "F62": "EST/EDT ARE LITERAL FIXED-OFFSET SOURCE LABELS. EST = UTC-05:00 and EDT = UTC-04:00 regardless of season; the parser never rewrites, rejects or seasonally validates them. Conversion needs no timezone database. Any other or missing zone label is unsupported: no guess, declared_release_at null, PARSER_FAILED."
   },
   "item_predicate": {
+    "backfill_discovery_side": "revision_policy.reobservation_scheduler.candidate_acquisition.discovery_side_classification_input.HISTORICAL_BACKFILL",
     "classification_states": {
       "DEFINITELY_OUT_OF_SCOPE": "the item is excluded by a frozen deterministic negative rule that requires NO semantic guessing. V1 keeps this category deliberately NARROW.",
       "IN_SCOPE_V1": "the exact frozen positive predicate succeeds on BOTH surfaces",
@@ -2125,8 +2405,11 @@
     "provider_rate_limit": "UNKNOWN",
     "request_accounting": "request_accounting: PHYSICAL_REQUEST_ATTEMPT_START units in FEDERAL_RESERVE_PROVIDER_V1_GLOBAL; rate_limiter freezes rolling-window, spacing, monotonic, atomic admission and epoch semantics.",
     "retry_policy": {
+      "candidate_retry_binding": "revision_policy.reobservation_scheduler.candidate_acquisition.retry: when a later successful discovery cycle lists the candidate again, or once after restart",
       "exponential_request_storm": false,
+      "feed_retry_binding": "a failed feed poll is followed only by the next poll under revision_policy.reobservation_scheduler.live_feed_cadence",
       "hidden_library_retries": "forbidden",
+      "reobservation_retry_binding": "revision_policy.reobservation_scheduler.failed_attempt_retry: failed reobservation of S is eligible again 60 s after its terminal outcome; no cap, no extra backoff; discovery-cycle retry never applies to an anchored item (revision_policy.reobservation_scheduler.execution.post_anchor_primary_fetch_routing)",
       "rule": "on failure, record source health and retry only on the next normal discovery cycle or a scheduled pending-item retry, all under the same ceiling",
       "tight_retry_loop": false
     }
@@ -2265,7 +2548,7 @@
       "feed_primary": "Feed start at 100 and immediate statement discovery cannot permit primary start before 110, subject also to the rolling window.",
       "historical": "Historical provider capture under this same CaptureSpec/client follows the identical limiter and has no separate capacity or fast lane.",
       "reattempt": "Existing polling.retry_policy is unchanged. Each legitimately permitted later attempt obtains a fresh admission; no hidden transport retry or free retry.",
-      "recheck": "Being due grants no immediate network permission. Recheck work must wait until limiter conditions pass; no overdue or queue scheduling policy is defined here.",
+      "recheck": "Being due grants no immediate network permission. Recheck work waits until limiter conditions pass; which eligible work takes a grant is frozen by revision_policy.reobservation_scheduler.selection.",
       "redirect": "Every validated redirect-follow GET independently reacquires this same rolling-window, start-spacing, monotonic and atomic provider gate; no immediate auto-follow bypass."
     },
     "clock": {
@@ -2322,7 +2605,7 @@
       "safety_argument": "Exclusive handoff prevents further starts from the old epoch. After 60 new-epoch monotonic seconds every unknown prior-epoch start is at least 60 seconds old and outside the strict-left rolling window. The embargo also exceeds the 10-second spacing requirement; no cross-epoch timestamp comparison or durable request-start history is required.",
       "wall_utc_shortcut": "FORBIDDEN - UTC history, persisted request times or an apparent long downtime cannot shorten or bypass the embargo."
     },
-    "scope_boundary": "FIX15 freezes the complete provider rate-admission contract only. It does not define recheck missed/overdue/coalescing/drift/fairness/starvation policy, network-operation total deadline, DNS/TLS/header/body timeout coverage, the general source-health matrix or EST/EDT seasonal consistency. Those audits remain for R16; current scheduler, timestamp, retry, source-health and connect/read timeout semantics are preserved.",
+    "scope_boundary": "FIX15 freezes the complete provider rate-admission contract only. Scheduling, overdue/coalescing/fairness (revision_policy.reobservation_scheduler), the physical-attempt deadline (http_policy.physical_attempt_deadline), source-health classification (source_health) and EST/EDT labels (timestamps.release_time.zone_label_policy) are frozen by FIX18 without changing any rate-admission rule.",
     "spacing": {
       "admission_inequality": "t - previous_start >= 10",
       "category_exemptions": "NONE",
@@ -2377,6 +2660,29 @@
     "hash_before_text_decode": true,
     "hash_is_not_vintage_proof": "the raw body hash is provenance for WHAT HYPRL ACTUALLY OBSERVED AND WHEN. It does not become proof of historical content existence merely because the same normalized record also carries a declared_release_at recovered from the page.",
     "network_repair": "FORBIDDEN",
+    "offline_replay": {
+      "digest_mismatch": "FAIL CLOSED (raw_policy.corrupt_raw_at_replay): no parser, no normalized output, no zero, no repair fetch",
+      "forbidden": [
+        "DNS",
+        "HTTP",
+        "HTTP cache refetch",
+        "DTD or external entity resolution",
+        "XInclude",
+        "HTML subresources",
+        "metadata refetch",
+        "network repair"
+      ],
+      "hash_persist_replay_identity": "admitted body bytes hashed == bytes persisted == bytes replayed (raw_policy.bytes_semantics, http_policy.decoded_body_limit_enforcement.raw_replay_preservation)",
+      "inputs": [
+        "verified persisted body bytes (SHA-256 re-verified)",
+        "required persisted per-response metadata, including exact Content-Type provenance",
+        "the persisted discovery-side classification result of the item (revision_policy.reobservation_scheduler.candidate_acquisition.discovery_side_classification_input)",
+        "the exact bound CaptureSpec hash"
+      ],
+      "network": false,
+      "scheduler": "replay never runs the scheduler or network deadline logic",
+      "timezone": "timestamps.release_time.zone_label_policy.replay"
+    },
     "order": [
       "fetch bytes",
       "durable raw artefact + hash",
@@ -2417,6 +2723,13 @@
     "why_stricter_than_evidence": "the Federal Reserve disclaimer states that, unless otherwise indicated, Board website information is in the public domain. V1 is nonetheless stricter: 6G-A does not need redistribution, and a blanket DISABLED avoids per-item 'unless otherwise indicated' rights analysis and keeps the release guard simple."
   },
   "request_accounting": {
+    "closure_bindings": {
+      "dns_tls_header_body_timeout_coverage": "http_policy.physical_attempt_deadline",
+      "est_edt_seasonal_consistency_audit": "timestamps.release_time.zone_label_policy",
+      "scheduler_overdue_coalescing_fairness_starvation": "revision_policy.reobservation_scheduler",
+      "source_health_full_matrix_audit": "source_health.mappings and source_health.failure_classification_v1",
+      "total_request_deadline": "http_policy.physical_attempt_deadline"
+    },
     "counted_attempt_types": {
       "feed_get": true,
       "historical_provider_get": true,
@@ -2424,13 +2737,6 @@
       "primary_statement_get": true,
       "redirect_follow_get": true,
       "scheduled_recheck_get": true
-    },
-    "deferred_semantics": {
-      "dns_tls_header_body_timeout_coverage": "DEFERRED_TO_R18_EXISTING_TIMEOUTS_UNCHANGED",
-      "est_edt_seasonal_consistency_audit": "DEFERRED_TO_R18_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
-      "scheduler_overdue_coalescing_fairness_starvation": "UNRESOLVED_FOR_R18",
-      "source_health_full_matrix_audit": "DEFERRED_TO_R18_EXISTING_MAPPINGS_UNCHANGED",
-      "total_request_deadline": "UNRESOLVED_FOR_R18"
     },
     "frozen_rate_semantics": {
       "concurrent_atomic_admission": "rate_limiter.admission and rate_limiter.concurrency",
@@ -2450,8 +2756,8 @@
       "reobservation_anchor": "revision_policy.reobservation_anchor and reobservation_anchor_timestamp_field: EXACT observed_at of the first qualifying durable primary content observation; FIX16 explicitly binds the formerly prose-only anchor.",
       "reobservation_offsets": "revision_policy.reobservation_offsets_seconds UNCHANGED",
       "retry_policy": "polling.retry_policy UNCHANGED",
-      "scheduler": "Existing anchor, offsets, target grid and retry permissions remain unchanged. FIX17 revision_policy.reobservation_obligations freezes derived logical membership/identity/recovery only; missed/overdue/coalescing/satisfaction/completion/fairness/starvation remain unresolved for R18.",
-      "timeouts": "http_policy.connect_timeout_seconds = 10 and read_timeout_seconds = 30 are unchanged and not reinterpreted. No total deadline added."
+      "scheduler": "Existing anchor, offsets, target grid and obligation identity remain unchanged. FIX17 revision_policy.reobservation_obligations freezes membership/identity/recovery; FIX18 revision_policy.reobservation_scheduler freezes status, overdue execution, coalescing, satisfaction, failed-attempt retry, completion durability and fairness.",
+      "timeouts": "http_policy.connect_timeout_seconds = 10 and read_timeout_seconds = 30 are unchanged. FIX18 adds http_policy.physical_attempt_deadline: a 60-second activity-independent total deadline per physical attempt."
     },
     "rate_fields": {
       "client_max_requests_per_minute": {
@@ -2475,7 +2781,7 @@
       "units_per_permitted_later_attempt": 1
     },
     "recheck": {
-      "admission_unavailable": "A due recheck cannot bypass the provider accounting gate. Exact waiting, ordering and scheduler semantics are not decided by FIX14.",
+      "admission_unavailable": "A due recheck cannot bypass the provider accounting gate. Waiting, ordering and scheduling are frozen by revision_policy.reobservation_scheduler; FIX14 accounting is unchanged.",
       "due_time_exemption": false,
       "units_per_attempt": 1
     },
@@ -2511,7 +2817,7 @@
         "HISTORICAL_PROVIDER_CAPTURE"
       ]
     },
-    "scope_boundary": "FIX14 accounting and FIX15 rate_limiter remain unchanged. FIX16 anchor semantics remain unchanged; FIX17 revision_policy.reobservation_obligations derives the four logical obligations durably from that anchor. Remaining scheduler execution/completion, network deadline/timeout coverage, general source-health and EST/EDT audits remain for R18; no implementation or final counter-review approval is established.",
+    "scope_boundary": "FIX14 accounting and FIX15 rate_limiter remain unchanged. FIX16 anchor and FIX17 obligation semantics remain unchanged. FIX18 closes scheduler execution/completion, network deadline, source-health and EST/EDT semantics through the bindings in closure_bindings; no implementation or counter-review approval is established.",
     "source_health": {
       "attempt_failure": "Existing source_health failure mappings apply if an actual attempted request later fails.",
       "new_state": false,
@@ -2533,7 +2839,7 @@
       "rule": "For a successful content response, observed_at retains existing actual successful response-observation semantics; for a revision it is the successful receipt of its PRIMARY statement raw bytes. The accounting start event is not a causal timestamp replacement."
     },
     "transport_substages": {
-      "rule": "DNS, TCP, TLS, HTTP request write and response processing within ONE admitted attempt are not separate provider requests. DNS success plus TCP success plus TLS success plus one GET is one unit total. This defines no substage timeout semantics.",
+      "rule": "DNS, TCP, TLS, HTTP request write and response processing within ONE admitted attempt are not separate provider requests. DNS success plus TCP success plus TLS success plus one GET is one unit total. Their time bounds are frozen in http_policy.physical_attempt_deadline; accounting is unchanged.",
       "separately_counted": false
     },
     "unit": {
@@ -2560,7 +2866,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 18 closes ONLY the R17 MEDIUM concerning obligation birth/recovery, with its tightly coupled logical identity. FIX17 makes the durable original FIX16 anchor and fixed offsets the authority for exactly four derived logical obligations, independent of absent/partial/duplicate scheduler materialization. The tuple (source_item_id, original anchor observed_at, offset_seconds) is deterministic and idempotent across crash/restart, concurrent recovery, repeated observations and content revisions. Membership reconstruction establishes no status, satisfaction, completion or execution permission. FIX1-FIX16 remain preserved, including raw-first causality, all timestamp definitions, original anchor qualification/precision, identity, retry policy and the entire REV16 rate_limiter. Remaining scheduler execution/completion, deadline/stage-bound, full source-health and EST/EDT semantics remain deferred to R18; historical FIX15 scope references do not override current deferrals. No runtime, capture, fixture, migration or final implementation approval is established.",
+  "revision_note": "Spec revision 19 (FIX18) closes the entire remaining runtime semantic surface in one pass: revision_policy.reobservation_scheduler (REOBSERVATION_SCHEDULER_POLICY_V1) freezes the two-state PENDING/SATISFIED obligation model, missed/overdue survival, deterministic coalescing, the QUALIFYING_DURABLE_PRIMARY_SOURCE_OBSERVATION satisfaction boundary, same/changed-content and parser-failure outcomes, failed-attempt retry timing, crash/lost-ACK reconstruction from durable records, work classes and ELIGIBLE_CLASS_ALTERNATION_V1 fairness. http_policy.physical_attempt_deadline (PHYSICAL_ATTEMPT_TOTAL_DEADLINE_V1) freezes a 60-second activity-independent monotonic deadline per physical attempt covering DNS/TCP/TLS/write/header/body/content-decoding. source_health.failure_classification_v1 and new mappings make every failure class deterministic within the unchanged rev4 vocabulary. zero_assertion adds cycle, partial-cycle, pending and commit blockers. timestamps.release_time.zone_label_policy freezes literal EST/EDT offsets without seasonal rewriting and fail-closed unsupported labels. raw_policy.offline_replay restates the network-free replay contract. F54-F62 and FOMC116-FOMC135 are added; every former R18 deferral marker is replaced by a binding to its closing rule. FIX1-FIX17 remain authoritative, including anchor, offsets, obligation identity/cardinality, the REV16 rate_limiter, connect/read timeouts and all causal timestamp definitions. No runtime, capture, fixture or implementation approval is established; an independent global counter-review of this revision is pending.",
   "revision_policy": {
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
@@ -2642,7 +2948,7 @@
         "anchor_exists": true,
         "erases_anchor": false,
         "reanchors": false,
-        "rule": "A subsequent PARSER_FAILED or normalization failure cannot erase or move the anchor established by the qualifying durable content observation. No EventRevision success is implied and existing retry policy remains authoritative; later failed-item scheduling is not redesigned."
+        "rule": "A subsequent PARSER_FAILED or normalization failure cannot erase or move the anchor established by the qualifying durable content observation. No EventRevision success is implied. Later primary fetches of the anchored item are REOBSERVATION work under revision_policy.reobservation_scheduler."
       },
       "qualification": {
         "EventRevision_commit_required": false,
@@ -2658,9 +2964,9 @@
         "surface": "PRIMARY_STATEMENT"
       },
       "rate_limiter_delay_reanchors": false,
-      "rate_limiter_independence": "A target is a scheduler target, not a guaranteed actual request-start time. FIX15 may delay actual admission without changing A or any future target. Missed/overdue execution, satisfaction and coalescing are not decided by FIX16.",
+      "rate_limiter_independence": "A target is a scheduler target, not a guaranteed actual request-start time. FIX15 may delay actual admission without changing A or any future target. Missed/overdue execution, satisfaction and coalescing are frozen by revision_policy.reobservation_scheduler, never by shifting targets.",
       "restart_relative_reset": false,
-      "scope_boundary": "FIX16 binds anchor value, minimal durable qualification, reconstruction and the immutable offset grid. FIX17 reobservation_obligations binds the derived logical obligation set and its identity/reconstruction without requiring scheduler writes. Scheduler completion durability, missed/overdue execution, coalescing, satisfaction, failed-recheck policy, fairness/starvation, network deadlines/stage bounds, full source-health matrix and EST/EDT seasonal consistency remain for R18.",
+      "scope_boundary": "FIX16 binds anchor value, minimal durable qualification, reconstruction and the immutable offset grid. FIX17 reobservation_obligations binds the derived logical obligation set and identity. FIX18 reobservation_scheduler binds execution, satisfaction, completion durability and fairness without changing any of these.",
       "source_available_at_effect": "NONE",
       "source_event": "FIRST_QUALIFYING_DURABLE_PRIMARY_CONTENT_OBSERVATION",
       "timestamp_definition_binding": "timestamps.observed_at - unchanged actual successful receipt/observation of the complete admitted PRIMARY response body. Request initiation and response headers are not this event.",
@@ -2685,18 +2991,19 @@
       }
     },
     "reobservation_anchor_timestamp_field": "observed_at",
-    "reobservation_deferred_semantics": {
-      "checkpoint_satisfaction_event": "UNRESOLVED_FOR_R18",
-      "coalescing": "UNRESOLVED_FOR_R18",
-      "dns_tls_header_body_bounds": "DEFERRED_TO_R18_EXISTING_TIMEOUTS_UNCHANGED",
-      "est_edt_seasonal_consistency": "DEFERRED_TO_R18_EXISTING_TIMESTAMP_POLICY_UNCHANGED",
-      "failed_recheck_completion_semantics": "UNRESOLVED_FOR_R18",
-      "fairness_starvation": "UNRESOLVED_FOR_R18",
-      "full_source_health_matrix": "DEFERRED_TO_R18_EXISTING_MAPPINGS_UNCHANGED",
-      "missed_checkpoint_policy": "UNRESOLVED_FOR_R18",
-      "overdue_checkpoint_policy": "UNRESOLVED_FOR_R18",
-      "scheduler_completion_durability": "UNRESOLVED_FOR_R18",
-      "total_network_deadline": "UNRESOLVED_FOR_R18"
+    "reobservation_closure_bindings": {
+      "checkpoint_satisfaction_event": "revision_policy.reobservation_scheduler.satisfaction",
+      "coalescing": "revision_policy.reobservation_scheduler.satisfaction.coalescing",
+      "dns_tls_header_body_bounds": "http_policy.physical_attempt_deadline",
+      "est_edt_seasonal_consistency": "timestamps.release_time.zone_label_policy",
+      "failed_recheck_completion_semantics": "revision_policy.reobservation_scheduler.satisfaction.non_satisfying_outcomes and failed_attempt_retry",
+      "fairness_starvation": "revision_policy.reobservation_scheduler.selection",
+      "full_source_health_matrix": "source_health.mappings and source_health.failure_classification_v1",
+      "missed_checkpoint_policy": "revision_policy.reobservation_scheduler.missed_and_overdue",
+      "overdue_checkpoint_policy": "revision_policy.reobservation_scheduler.missed_and_overdue and execution",
+      "scheduler_completion_durability": "revision_policy.reobservation_scheduler.completion_durability and lost_ack",
+      "status": "ALL_CLOSED_IN_FIX18 - every formerly open reobservation property is bound to the rule listed here",
+      "total_network_deadline": "http_policy.physical_attempt_deadline"
     },
     "reobservation_obligations": {
       "authority": {
@@ -2722,19 +3029,11 @@
         "reconstructible_obligations": 0,
         "rule": "No obligation set is derivable from a volatile observation lost before the FIX16 durable boundary. A later first qualifying durable primary observation may establish the original anchor and its four obligations."
       },
-      "deferred_semantics": {
-        "coalescing": "UNRESOLVED_FOR_R18",
-        "completion_durability": "UNRESOLVED_FOR_R18",
-        "failed_recheck": "UNRESOLVED_FOR_R18",
-        "fairness_starvation": "UNRESOLVED_FOR_R18",
-        "missed_checkpoint_policy": "UNRESOLVED_FOR_R18",
-        "overdue_execution": "UNRESOLVED_FOR_R18",
-        "satisfaction_boundary": "UNRESOLVED_FOR_R18"
-      },
       "due_at": {
         "precision_binding": "revision_policy.reobservation_anchor.offset_arithmetic.precision",
         "rule": "due_at(S,A,o) = A + o seconds, directly from original observed_at under unchanged reobservation_anchor.offset_arithmetic. Recovery, materialization and execution times never shift A or any target."
       },
+      "execution_and_status_binding": "revision_policy.reobservation_scheduler (FIX18) is authoritative for status, satisfaction, overdue execution, coalescing, failed attempts, completion durability and fairness. FIX17 membership/identity is unchanged.",
       "logical_identity": {
         "fields": [
           "source_item_id",
@@ -2760,7 +3059,7 @@
         "duplicate_row_does_not_create_new_logical_obligation": true,
         "role": "CACHE_OR_EXECUTION_INDEX",
         "rule": "Materialized membership is an optional cache/index/queue aid. With a durable anchor, zero rows, two rows, four correct rows or duplicate rows all represent the same four logical obligations. Existing rows must reconcile to derived keys and targets; missing rows do not authorize missing logical work, and conflicting cache values have no authority over the original anchor or derived set. No corruption-repair procedure or storage primitive is prescribed.",
-        "status_boundary": "The cache rule concerns membership, identity and target only. Derivation/reconciliation neither assigns nor resets status, establishes satisfaction, nor authorizes execution. It does not make completion evidence disposable. Status/completion persistence and merging remain unresolved for R18."
+        "status_boundary": "The cache rule concerns membership, identity and target only. Derivation/reconciliation neither assigns nor resets status, establishes satisfaction, nor authorizes execution by itself. Status is derived under revision_policy.reobservation_scheduler from durable qualifying observation records; completion rows are caches that cannot override that derivation."
       },
       "model": {
         "id": "REOBSERVATION_OBLIGATION_SET_V1"
@@ -2775,12 +3074,12 @@
       "parser_failure_after_durable_anchor": {
         "EventRevision_success_implied": false,
         "obligations_exist": true,
-        "rule": "A later parser/normalization failure cannot erase the four obligations entailed by a qualifying durable anchor. No parsing success or EventRevision commit is implied; failed-recheck/execution policy remains deferred."
+        "rule": "A later parser/normalization failure cannot erase the four obligations entailed by a qualifying durable anchor. No parsing success or EventRevision commit is implied; execution and satisfaction follow revision_policy.reobservation_scheduler."
       },
       "provenance_and_rate_boundary": "Obligation keys, target times and materialization are operational metadata, not observed content or source-vintage evidence. Derivation creates no SourceObservation or EventRevision and changes no observed_at, ingested_at or source_available_at. It performs no HTTP attempt, consumes no request unit and grants no limiter permit or retry permission. Actual permitted attempts remain subject to unchanged FIX14/FIX15 and polling.retry_policy.",
       "reconstruction": {
         "deterministic": true,
-        "elapsed_time": "All four identities remain logically derivable even when recovery occurs after one or every due_at. This determines existence only, not overdue execution, satisfaction, completion or retention of physical rows.",
+        "elapsed_time": "All four identities remain logically derivable even when recovery occurs after one or every due_at. Their status after recovery is derived under revision_policy.reobservation_scheduler.completion_durability; physical row retention is not required.",
         "idempotent": true,
         "network_request_required_for_derivation": false,
         "repeated_interrupted_concurrent_recovery": "Repeated, interrupted or concurrent reconstructors derive the same four logical keys and targets. Repeated insertions or retry after a lost materialization-write ACK cannot create a fifth logical member or a second grid.",
@@ -2795,7 +3094,7 @@
         "repeated_same_content_creates_new_grid": false,
         "rule": "H1 -> H2, repeated H1 observations, later parse success and restart preserve original S,A and the same four keys. SourceObservation multiplicity is independent of obligation-grid identity. Existing source identity and immutable raw/EventRevision semantics are unchanged."
       },
-      "scope_boundary": "FIX17 freezes logical obligation birth, identity, cardinality and crash reconstruction only. Four logical obligations do not imply four HTTP GETs, immediate execution, exactly-once dispatch or any status transition. Missed/overdue, coalescing, satisfaction, failed-recheck behavior, completion durability, fairness/starvation, network deadlines/stage bounds, full source-health mapping and EST/EDT seasonality remain deferred to R18.",
+      "scope_boundary": "FIX17 freezes logical obligation birth, identity, cardinality and crash reconstruction. Four logical obligations do not imply four HTTP GETs, immediate execution or exactly-once dispatch. FIX18 revision_policy.reobservation_scheduler freezes status, overdue execution, coalescing, satisfaction, failed attempts, completion durability and fairness; http_policy.physical_attempt_deadline, source_health and timestamps.release_time.zone_label_policy close the remaining network, health and EST/EDT semantics.",
       "spec_binding": "The anchor/grid is governed by the CaptureSpec semantics recorded under existing provenance conventions. The future implementation binds records to its authoritative final spec hash. CaptureSpec hash is not added to this logical tuple. FIX17 introduces no runtime migration, cross-version reconciliation or identity churn from pre-implementation spec revisions."
     },
     "reobservation_offsets_seconds": [
@@ -2805,6 +3104,240 @@
       604800
     ],
     "reobservation_rationale": "detects immediate, same-day, next-day and delayed corrections; ~4 extra requests per statement at roughly 8 statements a year is negligible",
+    "reobservation_scheduler": {
+      "authority": {
+        "completion_rows_authoritative": false,
+        "ephemeral_done_bit_authoritative": false,
+        "rule": "Obligation status is a deterministic function of durable records only: the durable original FIX16 anchor supplies membership (FIX17) and durable qualifying primary observation records of the same logical source item supply satisfaction. Scheduler rows, completion markers, queues and in-memory state are caches or execution aids; they cannot create, erase, satisfy or un-satisfy an obligation."
+      },
+      "candidate_acquisition": {
+        "acquisition_predicate": "LIVE: an UNANCHORED feed item triggers primary acquisition IFF its normalized feed title equals item_predicate.feed_title_exact AND its official link passes every existing URL/identity/surfaces.primary validation including path_constraint. Every other UNANCHORED feed item triggers NO primary GET: it is classified from feed fields only under the existing item_predicate (UNRESOLVED_CANDIDATE unless a frozen negative rule applies) and creates no anchor, SourceObservation or obligation. An ANCHORED item listed by any feed triggers no primary GET and is never re-classified from the current feed title; its classification in every LIVE cycle is its recorded state (discovery_side_classification_input and zero_assertion.cycle_definition). HISTORICAL_BACKFILL: every link on the durable official calendar/archive page of the run whose validated URL passes the same validation including surfaces.primary.path_constraint triggers primary acquisition, whatever its link text; there is no feed title and no label-based selector in backfill.",
+        "birth": "A durable successful feed (or backfill archive) observation listing an unanchored item that satisfies acquisition_predicate creates one acquisition for that item, unless one is already pending or in flight (dedupe).",
+        "dedupe": "At most one acquisition per candidate source_item_id is pending or in flight at a time.",
+        "discovery_side_classification_input": {
+          "HISTORICAL_BACKFILL": "recorded result = 'link on an official calendar/archive page passing surfaces.primary.path_constraint'. This satisfies the discovery-side conjunct for backfill ONLY; item_predicate.primary_page_title_exact still decides, so a URL never classifies alone (item_predicate.insufficient_alone). A backfill primary page whose title does not match is UNRESOLVED_CANDIDATE with no revision.",
+          "LIVE": "recorded result = (normalized feed title == item_predicate.feed_title_exact), which is always true for an acquired LIVE item",
+          "persisted_replay_input": true,
+          "rule": "The discovery-side conjunct of item_predicate for S is evaluated ONCE, from the discovery observation (feed or archive) that created the acquisition which produced S's anchor, and is persisted with S as metadata. Every later observation of S (reobservation, recovery, offline replay) is classified from that recorded discovery-side result plus its OWN primary title. Later feed observations, edited feed titles or a later feed that no longer lists S never re-evaluate it.",
+          "zero": "EVENTS_OBSERVED_ZERO is a LIVE discovery-cycle assertion only; backfill runs never assert it"
+        },
+        "restart": "After restart, every unanchored item satisfying acquisition_predicate listed by the most recent durable successful feed observation is pending acquisition again, including items whose earlier acquisition failed. These re-derived acquisitions belong to no pre-restart cycle: a cycle interrupted by a limiter-epoch change can NEVER assert EVENTS_OBSERVED_ZERO. The first poll of the new epoch starts a fresh cycle. In backfill, only a later operator run over an archive listing re-derives acquisitions.",
+        "retry": "A failed candidate acquisition is retried only (a) when a later successful discovery cycle lists the candidate again (polling.retry_policy 'next normal discovery cycle') or (b) once after restart under candidate_acquisition.restart. No separate candidate retry timer exists.",
+        "success": "A qualifying durable primary observation establishes the FIX16 anchor and FIX17 obligations; later GETs of that item are REOBSERVATION work."
+      },
+      "clock": {
+        "due_eligibility_clock": "now_utc = the collector canonical UTC wall clock, the same clock domain that assigns observed_at. Used ONLY to decide PENDING_DUE eligibility.",
+        "rate_admission": "Unchanged FIX15 monotonic limiter; wall UTC never accelerates or resets admission.",
+        "satisfaction_comparison": "Satisfaction compares persisted canonical observed_at against due_at; it never uses dispatch time, monotonic time or completion-marker time.",
+        "timestamp_precision": "Canonical observed_at, anchor A and due_at use UTC with exactly MICROSECOND precision; observed_at is the collector clock reading truncated toward zero to the microsecond. due_at = A + o exactly; every satisfaction and eligibility comparison is exact at microsecond precision. This pins the precision left conditional in revision_policy.reobservation_anchor.offset_arithmetic.precision (sub-second precision preserved, no rounding).",
+        "wall_clock_jump": "A wall-clock jump can change only WHEN work becomes eligible. It cannot satisfy an obligation early, because satisfaction requires persisted observed_at >= due_at."
+      },
+      "completion_durability": {
+        "authority": "satisfaction.rule evaluated over durable qualifying observation records. Nothing else establishes completion.",
+        "completion_rows": "Optional caches. A row claiming SATISFIED without a supporting durable qualifying record has no authority; a missing or stale row cannot un-satisfy. Rows must reconcile to the derived status.",
+        "crash_after_observation_durable_before_marker": "Recovery derives SATISFIED for every obligation with due_at <= R.observed_at. A duplicate provider GET because a completion marker or cache row was lost is FORBIDDEN.",
+        "crash_before_observation_durable": "The volatile observation never existed for scheduling purposes. Obligations stay PENDING and a new real fetch is required and conforming; nothing is synthesized from memory or logs.",
+        "epoch_quiescence": "Recovery derivation and the first dispatch of a new limiter epoch happen only after every attempt of the previous emitter has ended and its outcome is either durable or abandoned. A previous-epoch observation may not become durable after new-epoch recovery; if it cannot be excluded, it is abandoned and treated as never observed.",
+        "network_required_for_derivation": false,
+        "raw_corruption": "Scheduler derivation reads durable per-response metadata and does not re-verify body digests. Raw corruption is handled by raw_policy.corrupt_raw_at_replay (fail closed) and NEVER triggers a repair refetch (raw_policy.network_repair FORBIDDEN).",
+        "recovery_rule": "On startup/recovery, before dispatching any reobservation of S, derive the status of all four obligations of S from the durable anchor and durable qualifying observation records of S."
+      },
+      "execution": {
+        "after_final_satisfaction": "Once O604800 is satisfied, S generates no further reobservation traffic (revision_policy.post_window_limitation).",
+        "dispatch": "One dispatch of S = one logical fetch of S's stored canonical_primary_statement_url (identity.reobservation_identity_stability) with at most 3 followed redirects; every physical attempt independently obtains FIX15 admission.",
+        "no_catch_up_burst": "Several overdue obligations of S never produce back-to-back GETs. After a qualifying R, obligations with due_at <= R.observed_at are satisfied by it and later ones wait for their own due_at.",
+        "not_due": "An item with only PENDING_NOT_DUE obligations is never fetched as reobservation work.",
+        "one_in_flight_per_item": true,
+        "post_anchor_primary_fetch_routing": "Once S has a durable anchor, discovery never issues a primary GET for S; feed relisting of an anchored item causes no primary request. Every further primary GET of S is REOBSERVATION work under this policy.",
+        "work_unit": "REOBSERVATION work is per logical source item S, not per obligation. S is eligible iff it has at least one PENDING_DUE obligation, it is not inside failed_attempt_retry backoff, and no reobservation logical fetch of S is in flight."
+      },
+      "failed_attempt_retry": {
+        "attempt_cap": "NONE - the obligation stays required; there is no give-up and no terminal failure",
+        "binding": "polling.retry_policy 'scheduled pending-item retry', using the existing polling.live_feed_poll_interval_seconds cadence",
+        "epoch_boundary": "A new limiter epoch discards in-memory retry backoff. The FIX15 60-second cold-start embargo already separates every new-epoch start from every prior-epoch start by at least 60 seconds, so no durable failure record is required for retry timing.",
+        "extra_backoff": "NONE - no exponential or jittered backoff in V1",
+        "hidden_or_library_retry": "FORBIDDEN (request_accounting.hidden_library_attempt)",
+        "permanent_failure_cost": "An item whose primary page fails permanently is re-attempted about once per 60 seconds plus queueing, within the provider-wide ceiling, until a qualifying observation succeeds. V1 accepts this bounded cost rather than a terminal missed state; changing it requires a spec revision.",
+        "rule": "When a reobservation logical fetch of S ends without a qualifying observation, S is not eligible again until that fetch's terminal-outcome instant + 60 seconds, measured on the FIX15 monotonic domain of the current limiter epoch. It is then eligible again subject to selection and FIX15.",
+        "terminal_outcome_instant": "the instant the last physical attempt of that logical fetch reaches its non-qualifying outcome, or the instant a response is determined to be lost before durability",
+        "tight_loop": false
+      },
+      "fairness": {
+        "argument": "Class rotation bounds inter-class waiting. Within REOBSERVATION each dispatch moves the dispatched item's key behind every item not dispatched since, and the eligible set is finite. Within FEED_DISCOVERY each cycle has finitely many candidates, each dispatched once before the next poll.",
+        "continuous_feed_pressure_vs_rechecks": "REOBSERVATION wins every contested turn after a FEED_DISCOVERY selection",
+        "guarantee": "While FIX15 continues granting physical starts and a class continuously contains eligible required work, that class is selected at least once in every run of consecutive contested decisions whose length is the number of classes with eligible work. Within a class every eligible item is dispatched after finitely many decisions of that class. Neither FEED_DISCOVERY nor REOBSERVATION can starve the other.",
+        "infinite_recheck_backlog_vs_feed": "With FEED_DISCOVERY and REOBSERVATION both eligible and no backfill work, FEED_DISCOVERY wins the next contested turn after every REOBSERVATION selection; with all three classes eligible, class_rule rotation applies. Within a FEED_DISCOVERY turn within_FEED_DISCOVERY decides (pending acquisitions of the latest feed observation, then the due poll), so polling is delayed only by the finitely many acquisitions of one cycle."
+      },
+      "grid_immutability": {
+        "example": "A=18:00:00; O300 due 18:05:00 actually observed 18:30:00; O3600 remains due 19:00:00, O86400 A+1d, O604800 A+7d.",
+        "previous_execution_chaining": "FORBIDDEN",
+        "rule": "due_at(S,A,o) = A + o always (revision_policy.reobservation_obligations.due_at). Late execution, limiter delay, failures, retries, restarts and satisfaction times never shift any target."
+      },
+      "id": "REOBSERVATION_SCHEDULER_POLICY_V1",
+      "live_feed_cadence": {
+        "no_catch_up_polls": "A delayed poll never produces extra polls to make up intervals.",
+        "rule": "In LIVE mode at most one feed poll logical fetch is pending or in flight. The first poll of a limiter epoch is due immediately (subject to FIX15). Each next poll becomes due 60 seconds (polling.live_feed_poll_interval_seconds) after the previous poll's initial PHYSICAL_REQUEST_ATTEMPT_START, on the monotonic epoch domain, and not before that poll's logical fetch has ended."
+      },
+      "lost_ack": {
+        "network_request_solely_due_to_ack_loss": "FORBIDDEN",
+        "rule": "If the durable write of R, or any later completion-cache write, succeeded but the caller lost the ACK, recovery re-reads durable state and derives the same satisfied set. No duplicate logical completion exists because status is derived. EventRevision creation stays idempotent under identity.revision_id and timestamps.ingested_at.lost_ack.",
+        "unknown_local_write_outcome": "Resolve by reading durable state before any dispatch of S; never by refetching from the provider."
+      },
+      "missed_and_overdue": {
+        "collector_offline_across_due_at": "The obligation survives restart as PENDING_DUE (FIX17 derivation plus completion_durability) and its item becomes eligible as soon as selection and FIX15, including the new-epoch cold-start embargo, permit.",
+        "no_historical_synthesis": "The eventual reobservation is ONE real current observation with its own real observed_at. No synthetic, backdated, interpolated or historical observation is created for a missed target, and due_at is never rewritten.",
+        "overdue_duration_irrelevant": "An obligation overdue by seconds or by days follows the same rules.",
+        "rule": "Passing due_at never ends, skips, expires or fails an obligation. A PENDING_DUE obligation remains required, with no time limit, until satisfaction.rule holds.",
+        "terminal_missed_state": false
+      },
+      "non_material_mechanics": [
+        "storage of completion caches",
+        "queue/lock/thread primitives",
+        "logging and diagnostics",
+        "the internal representation of eligibility"
+      ],
+      "post_durable_processing": {
+        "ingested_at": "the actual successful commit instant (timestamps.ingested_at); commit retry timing is local latency and never rewrites observed_at",
+        "provider_traffic": "NONE - post-durable processing and its retries never cause a provider request",
+        "revision_creation": "The EventRevision for body hash H of item S is created from the EARLIEST durable qualifying observation of S carrying H whose processing yields IN_SCOPE_V1. A later same-hash observation never creates a second revision (revision_policy.same_item_same_body_hash) and never suppresses the revision owed to an earlier unconcluded observation.",
+        "rule": "Every durable qualifying primary observation MUST be processed to a durable conclusion (text decoding, parsing, classification and, when IN_SCOPE_V1, normalized EventRevision commit or a recorded PARSER_FAILED outcome). Processing is a deterministic offline function of the durable bytes, persisted metadata and CaptureSpec hash, and needs no network.",
+        "when": "immediately after durability in-process; and, for every durable qualifying observation whose processing has not durably concluded, at every recovery before any zero decision and before any reobservation dispatch of that item; and, after a failed local commit, again at exactly failure + 60 s (monotonic), repeated until concluded"
+      },
+      "provenance_and_rate_boundary": "Scheduler state, eligibility, selection and derived status are operational metadata. They create no SourceObservation or EventRevision, change no observed_at, ingested_at, declared_release_at or source_available_at, and grant no limiter permit.",
+      "replay_role": "Offline replay never runs the scheduler and needs no network. Obligation status is derivable offline from durable records.",
+      "satisfaction": {
+        "boundary": "QUALIFYING_DURABLE_PRIMARY_SOURCE_OBSERVATION",
+        "changed_content": "A qualifying R with a changed body hash satisfies eligible obligations at R's durability boundary. Downstream parsing/normalization then appends the new immutable revision under existing rules. Satisfaction neither waits for nor depends on that commit, and a later normalization or commit failure cannot un-satisfy.",
+        "coalescing": {
+          "allowed": true,
+          "example": "Observation at A+4000 satisfies O300 and O3600; O86400 and O604800 stay PENDING.",
+          "not_historical_reconstruction": "Coalesced satisfaction records that the source was re-observed at R.observed_at. It does not claim or synthesize the source state at any earlier due_at.",
+          "per_obligation_catch_up_requests": "FORBIDDEN",
+          "prefix_property": "Because A+300 < A+3600 < A+86400 < A+604800, the satisfied set of S is always the offset prefix {o | A + o <= max qualifying observed_at of S}.",
+          "rule": "One qualifying R satisfies EVERY obligation of the same S whose due_at <= R.observed_at, including several overdue obligations at once. Obligations of S with due_at > R.observed_at stay PENDING. R never satisfies obligations of another source item."
+        },
+        "late_execution": "Lateness is not failure. A qualifying R at A+312 caused by FIX15 delay satisfies O300 (due A+300). Limiter waiting is not a source failure, not a checkpoint failure, not a new anchor and not a new due_at.",
+        "no_early_satisfaction": "R with R.observed_at < due_at satisfies nothing for that obligation, now or later; no pre-satisfaction and no carry-forward credit. Observation at 18:30 cannot satisfy O3600 due 19:00.",
+        "non_satisfying_outcomes": {
+          "accounting": "any consumed unit stays consumed (FIX14)",
+          "obligation_effect": "obligation stays PENDING and remains eligible under failed_attempt_retry",
+          "outcomes": [
+            "DNS failure or hang",
+            "TCP/connect failure or connect timeout",
+            "TLS failure or stall",
+            "read inactivity timeout",
+            "physical-attempt total deadline expiry",
+            "redirect Location failure, rejection or limit exhaustion",
+            "final non-200 status including 204, 206, 304, 4xx and 5xx",
+            "incomplete or truncated body",
+            "content-coding failure",
+            "decoded-body oversize abort",
+            "response lost before durable per-response persistence (crash or persistence failure)",
+            "cancellation after grant",
+            "provider ownership failure (no attempt)"
+          ]
+        },
+        "not_required_for_satisfaction": [
+          "changed content",
+          "text decoding success",
+          "semantic parse success",
+          "classification success",
+          "a new EventRevision",
+          "normalized EventRevision commit",
+          "ingested_at"
+        ],
+        "parser_failure_after_durable_observation": {
+          "EventRevision_implied": false,
+          "normalized_success_implied": false,
+          "obligation_status": "SATISFIED",
+          "source_health": "PARSER_FAILED on the primary_statement surface under existing mappings",
+          "zero": "blocked where the item is relevant under zero_assertion"
+        },
+        "qualifying_observation": {
+          "body_digest_reverification_required_for_satisfaction": false,
+          "definition": "A per-response record, under raw_policy.persisted_per_response, of a PRIMARY_STATEMENT response for logical source item S that meets EVERY revision_policy.reobservation_anchor.qualification condition: final admitted HTTP 200 exactly, complete admitted body under FIX8/FIX12, canonical observed_at, and the existing durable raw/SourceObservation persistence boundary with durable association to S.",
+          "initiating_path": "Any qualifying observation of S counts, whatever work path started it. Under V1 routing every post-anchor primary GET of S is REOBSERVATION work (execution.post_anchor_primary_fetch_routing), so this is exactly the scheduled-reobservation set. The anchor observation itself has observed_at = A < A+300 and satisfies nothing.",
+          "per_response_record_required": "Every admitted response persists its own per-response record with its own observed_at, including a same-content response (revision_policy.unchanged_refetch). Body-byte storage MAY be shared by content hash as a storage mechanic, and the content-derived identity.source_observation_id MAY repeat; satisfaction is keyed to the per-response record, not to source_observation_id, content_hash or EventRevision.",
+          "same_source_item_required": true
+        },
+        "rule": "Obligation (S,A,o) is SATISFIED iff there exists a qualifying observation R of the same S with R.observed_at >= A + o, compared as canonical timestamps at existing precision; equality satisfies. Otherwise it is PENDING.",
+        "same_content": "A qualifying R whose body hash equals a prior hash of S satisfies every eligible obligation under coalescing. It creates no new EventRevision (revision_policy.same_item_same_body_hash).",
+        "satisfying_observation_for_audit": "the earliest qualifying R of S with R.observed_at >= A + o; deterministic from durable records."
+      },
+      "selection": {
+        "class_cycle_order": [
+          "FEED_DISCOVERY",
+          "REOBSERVATION",
+          "HISTORICAL_BACKFILL"
+        ],
+        "class_rule": [
+          "select the first class with eligible work in class_cycle_order strictly after last_selected_class, wrapping around",
+          "if only one class has eligible work, that class is selected",
+          "with two classes eligible this is strict alternation between them",
+          "a class with no eligible work consumes no turn",
+          "last_selected_class is set to the selected class at every decision",
+          "at the start of every limiter epoch last_selected_class = HISTORICAL_BACKFILL, so FEED_DISCOVERY wins the first contested decision"
+        ],
+        "continuations_first": "A validated redirect-follow attempt of an already dispatched logical fetch is a continuation. It takes the next grant before any new dispatch (earliest dispatch first among several continuations) and neither consumes nor changes the class turn.",
+        "decision_point": "A selection decision happens only when a new logical fetch's initial physical attempt is about to obtain a FIX15 grant. Exactly one eligible work item is selected per decision and its initial attempt consumes that grant. Selection reserves no future grant.",
+        "fix15_authority": "Selection chooses WHICH work takes a grant; FIX15 alone decides WHEN a grant exists.",
+        "id": "ELIGIBLE_CLASS_ALTERNATION_V1",
+        "implementation_freedom": "Threads, queues, locks and data structures are free; the observable sequence of selected work must equal this rule.",
+        "source_item_id_order": "ascending lexicographic order of the lowercase hex source_item_id",
+        "within_FEED_DISCOVERY": [
+          "first: acquisitions of the most recent durable successful feed observation that have not been dispatched in the current epoch since that observation, by source_item_id ascending",
+          "then: a due LIVE feed poll"
+        ],
+        "within_HISTORICAL_BACKFILL": "the archive/calendar page of the run first, then its not-yet-dispatched candidate acquisitions by source_item_id ascending, then the next archive page in operator-supplied run order",
+        "within_REOBSERVATION": "eligible items ordered by the key (most recent reobservation dispatch instant of S in the current epoch, with never-dispatched-in-epoch ordered first; then oldest PENDING_DUE due_at ascending; then source_item_id ascending). For the normal case this is oldest due_at first; the dispatch-instant component makes permanently failing items yield to others.",
+        "work_conserving": "Whenever eligible work exists and FIX15 would admit a start, a selection decision occurs and that start is made. An implementation MUST NOT idle, serialize logical fetches or cap concurrency below what FIX15 and the one-in-flight-per-work-key rules allow (one feed poll, one fetch per source item). Remaining timing differences arise only from local processing latency and are non-material."
+      },
+      "status_model": {
+        "derived_pending_views": {
+          "PENDING_DUE": "PENDING and now_utc >= due_at; includes every overdue obligation regardless of how long ago due_at passed",
+          "PENDING_NOT_DUE": "PENDING and now_utc < due_at"
+        },
+        "enum_spelling": "Physical enum names and encodings are implementation choices; the two-state semantics and derived views are not.",
+        "failure_is_not_status": "Attempt failure is an attempt/source-health outcome, never an obligation status. A failed attempt neither satisfies nor destroys an obligation.",
+        "forbidden_statuses": [
+          "MISSED",
+          "EXPIRED",
+          "SKIPPED",
+          "FAILED",
+          "ABANDONED",
+          "CANCELLED"
+        ],
+        "initial_state": "PENDING at FIX17 birth",
+        "irreversibility_basis": "Supporting qualifying observation records are immutable under revision_policy.overwrite; V1 defines no deletion of them.",
+        "logical_states": [
+          "PENDING",
+          "SATISFIED"
+        ],
+        "terminal_states": [
+          "SATISFIED"
+        ],
+        "transitions": [
+          "birth -> PENDING",
+          "PENDING -> SATISFIED only through satisfaction.rule",
+          "SATISFIED is irreversible; no transition back to PENDING"
+        ]
+      },
+      "work_classes": {
+        "FEED_DISCOVERY": [
+          "LIVE discovery feed poll logical fetch",
+          "primary acquisition logical fetch of a discovered candidate that has no durable anchor"
+        ],
+        "HISTORICAL_BACKFILL": [
+          "official archive/calendar page fetch in an operator-started backfill run",
+          "primary acquisition of an unanchored candidate listed by that archive/calendar page"
+        ],
+        "REOBSERVATION": [
+          "reobservation logical fetch of an anchored item S under this policy"
+        ],
+        "no_silent_drop": "Queue capacity, queue pressure or restart can never delete required work. REOBSERVATION work is re-derived from durable anchors and observations; the LIVE feed poll is re-derived from live_feed_cadence; candidate acquisition is re-derived from the most recent durable successful feed/archive observation under candidate_acquisition.",
+        "shared_limiter": "All classes obtain every physical start from the unchanged FIX15 provider-wide limiter; no class has an independent budget, quota or fast lane."
+      }
+    },
     "reobservation_under_ceiling": true,
     "revision_identity": "content-aware",
     "same_item_different_body_hash": "NEW immutable EventRevision appended",
@@ -2846,6 +3379,7 @@
     "bounded redirects (3)",
     "decoded HTTP body size bounded incrementally during production (feed 2 MiB, statement 5 MiB)",
     "bounded connect and read timeouts",
+    "60-second activity-independent total deadline per physical attempt covering DNS, TCP, TLS, write, headers, body and content decoding",
     "no credentials",
     "no cookies as a correctness dependency",
     "XML DOCTYPE forbidden",
@@ -2865,12 +3399,30 @@
     "NOTE: the decoded-body caps bound parser INPUT only; XML parser expansion safety comes from the DOCTYPE/XInclude prohibitions above, never from the size caps. \"XXE disabled\" alone is NOT a sufficient summary of this list."
   ],
   "source_health": {
+    "failure_classification_v1": {
+      "commit_failure": "normalization/EventRevision commit failure after durable raw keeps the existing mapping (no ingested_at, no EventRevision visibility), never becomes EVENTS_OBSERVED_ZERO, and blocks zero for the affected cycle.",
+      "first_failure_wins": "The processing order is: validation, FIX15 admission, transport, status gate, bounded body production, durable persistence, media type, charset/UTF-8, XML security, XML syntax, feed structure, HTML anchors/date/release line, classification, normalization, commit. The first failing stage determines the state and later stages do not run. Concurrent limits during the network phase are ordered by which occurred first.",
+      "logical_fetch_result": "A logical fetch's health result is the outcome of its last physical attempt, recorded on the fetched surface (discovery_feed or primary_statement). A reobservation failure is recorded on primary_statement and never marks the feed or the provider globally unavailable.",
+      "missingness": "Every failure state is missingness; none is evidence of zero events (source_health.never).",
+      "rate_limited_state": "RATE_LIMITED ('client ceiling reached') is only a non-failure diagnostic meaning work waited for FIX15 admission. It is never SOURCE_UNAVAILABLE, PARSER_FAILED or EVENTS_OBSERVED_ZERO, never fails or satisfies an obligation, and is not a discovery cycle. Whether and how often such diagnostic records are written affects no traffic, observation, revision, obligation, zero or replay decision (rate_limiter.wait_semantics).",
+      "redirect_target_failures": "An attempted redirect target that fails at transport, deadline or status maps exactly as the same failure on an initial request.",
+      "rule": "Every failure of a feed, primary or reobservation logical fetch maps to exactly one existing rev4 state through source_health.mappings. No new global state is added."
+    },
     "mappings": {
+      "Content-Type outside the surface's accepted media": "PARSER_FAILED",
+      "DNS resolution failure, or DNS still unresolved at the physical-attempt total deadline": "SOURCE_UNAVAILABLE",
       "HTTP 204 No Content received (unsupported)": "SOURCE_UNAVAILABLE",
       "HTTP 206 Partial Content received (unsupported)": "SOURCE_UNAVAILABLE",
       "HTTP 304 Not Modified received (unsupported)": "SOURCE_UNAVAILABLE",
+      "TCP connection refused, reset, unreachable, or connect timeout": "SOURCE_UNAVAILABLE",
+      "TLS handshake failure, certificate or hostname verification failure, or TLS stall": "SOURCE_UNAVAILABLE",
+      "cancellation after grant, before or during network I/O": "no source-health result about the provider; the logical fetch is non-qualifying, its unit stays consumed, and zero is blocked for the affected cycle or candidate",
+      "charset declaration unsupported, unknown or conflicting, or unsupported BOM": "PARSER_FAILED",
       "client ceiling reached": "RATE_LIMITED",
+      "connection closed or body truncated before the complete body, including Content-Length or chunked-framing shortfall": "SOURCE_UNAVAILABLE",
+      "content-coding stream malformed, truncated or of a coding not admitted by V1": "SOURCE_UNAVAILABLE",
       "decoded body exceeds the frozen size bound": "PARSER_FAILED",
+      "exclusive provider ownership cannot be established": "no provider attempt and no source-health result about the provider; no zero",
       "feed XML DOCTYPE declaration detected": "PARSER_FAILED",
       "feed XML XInclude construct detected": "PARSER_FAILED",
       "feed XML custom entity declaration machinery detected": "PARSER_FAILED",
@@ -2881,11 +3433,20 @@
       "feed fetched and parsed, all relevant items deterministically classified, zero IN_SCOPE_V1 admitted, zero unresolved candidates": "EVENTS_OBSERVED_ZERO",
       "feed item cannot be deterministically classified (UNRESOLVED_CANDIDATE)": "PARSER_FAILED",
       "feed title matches but primary page title does not (classification conflict)": "PARSER_FAILED",
+      "feed well-formed but required RSS structure or item fields missing or invalid": "PARSER_FAILED",
       "final HTTP status is not exactly 200": "SOURCE_UNAVAILABLE",
+      "identical verified primary body yields a conflicting derived date (determinism failure)": "PARSER_FAILED with determinism-failure diagnostic; no new content revision",
+      "invalid UTF-8 under strict decoding": "PARSER_FAILED",
       "normalization persistence failure": "no ingested_at, no EventRevision visibility",
+      "official statement date absent, unparseable or ambiguous": "PARSER_FAILED",
+      "persisted raw digest mismatch or impossible persisted raw provenance at verified replay": "fail closed at verified replay (design NORMALIZED_PRESENT_RAW_CORRUPT); no network repair, no parse, no zero",
+      "physical-attempt total deadline expiry at any stage": "SOURCE_UNAVAILABLE",
       "positive feed candidate but primary statement fetch failed": "SOURCE_UNAVAILABLE",
+      "primary required HTML anchor absent, duplicated or structurally ambiguous": "PARSER_FAILED",
       "primary statement HTML malformed": "PARSER_FAILED",
       "raw integrity failure": "fail closed at verified replay",
+      "raw/per-response persistence failure before durability": "NO source-health state about the provider: local fail-closed; the response is treated as never observed (no anchor, no satisfaction, no parse) and the feed cycle or candidate is incomplete, so EVENTS_OBSERVED_ZERO is blocked",
+      "read inactivity timeout before the complete admitted body": "SOURCE_UNAVAILABLE",
       "redirect Location missing or malformed": "SOURCE_UNAVAILABLE",
       "redirect destination rejected by the allowlist": "SOURCE_UNAVAILABLE",
       "redirect status outside the allowed set": "SOURCE_UNAVAILABLE",
@@ -2893,7 +3454,9 @@
       "redirect transition limit exceeded": "SOURCE_UNAVAILABLE",
       "release line is 'For immediate release'": "NOT a health failure - event valid, source_available_at unavailable",
       "release line unrecognised / malformed": "PARSER_FAILED",
-      "surface not polled this interval": "SOURCE_NOT_CHECKED"
+      "release line uses an unsupported zone label (bare ET, Eastern, local time, any label other than EST/EDT) or no zone": "PARSER_FAILED",
+      "surface not polled this interval": "SOURCE_NOT_CHECKED",
+      "waiting for FIX15 admission (window, spacing or embargo)": "no failure state; see failure_classification_v1.rate_limited_state"
     },
     "never": "a network failure is missingness, NEVER evidence of zero events. And an absence claim requires MORE than retrieval and parsing: it requires COMPLETE deterministic classification of every relevant item with zero unresolved candidates. Fetch + parse success alone is NOT sufficient to assert absence.",
     "new_global_state_added": false,
@@ -2914,7 +3477,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 18,
+  "spec_revision": 19,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -2934,7 +3497,8 @@
     "bbc29abba992cfa4edeecc69c3b9beeb51f5955fbc6b87f0f863d8ca5d0f9050",
     "49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17",
     "6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038",
-    "5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7"
+    "5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7",
+    "dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -2985,7 +3549,7 @@
         "observed_at",
         "ingested_at"
       ],
-      "null_when": "the release line is \"For immediate release\", or no accepted grammar matches",
+      "null_when": "the release line is \"For immediate release\" (valid revision). When no accepted grammar matches, no value is derived AND the page is PARSER_FAILED with no EventRevision (timestamps.unrecognised_release_syntax).",
       "nullable": true,
       "role": "PROVIDER-DECLARED RELEASE TIME FOR THE LOGICAL EVENT - NON-GATING PROVENANCE ONLY",
       "stored_alongside": [
@@ -3048,6 +3612,14 @@
         "For release at <H>:<MM> p.m. EDT"
       ],
       "bare_ET": "NOT ACCEPTED in V1 - no timezone guess; source_available_at unavailable",
+      "clock_grammar": {
+        "H": "decimal 1..12 written without a leading zero ('2', '12'); '02' or '0' is unrecognised",
+        "MM": "exactly two decimal digits 00..59",
+        "anything_else": "unrecognised -> timestamps.unrecognised_release_syntax",
+        "conversion": "a.m.: 12 -> 00, otherwise H; p.m.: 12 -> 12, otherwise H+12; local time is on official_statement_date; then apply the literal zone offset",
+        "example_noon": "'12:30 p.m. EDT' on 2026-06-17 -> 2026-06-17T16:30:00Z",
+        "meridiem": "exactly 'a.m.' or 'p.m.' as in accepted_grammar"
+      },
       "evidence": "EST verified on 2025-12-10, 2026-01-28 and 2019-01-30; EDT verified across 2016-2026 samples",
       "literal_offsets": {
         "EDT": "-04:00",
@@ -3055,7 +3627,36 @@
       },
       "normalization": "extract from parser_policy.release_line_anchor using its token-bounded text extent, then apply parser_policy.semantic_text_normalization in its frozen order; the strict release grammar is otherwise unchanged",
       "role_in_v1": "NON-GATING provider-declared release metadata. The strict grammar is RETAINED unchanged; only its role changed - it no longer gates content revision visibility.",
-      "timezone_inference": "FORBIDDEN - the abbreviation is read from the document, never derived from the date"
+      "timezone_inference": "FORBIDDEN - the abbreviation is read from the document, never derived from the date",
+      "zone_label_policy": {
+        "America_New_York_rules_used": false,
+        "id": "LITERAL_ZONE_LABEL_V1",
+        "optional_diagnostic": "An implementation MAY attach a NON-CAUSAL diagnostic noting a seasonally unusual label. It is not required, never alters declared_release_at, never substitutes an offset, never rejects, is not a replay input, and its presence or absence is non-material.",
+        "replay": "Conversion depends only on persisted body bytes, the frozen literal table and this CaptureSpec hash; no timezone database or platform locale.",
+        "rule": "EST means exactly UTC-05:00 and EDT means exactly UTC-04:00, by the printed label alone, irrespective of calendar date or season. The parser follows the explicit source label and never corrects it.",
+        "seasonal_mismatch": {
+          "january_EDT_example": "January 15, 2026 + 'For release at 2:00 p.m. EDT' -> declared_release_at 2026-01-15T18:00:00Z",
+          "july_EST_example": "July 15, 2026 + 'For release at 2:00 p.m. EST' -> declared_release_at 2026-07-15T19:00:00Z",
+          "offset_substituted": false,
+          "parser_failed": false,
+          "rejected": false
+        },
+        "seasonal_rewrite": false,
+        "seasonal_validation": false,
+        "trust_verdict": "the timestamp_trust_verdict for the release claim (timestamps.declared_release_at.stored_alongside; normalized field declared_release_trust_verdict) is computed exactly as for a seasonally consistent label of the same grammar; season never changes it",
+        "tzdb_required_for_causal_conversion": false,
+        "unsupported_labels": {
+          "examples": [
+            "ET",
+            "Eastern",
+            "Eastern Time",
+            "local time",
+            "no zone label",
+            "any label other than exactly EST or EDT"
+          ],
+          "verdict": "No accepted grammar matches: declared_release_at = null, no zone guess, PARSER_FAILED under timestamps.unrecognised_release_syntax and the 'release line unrecognised / malformed' mapping."
+        }
+      }
     },
     "rss_pubdate": {
       "authoritative_for_source_available_at": false,
@@ -3092,6 +3693,8 @@
     },
     "unrecognised_release_syntax": {
       "distinct_from": "immediate_release, which is recognised and valid",
+      "event_revision_created": false,
+      "stage_effect": "An unrecognised release line (including any unsupported or missing zone label) is PARSER_FAILED at the release-line stage: first failure wins, no classification completes, no EventRevision is created and zero is blocked. declared_release_at.null_when 'no accepted grammar matches' therefore never yields an admitted revision; only the recognised 'For immediate release' form yields a revision with declared_release_at = null.",
       "verdict": "PARSER_FAILED"
     }
   },
@@ -3248,7 +3851,11 @@
       "HTTP final-status admission contract",
       "redirect policy",
       "conditional-request and cache-validator policy",
-      "redirect Location resolution semantics"
+      "redirect Location resolution semantics",
+      "re-observation scheduler status, satisfaction, retry and selection policy",
+      "physical-attempt deadline",
+      "source-health failure classification",
+      "EST/EDT zone label policy"
     ],
     "silent_mutation": "FORBIDDEN"
   },
@@ -3284,8 +3891,22 @@
       "a candidate whose primary parse failed",
       "a discovery/primary classification conflict",
       "feed parser failure",
-      "feed source unavailable"
+      "feed source unavailable",
+      "a relevant candidate whose primary acquisition is pending, awaiting admission or in flight",
+      "a transport failure, deadline expiry or non-200 final status on the feed or a relevant candidate",
+      "a raw persistence failure for the feed or a relevant candidate",
+      "a relevant IN_SCOPE_V1 candidate whose normalized EventRevision commit failed or is not yet durable",
+      "an anchored relevant item that has never been successfully classified"
     ],
+    "cycle_definition": {
+      "LIVE": "One discovery cycle = one feed poll logical fetch plus the primary acquisitions created for the relevant unanchored candidates it lists (revision_policy.reobservation_scheduler.candidate_acquisition). The cycle's zero decision is made only after all of them and their classification/commit have concluded.",
+      "already_classified_item": "An item already classified by an earlier successful primary parse stays classified. A later reobservation failure (transport or parse) of that item is recorded as primary health and neither reclassifies it nor blocks zero of a later cycle.",
+      "epoch_interruption": "a cycle interrupted by a limiter-epoch change never asserts EVENTS_OBSERVED_ZERO (candidate_acquisition.restart)",
+      "never_classified_item": "An item that has never been successfully classified (for example anchored but every primary parse failed) stays unresolved and blocks zero for every cycle that lists it.",
+      "recorded_state": "An item's recorded classification state for LIVE cycles is its FIRST successful classification. Later changed-content outcomes (including a non-matching later page title or a later PARSER_FAILED) are revision/health outcomes only and never change the recorded state or zero eligibility.",
+      "relevant_items": "the relevant items listed by that cycle's feed observation",
+      "shared_acquisition": "Every cycle whose feed observation lists an item satisfying acquisition_predicate that is unanchored, or whose acquisition is pending or in flight at that observation, includes that item: its zero decision waits for the conclusion of the (possibly shared, deduped) acquisition and its post-durable processing. If that acquisition admits an IN_SCOPE_V1 event, every cycle that waited on it is non-zero."
+    },
     "design_alignment": "design rev4 missingness_policy.never_encoded_as_zero = true; unresolved classification is not zero",
     "downstream_restriction": "EVENTS_OBSERVED_ZERO from this provider MUST NOT be interpreted downstream as \"the Federal Reserve/FOMC produced no monetary-policy event\". No model or feature may treat it as a complete-world event count unless a future coverage contract establishes completeness. This binds later InformationSnapshot composition.",
     "forbidden_wording": "never state \"zero FOMC events\" or equivalent without the capture-scope qualifier. This is a CAPTURE-SCOPE absence assertion, not a world-state one.",
@@ -3295,6 +3916,11 @@
       "zero monetary-policy statements",
       "a complete-world absence assertion"
     ],
+    "partial_cycle": {
+      "example": "Feed succeeds and lists 3 relevant candidates; 2 primary acquisitions succeed and 1 fails: the 2 are retained, the failed one remains unresolved with SOURCE_UNAVAILABLE on primary_statement, and EVENTS_OBSERVED_ZERO is impossible for the cycle.",
+      "retry": "the failed candidate is acquired again only when a later successful cycle lists it, or once after restart (revision_policy.reobservation_scheduler.candidate_acquisition.restart)",
+      "rule": "Candidate outcomes are independent. Successful durable observations, anchors, obligations and revisions of some candidates are retained when another candidate fails; there is no all-or-nothing cycle rollback."
+    },
     "preconditions_all_required": [
       "1. the discovery feed fetch succeeded",
       "2. the raw feed artefact was durably persisted",
@@ -3302,7 +3928,10 @@
       "4. every feed item relevant to this capture scope was classified deterministically",
       "5. unresolved_candidate_count = 0",
       "6. no primary-page fetch or parse remains unresolved for a candidate that could affect the V1 result",
-      "7. the number of newly admitted IN_SCOPE_V1 events = 0"
+      "7. the number of newly admitted IN_SCOPE_V1 events = 0",
+      "8. every relevant candidate's primary acquisition in this cycle has concluded: none pending, awaiting FIX15 admission or in flight",
+      "9. every relevant item listed by this cycle's feed observation that has a durable qualifying primary observation has durably concluded post-durable processing (classification and, when IN_SCOPE_V1, normalized EventRevision commit), whether that observation belongs to this cycle or an earlier one",
+      "10. no relevant source failure, parser failure, raw persistence failure, deadline expiry or unclassified relevant candidate exists in this cycle"
     ],
     "semantic_scope": "ZERO CONFIRMED V1-SUBSET EVENTS. Precisely: \"no new events matching federal_reserve_fomc_capture_v1's frozen V1 predicate were confirmed during this successful discovery cycle.\"",
     "state": "EVENTS_OBSERVED_ZERO"
