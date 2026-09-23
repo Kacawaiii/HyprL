@@ -18,7 +18,7 @@
     "FOMC04": {
       "case": "release line says bare 'ET'",
       "source_available_at": null,
-      "verdict": "no timezone guess; declared_release_at = null; content source_available_at = null; unsupported zone label -> PARSER_FAILED under timestamps.unrecognised_release_syntax (see FOMC134)"
+      "verdict": "no timezone guess; declared_release_at = null; RELEASE_TIME_UNPARSED diagnostic; content source_available_at = null; the EventRevision is NOT withheld (see FOMC158)"
     },
     "FOMC05": {
       "case": "feed shows item, primary page unavailable",
@@ -469,11 +469,11 @@
       "expected": {
         "health": "SOURCE_UNAVAILABLE",
         "hidden_retry": false,
-        "next_eligible": "terminal outcome + 60 s (monotonic)",
+        "next_eligible": "terminal instant + 60 s for attempt 2 (retry_policy backoff), from durable outcome records",
         "obligation": "PENDING",
         "units_consumed": 1
       },
-      "verdict": "Failure neither satisfies nor erases the obligation; retry follows failed_attempt_retry with no tight loop."
+      "verdict": "Failure neither satisfies nor erases the obligation; retry follows BOUNDED_RETRY_EPISODE_V1."
     },
     "FOMC124": {
       "case": "CRASH AFTER DURABLE RECHECK BEFORE COMPLETION MARKER - R at A+301 durable, crash, restart",
@@ -495,13 +495,13 @@
     "FOMC126": {
       "case": "FEED VERSUS PERSISTENT RECHECK BACKLOG - 10 items with PENDING_DUE obligations, some permanently failing, while LIVE feed polls keep becoming due",
       "expected": {
-        "class_order_when_both_eligible": "FEED_DISCOVERY and REOBSERVATION strictly alternate",
+        "class_order_when_both_eligible": "FEED_DISCOVERY and REOBSERVATION strictly alternate, rotation derived from durable dispatch records",
         "failing_items_block_others": false,
         "feed_starved": false,
         "limiter_changed": false,
         "recheck_starved": false
       },
-      "verdict": "ELIGIBLE_CLASS_ALTERNATION_V1 plus least-recently-dispatched ordering serves every class and item after finitely many grants; FIX15 still decides when grants exist."
+      "verdict": "Durable rotation plus (next_eligible_at, source_item_id) ordering and bounded, suspending episodes serve every class and item after finitely many grants."
     },
     "FOMC127": {
       "case": "SLOW DRIP - final 200 headers, then one decoded body byte every 29 s forever",
@@ -522,7 +522,7 @@
         "late_resolution_used": false,
         "units_consumed": 1
       },
-      "verdict": "DNS is inside the total deadline; a blocking resolver is bounded externally and its late answer discarded."
+      "verdict": "DNS is inside the total deadline; at expiry the attempt aborts logically, a late answer is discarded and no TCP connection or HTTP byte follows."
     },
     "FOMC129": {
       "case": "TLS HANG - TCP connects, TLS handshake stalls",
@@ -550,8 +550,8 @@
       "case": "PARTIAL DISCOVERY CYCLE - feed succeeds with 3 relevant candidates; 2 primary acquisitions succeed, 1 fails",
       "expected": {
         "EVENTS_OBSERVED_ZERO": false,
-        "cycle_waits_for": "all 3 acquisitions and their post-durable processing",
-        "failed_candidate": "unresolved, SOURCE_UNAVAILABLE on primary_statement",
+        "cycle_waits_for": "nothing: the cycle is NOT_ZERO as soon as it has candidates",
+        "failed_candidate": "unconcluded LIVE acquisition under retry_policy; SOURCE_UNAVAILABLE on primary_statement",
         "rollback": false,
         "successes_retained": 2
       },
@@ -578,12 +578,12 @@
     "FOMC134": {
       "case": "UNSUPPORTED ZONE LABEL - release line with 'ET', 'Eastern', 'local time' or no zone",
       "expected": {
-        "EventRevision": false,
+        "EventRevision": "created if all other content requirements succeed",
         "declared_release_at": null,
-        "health": "PARSER_FAILED",
+        "health": "RELEASE_TIME_UNPARSED diagnostic (no health failure)",
         "zone_guess": false
       },
-      "verdict": "No accepted grammar matches; fail closed without guessing."
+      "verdict": "No accepted grammar matches; declared_release_at null without guessing; the statement is retained."
     },
     "FOMC135": {
       "case": "CORRUPT RAW AT REPLAY - persisted body digest mismatch",
@@ -596,17 +596,320 @@
       },
       "verdict": "Replay fails closed offline; corruption never triggers a provider refetch or re-opens a satisfied obligation."
     },
+    "FOMC136": {
+      "case": "FEED WITH 4 STATEMENT CANDIDATES AND 11 ITEMS WHOSE LINKS LIE OUTSIDE THE STATEMENT FAMILY PREFIX, non-matching titles; all 4 statements already admitted before B",
+      "expected": {
+        "DEFINITELY_OUT_OF_SCOPE": 11,
+        "KNOWN": 4,
+        "cycle": "EVENTS_OBSERVED_ZERO"
+      },
+      "verdict": "Structural negatives and ALREADY_KNOWN items are non-blocking. Note: bound evidence shows real non-statement monetary items share the family; those follow FOMC137 once, then are ALREADY_KNOWN."
+    },
+    "FOMC137": {
+      "case": "NEW IN-FAMILY ITEM monetary20260801a.htm WITH AN UNKNOWN TITLE",
+      "expected": {
+        "classification": "UNRESOLVED_CANDIDATE",
+        "next_cycle_listing_it": "KNOWN, non-blocking",
+        "primary_get": false,
+        "this_cycle": "NOT_ZERO"
+      },
+      "verdict": "Title non-match never yields a false zero in its own cycle and never blocks forever."
+    },
+    "FOMC138": {
+      "case": "CLEAN CYCLE - every item structurally outside the family or already known",
+      "expected": {
+        "cycle": "EVENTS_OBSERVED_ZERO"
+      },
+      "verdict": "Zero is reachable and cycle-scoped."
+    },
+    "FOMC139": {
+      "case": "ITEM ADMITTED IN AN EARLIER CYCLE APPEARS AGAIN",
+      "expected": {
+        "classification": "KNOWN",
+        "newly_admitted": false
+      },
+      "verdict": "Reappearance is not a new admission and does not block."
+    },
     "FOMC14": {
       "case": "feed HTTP failure",
       "verdict": "SOURCE_UNAVAILABLE; NOT zero events"
     },
+    "FOMC140": {
+      "case": "NEW STATEMENT CANDIDATE, ACQUIRED AND ADMITTED AFTER THE CYCLE CONCLUSION",
+      "expected": {
+        "cycle": "NOT_ZERO",
+        "newly_admitted_attributed_to": "the cycle that created the LIVE acquisition"
+      },
+      "verdict": "The candidate made the cycle non-zero at evaluation; admission is reporting provenance of that cycle."
+    },
+    "FOMC141": {
+      "case": "H1 NORMALIZED; LATER H2 DURABLY OBSERVED BUT PARSER_FAILED",
+      "expected": {
+        "EventRevision_for_H2": false,
+        "H2_SourceObservation": "retained",
+        "earlier_cycle_conclusions": "unchanged",
+        "latest_normalized_revision": "H1",
+        "newer_content_barrier": true
+      },
+      "verdict": "H1 is not silently presented as current source truth after H2's durable observation."
+    },
+    "FOMC142": {
+      "case": "ANCHORED ITEM PAGE RETURNS 404 FOREVER FROM O300",
+      "expected": {
+        "backoff_seconds": [
+          60,
+          300,
+          900,
+          3600,
+          14400
+        ],
+        "episodes": "<= 4 (O300, then O3600 or later only if due after each suspension)",
+        "logical_fetches_per_episode": 6,
+        "max_physical_requests_per_episode": 24,
+        "obligations": "PENDING, auditable",
+        "traffic_after_final_suspension": 0
+      },
+      "verdict": "Bounded, suspending retry; no perpetual polling."
+    },
+    "FOMC143": {
+      "case": "RESTART DURING A RETRY EPISODE AFTER 3 FAILURES",
+      "expected": {
+        "attempt_number_after_restart": 4,
+        "episode_reset": false,
+        "next_eligible_at": "third failure terminal instant + 900 s"
+      },
+      "verdict": "Episode state derives from durable dispatch/outcome records."
+    },
+    "FOMC144": {
+      "case": "100 SUSPENDED DEAD ITEMS + LIVE FEED + ONE FRESH DUE RECHECK + BACKFILL MANIFEST",
+      "expected": {
+        "backfill_starved": false,
+        "feed_starved": false,
+        "fresh_recheck_starved": false,
+        "suspended_items_eligible": false
+      },
+      "verdict": "Suspended items generate no traffic; durable rotation serves the three classes."
+    },
+    "FOMC145": {
+      "case": "LOCAL DB FAILURE - complete 200 body received, raw persistence fails, bytes lost",
+      "expected": {
+        "attempt_outcome": "LOCAL_PERSISTENCE_FAILED counted as one non-qualifying attempt",
+        "health": "NO_PROVIDER_HEALTH_STATE",
+        "provider_retry_beyond_episode": false
+      },
+      "verdict": "A lost-bytes local failure behaves exactly like a crash: one attempt of the bounded episode, never an extra retry."
+    },
+    "FOMC146": {
+      "case": "IMPLEMENTATION USES urllib AllowlistedRedirectHandler",
+      "expected": {
+        "conforming": false,
+        "reasons": [
+          "automatic follow",
+          "up to 10 redirects",
+          "no per-hop grant",
+          "no per-hop deadline",
+          "URI fallback"
+        ]
+      },
+      "verdict": "Only MANUAL_REDIRECT_LOOP_V1 conforms."
+    },
+    "FOMC147": {
+      "case": "BACKFILL MANIFEST WITH DUPLICATE AND DIFFERENTLY-ORDERED ENTRIES",
+      "expected": {
+        "entries_after_dedupe": "one per source_item_id",
+        "invalid_entry_effect": "whole manifest rejected",
+        "order": "ascending source_item_id"
+      },
+      "verdict": "Deterministic finite backfill scope."
+    },
+    "FOMC148": {
+      "case": "BACKFILL FETCH OF A 2021 STATEMENT",
+      "expected": {
+        "obligations": 0,
+        "observation_mode": "HISTORICAL_BACKFILL",
+        "reobservation_anchor": false
+      },
+      "verdict": "No short-horizon recheck grid from backfill."
+    },
+    "FOMC149": {
+      "case": "ITEM FIRST BACKFILLED, LATER LISTED BY THE LIVE FEED",
+      "expected": {
+        "LIVE_acquisition": true,
+        "LIVE_anchor_and_grid": true,
+        "cycle_effect": "KNOWN, non-blocking",
+        "newly_admitted": false
+      },
+      "verdict": "Backfill never pre-empts LIVE observation; identity stays mode-neutral."
+    },
     "FOMC15": {
       "case": "valid feed, zero new FOMC items",
-      "verdict": "EVENTS_OBSERVED_ZERO only when ALL seven preconditions hold - in particular complete deterministic classification and zero unresolved candidates - and the assertion is scoped to the V1 capture subset"
+      "verdict": "EVENTS_OBSERVED_ZERO only when ALL zero_assertion.preconditions_all_required hold - the cycle has no CYCLE_CANDIDATE - and the assertion is scoped to the V1 capture subset and to that cycle"
+    },
+    "FOMC150": {
+      "case": "OLD-EPOCH RESPONSE COMMITS DURABLY AFTER A NEW EPOCH BEGAN",
+      "expected": {
+        "can_displace_existing_anchor": false,
+        "live_and_replay_status": "identical",
+        "valid_observation": true
+      },
+      "verdict": "Late durable records are valid and ordered by commit_seq."
+    },
+    "FOMC151": {
+      "case": "PRIMARY 200 WITHOUT Content-Type",
+      "expected": {
+        "health": "PARSER_FAILED",
+        "raw_retained": true,
+        "sniffing": false
+      },
+      "verdict": "Missing media type fails closed."
+    },
+    "FOMC152": {
+      "case": "TWO Content-Type LINES: text/html and application/json",
+      "expected": {
+        "health": "PARSER_FAILED"
+      },
+      "verdict": "Conflicting media types are rejected."
+    },
+    "FOMC153": {
+      "case": "Content-Type 'Text/HTML ; Charset=\"utf-8\"; foo=bar'",
+      "expected": {
+        "accepted": true
+      },
+      "verdict": "Case-insensitive type, OWS, quoted charset and ignored extra parameter pass."
+    },
+    "FOMC154": {
+      "case": "DNS ANSWER ARRIVES AT ELAPSED 61 s",
+      "expected": {
+        "health": "SOURCE_UNAVAILABLE",
+        "http_bytes_sent": false,
+        "tcp_started": false
+      },
+      "verdict": "Logical abort at 60 s is the observable contract."
+    },
+    "FOMC155": {
+      "case": "DUE BOUNDARY - A = 18:00:05.250000+00:00, R.observed_at = 18:05:05.250000+00:00 and a variant at 18:05:05+00:00",
+      "expected": {
+        "comparison": "parsed instants, never strings",
+        "exact": "SATISFIES O300 (equality)",
+        "whole_second_variant": "does NOT satisfy (earlier instant)"
+      },
+      "verdict": "CANONICAL_UTC_TIMESTAMP_V1 arithmetic."
+    },
+    "FOMC156": {
+      "case": "WALL CLOCK STEPS FORWARD ONE DAY; previous response at A (reference), R recorded 2026-09-23T18:05:10Z with monotonic elapsed 305 s since the reference",
+      "expected": {
+        "COLLECTOR_CLOCK_ANOMALY": true,
+        "becomes_reference": false,
+        "next_response_without_Date": "still anomalous (beyond 90 s from the epoch record)",
+        "observed_at_rewritten": false,
+        "processed": false,
+        "satisfies": []
+      },
+      "verdict": "A clock jump cannot pre-satisfy O3600 or O86400 on this or any later response unless the server time confirms the wall clock."
+    },
+    "FOMC157": {
+      "case": "RAW DIGEST MISMATCH FOUND DURING NORMAL POST-DURABLE PROCESSING",
+      "expected": {
+        "network_repair": false,
+        "outcome": "CORRUPTION_FAIL_CLOSED",
+        "parse": false,
+        "refetch": false
+      },
+      "verdict": "Corruption fails closed everywhere."
+    },
+    "FOMC158": {
+      "case": "VALID STATEMENT WITH 'For release at 2:00&nbsp;p.m. ET'",
+      "expected": {
+        "EventRevision": true,
+        "declared_release_at": null,
+        "diagnostic": "RELEASE_TIME_UNPARSED",
+        "visibility": "observed/durable timeline"
+      },
+      "verdict": "Release-clock failure never deletes the event."
+    },
+    "FOMC159": {
+      "case": "FEED F1 LISTS NEW STATEMENT S1; ACQUISITION FAILS; F2 NO LONGER LISTS S1",
+      "expected": {
+        "F1_cycle": "NOT_ZERO (unchanged)",
+        "F2_cycle": "unaffected by S1",
+        "acquisition_required": true,
+        "dispatch_source": "durable acquisition record"
+      },
+      "verdict": "Feed disappearance never cancels durable acquisition work."
     },
     "FOMC16": {
       "case": "normalization transaction fails after raw persisted",
       "verdict": "no ingested_at, no EventRevision visibility; raw survives for rebuild"
+    },
+    "FOMC160": {
+      "case": "LIVE CYCLE OTHERWISE CLEAN WHILE 300 BACKFILL ENTRIES ARE PENDING OR SUSPENDED",
+      "expected": {
+        "cycle": "EVENTS_OBSERVED_ZERO"
+      },
+      "verdict": "Backfill backlog never blocks LIVE zero."
+    },
+    "FOMC161": {
+      "case": "A-B-A REVERSION - R1 H1 -> V1; R2 H2 -> V2; R3 H1 again",
+      "expected": {
+        "R3_outcome": "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION",
+        "barrier": false,
+        "current_normalized_revision_after_R3": "V1",
+        "new_revision_for_R3": false
+      },
+      "verdict": "Revisions are keyed per hash; the revision matching the latest observation is current."
+    },
+    "FOMC162": {
+      "case": "ITEM CONCLUDED UNRESOLVED IN CYCLE C0 (other title) IS RETITLED TO THE STATEMENT TITLE IN C1, path monetary20261101a.htm, no LIVE observation",
+      "expected": {
+        "C1": "NOT_ZERO",
+        "LIVE_acquisition": true
+      },
+      "verdict": "A retitle to the statement title is a candidate again; no zero cycle can admit an event."
+    },
+    "FOMC163": {
+      "case": "NTP STEPS THE WALL CLOCK BACK 3 s BETWEEN TWO RESPONSES",
+      "expected": {
+        "COLLECTOR_CLOCK_ANOMALY": false,
+        "later_responses": "unaffected",
+        "reason": "3 s is within the 60 s monotonic bound"
+      },
+      "verdict": "Normal clock discipline never trips the 60 s check; each response re-baselines."
+    },
+    "FOMC164": {
+      "case": "CRASH AFTER THE QUALIFYING PER-RESPONSE RECORD COMMITS, BEFORE THE OUTCOME RECORD",
+      "expected": {
+        "dispatch": "SUCCESS",
+        "duplicate_get": false,
+        "episode": "closed if no PENDING_DUE remains"
+      },
+      "verdict": "A linked qualifying record proves success; no INTERRUPTED retry follows."
+    },
+    "FOMC165": {
+      "case": "NTP CORRECTS A WALL CLOCK THAT WAS 5 MIN FAST; next response carries Date agreeing within 2 s",
+      "expected": {
+        "COLLECTOR_CLOCK_ANOMALY": false,
+        "becomes_reference": true,
+        "monotonic_mismatch": true,
+        "server_time_agrees_within_90s": true
+      },
+      "verdict": "A server-verified correction re-baselines without an outage."
+    },
+    "FOMC166": {
+      "case": "WALL CLOCK STEPS FORWARD 280 s; next response's Date differs by 280 s",
+      "expected": {
+        "COLLECTOR_CLOCK_ANOMALY": true,
+        "O300_pre_satisfied": false,
+        "reason": "server_time differs by 280 s > 90 s"
+      },
+      "verdict": "A 280 s bogus step is caught by the server-time check (280 s > 90 s) and never absorbed."
+    },
+    "FOMC167": {
+      "case": "CDN SERVES A CACHED PAGE: Date 20 min old, Age: 1200, collector clock correct",
+      "expected": {
+        "COLLECTOR_CLOCK_ANOMALY": false,
+        "server_time": "Date + 1200 s"
+      },
+      "verdict": "Age is honoured; a compliant cache causes no outage."
     },
     "FOMC17": {
       "case": "commit succeeds but ACK lost",
@@ -630,19 +933,19 @@
     },
     "FOMC22": {
       "case": "UNSCHEDULED MONETARY ACTION WITH A DIFFERENT TITLE - feed fetch and parse succeed; an official item is plausibly monetary/FOMC but its title differs from the frozen predicate",
-      "verdict": "NOT normalized under V1. classification = UNRESOLVED_CANDIDATE. EVENTS_OBSERVED_ZERO is PROHIBITED for that cycle. No claim is made that the event did not exist. Raw feed evidence retained. A future CaptureSpec may add the family."
+      "verdict": "NOT normalized under V1. classification = UNRESOLVED_CANDIDATE. EVENTS_OBSERVED_ZERO is PROHIBITED for that cycle. No claim is made that the event did not exist. Raw feed evidence retained. A future CaptureSpec may add the family. Cycle-local: the cycle in which it is first a CYCLE_CANDIDATE is NOT_ZERO; afterwards it is ALREADY_KNOWN and stays visible as an unresolved item record."
     },
     "FOMC23": {
       "case": "FEED TITLE MATCHES, PRIMARY PAGE TITLE DIFFERS",
-      "verdict": "discovery/primary classification CONFLICT. No normalized event, no zero assertion, and NO silent downgrade to DEFINITELY_OUT_OF_SCOPE. Diagnostic and raw provenance retained; PARSER_FAILED for that surface."
+      "verdict": "discovery/primary classification CONFLICT. No normalized event, no zero assertion, and NO silent downgrade to DEFINITELY_OUT_OF_SCOPE. Diagnostic and raw provenance retained; PARSER_FAILED for that surface. The conflict's cycle is NOT_ZERO; once durably concluded the item is ALREADY_KNOWN."
     },
     "FOMC24": {
-      "case": "SUCCESSFUL CYCLE WITH ZERO MATCHES AND ZERO UNRESOLVED CANDIDATES - feed raw persisted, parse succeeds, every relevant entry deterministically outside the V1 subset, no pending or failing candidate",
+      "case": "SUCCESSFUL CYCLE WITH NO CYCLE_CANDIDATE - feed raw persisted, parse succeeds, every item DEFINITELY_OUT_OF_SCOPE or ALREADY_KNOWN",
       "verdict": "EVENTS_OBSERVED_ZERO PERMITTED, and explicitly scoped to the V1 capture subset - not to all FOMC monetary-policy activity."
     },
     "FOMC25": {
       "case": "POSITIVE FEED CANDIDATE, PRIMARY FETCH FAILS",
-      "verdict": "no normalized event; candidate remains unresolved; SOURCE_UNAVAILABLE on the primary surface; EVENTS_OBSERVED_ZERO PROHIBITED. \"0 normalized events\" is not zero."
+      "verdict": "no normalized event; the LIVE acquisition stays unconcluded under retry_policy; SOURCE_UNAVAILABLE on the primary surface; this cycle and every cycle listing the item while the acquisition is unconcluded (including SUSPENDED) is NOT_ZERO."
     },
     "FOMC26": {
       "case": "OFFICIAL DATE CORRECTION ON SAME URL - R3/X6",
@@ -711,7 +1014,7 @@
       "final_response_url": "U2",
       "observation_mode": "HISTORICAL_BACKFILL",
       "rss_guid": null,
-      "verdict": "U1 comes from a durable official calendar/archive statement link, passes existing validation and normalization, and anchors source_item_id before U1 -> U2. No GUID required; no identity from U2, HTML canonical or a synthetic date-derived URL. Existing backfill visibility and admission requirements remain unchanged."
+      "verdict": "U1 comes from a durable validated backfill manifest entry, passes existing validation and normalization, and anchors source_item_id before U1 -> U2. No GUID required; no identity from U2, HTML canonical or a synthetic date-derived URL. Backfill observations create no reobservation grid."
     },
     "FOMC31": {
       "case": "MIXED-CASE HTTPS",
@@ -919,7 +1222,7 @@
       "verdict": "PARSER_FAILED even if their text is identical. No first-match behaviour. No EventRevision. Zero blocked."
     },
     "FOMC51": {
-      "case": "MISSING REQUIRED ANCHOR - one of title/date/release absent while the page is otherwise syntactically valid",
+      "case": "MISSING REQUIRED ANCHOR - title or date anchor absent while the page is otherwise syntactically valid (an absent release-line anchor is FOMC158's non-gating case)",
       "verdict": "PARSER_FAILED. No fallback to document metadata, whole-page text or any node outside the frozen region."
     },
     "FOMC52": {
@@ -1288,7 +1591,13 @@
     "no_floating_dependency": true,
     "provider_verification_hash": "e854ddb9cc8b5bc2634fe6ca6fc793289bafd6c94bb49dde71109e1d17341034",
     "provider_verification_revision": 3,
-    "shared_http_primitive": "scripts/trading_lab/safe_http.py::require_https_host + AllowlistedRedirectHandler",
+    "shared_http_primitive": "scripts/trading_lab/safe_http.py::require_https_host ONLY (scheme, userinfo, host and port checks), reused as one of the V1 URL checks",
+    "shared_http_primitive_conformance": {
+      "AllowlistedRedirectHandler": "NOT CONFORMING for FOMC V1 - it inherits urllib automatic redirect following (up to 10 redirects inside one urlopen, URI header fallback, unbounded redirect-body read, single timeout, no per-hop limiter grant or deadline)",
+      "build_hardened_opener": "NOT CONFORMING for FOMC V1 for the same reason",
+      "implementation_status": "No existing repo primitive implements http_policy.redirect_implementation. Phase 6G-A must supply one; this spec does not claim existing code conforms.",
+      "require_https_host": "REUSED as a necessary, NOT sufficient, check. It accepts inputs V1 rejects (empty port ':', stripped control characters, leading whitespace) and can raise a bare ValueError; url_canonicalization port admission, whitespace/control-character and malformed-authority rules are checked separately, and any exception is a rejection."
+    },
     "taxonomy_version": "trading-lab.event-taxonomy.v1",
     "timestamp_trust_policy": "TimestampTrustPolicyV1"
   },
@@ -1319,6 +1628,20 @@
     "sample_success_pages": 5,
     "selector_status": "EMPIRICAL_FAIL_CLOSED_V1"
   },
+  "durable_ordering": {
+    "basis": "design rev4 durability_and_transaction_policy: a single authoritative SQLite EventStore with serialized write transactions; store commit order disambiguates STORAGE chronology and never overrides semantic source-time rules",
+    "id": "STORE_COMMIT_SEQUENCE_V1",
+    "late_durable_record": "A record that commits after a limiter-epoch transition receives a larger commit_seq like any other and is fully valid (no abandonment). It can never displace an anchor or revision chosen from a smaller commit_seq.",
+    "not_business_truth": "commit_seq never replaces observed_at, ingested_at, due_at or any causal timestamp and is never an identity input",
+    "rule": "Every durable record this spec relies on (per-response raw/observation record, dispatch record, attempt outcome record, processing outcome record, feed item conclusion, cycle conclusion, EventRevision, manifest, operator retry request) carries commit_seq: the strictly increasing position of its committing transaction in the authoritative store. commit_seq is assigned inside the committing transaction and exists only if that transaction commits.",
+    "uses": [
+      "'first'/'earliest'/'latest'/'before' between durable records ALWAYS means commit_seq order unless a rule explicitly names a timestamp comparison",
+      "reobservation anchor selection (the qualifying LIVE record with the smallest commit_seq)",
+      "EventRevision source observation selection (the qualifying record carrying H with the smallest commit_seq)",
+      "zero pre-cycle state (records with commit_seq smaller than the cycle's feed record)",
+      "class rotation (the latest dispatch record)"
+    ]
+  },
   "future_fixture_requirements": {
     "capture_authorization": "real historical raw fixtures may be captured only after implementation is authorised",
     "required_before_implementation_is_accepted": [
@@ -1341,7 +1664,7 @@
       "official discovery link U1 redirecting to U2: identity from normalized U1 (FOMC27)",
       "same discovery U1 redirecting first to U2, later to U3: stable logical identity, with both unchanged-body and changed-body controls (FOMC28)",
       "primary HTML canonical U4 differing from discovery U1: no identity authority (FOMC29)",
-      "historical official archive link U1 redirecting to U2 without an RSS GUID: identity from normalized U1 (FOMC30)",
+      "historical backfill manifest entry U1 redirecting to U2 without an RSS GUID: identity from normalized U1 (FOMC30)",
       "HTTPS, Https, hTtPs, HtTpS and https scheme spellings converge to the exact lowercase-https identity URL and source_item_id (FOMC31)",
       "http and other non-HTTPS or empty/missing schemes are rejected without upgrade, source_item_id admission or primary request (FOMC32)",
       "absent port and explicit decimal :443 yield byte-identical portless canonical discovery URLs and the same source_item_id, without identity conflict or content revision from port spelling alone (FOMC33)",
@@ -1394,7 +1717,14 @@
       "same-body, changed-body and parser-failure reobservations proving satisfaction at the durable observation boundary (FOMC120-FOMC122)",
       "a crash after durable reobservation before the completion cache, and a lost ACK, proving no duplicate GET (FOMC124-FOMC125)",
       "a local synthetic slow-drip, DNS-hang, TLS-hang and header-hang server proving the 60-second physical-attempt deadline (FOMC127-FOMC130)",
-      "a feed-plus-recheck backlog proving ELIGIBLE_CLASS_ALTERNATION_V1 (FOMC126)"
+      "a feed-plus-recheck backlog proving ELIGIBLE_CLASS_ALTERNATION_V1 (FOMC126)",
+      "a recorded feed fixture exercising feed_item_classification_v1 steps 1-6 and cycle-local zero (FOMC136-FOMC140, FOMC159-FOMC160)",
+      "H1 then parser-failed H2 proving the newer-content barrier (FOMC141)",
+      "a synthetic dead page and restart proving BOUNDED_RETRY_EPISODE_V1 durability and bounds (FOMC142-FOMC145)",
+      "a local synthetic redirect server proving MANUAL_REDIRECT_LOOP_V1 and the non-conformance of automatic handlers (FOMC146)",
+      "a backfill manifest fixture proving validation, dedupe, ordering, no recheck grid and LIVE non-pre-emption (FOMC147-FOMC149)",
+      "Content-Type gate fixtures (FOMC151-FOMC153), a late-DNS fixture (FOMC154), canonical timestamp boundary fixtures (FOMC155), a clock-anomaly fixture (FOMC156), a corruption-during-processing fixture (FOMC157) and a non-gating release-clock fixture (FOMC158)",
+      "fixtures for FOMC123 and FOMC131-FOMC135"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -1437,6 +1767,31 @@
       "superseded_wording": "rev12 said only \"V1 CORRECTNESS MUST NOT DEPEND ON HTTP 304\", which never stated what happens IF a 304 arrives. That gap is now closed."
     },
     "connect_timeout_seconds": 10,
+    "content_type_gate": {
+      "accepted_media": {
+        "discovery_feed": [
+          "application/rss+xml",
+          "application/xml",
+          "text/xml"
+        ],
+        "primary_statement": [
+          "text/html"
+        ]
+      },
+      "charset": "a charset parameter must satisfy parser_policy.text_decoding_v1.http_charset_policy (UTF-8 compatible); otherwise PARSER_FAILED",
+      "comparison": "type/subtype compared ASCII case-insensitively; parameter names ASCII case-insensitive; parameter order irrelevant; after the duplicate check, parameters other than charset do not affect admission",
+      "duplicate_parameter_name": "any parameter name appearing twice within one value (case-insensitively) -> PARSER_FAILED",
+      "field_name": "Content-Type header field name matched ASCII case-insensitively",
+      "header_absence_note": "text_decoding_v1's recorded-header-absence input remains provenance only; an admitted body can never reach text decoding without passing this gate",
+      "health": "PARSER_FAILED on the fetched surface",
+      "id": "CONTENT_TYPE_GATE_V1",
+      "missing": "no Content-Type field -> PARSER_FAILED; no sniffing",
+      "multiple_values": "each Content-Type field line is one value; if every value parses, all share the same case-folded type/subtype and each passes parser_policy.text_decoding_v1.http_charset_policy, the gate passes; otherwise PARSER_FAILED",
+      "quoted_string": "quoted-pairs are unescaped per RFC 9110 before the charset label is evaluated",
+      "stage": "after durable raw persistence (raw retained), before charset/text decoding",
+      "unparseable_value": "PARSER_FAILED (including an unquoted comma, empty value or missing subtype)",
+      "value_grammar": "OWS type '/' subtype *( OWS ';' OWS [ parameter ] ) OWS (RFC 9110): empty parameters and a trailing ';' are allowed; type, subtype and parameter names are tokens; a parameter value is a token or quoted-string"
+    },
     "decoded_body_limit_enforcement": {
       "abort_on_would_exceed": true,
       "accepted_buffer_rule": "Start decoded_count at 0. For each incrementally produced decoded chunk, before appending, if decoded_count + len(chunk) > the applicable body limit, ABORT immediately without appending excess bytes. Otherwise append and increment decoded_count. The accepted decoded-body accumulation MUST never exceed the applicable cap.",
@@ -1565,8 +1920,8 @@
         "body transfer",
         "content decoding required to produce admitted decoded body bytes"
       ],
-      "ends_at": "The network phase of an attempt ends when (a) the complete decoded body of a final exact-200 response is available, (b) the response is classified as an intermediate redirect or non-admitted final response, or (c) the attempt fails. Draining or discarding a non-admitted body stays inside the same deadline and is never admitted.",
-      "enforcement": "If a library cannot enforce a stage within the total deadline (for example a blocking resolver), the implementation MUST enforce the deadline externally: at expiry the attempt is terminated, any late resolver result is discarded and never used to connect, no further network I/O is performed for the attempt, and no byte received after expiry is admitted.",
+      "ends_at": "The network phase of an attempt ends when (a) the complete decoded body of a final exact-200 response is available, (b) the response is classified as an intermediate redirect or non-admitted final response, whose body is not drained (the connection is closed), or (c) the attempt fails.",
+      "enforcement": "At the total deadline the FOMC provider operation aborts the attempt logically. Observable requirements: a DNS result arriving after expiry is discarded; no TCP connection is initiated from it; no HTTP request byte is sent by the expired attempt; nothing received by it is admitted. Resolver activity inside the platform after logical cancellation (for example retransmissions of an abandoned lookup) is outside provider semantics unless the implementation chooses process isolation.",
       "excluded_before_start": [
         "URL validation",
         "selection",
@@ -1582,7 +1937,7 @@
         "parser_invoked": false,
         "partial_body_admitted": false,
         "persisted_as_admitted_body": false,
-        "reobservation": "obligation stays PENDING; retry per revision_policy.reobservation_scheduler.failed_attempt_retry",
+        "reobservation": "obligation stays PENDING; further attempts follow revision_policy.reobservation_scheduler.retry_policy",
         "source_health": "SOURCE_UNAVAILABLE for the attempted surface",
         "successful_content_hash_created": false,
         "unit_refunded": false,
@@ -1628,6 +1983,20 @@
     "read_timeout_note": "matches the repo convention REQUEST_TIMEOUT_SECONDS = 30; an inactivity bound whose coverage is frozen in http_policy.physical_attempt_deadline.stage_limits",
     "read_timeout_seconds": 30,
     "redirect_chain_recorded": true,
+    "redirect_implementation": {
+      "automatic_redirect_following": "FORBIDDEN - the HTTP client must never follow a redirect itself",
+      "connections": "every physical attempt opens a new connection (its own DNS, TCP and TLS stages under its own deadline); no connection is reused across physical attempts",
+      "id": "MANUAL_REDIRECT_LOOP_V1",
+      "per_response": [
+        "1. read the status and headers of the response of the current physical attempt",
+        "2. if the status is an allowed redirect status: resolve Location under http_policy.redirect_policy (no URI-header fallback, no repair), validate the target completely BEFORE any network side effect",
+        "3. close the redirect response and its connection without draining its body; the redirect body is never semantic, never admitted and never read",
+        "4. obtain a separate FIX15 limiter grant for the next physical attempt, consuming one unit, with a fresh http_policy.physical_attempt_deadline",
+        "5. at most 3 followed redirects per logical fetch (http_policy.max_redirects); a 4th redirect is a redirect-limit failure",
+        "6. any other final status goes to http_policy.http_status_policy"
+      ],
+      "timeouts": "the transport must enforce connect_timeout_seconds and read_timeout_seconds separately, plus the total deadline"
+    },
     "redirect_policy": {
       "allowed_statuses": [
         301,
@@ -1806,7 +2175,7 @@
     "final_response_url_role": "NON-IDENTIFYING TRANSPORT PROVENANCE: final allowlisted response URL after redirects. It MUST NOT replace canonical_primary_statement_url or re-key an item, including when it differs from discovery or changes on a later observation. Existing security validation still applies.",
     "guid_note": "historical statements may lie outside current feed depth; identity must not depend on the feed",
     "guid_required_for_backfill": false,
-    "historical_discovery_url_role": "the statement link extracted from the durable official Federal Reserve calendar/archive artifact supplies the pre-redirect identity input, under the same validation and normalization as LIVE. No synthesized URL from date; no RSS GUID required; no identity from final response or HTML canonical.",
+    "historical_discovery_url_role": "the validated HISTORICAL_BACKFILL_MANIFEST_V1 entry (surfaces.backfill_manifest), persisted durably before any request, supplies the pre-redirect identity input under the same validation and normalization as LIVE. No synthesized URL from date; no RSS GUID required; no identity from final response or HTML canonical.",
     "html_canonical_role": "NON-IDENTIFYING, NON-AUTHORITATIVE: <link rel=\"canonical\"> is ignored for V1 semantics and logical identity. It MUST NOT replace canonical_primary_statement_url, change source_item_id, merge or split items, or override official discovery identity. A mismatch alone is NOT an identity conflict. If retained at all, it is optional diagnostic/provenance only; no network retrieval is authorized by this field.",
     "identity_url_authority": "OFFICIAL_DISCOVERY_LINK_PRE_REDIRECT",
     "identity_url_input_stage": "official statement link parsed from the already DURABLE official discovery artifact, BEFORE the primary HTTP request and BEFORE following any primary redirect",
@@ -1869,22 +2238,22 @@
     "F15": "Replay is offline; no network.",
     "F16": "No market, outcome, consensus or LLM field exists in the capture layer.",
     "F17": "The CaptureSpec hash is bound into every normalized revision.",
-    "F18": "Unsupported release syntax fails closed.",
+    "F18": "Unsupported release syntax never guesses a time: declared_release_at is null with RELEASE_TIME_UNPARSED, and the EventRevision is not withheld on that ground.",
     "F19": "RELEASE TIME IS NOT CONTENT-VINTAGE PROOF. A provider-declared logical release timestamp must never be used as the source availability of a captured content revision unless the provider contract proves that exact revision became available at that timestamp. For FOMC V1 no such revision-specific proof exists.",
     "F20": "BACKFILL CONTENT VINTAGE. Historical backfill content is visible only from its actual observed/durable timeline unless exact vintage provenance exists. An original release timestamp may describe event metadata but cannot retroactively date the fetched body.",
     "F21": "REVISION-SPECIFIC AVAILABILITY. A later observed content revision cannot inherit an earlier logical event release timestamp as its own source availability. Each revision requires its own availability evidence; absent provider evidence, source_available_at = null.",
     "F22": "ABSENCE CLAIM CANNOT EXCEED CLASSIFIER COVERAGE. An absence assertion must never cover a semantic family broader than the frozen classifier's proven coverage. Where classifier completeness is not established, zero is scoped to the capture predicate only.",
-    "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that check. No exception.",
-    "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics.",
+    "F23": "UNRESOLVED CANDIDATE BLOCKS ZERO. Any discovery item that is a CYCLE_CANDIDATE and cannot be deterministically classified as IN_SCOPE_V1 or DEFINITELY_OUT_OF_SCOPE blocks EVENTS_OBSERVED_ZERO for that cycle. No exception. A durably concluded unresolved item is ALREADY_KNOWN for later cycles and stays visible as an unresolved item record.",
+    "F24": "DISCOVERY/PRIMARY CLASSIFICATION CONFLICT FAILS CLOSED. If discovery metadata indicates an in-scope candidate but the primary page does not satisfy the frozen predicate: no event, no zero, and no silent downgrade to out-of-scope. Diagnostic and raw provenance are recorded under existing source-health semantics. Scope: the cycle in which the conflict is a CYCLE_CANDIDATE (zero_assertion.cycle_definition).",
     "F25": "MUTABLE CONTENT METADATA MUST NOT DEFINE LOGICAL IDENTITY. Mutable statement metadata parsed from primary-page content, including official_statement_date, MUST NOT participate in source_item_id, the logical item hash or identity dedupe. With provider_id and event_family fixed and the same frozen canonical_primary_statement_url, date corrections preserve the logical item, with or without RSS GUID. Changed bytes append revisions; identical verified bytes under the same CaptureSpec hash must yield the same date, otherwise FAIL CLOSED with no new content revision and no overwrite.",
-    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL calendar/archive discovery, with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url. Apply the existing hostname normalization unchanged and serialize the canonical authority WITHOUT any port component: an absent port and admitted explicit decimal 443 MUST yield the exact same identity URL. Original explicit default-port spelling MUST NOT be hashed as a port component of canonical_primary_statement_url. Any malformed percent escape makes the discovery URL inadmissible: no canonical_primary_statement_url or source_item_id may be derived/admitted from it. Validate percent syntax before normalization/identity and before any request; no repair or percent-decoding is introduced by this gate.",
+    "F26": "DISCOVERY URL ANCHORS LOGICAL IDENTITY. For FOMC V1, canonical_primary_statement_url is the official statement link parsed from durable official discovery provenance BEFORE primary redirects, validated and normalized under existing V1 rules. Redirect destinations, final response URLs and HTML canonical URLs are non-identifying provenance and MUST NOT replace this identity input. The rule applies to LIVE feed and HISTORICAL_BACKFILL manifest discovery (surfaces.backfill_manifest), with or without RSS GUID. The admitted HTTPS scheme MUST be serialized as exactly lowercase ASCII https in the identity URL; original scheme spelling MUST NOT be hashed as the scheme component of canonical_primary_statement_url. Apply the existing hostname normalization unchanged and serialize the canonical authority WITHOUT any port component: an absent port and admitted explicit decimal 443 MUST yield the exact same identity URL. Original explicit default-port spelling MUST NOT be hashed as a port component of canonical_primary_statement_url. Any malformed percent escape makes the discovery URL inadmissible: no canonical_primary_statement_url or source_item_id may be derived/admitted from it. Validate percent syntax before normalization/identity and before any request; no repair or percent-decoding is introduced by this gate.",
     "F27": "TRANSPORT REDIRECTION MUST NOT REKEY AN ITEM. With provider_id, event_family and the normalized official discovery URL fixed, U1 -> U2 and later U1 -> U3 MUST produce the same source_item_id from normalize(U1). Transport movement alone cannot split logical history, cause an identity conflict or create a content revision; changed bytes append revisions under the same item, and unchanged bytes do not duplicate revisions.",
     "F28": "HTTPS SCHEME CASE CANNOT ALTER LOGICAL IDENTITY. HTTPS scheme admission is ASCII case-insensitive; the canonical identity scheme is always exactly lowercase ASCII https. With provider_id, event_family and every other URL component unchanged, changing only upstream HTTPS scheme case MUST preserve canonical_primary_statement_url and source_item_id and MUST NOT create an identity conflict or content revision. Non-HTTPS and empty/missing schemes are rejected, never silently upgraded. Original source spelling is raw discovery provenance only.",
     "F29": "EXPLICIT DEFAULT HTTPS PORT CANNOT ALTER LOGICAL IDENTITY. For otherwise identical admitted official discovery URLs, with provider_id and event_family fixed, an absent port and explicit decimal port 443 MUST produce byte-identical canonical_primary_statement_url values WITHOUT a port component and the SAME source_item_id. Default-port spelling alone MUST NOT create a logical item, identity conflict or content revision. Any other explicit port or malformed port is rejected before source_item_id derivation and before any request; never silently stripped, rewritten or interpreted as absent/default. Raw explicit-port spelling remains provenance only.",
     "F30": "MALFORMED PERCENT ESCAPES ARE REJECTED BEFORE IDENTITY OR REQUEST. Every literal % in an admitted V1 URL must begin PCT_ENCODED = % HEXDIG HEXDIG, with exactly two ASCII hex digits from 0-9, A-F or a-f. Otherwise FAIL CLOSED before canonical identity/source_item_id derivation or admission, before a primary request, and before redirect follow. This mandatory syntax gate does not decode, re-encode, repair or provide a literal-percent fallback. Valid escapes remain subject to existing component restrictions and path-preservation semantics; no new equivalence or hex-case normalization is introduced. Durable raw source text is not mutated.",
     "F31": "DECODED BODY SIZE IS ENFORCED DURING PRODUCTION. For every body consumed under V1's existing decoded-size policy, count decoded entity-body bytes incrementally from zero before charset/text decoding. Enforce the feed 2097152-byte or statement 5242880-byte cap during bounded output production, not after unbounded decompression. If the next output would exceed the cap, stop body decoding immediately, do not append excess bytes and do not continue to learn final size. Exactly the cap passes the size gate; cap + 1 rejects. Content-Length or compressed size cannot replace this gate. No oversized body or incomplete prefix reaches text decoding, XML/HTML parsing or normalization, becomes a complete admitted raw artifact or successful complete-body hash, or produces an EventRevision. Reuse PARSER_FAILED, never EVENTS_OBSERVED_ZERO. Existing successful-body hash/persistence/replay bytes and raw-first order remain unchanged.",
     "F32": "TEXT DECODING IS SINGLE-VALUED AND STRICT UTF-8. Both V1 XML and HTML bodies use only UTF-8, also the explicit default when signals are absent. Every recognized HTTP/BOM/document encoding signal must be UTF-8-compatible under text_decoding_v1, or cause PARSER_FAILED; labels are limited to utf-8 and utf8 after the frozen ASCII-only label normalization. No competing authority, heuristic detection, fallback decoder, lossy error handling or platform codec/alias selection. Invalid UTF-8 and unsupported BOMs fail closed. Exactly one leading UTF-8 BOM is an encoding signature omitted from semantic text, never removed from raw/hash/replay bytes. Same verified admitted bytes plus persisted relevant HTTP metadata plus the same CaptureSpec hash MUST produce the same Unicode text or PARSER_FAILED. Charset failure preserves raw provenance, creates no EventRevision and cannot establish zero for an affected feed/candidate. Existing Unicode/whitespace transformations and FIX1-FIX8 remain unchanged.",
-    "F33": "HTML SEMANTIC ANCHORS ARE UNIQUE AND AUTHORITATIVE. primary_page_title is the unique h3.title within the frozen article-heading region; official_statement_date the unique p.article__time; release_line the unique p.releaseTime start element. No document-metadata, inline-SVG, global-text or traversal-order fallback may substitute. Zero or more than one match: PARSER_FAILED.",
+    "F33": "HTML SEMANTIC ANCHORS ARE UNIQUE AND AUTHORITATIVE. primary_page_title is the unique h3.title within the frozen article-heading region; official_statement_date the unique p.article__time; release_line the unique p.releaseTime start element. No document-metadata, inline-SVG, global-text or traversal-order fallback may substitute. Zero or more than one title or date match: PARSER_FAILED; zero or more than one release-line match: non-gating RELEASE_TIME_UNPARSED.",
     "F34": "RELEASE LINE EXTENT IS TOKEN-BOUND, NOT RECOVERED-DOM-BOUND. release_line consists only of the leading character-data segment following the unique p.releaseTime start tag and preceding the next markup token. Recovered descendant .textContent is forbidden as authority. This closes the observed unclosed-paragraph problem.",
     "F35": "SEMANTIC TEXT NORMALIZATION ORDER IS SINGLE-VALUED: (1) character-reference-aware field extraction, (2) NFC, (3) ASCII-whitespace collapse, (4) U+0020 trim, (5) exact compare or strict parse. No reordering.",
     "F36": "XML DISCOVERY PARSING HAS NO DTD / CUSTOM-ENTITY / XINCLUDE EXPANSION PATH. FOMC V1 discovery XML forbids DOCTYPE and XInclude. External DTDs, external general entities and external parameter entities are never resolved. Custom internal entity declarations are unsupported because DOCTYPE is forbidden, so the billion-laughs family is rejected before expansion. Parsing performs no network or filesystem resolution. Security rejection is PARSER_FAILED and blocks EVENTS_OBSERVED_ZERO.",
@@ -1901,22 +2270,32 @@
     "F47": "MINIMUM SPACING IS PROVIDER-WIDE START-TO-START. A candidate requires t - previous_start >= 10 seconds; exact equality passes. Accounting, window and spacing use the SAME PHYSICAL_REQUEST_ATTEMPT_START atomic grant-and-consume event immediately before transport invocation. Completion time cannot shift the reference. No category or redirect/recheck exemption, no stored or reusable permit and no refund after grant, including cancellation before network I/O.",
     "F48": "RATE ADMISSION IS ATOMIC AND MONOTONIC WITHIN A LIMITER EPOCH. All concurrent candidates, across every FOMC V1 category/process emitter, pass through one provider-wide atomic inspect/test/grant/register decision over comparable monotonic history before transport. Stale-state double grants and simultaneous starts are forbidden; later candidates see prior grants. UTC/NTP/manual/timezone/DST changes cannot alter elapsed admission. The coordination primitive is unspecified.",
     "F49": "NEW LIMITER EPOCHS FAIL CONSERVATIVELY CLOSED FOR 60 SECONDS. Every fresh limiter epoch requires exclusive provider ownership and no attempt for its first 60 monotonic seconds; exact elapsed 60 passes the embargo. The epoch embargo begins only once old independent issuers can no longer initiate attempts. Independent overlapping epochs cannot both emit. After embargo, admission uses fresh current-epoch history; precise prior-epoch monotonic history is not reused and durable per-request history is not required. UTC history cannot shorten the embargo.",
-    "F50": "REOBSERVATION GRID IS ANCHORED TO THE FIRST DURABLE PRIMARY OBSERVATION'S observed_at. For each logical FOMC source item, the original anchor is exactly observed_at of the first qualifying admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. Request/header time, raw durability commit, normalized/EventRevision commit, declared_release_at, ingested_at, limiter monotonic start and restart time cannot replace that value. Semantic parse success and EventRevision commit are not prerequisites. The anchor is immutable across later observations/revisions; targets remain original observed_at plus exactly 300,3600,86400,604800 seconds with existing precision. No source_available_at inference.",
+    "F50": "REOBSERVATION GRID IS ANCHORED TO THE FIRST DURABLE PRIMARY OBSERVATION'S observed_at. For each logical FOMC source item, the original anchor is exactly observed_at of the first (smallest commit_seq) qualifying LIVE, clock-check-passing admitted complete primary content observation that reaches existing durable raw/SourceObservation persistence. Request/header time, raw durability commit, normalized/EventRevision commit, declared_release_at, ingested_at, limiter monotonic start and restart time cannot replace that value. Semantic parse success and EventRevision commit are not prerequisites. The anchor is immutable across later observations/revisions; targets remain original observed_at plus exactly 300,3600,86400,604800 seconds with existing precision. No source_available_at inference.",
     "F51": "DURABILITY DETERMINES ANCHOR SURVIVAL, NOT ANCHOR TIME. A volatile observation lost before the required raw/SourceObservation durability boundary creates no reconstructible anchor. Once the qualifying observation is durable, its original observed_at remains the anchor across crashes and restarts, even before normalized commit and after downstream parser/normalization failure. No restart-relative or commit-relative re-anchoring, no inferred anchor from lost volatile state, and no later revision or limiter delay may shift the grid.",
     "F52": "DURABLE REOBSERVATION ANCHOR IMPLIES FOUR REQUIRED LOGICAL OBLIGATIONS. At the existing qualifying original anchor durability boundary, exactly four logical obligations exist for offsets 300,3600,86400,604800 and targets original observed_at plus offset. No scheduler-specific write or normalized EventRevision commit is required for logical existence. Missing or partial materialization and crash after anchor durability cannot erase them; without a qualifying durable anchor no set can be derived from a lost volatile observation. This freezes membership, not execution or completion.",
     "F53": "REOBSERVATION OBLIGATION IDENTITY IS DERIVED AND IDEMPOTENT. The authoritative logical key is (source_item_id, original_reobservation_anchor_observed_at, offset_seconds), using exclusively the original FIX16 anchor and one of the four fixed offsets. Repeated/concurrent recovery, materialization, lost materialization ACK, same-body reobservation, parser recovery and H1 -> H2 cannot add logical checkpoints or a second grid. Duplicate rows denote the same member; different source items with equal anchor times remain distinct. Physical encoding and status/completion semantics are not prescribed.",
-    "F54": "PAST-DUE OBLIGATIONS REMAIN REQUIRED. A PENDING reobservation obligation stays required after due_at, with no MISSED, EXPIRED, FAILED or other terminal state from lateness or failure. After downtime it becomes eligible subject to selection and FIX15, and is satisfied only by a real later observation with its own observed_at; no backdating, synthesis or due_at rewrite, and late execution never shifts any target.",
+    "F54": "PAST-DUE OBLIGATIONS REMAIN REQUIRED. A PENDING reobservation obligation stays required after due_at, with no MISSED, EXPIRED, FAILED or other terminal state from lateness or failure (a SUSPENDED retry episode is a work-item state, not an obligation status). After downtime it becomes eligible subject to selection and FIX15, and is satisfied only by a real later observation with its own observed_at; no backdating, synthesis or due_at rewrite, and late execution never shifts any target.",
     "F55": "ONE DURABLE REOBSERVATION MAY SATISFY ALL DUE OBLIGATIONS FOR ITS ITEM. A qualifying observation R of S satisfies exactly the obligations of S with due_at <= R.observed_at, never those with a later due_at and never another item's. Several overdue obligations produce one logical fetch, not catch-up GETs, and satisfaction claims no earlier source state.",
     "F56": "OBLIGATION SATISFACTION OCCURS AT THE DURABLE SOURCE OBSERVATION BOUNDARY. Satisfaction requires a per-response record of an admitted final exact-200 complete primary response with canonical observed_at that reached durable raw/SourceObservation persistence. Changed content, parse success, a new EventRevision and normalized commit are not required; a durable observation followed by parser failure satisfies the obligation while health records PARSER_FAILED.",
-    "F57": "FAILED ATTEMPTS DO NOT SATISFY OR ERASE OBLIGATIONS. Transport, deadline, redirect, non-200, incomplete, content-coding, oversize, persistence-loss and cancellation outcomes leave the obligation PENDING. The item is eligible again 60 seconds after the terminal outcome, with no cap, no hidden retry and no tight loop.",
+    "F57": "FAILED ATTEMPTS DO NOT SATISFY OR ERASE OBLIGATIONS. Transport, deadline, redirect, non-200, incomplete, content-coding, oversize, persistence-loss, clock-anomaly and cancellation outcomes leave the obligation PENDING. Further provider work follows BOUNDED_RETRY_EPISODE_V1: at most 6 logical fetches per episode (backoff 60/300/900/3600/14400 s), then SUSPENDED; no tight loop, no hidden retry.",
     "F58": "SATISFACTION IS CRASH- AND ACK-RECONSTRUCTIBLE. Obligation status is derived only from the durable anchor and durable qualifying observation records. Completion rows are caches; losing a marker or an ACK never causes a provider request, and a volatile observation lost before durability satisfies nothing.",
-    "F59": "FEED AND REOBSERVATION WORK CANNOT STARVE EACH OTHER. All work shares the FIX15 limiter. ELIGIBLE_CLASS_ALTERNATION_V1 rotates among classes with eligible work, and least-recently-dispatched ordering within REOBSERVATION prevents failing items from starving others. Queue pressure or restart never deletes required work.",
-    "F60": "EVERY PHYSICAL NETWORK ATTEMPT HAS A 60-SECOND ACTIVITY-INDEPENDENT TOTAL DEADLINE. It starts at PHYSICAL_REQUEST_ATTEMPT_START after limiter waiting, is monotonic, never resets on received bytes, and covers DNS, TCP, TLS, request write, headers, body and content decoding. Connect 10 s and read-inactivity 30 s still apply and the earliest limit wins. Each redirect-follow attempt has its own deadline. Expiry admits nothing and maps to SOURCE_UNAVAILABLE.",
-    "F61": "SOURCE FAILURES AND PARSER FAILURES BLOCK CLEAN ZERO. Every failure maps deterministically, first failing stage wins, to existing rev4 states. Within a cycle (zero_assertion.cycle_definition), any relevant pending acquisition, source failure, parser failure, persistence failure, deadline expiry, unfinished commit or unclassified item blocks EVENTS_OBSERVED_ZERO; successful candidates of a partial cycle are retained without rollback.",
-    "F62": "EST/EDT ARE LITERAL FIXED-OFFSET SOURCE LABELS. EST = UTC-05:00 and EDT = UTC-04:00 regardless of season; the parser never rewrites, rejects or seasonally validates them. Conversion needs no timezone database. Any other or missing zone label is unsupported: no guess, declared_release_at null, PARSER_FAILED."
+    "F59": "FEED, REOBSERVATION AND BACKFILL WORK CANNOT STARVE EACH OTHER. All work shares the FIX15 limiter. Class rotation derives from durable dispatch records; within classes (next_eligible_at, source_item_id) ordering and suspending bounded episodes guarantee service. Queue pressure, restart or later feed contents never delete required work.",
+    "F60": "EVERY PHYSICAL NETWORK ATTEMPT HAS A 60-SECOND ACTIVITY-INDEPENDENT TOTAL DEADLINE. It starts at PHYSICAL_REQUEST_ATTEMPT_START after limiter waiting, is monotonic, never resets on received bytes, and covers DNS, TCP, TLS, request write, headers, body and content decoding. Connect 10 s and read-inactivity 30 s still apply and the earliest limit wins. Each redirect-follow attempt has its own deadline. Expiry aborts logically: a late DNS result is discarded, no TCP connection or HTTP byte follows, nothing is admitted, and it maps to SOURCE_UNAVAILABLE.",
+    "F61": "ZERO IS CYCLE-LOCAL AND FAILURES BLOCK IT. EVENTS_OBSERVED_ZERO holds for one LIVE discovery cycle iff its feed observation qualifies and every item is DEFINITELY_OUT_OF_SCOPE or ALREADY_KNOWN in the durable pre-cycle state (commit_seq < B). Any CYCLE_CANDIDATE - unresolved, conflicting, unidentifiable, or with an unconcluded LIVE acquisition - makes the cycle NOT_ZERO. The conclusion is durable and never rewritten; backfill never blocks it.",
+    "F62": "EST/EDT ARE LITERAL FIXED-OFFSET SOURCE LABELS AND RELEASE-CLOCK PARSING IS NON-GATING. EST = UTC-05:00 and EDT = UTC-04:00 regardless of season, with no timezone database. Any other, missing or malformed release clock gives declared_release_at = null and RELEASE_TIME_UNPARSED; no zone is guessed and the EventRevision is not withheld.",
+    "F63": "STATEMENT RELEVANCE IS STRUCTURAL THEN SEMANTIC. Feed items outside the statement-family path prefix with non-matching titles are DEFINITELY_OUT_OF_SCOPE; in-family items are candidates; only exact feed title plus PRIMARY_STATEMENT_PATH_V1 (monetary<valid YYYYMMDD>a.htm) triggers a primary GET; the page title decides admission.",
+    "F64": "NEWER UNNORMALIZED CONTENT IS NEVER HIDDEN. Revisions are keyed per content hash. The current normalized revision is the one matching the latest durable qualifying observation's hash (reused after A-B-A); when none exists, NEWER_DURABLE_SOURCE_CONTENT_UNNORMALIZED holds and no older revision may be presented as current source truth. No revision is invented and no content is discarded.",
+    "F65": "PROVIDER RETRY TRAFFIC IS FINITE AND DURABLE. Every work item retries in bounded episodes whose state derives from durable dispatch/outcome records; restart never resets an episode; episode opening is keyed by offsets, not wall time; an anchored dead item costs at most 120 autonomous physical requests.",
+    "F66": "LOCAL FAILURE NEVER CAUSES EXTRA PROVIDER TRAFFIC. Commit and corruption failures cause none; lost-bytes persistence failure counts as one attempt of the bounded episode, exactly like a crash; without a committable dispatch record no request can start.",
+    "F67": "REDIRECTS ARE FOLLOWED ONLY BY A MANUAL LOOP. Automatic client redirect following is non-conforming; each hop is validated before contact, takes its own limiter grant and deadline, and at most 3 are followed. No existing repo opener is claimed to conform.",
+    "F68": "HISTORICAL BACKFILL IS A FINITE MANIFEST WITHOUT A RECHECK GRID. Backfill input is a validated, deduplicated, ordered manifest of at most 1000 primary statement URLs; no listing page is crawled; backfill observations never create anchors or obligations and never suppress LIVE acquisition; observation_mode is per observation.",
+    "F69": "DURABLE ACQUISITION WORK SURVIVES FEED DISAPPEARANCE. A LIVE acquisition created by a cycle stays required until concluded or suspended, whatever later feeds list.",
+    "F70": "TIMESTAMPS ARE CANONICAL AND COMPARED AS INSTANTS. All FOMC timestamps use CANONICAL_UTC_TIMESTAMP_V1 (market_data_store._canonical_timestamp); arithmetic and ordering use parsed instants, and 'first/earliest/latest' between durable records means commit_seq order.",
+    "F71": "COLLECTOR CLOCK ANOMALIES FAIL SAFE. An observation failing COLLECTOR_CLOCK_CHECK_V1 (90 s against server Date + Age when present; otherwise 60 s against the latest trusted reference and 90 s against the epoch record) keeps its observed_at but is never processed, cannot anchor, satisfy or start a cycle, is a visible diagnostic, and never becomes a reference.",
+    "F72": "RAW CORRUPTION FAILS CLOSED EVERYWHERE. A digest mismatch found in processing, recovery, reconciliation or replay prevents parsing, yields CORRUPTION_FAIL_CLOSED, marks dependent revisions NORMALIZED_PRESENT_RAW_CORRUPT and never triggers a refetch."
   },
   "item_predicate": {
-    "backfill_discovery_side": "revision_policy.reobservation_scheduler.candidate_acquisition.discovery_side_classification_input.HISTORICAL_BACKFILL",
+    "backfill_discovery_side": "a HISTORICAL_BACKFILL_MANIFEST_V1 entry satisfies the discovery-side conjunct for its backfill observations only; primary_page_title_exact still decides",
     "classification_states": {
       "DEFINITELY_OUT_OF_SCOPE": "the item is excluded by a frozen deterministic negative rule that requires NO semantic guessing. V1 keeps this category deliberately NARROW.",
       "IN_SCOPE_V1": "the exact frozen positive predicate succeeds on BOTH surfaces",
@@ -1925,16 +2304,35 @@
     "default_non_match": "UNRESOLVED_CANDIDATE",
     "default_rationale": "fail closed. Unknown relevance resolves to UNRESOLVED, never to a negative. There is no frozen safe negative rule for a differently-titled official monetary item, so the default applies.",
     "evidence": "title verified on the four FOMC statement feed items and on statement pages sampled 2015-2026",
+    "feed_item_classification_v1": {
+      "already_known": "an identifiable item is ALREADY_KNOWN iff, in the pre-cycle state, EITHER (a) KNOWN_ADMITTED: it has a committed IN_SCOPE_V1 EventRevision in any observation mode; OR (b) KNOWN_CONCLUDED: it has a durable feed item conclusion UNRESOLVED_CANDIDATE or classification conflict, or a terminal non-normalized processing outcome from a qualifying LIVE observation, AND it has no unconcluded LIVE acquisition, AND NOT (it has no qualifying LIVE observation while its current feed title == feed_title_exact and its path matches PRIMARY_STATEMENT_PATH_V1). The last clause makes an item retitled to the exact statement title a CYCLE_CANDIDATE again (step 6).",
+      "applies_to": "every item of a LIVE discovery cycle's feed observation, evaluated against the pre-cycle state (zero_assertion.cycle_definition.pre_cycle_state)",
+      "durable_conclusions": "each UNRESOLVED_CANDIDATE conclusion made by these steps is persisted as a feed item conclusion record within the cycle conclusion transaction",
+      "id": "FEED_ITEM_CLASSIFICATION_V1",
+      "live_after_backfill": "an item KNOWN_ADMITTED only through HISTORICAL_BACKFILL, with no qualifying LIVE observation, receives exactly one LIVE acquisition under step 3 when the feed lists it with the exact title and path; that acquisition never makes any cycle non-zero and never counts as newly admitted",
+      "negative_rule_scope": "the only frozen negative rule is structural (step 2). No title-based negative rule exists; in-family items with other titles stay UNRESOLVED_CANDIDATE and block the cycle in which they are first concluded.",
+      "persistence_of_conclusions": "items concluded UNRESOLVED_CANDIDATE by steps 4, 5 or 6 are KNOWN_CONCLUDED in later cycles (step 3); only step-1 items (no identity) block every cycle that lists them",
+      "retitle": "an item previously concluded UNRESOLVED from feed fields whose feed title becomes exactly the statement title, with a PRIMARY_STATEMENT_PATH_V1 path and no qualifying LIVE observation, is a CYCLE_CANDIDATE and gets a LIVE acquisition; the cycle is NOT_ZERO",
+      "steps": [
+        "1. link fails V1 URL admission or identity derivation -> CYCLE_CANDIDATE, concluded UNRESOLVED_CANDIDATE (unidentifiable); it has no source_item_id, so it is a CYCLE_CANDIDATE in every cycle that lists it",
+        "2. canonical path outside the prefix of surfaces.statement_family_path AND normalized feed title != feed_title_exact -> DEFINITELY_OUT_OF_SCOPE (structural negative rule; non-blocking)",
+        "3. the item is ALREADY_KNOWN in the pre-cycle state -> KNOWN (non-blocking, never newly admitted). If it is KNOWN_ADMITTED only through HISTORICAL_BACKFILL, has no qualifying LIVE observation and no LIVE acquisition record, and its feed title == feed_title_exact and path matches PRIMARY_STATEMENT_PATH_V1, one LIVE acquisition is created (live_after_backfill); this does not make it a CYCLE_CANDIDATE",
+        "4. canonical path outside the prefix AND feed title == feed_title_exact -> CYCLE_CANDIDATE, concluded UNRESOLVED_CANDIDATE",
+        "5. path under the prefix but not matching STATEMENT_FAMILY_PATH_V1 -> CYCLE_CANDIDATE, concluded UNRESOLVED_CANDIDATE (malformed family)",
+        "6. otherwise CYCLE_CANDIDATE: if feed title == feed_title_exact AND path matches PRIMARY_STATEMENT_PATH_V1 -> it needs a LIVE acquisition (created unless an unconcluded one exists); else concluded UNRESOLVED_CANDIDATE from feed fields"
+      ],
+      "unconcluded_acquisition_blocks": "an item that is not KNOWN_ADMITTED and has a LIVE acquisition that is not concluded (pending, in flight, failing or SUSPENDED) is a CYCLE_CANDIDATE in every cycle that lists it; a KNOWN_ADMITTED item never blocks, whatever the state of its LIVE acquisition"
+    },
     "feed_title_exact": "Federal Reserve issues FOMC statement",
     "insufficient_alone": [
       "a URL containing 'monetary'",
       "a feed category",
       "a date pattern"
     ],
-    "known_v1_narrowness": "an unscheduled or differently-titled FOMC action is NOT captured by V1. It is recorded as an UNRESOLVED_CANDIDATE and blocks the zero assertion, rather than being silently treated as absent. Widening the positive predicate requires a spec revision.",
+    "known_v1_narrowness": "an unscheduled or differently-titled FOMC action is NOT captured by V1. It is recorded as an UNRESOLVED_CANDIDATE, makes its cycle non-zero and stays durably visible as an unresolved item record; it is never silently treated as absent. Widening the positive predicate requires a spec revision.",
     "no_broad_semantic_classifier": "V1 must NOT be widened with keyword lists, semantic similarity, an LLM, regex over body text, or hardcoded emergency-action vocabulary. Honest incompleteness beats speculative coverage.",
     "normalization": "extract from parser_policy.primary_page_title_anchor, then apply parser_policy.semantic_text_normalization in its frozen order; comparison is exact and case-sensitive",
-    "on_positive_predicate_no_match": "classification = UNRESOLVED_CANDIDATE unless an explicit frozen negative rule proves DEFINITELY_OUT_OF_SCOPE. No normalized FOMC EventRevision is created either way, but an UNRESOLVED_CANDIDATE BLOCKS any zero assertion for that cycle until it is deterministically resolved.",
+    "on_positive_predicate_no_match": "classification = UNRESOLVED_CANDIDATE unless the structural negative rule (feed_item_classification_v1 step 2) proves DEFINITELY_OUT_OF_SCOPE. No normalized FOMC EventRevision is created either way. An UNRESOLVED_CANDIDATE blocks EVENTS_OBSERVED_ZERO for the cycle in which it is a CYCLE_CANDIDATE; once durably concluded it is ALREADY_KNOWN for later cycles.",
     "primary_page_title_exact": "Federal Reserve issues FOMC statement",
     "role": "POSITIVE CLASSIFIER FOR THE V1 SUBSET ONLY - a non-match is NOT proof that an item is not an FOMC monetary-policy event",
     "rule": "CONJUNCTION - both must hold, on verified official fields only",
@@ -1944,10 +2342,12 @@
     "HISTORICAL_BACKFILL": {
       "actual_observed_at": "the backfill fetch instant",
       "content_source_available_at": null,
+      "discovery_input": "surfaces.backfill_manifest only",
       "exact_content_retrospective_source": "UNSUPPORTED_V1",
       "exact_content_vintage_from_source": "NOT PROVEN",
       "historical_observed_at": "UNAVAILABLE BY DEFINITION",
-      "logical_release_metadata": "SUPPORTED when the strict parser succeeds"
+      "logical_release_metadata": "SUPPORTED when the strict parser succeeds",
+      "reobservation_grid": "NONE"
     },
     "LIVE": {
       "content_durable_replay": "SUPPORTED",
@@ -1961,9 +2361,9 @@
   "modes": {
     "HISTORICAL_BACKFILL": {
       "cadence_class": "OFFLINE_BACKFILL",
-      "discovery": "official FOMC calendar/archive links; URLs never synthesised from dates",
+      "discovery": "surfaces.backfill_manifest (HISTORICAL_BACKFILL_MANIFEST_V1) only; URLs never synthesised from dates; no archive/calendar crawl",
       "observed_at": "the actual backfill collection instant",
-      "raw_first": "the archive/calendar page is itself preserved when its links form the provenance of discovery",
+      "raw_first": "the manifest artefact is persisted durably before any backfill request",
       "relabelling": "a backfill item is NEVER relabelled LIVE"
     },
     "LIVE": {
@@ -1971,6 +2371,8 @@
       "discovery": "official monetary-policy feed poll",
       "observed_at": "real primary statement fetch instant"
     },
+    "live_not_preempted": "a backfill observation never suppresses LIVE acquisition: an item KNOWN only through HISTORICAL_BACKFILL, without a qualifying LIVE observation, is LIVE-acquired when the feed lists it with the exact statement title and a PRIMARY_STATEMENT_PATH_V1 path (feed_item_classification_v1 step 3); with another title it is not fetched in LIVE",
+    "mode_is_per_observation": "observation_mode belongs to each per-response record and each EventRevision (from its source observation). Logical source identity is mode-neutral; an item is never labelled BACKFILL or LIVE as a whole.",
     "reconstruction": "observed_at is NEVER reconstructed from source timestamps in either mode"
   },
   "non_goals": [
@@ -2050,18 +2452,18 @@
   ],
   "parser_policy": {
     "anchor_cardinality_failure": {
-      "distinction": "STRUCTURAL extraction failure - anchor absent, anchor duplicated, or release leading segment absent/ambiguous - is PARSER_FAILED. A SUCCESSFUL unique extraction whose normalized title merely differs from the expected title keeps the existing FIX2 classification/conflict semantics. These must NOT be collapsed.",
+      "distinction": "STRUCTURAL extraction failure of the TITLE or DATE anchor - absent or duplicated - is PARSER_FAILED. Release-line anchor failures (absent, duplicated, empty or multiple declarations) are NON-GATING RELEASE_TIME_UNPARSED under timestamps.unrecognised_release_syntax. A successful unique title extraction that merely differs from the expected title keeps the FIX2 classification/conflict semantics.",
       "new_global_health_state": false,
       "normalized_revision_created": false,
       "state": "PARSER_FAILED",
-      "zero_policy": "any required-primary anchor or extraction failure BLOCKS EVENTS_OBSERVED_ZERO under FIX2. A broken template can never mean \"no FOMC statement\"."
+      "zero_policy": "a title or date anchor failure of a CYCLE_CANDIDATE's primary page leaves its acquisition concluded non-normalized; the cycle containing that candidate is NOT_ZERO. A broken template can never mean \"no FOMC statement\"."
     },
     "anchor_drift_policy": {
       "automatic_alternative_node_search": "FORBIDDEN",
       "heuristic_broadening": "FORBIDDEN",
-      "historical_templates": "NO claim is made that these anchors hold for 2015, 2019, all Federal Reserve history or all monetary pages. Backfill pages outside the observed template family FAIL CLOSED if the anchors do not match. FIX10 adds no legacy selector.",
-      "immediate_release_note": "no \"For immediate release\" page was captured in the evidence sample, so its DOM placement is not empirically exercised. The existing immediate-release GRAMMAR is preserved unchanged: if it appears in the SAME frozen p.releaseTime anchor the existing grammar applies; if the structure differs, fail closed rather than guess.",
-      "on_cardinality_violation": "FAIL CLOSED / PARSER_FAILED",
+      "historical_templates": "NO claim is made that these anchors hold for 2015, 2019, all Federal Reserve history or all monetary pages. Pages whose TITLE or DATE anchors do not match FAIL CLOSED; a non-matching release-line anchor is non-gating RELEASE_TIME_UNPARSED. FIX10 adds no legacy selector.",
+      "immediate_release_note": "no 'For immediate release' page was captured in the evidence sample, so its DOM placement is not empirically exercised. If it appears in the SAME frozen p.releaseTime anchor the existing grammar applies; otherwise the release line is non-gating RELEASE_TIME_UNPARSED (timestamps.unrecognised_release_syntax), never a guess.",
+      "on_cardinality_violation": "TITLE or DATE anchor: FAIL CLOSED / PARSER_FAILED. RELEASE-LINE anchor: non-gating RELEASE_TIME_UNPARSED (timestamps.unrecognised_release_syntax).",
       "rationale": "intentional provider drift detection: if upstream markup changes, V1 must stop rather than guess"
     },
     "determinism": "operates offline on verified locally stored raw body bytes and the persisted relevant HTTP Content-Type provenance required by text_decoding_v1; the same bytes, metadata and CaptureSpec hash must yield the same decoded text or PARSER_FAILED. No network or machine-dependent charset selection.",
@@ -2144,11 +2546,11 @@
     "release_line_anchor": {
       "character_references": "resolved to Unicode as part of extraction, BEFORE NFC; extraction never extends through later markup because descendant text exists",
       "class_token_contains": "releaseTime",
-      "duplicate_rule": "two p.releaseTime start tags -> PARSER_FAILED even if their text is identical; no first/last wins",
-      "empty_leading_segment": "if the unique start tag exists but no non-whitespace semantic character data precedes the first subsequent markup token: PARSER_FAILED. No fallback to descendant text and no later scan of the page.",
+      "duplicate_rule": "two p.releaseTime start tags -> RELEASE_TIME_UNPARSED (non-gating, timestamps.unrecognised_release_syntax) even if their text is identical; no first/last wins",
+      "empty_leading_segment": "if the unique start tag exists but no non-whitespace semantic character data precedes the first subsequent markup token: RELEASE_TIME_UNPARSED (non-gating, timestamps.unrecognised_release_syntax). No fallback to descendant text and no later scan of the page.",
       "fallback": "NONE",
-      "multiple_declarations_in_segment": "the single extracted segment must satisfy exactly one strict release declaration grammar; ambiguous or multiple independent declarations -> PARSER_FAILED, never first-match selection.",
-      "multiple_matches": "PARSER_FAILED",
+      "multiple_declarations_in_segment": "the single extracted segment must satisfy exactly one strict release declaration grammar; ambiguous or multiple independent declarations -> RELEASE_TIME_UNPARSED (non-gating, timestamps.unrecognised_release_syntax), never first-match selection.",
+      "multiple_matches": "RELEASE_TIME_UNPARSED (non-gating, timestamps.unrecognised_release_syntax)",
       "observed_result": "only the release declaration plus its surrounding raw whitespace; the <ul> and everything after it is excluded",
       "recovered_dom_textcontent_authoritative": false,
       "region": "html_semantic_region",
@@ -2158,7 +2560,7 @@
       "text_extent_rule": "after locating the UNIQUE p.releaseTime START TAG in the decoded HTML token stream, release_line_source_text is the concatenation of the contiguous character-data / character-reference-derived text immediately following that start tag and preceding the FIRST subsequent HTML markup token. That first markup token terminates the segment.",
       "tokenization_requirement": "no parser library is pinned, but deterministic HTML tokenization sufficient to distinguish START TAG, CHARACTER DATA, CHARACTER REFERENCE and the next MARKUP TOKEN is required. Comments, declarations and tags after the start tag all terminate the segment. A parser that has already repaired the DOM in a way that loses this original token boundary may NOT substitute repaired .textContent. A tokenizer/event stream or an equivalent structural scan over the decoded HTML is acceptable provided these semantics are exact.",
       "why_token_bound": "the evidence shows p.releaseTime is NEVER CLOSED: there is no </p> and the next markup is <ul class=\"list-unstyled\">. A WHATWG parser implicitly closes the paragraph there; a permissive parser does not and absorbs the share menu and the entire statement body. Defining the field by element.textContent, recursive descendant text, browser-rendered text or recovered-DOM subtree text would therefore NOT be single-valued. Token-bounded extraction removes all dependence on whether a parser closes the paragraph.",
-      "zero_matches": "PARSER_FAILED"
+      "zero_matches": "RELEASE_TIME_UNPARSED (non-gating, timestamps.unrecognised_release_syntax)"
     },
     "semantic_text_normalization": {
       "ascii_whitespace": [
@@ -2405,12 +2807,12 @@
     "provider_rate_limit": "UNKNOWN",
     "request_accounting": "request_accounting: PHYSICAL_REQUEST_ATTEMPT_START units in FEDERAL_RESERVE_PROVIDER_V1_GLOBAL; rate_limiter freezes rolling-window, spacing, monotonic, atomic admission and epoch semantics.",
     "retry_policy": {
-      "candidate_retry_binding": "revision_policy.reobservation_scheduler.candidate_acquisition.retry: when a later successful discovery cycle lists the candidate again, or once after restart",
+      "candidate_retry_binding": "revision_policy.reobservation_scheduler.retry_policy LIVE_ACQUISITION episodes; later feed listings reuse the durable acquisition and never add retries",
       "exponential_request_storm": false,
       "feed_retry_binding": "a failed feed poll is followed only by the next poll under revision_policy.reobservation_scheduler.live_feed_cadence",
       "hidden_library_retries": "forbidden",
-      "reobservation_retry_binding": "revision_policy.reobservation_scheduler.failed_attempt_retry: failed reobservation of S is eligible again 60 s after its terminal outcome; no cap, no extra backoff; discovery-cycle retry never applies to an anchored item (revision_policy.reobservation_scheduler.execution.post_anchor_primary_fetch_routing)",
-      "rule": "on failure, record source health and retry only on the next normal discovery cycle or a scheduled pending-item retry, all under the same ceiling",
+      "reobservation_retry_binding": "revision_policy.reobservation_scheduler.retry_policy (BOUNDED_RETRY_EPISODE_V1): at most 6 logical fetches per episode with backoff 60/300/900/3600/14400 s, then SUSPENDED; discovery-cycle retry never applies to an anchored item",
+      "rule": "on failure, record source health; any later attempt is only the next normal discovery poll or an attempt permitted by revision_policy.reobservation_scheduler.retry_policy, all under the same ceiling",
       "tight_retry_loop": false
     }
   },
@@ -2654,11 +3056,25 @@
     "bytes_semantics": "raw_body_bytes = the entity body AFTER standard HTTP content decoding; Content-Encoding retained as metadata",
     "charset": "ONLY parser_policy.text_decoding_v1 applies, AFTER complete bounded body admission, durable raw persistence and byte hashing. XML and HTML use STRICT UTF-8, also the explicit default; every recognized declaration must be UTF-8-compatible. Unsupported/conflicting/unknown charset, unsupported BOM or invalid UTF-8 => PARSER_FAILED with raw/hash preserved, no EventRevision and no zero from the failed feed/candidate. No fallback or lossy decoding.",
     "content_type_charset_provenance": "The existing persisted Content-Type provenance MUST preserve the exact relevant received field value(s), including charset parameters, duplicates and source spelling, or explicitly record that the header was absent. Never replace them with a library-inferred default charset, keep only the media type, or discard a conflicting value. These values and the unchanged body bytes are required offline inputs to parser_policy.text_decoding_v1. Missing recorded provenance is not equivalent to actual header absence: fail closed, no metadata refetch. This clarifies existing HTTP provenance, not a new raw/EventStore schema.",
-    "corrupt_raw_at_replay": "verified replay FAILS CLOSED (design NORMALIZED_PRESENT_RAW_CORRUPT)",
+    "corrupt_raw_at_replay": "verified replay FAILS CLOSED (design NORMALIZED_PRESENT_RAW_CORRUPT); raw_policy.integrity_verification applies the same rule outside replay",
     "hash_algorithm": "SHA-256",
     "hash_algorithm_note": "repo primitive sha256_bytes; no second digest algorithm introduced",
     "hash_before_text_decode": true,
     "hash_is_not_vintage_proof": "the raw body hash is provenance for WHAT HYPRL ACTUALLY OBSERVED AND WHEN. It does not become proof of historical content existence merely because the same normalized record also carries a declared_release_at recovered from the page.",
+    "integrity_verification": {
+      "id": "RAW_INTEGRITY_EVERYWHERE_V1",
+      "later_detection": "a mismatch found after a terminal outcome exists is recorded as a separate durable integrity diagnostic (live operation only); dependent revisions are NORMALIZED_PRESENT_RAW_CORRUPT and verified snapshots depending on them fail closed",
+      "on_mismatch": [
+        "no parse and no normalization from those bytes",
+        "if the record has no terminal processing outcome yet, persist CORRUPTION_FAIL_CLOSED as its terminal outcome (live operation only); an existing terminal outcome is never replaced",
+        "no network repair and no scheduler refetch triggered by the corruption (raw_policy.network_repair FORBIDDEN)",
+        "every normalized EventRevision bound to that raw hash is NORMALIZED_PRESENT_RAW_CORRUPT: verified snapshots depending on it fail closed; the revision row is not deleted or silently recomputed",
+        "a feed record found corrupt: verified replay of its discovery cycle fails closed; the durable cycle conclusion is never rewritten"
+      ],
+      "replay_writes": "replay is read-only: it never persists outcomes or diagnostics; it fails closed",
+      "rule": "Every consumer of persisted raw bytes - normal post-durable processing, restart recovery, scheduler reconciliation that reads bytes, and replay - MUST verify the stored SHA-256 before use. A digest mismatch is FAIL CLOSED everywhere, not only at replay.",
+      "scheduler_effect": "Satisfaction derived from the record's durable metadata stands (the observation happened); corruption never re-opens an obligation and never triggers traffic."
+    },
     "network_repair": "FORBIDDEN",
     "offline_replay": {
       "digest_mismatch": "FAIL CLOSED (raw_policy.corrupt_raw_at_replay): no parser, no normalized output, no zero, no repair fetch",
@@ -2675,8 +3091,12 @@
       "hash_persist_replay_identity": "admitted body bytes hashed == bytes persisted == bytes replayed (raw_policy.bytes_semantics, http_policy.decoded_body_limit_enforcement.raw_replay_preservation)",
       "inputs": [
         "verified persisted body bytes (SHA-256 re-verified)",
-        "required persisted per-response metadata, including exact Content-Type provenance",
+        "required persisted per-response metadata, including exact Content-Type provenance, observed_at, monotonic reading, epoch id, and HTTP Date and Age values",
         "the persisted discovery-side classification result of the item (revision_policy.reobservation_scheduler.candidate_acquisition.discovery_side_classification_input)",
+        "limiter epoch records (timestamps.collector_clock_anomaly)",
+        "dispatch, outcome, operator retry and manifest records (retry_policy, surfaces.backfill_manifest)",
+        "processing outcome, feed item conclusion and cycle conclusion records",
+        "commit_seq ordering of all durable records (durable_ordering)",
         "the exact bound CaptureSpec hash"
       ],
       "network": false,
@@ -2698,14 +3118,20 @@
       "request URL",
       "final URL",
       "redirect chain",
-      "retrieval timestamp",
+      "observed_at (timestamps.observed_at.event)",
       "HTTP status",
-      "Content-Type",
+      "Content-Type field values or recorded absence",
       "Content-Encoding",
       "body SHA-256",
-      "byte length"
+      "byte length",
+      "observation_mode (LIVE or HISTORICAL_BACKFILL)",
+      "source_item_id association",
+      "dispatch record id and retry episode id",
+      "HTTP Date and Age field values (exact, including duplicates) or recorded absence",
+      "monotonic reading and limiter epoch id for timestamps.collector_clock_anomaly",
+      "raw_committed_at and commit_seq (durable_ordering)"
     ],
-    "unexpected_media_type": "fail closed / PARSER_FAILED"
+    "unexpected_media_type": "PARSER_FAILED under http_policy.content_type_gate"
   },
   "redistribution": {
     "internal_normalized_metadata_allowed": [
@@ -2775,7 +3201,7 @@
     },
     "rate_limiter_binding": "rate_limiter is authoritative for the temporal, atomic and epoch semantics of the unchanged PHYSICAL_REQUEST_ATTEMPT_START accounting unit.",
     "reattempt": {
-      "existing_policy_authority": "polling.retry_policy remains unchanged: hidden library retries and tight loops are forbidden; a later attempt is allowed only via the next normal discovery cycle or an allowed scheduled pending-item retry under the same provider ceiling.",
+      "existing_policy_authority": "polling.retry_policy: hidden library retries and tight loops are forbidden; a later attempt is allowed only as the next normal discovery poll or an attempt permitted by revision_policy.reobservation_scheduler.retry_policy (BOUNDED_RETRY_EPISODE_V1), under the same provider ceiling.",
       "free_retry": "FORBIDDEN",
       "new_retry_permission": false,
       "units_per_permitted_later_attempt": 1
@@ -2866,8 +3292,17 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 19 (FIX18) closes the entire remaining runtime semantic surface in one pass: revision_policy.reobservation_scheduler (REOBSERVATION_SCHEDULER_POLICY_V1) freezes the two-state PENDING/SATISFIED obligation model, missed/overdue survival, deterministic coalescing, the QUALIFYING_DURABLE_PRIMARY_SOURCE_OBSERVATION satisfaction boundary, same/changed-content and parser-failure outcomes, failed-attempt retry timing, crash/lost-ACK reconstruction from durable records, work classes and ELIGIBLE_CLASS_ALTERNATION_V1 fairness. http_policy.physical_attempt_deadline (PHYSICAL_ATTEMPT_TOTAL_DEADLINE_V1) freezes a 60-second activity-independent monotonic deadline per physical attempt covering DNS/TCP/TLS/write/header/body/content-decoding. source_health.failure_classification_v1 and new mappings make every failure class deterministic within the unchanged rev4 vocabulary. zero_assertion adds cycle, partial-cycle, pending and commit blockers. timestamps.release_time.zone_label_policy freezes literal EST/EDT offsets without seasonal rewriting and fail-closed unsupported labels. raw_policy.offline_replay restates the network-free replay contract. F54-F62 and FOMC116-FOMC135 are added; every former R18 deferral marker is replaced by a binding to its closing rule. FIX1-FIX17 remain authoritative, including anchor, offsets, obligation identity/cardinality, the REV16 rate_limiter, connect/read timeouts and all causal timestamp definitions. No runtime, capture, fixture or implementation approval is established; an independent global counter-review of this revision is pending.",
+  "revision_note": "Spec revision 20 (FIX19) repairs every CRITICAL/HIGH/MEDIUM finding of the REV19 global review: statement relevance (structural family + exact primary path grammar, feed_item_classification_v1); cycle-local zero with a durable pre-cycle state and immutable cycle conclusions replacing 'recorded state'; the newer-content barrier replacing silent H2 loss; BOUNDED_RETRY_EPISODE_V1 replacing perpetual 60 s retries; manual redirect loop and honest safe_http binding; HISTORICAL_BACKFILL_MANIFEST_V1 replacing undeclared archive crawling; LIVE-only reobservation anchors; late durable records valid by commit_seq; durable rotation and retry state; processing gate; CONTENT_TYPE_GATE_V1; implementable DNS expiry; CANONICAL_UTC_TIMESTAMP_V1 replacing the microsecond pin; COLLECTOR_CLOCK_CHECK_V1; corruption fails closed everywhere; non-gating release-clock parsing; durable acquisitions surviving feed disappearance. Confirmed-good REV19 semantics are preserved. Pre-commit verifier findings (clock re-baselining, monotonic spacing, offset-keyed episodes, per-hash revisions, retitle handling, cycle recovery, stale release/zero/corruption text, replay inputs) are closed. No runtime, capture, fixture or implementation approval; an independent global review of this revision is pending.",
   "revision_policy": {
+    "newer_content_barrier": {
+      "clears": "as soon as the latest qualifying record's hash has a committed IN_SCOPE_V1 revision (newly created or reused)",
+      "definition": "For source item S and as-of instant t: let R be S's qualifying per-response record with the largest commit_seq among records with raw_committed_at <= t. The current normalized revision of S at t is the committed IN_SCOPE_V1 EventRevision of S whose content hash equals R's body hash and whose ingested_at <= t. The barrier holds at t iff R exists, S has at least one committed EventRevision with ingested_at <= t, and no current normalized revision exists.",
+      "id": "NEWER_DURABLE_SOURCE_CONTENT_UNNORMALIZED",
+      "no_discard": "R's raw bytes and outcome are retained; nothing is overwritten",
+      "replay": "derived offline from durable records and their commit instants",
+      "semantics": "When no barrier holds, the current normalized revision (which may be an older revision after A-B-A reversion) is the latest understood source content. When the barrier holds, every operation requiring the latest understood source content MUST see the barrier (with R's observed_at and processing outcome) and must not present any older revision as current. Revisions remain immutable history either way.",
+      "zero": "the barrier never changes any cycle conclusion"
+    },
     "overwrite": "FORBIDDEN - neither raw nor normalized revisions are ever overwritten",
     "post_window_limitation": "V1 makes NO promise to detect upstream changes after +7 days. This is an explicit, stated limitation, not an immutability claim. Extending the schedule requires CaptureSpec V2.",
     "reobservation_anchor": {
@@ -2909,6 +3344,7 @@
       "later_recheck_observation_reanchors": false,
       "later_revision_reanchors": false,
       "logical_item_binding": "The original logical source item under identity.source_item_id semantics; no new identity component or content-revision-specific anchor is introduced.",
+      "mode_scope": "Only a qualifying observation with observation_mode LIVE (a LIVE acquisition or reobservation) can establish the anchor. HISTORICAL_BACKFILL observations never create an anchor or reobservation obligations: a current backfill fetch cannot reconstruct what changed minutes after a historical release.",
       "non_qualifying_response": {
         "establishes_anchor": false,
         "examples": [
@@ -2925,11 +3361,11 @@
       },
       "offset_arithmetic": {
         "minute_alignment": "FORBIDDEN",
-        "precision": "Preserve the existing canonical timestamp representation and precision. If observed_at carries supported sub-second precision, preserve it in every offset sum; do not truncate for scheduling. If the existing model represents whole seconds only, retain that representation. FIX16 introduces no new timestamp precision regime.",
+        "precision": "Instants follow timestamps.canonical_serialization (CANONICAL_UTC_TIMESTAMP_V1). A + o is computed on parsed instants at that primitive's resolution, with no truncation or rounding.",
         "previous_recheck_chaining": "FORBIDDEN",
         "rounding": "FORBIDDEN",
         "rule": "For original anchor A, targets are exactly A+300, A+3600, A+86400 and A+604800 seconds by existing canonical UTC timestamp arithmetic. Each target is computed directly from A, never from a previous actual recheck or its completion.",
-        "subsecond_control_if_supported": {
+        "subsecond_control": {
           "anchor_utc": "2026-09-22T18:00:05.250Z",
           "offset_seconds": 300,
           "target_utc": "2026-09-22T18:05:05.250Z"
@@ -2953,12 +3389,14 @@
       "qualification": {
         "EventRevision_commit_required": false,
         "canonical_observed_at_required": true,
+        "clock_check_required": "not COLLECTOR_CLOCK_ANOMALY (timestamps.collector_clock_anomaly)",
         "complete_admitted_body_policy": "Existing bounded complete-body admission under FIX8/FIX12; no change to body production, status or raw-byte rules.",
         "complete_body_required": true,
         "durable_primary_observation_required": true,
         "final_http_status_admitted": true,
         "final_http_status_policy_binding": "http_policy.http_status_policy.final_body_admission (FIX12)",
         "final_http_status_required": 200,
+        "observation_mode_required": "LIVE",
         "rule": "ALL of final admitted HTTP 200, complete admitted primary body, its canonical observed_at and the existing durable raw/SourceObservation persistence boundary are required. Once these hold, later semantic parsing/normalization failure does not erase, postpone or replace the anchor. Anchor qualification alone admits no normalized event and does not bypass any parser, classifier, source-health or zero gate.",
         "semantic_parse_success_required_for_anchor": false,
         "surface": "PRIMARY_STATEMENT"
@@ -2968,7 +3406,7 @@
       "restart_relative_reset": false,
       "scope_boundary": "FIX16 binds anchor value, minimal durable qualification, reconstruction and the immutable offset grid. FIX17 reobservation_obligations binds the derived logical obligation set and identity. FIX18 reobservation_scheduler binds execution, satisfaction, completion durability and fairness without changing any of these.",
       "source_available_at_effect": "NONE",
-      "source_event": "FIRST_QUALIFYING_DURABLE_PRIMARY_CONTENT_OBSERVATION",
+      "source_event": "FIRST_QUALIFYING_DURABLE_LIVE_PRIMARY_CONTENT_OBSERVATION",
       "timestamp_definition_binding": "timestamps.observed_at - unchanged actual successful receipt/observation of the complete admitted PRIMARY response body. Request initiation and response headers are not this event.",
       "timestamp_field": "observed_at",
       "timestamp_field_binding": "revision_policy.reobservation_anchor_timestamp_field = observed_at; the timestamp_field here names exactly that same canonical field, with no alias or alternative.",
@@ -2983,7 +3421,7 @@
         "limiter_monotonic_start",
         "restart_time"
       ],
-      "value_rule": "For each existing logical FOMC source item, reobservation_anchor_at is EXACTLY the persisted observed_at of the first qualifying primary content observation that reaches the required existing durable raw/SourceObservation boundary. Durability establishes whether the observation can serve as the persistent anchor; it never substitutes its commit time for the earlier observed_at.",
+      "value_rule": "For each logical FOMC source item, reobservation_anchor_at is EXACTLY the persisted observed_at of the qualifying LIVE primary content observation with the smallest commit_seq that is not COLLECTOR_CLOCK_ANOMALY. Durability establishes whether it can serve as the anchor; its commit time never substitutes for the earlier observed_at.",
       "volatile_observation_before_durability": {
         "establishes_persistent_anchor": false,
         "reconstructible_anchor_survives_crash": false,
@@ -2996,7 +3434,7 @@
       "coalescing": "revision_policy.reobservation_scheduler.satisfaction.coalescing",
       "dns_tls_header_body_bounds": "http_policy.physical_attempt_deadline",
       "est_edt_seasonal_consistency": "timestamps.release_time.zone_label_policy",
-      "failed_recheck_completion_semantics": "revision_policy.reobservation_scheduler.satisfaction.non_satisfying_outcomes and failed_attempt_retry",
+      "failed_recheck_completion_semantics": "revision_policy.reobservation_scheduler.satisfaction.non_satisfying_outcomes and retry_policy",
       "fairness_starvation": "revision_policy.reobservation_scheduler.selection",
       "full_source_health_matrix": "source_health.mappings and source_health.failure_classification_v1",
       "missed_checkpoint_policy": "revision_policy.reobservation_scheduler.missed_and_overdue",
@@ -3111,36 +3549,30 @@
         "rule": "Obligation status is a deterministic function of durable records only: the durable original FIX16 anchor supplies membership (FIX17) and durable qualifying primary observation records of the same logical source item supply satisfaction. Scheduler rows, completion markers, queues and in-memory state are caches or execution aids; they cannot create, erase, satisfy or un-satisfy an obligation."
       },
       "candidate_acquisition": {
-        "acquisition_predicate": "LIVE: an UNANCHORED feed item triggers primary acquisition IFF its normalized feed title equals item_predicate.feed_title_exact AND its official link passes every existing URL/identity/surfaces.primary validation including path_constraint. Every other UNANCHORED feed item triggers NO primary GET: it is classified from feed fields only under the existing item_predicate (UNRESOLVED_CANDIDATE unless a frozen negative rule applies) and creates no anchor, SourceObservation or obligation. An ANCHORED item listed by any feed triggers no primary GET and is never re-classified from the current feed title; its classification in every LIVE cycle is its recorded state (discovery_side_classification_input and zero_assertion.cycle_definition). HISTORICAL_BACKFILL: every link on the durable official calendar/archive page of the run whose validated URL passes the same validation including surfaces.primary.path_constraint triggers primary acquisition, whatever its link text; there is no feed title and no label-based selector in backfill.",
-        "birth": "A durable successful feed (or backfill archive) observation listing an unanchored item that satisfies acquisition_predicate creates one acquisition for that item, unless one is already pending or in flight (dedupe).",
-        "dedupe": "At most one acquisition per candidate source_item_id is pending or in flight at a time.",
+        "birth": "feed_item_classification_v1 steps 3 (live_after_backfill) and 6 create at most one unconcluded durable LIVE_ACQUISITION per source item, committed with the cycle conclusion; creation is idempotent per source_item_id at commit time",
+        "conclusion": "an acquisition concludes when a qualifying LIVE observation of the item commits (success) and its processing reaches a terminal outcome; failures follow retry_policy; SUSPENDED is not a conclusion",
         "discovery_side_classification_input": {
-          "HISTORICAL_BACKFILL": "recorded result = 'link on an official calendar/archive page passing surfaces.primary.path_constraint'. This satisfies the discovery-side conjunct for backfill ONLY; item_predicate.primary_page_title_exact still decides, so a URL never classifies alone (item_predicate.insufficient_alone). A backfill primary page whose title does not match is UNRESOLVED_CANDIDATE with no revision.",
-          "LIVE": "recorded result = (normalized feed title == item_predicate.feed_title_exact), which is always true for an acquired LIVE item",
           "persisted_replay_input": true,
-          "rule": "The discovery-side conjunct of item_predicate for S is evaluated ONCE, from the discovery observation (feed or archive) that created the acquisition which produced S's anchor, and is persisted with S as metadata. Every later observation of S (reobservation, recovery, offline replay) is classified from that recorded discovery-side result plus its OWN primary title. Later feed observations, edited feed titles or a later feed that no longer lists S never re-evaluate it.",
-          "zero": "EVENTS_OBSERVED_ZERO is a LIVE discovery-cycle assertion only; backfill runs never assert it"
+          "rule": "The discovery-side conjunct of item_predicate is recorded per (S, observation_mode): for LIVE, at the LIVE acquisition's birth (feed title == feed_title_exact, always true for an acquired item); for HISTORICAL_BACKFILL, the validated manifest entry. Every later observation of S in that mode is classified from that recorded input plus its OWN primary title; later feed titles never re-evaluate it."
         },
-        "restart": "After restart, every unanchored item satisfying acquisition_predicate listed by the most recent durable successful feed observation is pending acquisition again, including items whose earlier acquisition failed. These re-derived acquisitions belong to no pre-restart cycle: a cycle interrupted by a limiter-epoch change can NEVER assert EVENTS_OBSERVED_ZERO. The first poll of the new epoch starts a fresh cycle. In backfill, only a later operator run over an archive listing re-derives acquisitions.",
-        "retry": "A failed candidate acquisition is retried only (a) when a later successful discovery cycle lists the candidate again (polling.retry_policy 'next normal discovery cycle') or (b) once after restart under candidate_acquisition.restart. No separate candidate retry timer exists.",
-        "success": "A qualifying durable primary observation establishes the FIX16 anchor and FIX17 obligations; later GETs of that item are REOBSERVATION work."
+        "durability": "the acquisition record is durable required work independent of later feed observations: a later feed that omits the item never cancels it, and dispatch reads durable acquisition records, never only the latest feed"
       },
       "clock": {
-        "due_eligibility_clock": "now_utc = the collector canonical UTC wall clock, the same clock domain that assigns observed_at. Used ONLY to decide PENDING_DUE eligibility.",
+        "due_eligibility_clock": "now_utc = the collector canonical UTC wall clock (timestamps.canonical_serialization). Used for due and retry eligibility only.",
         "rate_admission": "Unchanged FIX15 monotonic limiter; wall UTC never accelerates or resets admission.",
         "satisfaction_comparison": "Satisfaction compares persisted canonical observed_at against due_at; it never uses dispatch time, monotonic time or completion-marker time.",
-        "timestamp_precision": "Canonical observed_at, anchor A and due_at use UTC with exactly MICROSECOND precision; observed_at is the collector clock reading truncated toward zero to the microsecond. due_at = A + o exactly; every satisfaction and eligibility comparison is exact at microsecond precision. This pins the precision left conditional in revision_policy.reobservation_anchor.offset_arithmetic.precision (sub-second precision preserved, no rounding).",
-        "wall_clock_jump": "A wall-clock jump can change only WHEN work becomes eligible. It cannot satisfy an obligation early, because satisfaction requires persisted observed_at >= due_at."
+        "timestamp_precision": "timestamps.canonical_serialization (CANONICAL_UTC_TIMESTAMP_V1); comparisons on parsed instants only.",
+        "wall_clock_jump": "A wall-clock jump can change when work becomes eligible. It cannot silently satisfy obligations: an observation failing timestamps.collector_clock_anomaly neither satisfies nor anchors."
       },
       "completion_durability": {
         "authority": "satisfaction.rule evaluated over durable qualifying observation records. Nothing else establishes completion.",
         "completion_rows": "Optional caches. A row claiming SATISFIED without a supporting durable qualifying record has no authority; a missing or stale row cannot un-satisfy. Rows must reconcile to the derived status.",
-        "crash_after_observation_durable_before_marker": "Recovery derives SATISFIED for every obligation with due_at <= R.observed_at. A duplicate provider GET because a completion marker or cache row was lost is FORBIDDEN.",
+        "crash_after_observation_durable_before_marker": "Recovery derives SATISFIED for every obligation with due_at <= R.observed_at and the dispatch counts as SUCCESS (retry_policy.success). A duplicate provider GET because a completion marker, cache row or outcome record was lost is FORBIDDEN.",
         "crash_before_observation_durable": "The volatile observation never existed for scheduling purposes. Obligations stay PENDING and a new real fetch is required and conforming; nothing is synthesized from memory or logs.",
-        "epoch_quiescence": "Recovery derivation and the first dispatch of a new limiter epoch happen only after every attempt of the previous emitter has ended and its outcome is either durable or abandoned. A previous-epoch observation may not become durable after new-epoch recovery; if it cannot be excluded, it is abandoned and treated as never observed.",
+        "late_durable_record": "A limiter epoch controls permission to START provider transport only. A response legitimately started under an owned epoch whose per-response record commits after an epoch transition is a valid durable observation, considered identically by live derivation and replay (durable_ordering.late_durable_record). After ownership loss the old issuer MUST NOT start another physical attempt (FIX15).",
         "network_required_for_derivation": false,
         "raw_corruption": "Scheduler derivation reads durable per-response metadata and does not re-verify body digests. Raw corruption is handled by raw_policy.corrupt_raw_at_replay (fail closed) and NEVER triggers a repair refetch (raw_policy.network_repair FORBIDDEN).",
-        "recovery_rule": "On startup/recovery, before dispatching any reobservation of S, derive the status of all four obligations of S from the durable anchor and durable qualifying observation records of S."
+        "recovery_rule": "On startup/recovery, and whenever new durable records commit, derive obligation status, episode state and processing gates from durable records before dispatching any work of the affected item."
       },
       "execution": {
         "after_final_satisfaction": "Once O604800 is satisfied, S generates no further reobservation traffic (revision_policy.post_window_limitation).",
@@ -3148,25 +3580,13 @@
         "no_catch_up_burst": "Several overdue obligations of S never produce back-to-back GETs. After a qualifying R, obligations with due_at <= R.observed_at are satisfied by it and later ones wait for their own due_at.",
         "not_due": "An item with only PENDING_NOT_DUE obligations is never fetched as reobservation work.",
         "one_in_flight_per_item": true,
-        "post_anchor_primary_fetch_routing": "Once S has a durable anchor, discovery never issues a primary GET for S; feed relisting of an anchored item causes no primary request. Every further primary GET of S is REOBSERVATION work under this policy.",
-        "work_unit": "REOBSERVATION work is per logical source item S, not per obligation. S is eligible iff it has at least one PENDING_DUE obligation, it is not inside failed_attempt_retry backoff, and no reobservation logical fetch of S is in flight."
-      },
-      "failed_attempt_retry": {
-        "attempt_cap": "NONE - the obligation stays required; there is no give-up and no terminal failure",
-        "binding": "polling.retry_policy 'scheduled pending-item retry', using the existing polling.live_feed_poll_interval_seconds cadence",
-        "epoch_boundary": "A new limiter epoch discards in-memory retry backoff. The FIX15 60-second cold-start embargo already separates every new-epoch start from every prior-epoch start by at least 60 seconds, so no durable failure record is required for retry timing.",
-        "extra_backoff": "NONE - no exponential or jittered backoff in V1",
-        "hidden_or_library_retry": "FORBIDDEN (request_accounting.hidden_library_attempt)",
-        "permanent_failure_cost": "An item whose primary page fails permanently is re-attempted about once per 60 seconds plus queueing, within the provider-wide ceiling, until a qualifying observation succeeds. V1 accepts this bounded cost rather than a terminal missed state; changing it requires a spec revision.",
-        "rule": "When a reobservation logical fetch of S ends without a qualifying observation, S is not eligible again until that fetch's terminal-outcome instant + 60 seconds, measured on the FIX15 monotonic domain of the current limiter epoch. It is then eligible again subject to selection and FIX15.",
-        "terminal_outcome_instant": "the instant the last physical attempt of that logical fetch reaches its non-qualifying outcome, or the instant a response is determined to be lost before durability",
-        "tight_loop": false
+        "post_anchor_primary_fetch_routing": "Once S has a LIVE anchor, LIVE discovery never issues a primary GET for S; feed relisting causes no primary request. Every further LIVE primary GET of S is REOBSERVATION work. HISTORICAL_BACKFILL manifest entries are separate BACKFILL_ENTRY work.",
+        "work_unit": "REOBSERVATION work is per LIVE-anchored source item S, not per obligation. S is eligible iff S has at least one PENDING_DUE obligation, an open episode whose next attempt is eligible (retry_policy), no logical fetch of S in flight, and every durable qualifying record of S has a terminal processing outcome."
       },
       "fairness": {
-        "argument": "Class rotation bounds inter-class waiting. Within REOBSERVATION each dispatch moves the dispatched item's key behind every item not dispatched since, and the eligible set is finite. Within FEED_DISCOVERY each cycle has finitely many candidates, each dispatched once before the next poll.",
-        "continuous_feed_pressure_vs_rechecks": "REOBSERVATION wins every contested turn after a FEED_DISCOVERY selection",
-        "guarantee": "While FIX15 continues granting physical starts and a class continuously contains eligible required work, that class is selected at least once in every run of consecutive contested decisions whose length is the number of classes with eligible work. Within a class every eligible item is dispatched after finitely many decisions of that class. Neither FEED_DISCOVERY nor REOBSERVATION can starve the other.",
-        "infinite_recheck_backlog_vs_feed": "With FEED_DISCOVERY and REOBSERVATION both eligible and no backfill work, FEED_DISCOVERY wins the next contested turn after every REOBSERVATION selection; with all three classes eligible, class_rule rotation applies. Within a FEED_DISCOVERY turn within_FEED_DISCOVERY decides (pending acquisitions of the latest feed observation, then the due poll), so polling is delayed only by the finitely many acquisitions of one cycle."
+        "dead_items": "100 dead items consume at most one bounded episode each per wake condition (<= 24 physical requests per episode) and are then SUSPENDED and ineligible; they can never consume the budget indefinitely",
+        "fresh_work": "a fresh due obligation with next_eligible_at = due_at is never behind retries whose next_eligible_at is later, and restart does not reset retry keys (they derive from durable outcome records)",
+        "guarantee": "While FIX15 keeps granting, a class with eligible work is selected within every run of consecutive contested decisions whose length is the number of classes with eligible work, across restarts (rotation is durable). Within a class, an eligible item is overtaken only by items with a smaller (next_eligible_at, source_item_id) key; every dispatch moves its item's key forward by at least 60 s or closes its episode, and SUSPENDED items are not eligible, so every eligible item is dispatched after finitely many decisions. Within FEED_DISCOVERY, feed polls and LIVE acquisitions alternate durably, so neither starves the other."
       },
       "grid_immutability": {
         "example": "A=18:00:00; O300 due 18:05:00 actually observed 18:30:00; O3600 remains due 19:00:00, O86400 A+1d, O604800 A+7d.",
@@ -3175,8 +3595,9 @@
       },
       "id": "REOBSERVATION_SCHEDULER_POLICY_V1",
       "live_feed_cadence": {
-        "no_catch_up_polls": "A delayed poll never produces extra polls to make up intervals.",
-        "rule": "In LIVE mode at most one feed poll logical fetch is pending or in flight. The first poll of a limiter epoch is due immediately (subject to FIX15). Each next poll becomes due 60 seconds (polling.live_feed_poll_interval_seconds) after the previous poll's initial PHYSICAL_REQUEST_ATTEMPT_START, on the monotonic epoch domain, and not before that poll's logical fetch has ended."
+        "feed_poll_failure": "a failed poll is followed only by the next due poll; feed polls have no retry episode",
+        "no_catch_up_polls": "a delayed poll never produces extra polls",
+        "rule": "At most one feed poll is pending, in flight or unconcluded. The next poll becomes due 60 s after the latest durable feed-poll dispatch (measured per retry_policy.time_basis) and not before the previous poll has ENDED: its feed record has a durable cycle conclusion, or its dispatch has a non-qualifying outcome. With no feed-poll dispatch record, a poll is due immediately (subject to FIX15)."
       },
       "lost_ack": {
         "network_request_solely_due_to_ack_loss": "FORBIDDEN",
@@ -3184,7 +3605,7 @@
         "unknown_local_write_outcome": "Resolve by reading durable state before any dispatch of S; never by refetching from the provider."
       },
       "missed_and_overdue": {
-        "collector_offline_across_due_at": "The obligation survives restart as PENDING_DUE (FIX17 derivation plus completion_durability) and its item becomes eligible as soon as selection and FIX15, including the new-epoch cold-start embargo, permit.",
+        "collector_offline_across_due_at": "The obligation survives restart as PENDING_DUE and is served by a REOBSERVATION episode under retry_policy.reobservation_episode_opening, subject to selection, FIX15 and the new-epoch embargo. A SUSPENDED episode keeps the obligation PENDING until a wake condition.",
         "no_historical_synthesis": "The eventual reobservation is ONE real current observation with its own real observed_at. No synthetic, backdated, interpolated or historical observation is created for a missed target, and due_at is never rewritten.",
         "overdue_duration_irrelevant": "An obligation overdue by seconds or by days follows the same rules.",
         "rule": "Passing due_at never ends, skips, expires or fails an obligation. A PENDING_DUE obligation remains required, with no time limit, until satisfaction.rule holds.",
@@ -3197,14 +3618,93 @@
         "the internal representation of eligibility"
       ],
       "post_durable_processing": {
+        "first_terminal_outcome_authoritative": "each record has exactly one terminal processing outcome: the first one committed; nothing later (including replay or a later integrity failure) replaces it",
         "ingested_at": "the actual successful commit instant (timestamps.ingested_at); commit retry timing is local latency and never rewrites observed_at",
+        "normalized_success": "NORMALIZED success means terminal outcome NORMALIZED_REVISION_COMMITTED or NORMALIZED_SAME_CONTENT_NO_NEW_REVISION",
+        "processing_gate": "No provider fetch of S is dispatched while any durable qualifying record of S lacks a terminal processing outcome. Commit failures are retried locally (when rule) and block only S's own next fetch; other items and feed discovery continue.",
         "provider_traffic": "NONE - post-durable processing and its retries never cause a provider request",
-        "revision_creation": "The EventRevision for body hash H of item S is created from the EARLIEST durable qualifying observation of S carrying H whose processing yields IN_SCOPE_V1. A later same-hash observation never creates a second revision (revision_policy.same_item_same_body_hash) and never suppresses the revision owed to an earlier unconcluded observation.",
+        "revision_creation": "The EventRevision for body hash H of item S is created from the qualifying record of S carrying H with the smallest commit_seq whose processing concludes IN_SCOPE_V1, and only if S has no revision for H. A later record with a hash that already has a revision concludes NORMALIZED_SAME_CONTENT_NO_NEW_REVISION. A hash that does not conclude IN_SCOPE_V1 creates no revision and raises revision_policy.newer_content_barrier.",
         "rule": "Every durable qualifying primary observation MUST be processed to a durable conclusion (text decoding, parsing, classification and, when IN_SCOPE_V1, normalized EventRevision commit or a recorded PARSER_FAILED outcome). Processing is a deterministic offline function of the durable bytes, persisted metadata and CaptureSpec hash, and needs no network.",
-        "when": "immediately after durability in-process; and, for every durable qualifying observation whose processing has not durably concluded, at every recovery before any zero decision and before any reobservation dispatch of that item; and, after a failed local commit, again at exactly failure + 60 s (monotonic), repeated until concluded"
+        "terminal_outcomes": [
+          "NORMALIZED_REVISION_COMMITTED",
+          "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION",
+          "CLASSIFIED_NOT_IN_SCOPE",
+          "PARSER_FAILED",
+          "CORRUPTION_FAIL_CLOSED"
+        ],
+        "when": "immediately after durability in-process; for every durable qualifying record without a terminal outcome, at every recovery; after a failed local commit, again 60 s after the failure (retry_policy.time_basis), repeated until terminal. raw_policy.integrity_verification runs before every parse."
       },
       "provenance_and_rate_boundary": "Scheduler state, eligibility, selection and derived status are operational metadata. They create no SourceObservation or EventRevision, change no observed_at, ingested_at, declared_release_at or source_available_at, and grant no limiter permit.",
       "replay_role": "Offline replay never runs the scheduler and needs no network. Obligation status is derivable offline from durable records.",
+      "retry_policy": {
+        "durable_state": {
+          "derivation": "episode state, attempt number, next_eligible_at and SUSPENDED are deterministic functions of these durable records; restart never resets an episode",
+          "dispatch_record": "committed BEFORE the logical fetch requests its first FIX15 grant: {work item, episode id, attempt number, dispatch instant (wall UTC), monotonic reading, limiter epoch id}",
+          "outcome_record": "committed at the terminal outcome: {dispatch id, outcome class, terminal instant (wall UTC), monotonic reading, limiter epoch id}",
+          "unknown_outcome": "At every limiter-epoch begin, before the first dispatch, the new owner commits outcome INTERRUPTED (terminal instant = dispatch instant) for every dispatch with neither an outcome record nor a linked qualifying per-response record. For attempt accounting the outcome with the smallest commit_seq per dispatch is authoritative; a qualifying per-response record that commits later still counts for satisfaction, anchoring and success (durable_ordering.late_durable_record)."
+        },
+        "episode": "a bounded sequence of at most 6 logical fetches of one work item",
+        "hidden_or_library_retry": "FORBIDDEN (request_accounting.hidden_library_attempt)",
+        "id": "BOUNDED_RETRY_EPISODE_V1",
+        "local_failure": {
+          "commit_failure": "post-durable processing and commit failures are local work and never cause provider traffic",
+          "corruption": "never causes provider traffic (raw_policy.integrity_verification)",
+          "rule": "If response bytes were obtained but local raw persistence fails, persistence is retried locally while the bytes remain safely in process (no network). If the bytes are lost, the dispatch outcome is LOCAL_PERSISTENCE_FAILED, treated exactly like INTERRUPTED: one non-qualifying attempt of the bounded episode. This is deterministic however the failure is detected and matches design crash_state_matrix A ('refetch'), but it never creates a retry beyond the bounded episode.",
+          "store_unavailable": "a dispatch record must commit before any fetch, so while the store cannot commit no provider request can start at all"
+        },
+        "no_tight_loop": "minimum spacing between attempts of one work item is 60 s; FIX15 bounds provider-wide rate",
+        "provider_basis": "provider rate contract UNKNOWN and automated-access prohibition NOT_VERIFIED (polling); traffic must stay finite per work item",
+        "reobservation_episode_opening": "a REOBSERVATION episode for S opens when no episode of S is open, S has a PENDING_DUE obligation, and some PENDING_DUE obligation has an offset strictly greater than every offset that was PENDING_DUE when any earlier episode of S suspended (any offset if S has no suspended episode). Obligations that become due while an episode is open join it. No wall-clock comparison is involved.",
+        "schedule": {
+          "attempt_1": "when the episode opens (subject to selection and FIX15)",
+          "attempt_1_eligible_at": {
+            "BACKFILL_ENTRY": "raw_committed_at of the manifest",
+            "LIVE_ACQUISITION": "observed_at of the feed record whose cycle created the acquisition",
+            "REOBSERVATION": "due_at of the obligation that opened the episode",
+            "operator_retry": "committed instant of the operator retry record"
+          },
+          "backoff_after_failure_seconds": [
+            60,
+            300,
+            900,
+            3600,
+            14400
+          ],
+          "maximum_span": "about 5 h 22 min plus queueing",
+          "rule": "after the k-th non-qualifying outcome (k = 1..5), attempt k+1 is eligible at that outcome's durable terminal instant + backoff[k]; after the 6th non-qualifying outcome the episode is SUSPENDED"
+        },
+        "success": "A dispatch linked to a durable qualifying per-response record is a SUCCESS whether or not its outcome record exists. A REOBSERVATION episode closes, by derivation, as soon as S has no PENDING_DUE obligation, whatever work path produced the satisfying observation; other work items close on their own success.",
+        "suspension": {
+          "obligations": "stay PENDING and auditable; nothing is marked satisfied",
+          "state": "SUSPENDED (a work-item retry state, not an obligation status)",
+          "traffic": "no autonomous provider request for the work item until a wake condition",
+          "wake_conditions": {
+            "BACKFILL_ENTRY": "only a new manifest run or an explicit durable operator retry request",
+            "LIVE_ACQUISITION": "only an explicit durable operator retry request",
+            "REOBSERVATION": "a new episode opens only under retry_policy.reobservation_episode_opening (offset-keyed; no wall-clock comparison)",
+            "operator_retry": "an explicit durable operator retry record opens exactly one new episode for the named work item"
+          }
+        },
+        "time_basis": {
+          "due_eligibility": "obligation due eligibility compares now_utc with due_at (wall UTC targets)",
+          "ordering_key": "next_eligible_at is persisted as a wall UTC instant for ordering only (selection); eligibility itself uses the rules above",
+          "spacing_across_epochs": "when the referenced record belongs to an earlier epoch, spacing is measured in wall UTC from its persisted instant; if now_utc is earlier than that instant the spacing counts as elapsed. The new epoch's 60 s embargo applies in addition.",
+          "spacing_within_epoch": "backoff spacing, feed cadence and post-durable commit retry spacing are measured in the monotonic domain of the current limiter epoch from the persisted monotonic reading of the referenced record"
+        },
+        "upper_bound_proof": {
+          "logical_fetches_per_episode": 6,
+          "max_autonomous_physical_requests_per_source_item": "LIVE acquisition 24 + reobservation 4 x 24 = 120; the autonomous horizon ends at the last suspension or satisfaction, measured in collector runtime (downtime or processing-gate holds extend wall time, never the count)",
+          "max_per_backfill_entry_per_run": 24,
+          "max_physical_requests_per_dead_item_episode": 24,
+          "physical_attempts_per_logical_fetch": "<= 4 (initial + 3 redirects)",
+          "reobservation_episodes_per_item": "<= 4: every autonomous episode needs a PENDING_DUE offset strictly greater than all offsets covered at every earlier suspension, and there are four offsets"
+        },
+        "work_items": {
+          "BACKFILL_ENTRY": "one per manifest entry per manifest run",
+          "LIVE_ACQUISITION": "one per source item without a qualifying LIVE observation, created by feed_item_classification_v1",
+          "REOBSERVATION": "per LIVE-anchored source item (never per obligation)"
+        }
+      },
       "satisfaction": {
         "boundary": "QUALIFYING_DURABLE_PRIMARY_SOURCE_OBSERVATION",
         "changed_content": "A qualifying R with a changed body hash satisfies eligible obligations at R's durability boundary. Downstream parsing/normalization then appends the new immutable revision under existing rules. Satisfaction neither waits for nor depends on that commit, and a later normalization or commit failure cannot un-satisfy.",
@@ -3220,7 +3720,7 @@
         "no_early_satisfaction": "R with R.observed_at < due_at satisfies nothing for that obligation, now or later; no pre-satisfaction and no carry-forward credit. Observation at 18:30 cannot satisfy O3600 due 19:00.",
         "non_satisfying_outcomes": {
           "accounting": "any consumed unit stays consumed (FIX14)",
-          "obligation_effect": "obligation stays PENDING and remains eligible under failed_attempt_retry",
+          "obligation_effect": "obligation stays PENDING; further provider work follows retry_policy",
           "outcomes": [
             "DNS failure or hang",
             "TCP/connect failure or connect timeout",
@@ -3234,7 +3734,9 @@
             "decoded-body oversize abort",
             "response lost before durable per-response persistence (crash or persistence failure)",
             "cancellation after grant",
-            "provider ownership failure (no attempt)"
+            "provider ownership failure (no attempt)",
+            "COLLECTOR_CLOCK_ANOMALY observation",
+            "detected local persistence failure (bytes obtained, not durable)"
           ]
         },
         "not_required_for_satisfaction": [
@@ -3255,14 +3757,14 @@
         },
         "qualifying_observation": {
           "body_digest_reverification_required_for_satisfaction": false,
-          "definition": "A per-response record, under raw_policy.persisted_per_response, of a PRIMARY_STATEMENT response for logical source item S that meets EVERY revision_policy.reobservation_anchor.qualification condition: final admitted HTTP 200 exactly, complete admitted body under FIX8/FIX12, canonical observed_at, and the existing durable raw/SourceObservation persistence boundary with durable association to S.",
-          "initiating_path": "Any qualifying observation of S counts, whatever work path started it. Under V1 routing every post-anchor primary GET of S is REOBSERVATION work (execution.post_anchor_primary_fetch_routing), so this is exactly the scheduled-reobservation set. The anchor observation itself has observed_at = A < A+300 and satisfies nothing.",
+          "definition": "A per-response record, under raw_policy.persisted_per_response, of a PRIMARY_STATEMENT response for logical source item S that meets EVERY revision_policy.reobservation_anchor.qualification condition: final admitted HTTP 200 exactly, complete admitted body under FIX8/FIX12, canonical observed_at, and the existing durable raw/SourceObservation persistence boundary with durable association to S. It must also pass timestamps.collector_clock_anomaly. Any observation_mode counts once the item has a LIVE anchor.",
+          "initiating_path": "Any qualifying observation of S counts once S has a LIVE anchor, whatever work path started it (LIVE reobservation or a HISTORICAL_BACKFILL manifest fetch). After the anchor, LIVE discovery issues no primary GET for S (execution.post_anchor_primary_fetch_routing). The anchor observation itself has observed_at = A < A+300 and satisfies nothing.",
           "per_response_record_required": "Every admitted response persists its own per-response record with its own observed_at, including a same-content response (revision_policy.unchanged_refetch). Body-byte storage MAY be shared by content hash as a storage mechanic, and the content-derived identity.source_observation_id MAY repeat; satisfaction is keyed to the per-response record, not to source_observation_id, content_hash or EventRevision.",
           "same_source_item_required": true
         },
         "rule": "Obligation (S,A,o) is SATISFIED iff there exists a qualifying observation R of the same S with R.observed_at >= A + o, compared as canonical timestamps at existing precision; equality satisfies. Otherwise it is PENDING.",
         "same_content": "A qualifying R whose body hash equals a prior hash of S satisfies every eligible obligation under coalescing. It creates no new EventRevision (revision_policy.same_item_same_body_hash).",
-        "satisfying_observation_for_audit": "the earliest qualifying R of S with R.observed_at >= A + o; deterministic from durable records."
+        "satisfying_observation_for_audit": "the qualifying record of S with the smallest commit_seq among those with observed_at >= A + o; any exported or cached SATISFIED status MUST carry that record's id and observed_at so lateness (observed_at - due_at) is always visible."
       },
       "selection": {
         "class_cycle_order": [
@@ -3270,27 +3772,18 @@
           "REOBSERVATION",
           "HISTORICAL_BACKFILL"
         ],
-        "class_rule": [
-          "select the first class with eligible work in class_cycle_order strictly after last_selected_class, wrapping around",
-          "if only one class has eligible work, that class is selected",
-          "with two classes eligible this is strict alternation between them",
-          "a class with no eligible work consumes no turn",
-          "last_selected_class is set to the selected class at every decision",
-          "at the start of every limiter epoch last_selected_class = HISTORICAL_BACKFILL, so FEED_DISCOVERY wins the first contested decision"
-        ],
-        "continuations_first": "A validated redirect-follow attempt of an already dispatched logical fetch is a continuation. It takes the next grant before any new dispatch (earliest dispatch first among several continuations) and neither consumes nor changes the class turn.",
-        "decision_point": "A selection decision happens only when a new logical fetch's initial physical attempt is about to obtain a FIX15 grant. Exactly one eligible work item is selected per decision and its initial attempt consumes that grant. Selection reserves no future grant.",
+        "class_rule": "select the first class with eligible work in class_cycle_order strictly after the class of the latest durable dispatch record (largest commit_seq), wrapping around; with no dispatch record, start at FEED_DISCOVERY. A class without eligible work consumes no turn.",
+        "continuations_first": "a validated redirect-follow attempt of an already dispatched logical fetch takes the next grant before any new dispatch (smallest dispatch commit_seq first) and does not affect rotation",
+        "decision_point": "A selection decision happens only when a new logical fetch's initial physical attempt is about to obtain a FIX15 grant; exactly one eligible work item is selected per decision.",
         "fix15_authority": "Selection chooses WHICH work takes a grant; FIX15 alone decides WHEN a grant exists.",
         "id": "ELIGIBLE_CLASS_ALTERNATION_V1",
-        "implementation_freedom": "Threads, queues, locks and data structures are free; the observable sequence of selected work must equal this rule.",
-        "source_item_id_order": "ascending lexicographic order of the lowercase hex source_item_id",
-        "within_FEED_DISCOVERY": [
-          "first: acquisitions of the most recent durable successful feed observation that have not been dispatched in the current epoch since that observation, by source_item_id ascending",
-          "then: a due LIVE feed poll"
-        ],
-        "within_HISTORICAL_BACKFILL": "the archive/calendar page of the run first, then its not-yet-dispatched candidate acquisitions by source_item_id ascending, then the next archive page in operator-supplied run order",
-        "within_REOBSERVATION": "eligible items ordered by the key (most recent reobservation dispatch instant of S in the current epoch, with never-dispatched-in-epoch ordered first; then oldest PENDING_DUE due_at ascending; then source_item_id ascending). For the normal case this is oldest due_at first; the dispatch-instant component makes permanently failing items yield to others.",
-        "work_conserving": "Whenever eligible work exists and FIX15 would admit a start, a selection decision occurs and that start is made. An implementation MUST NOT idle, serialize logical fetches or cap concurrency below what FIX15 and the one-in-flight-per-work-key rules allow (one feed poll, one fetch per source item). Remaining timing differences arise only from local processing latency and are non-material."
+        "implementation_freedom": "threads, queues and locks are free; the observable sequence of selected work must equal this rule",
+        "rotation_state": "derived from durable dispatch records only; identical after restart",
+        "source_item_id_order": "ascending lowercase-hex source_item_id",
+        "within_FEED_DISCOVERY": "when both a due feed poll and an eligible LIVE_ACQUISITION exist, alternate by the kind of the latest durable FEED_DISCOVERY dispatch record (poll after an acquisition, acquisition after a poll; with no such record, the poll first); otherwise whichever kind is eligible. LIVE_ACQUISITION items are ordered by (next_eligible_at, source_item_id).",
+        "within_HISTORICAL_BACKFILL": "eligible BACKFILL_ENTRY items ordered by (manifest commit_seq, next_eligible_at, source_item_id)",
+        "within_REOBSERVATION": "eligible items ordered by (next_eligible_at, source_item_id), where next_eligible_at = the episode's attempt-eligibility instant (the opening obligation's due_at for attempt 1, terminal instant + backoff afterwards)",
+        "work_conserving": "Whenever eligible work exists and FIX15 would admit a start, a selection decision occurs and that start is made. No idling, serialization of logical fetches or concurrency cap below FIX15 and the one-in-flight rules (one feed poll, one fetch per work item)."
       },
       "status_model": {
         "derived_pending_views": {
@@ -3324,23 +3817,22 @@
       },
       "work_classes": {
         "FEED_DISCOVERY": [
-          "LIVE discovery feed poll logical fetch",
-          "primary acquisition logical fetch of a discovered candidate that has no durable anchor"
+          "LIVE discovery feed poll",
+          "LIVE_ACQUISITION work"
         ],
         "HISTORICAL_BACKFILL": [
-          "official archive/calendar page fetch in an operator-started backfill run",
-          "primary acquisition of an unanchored candidate listed by that archive/calendar page"
+          "BACKFILL_ENTRY work of validated manifests"
         ],
         "REOBSERVATION": [
-          "reobservation logical fetch of an anchored item S under this policy"
+          "REOBSERVATION work of LIVE-anchored items"
         ],
-        "no_silent_drop": "Queue capacity, queue pressure or restart can never delete required work. REOBSERVATION work is re-derived from durable anchors and observations; the LIVE feed poll is re-derived from live_feed_cadence; candidate acquisition is re-derived from the most recent durable successful feed/archive observation under candidate_acquisition.",
-        "shared_limiter": "All classes obtain every physical start from the unchanged FIX15 provider-wide limiter; no class has an independent budget, quota or fast lane."
+        "no_silent_drop": "Required work is derived from durable records (anchors, obligations, acquisition records, manifests, episodes); queue pressure, restart or later feed contents never delete it.",
+        "shared_limiter": "All classes obtain every physical start from the unchanged FIX15 provider-wide limiter; no independent budget."
       }
     },
     "reobservation_under_ceiling": true,
     "revision_identity": "content-aware",
-    "same_item_different_body_hash": "NEW immutable EventRevision appended",
+    "same_item_different_body_hash": "EventRevisions are keyed per (source item, content hash). A body hash of S with no existing EventRevision gets a NEW immutable EventRevision IF AND ONLY IF its processing concludes IN_SCOPE_V1 and commits; otherwise no revision is invented and revision_policy.newer_content_barrier applies. A body hash that already has a revision of S reuses it, including after A-B-A reversion.",
     "same_item_same_body_hash": "same content revision; NO duplicate revision created",
     "unchanged_refetch": "still raw-first with auditable observation metadata; no duplicate normalized revision",
     "upstream_immutability_assumed": false,
@@ -3376,6 +3868,7 @@
     "HTTPS verification enabled",
     "explicit exact-host allowlist",
     "redirect destinations validated before being followed",
+    "automatic client redirect following forbidden; manual redirect loop with per-hop validation, grant and deadline",
     "bounded redirects (3)",
     "decoded HTTP body size bounded incrementally during production (feed 2 MiB, statement 5 MiB)",
     "bounded connect and read timeouts",
@@ -3401,19 +3894,22 @@
   "source_health": {
     "failure_classification_v1": {
       "commit_failure": "normalization/EventRevision commit failure after durable raw keeps the existing mapping (no ingested_at, no EventRevision visibility), never becomes EVENTS_OBSERVED_ZERO, and blocks zero for the affected cycle.",
-      "first_failure_wins": "The processing order is: validation, FIX15 admission, transport, status gate, bounded body production, durable persistence, media type, charset/UTF-8, XML security, XML syntax, feed structure, HTML anchors/date/release line, classification, normalization, commit. The first failing stage determines the state and later stages do not run. Concurrent limits during the network phase are ordered by which occurred first.",
+      "first_failure_wins": "The processing order is: validation, FIX15 admission, transport, status gate, bounded body production, durable persistence, collector clock check, media type, charset/UTF-8, XML security, XML syntax, feed structure, HTML title/date anchors, classification, normalization, commit. The first failing stage determines the state and later stages do not run. Concurrent limits during the network phase are ordered by which occurred first.",
       "logical_fetch_result": "A logical fetch's health result is the outcome of its last physical attempt, recorded on the fetched surface (discovery_feed or primary_statement). A reobservation failure is recorded on primary_statement and never marks the feed or the provider globally unavailable.",
       "missingness": "Every failure state is missingness; none is evidence of zero events (source_health.never).",
       "rate_limited_state": "RATE_LIMITED ('client ceiling reached') is only a non-failure diagnostic meaning work waited for FIX15 admission. It is never SOURCE_UNAVAILABLE, PARSER_FAILED or EVENTS_OBSERVED_ZERO, never fails or satisfies an obligation, and is not a discovery cycle. Whether and how often such diagnostic records are written affects no traffic, observation, revision, obligation, zero or replay decision (rate_limiter.wait_semantics).",
       "redirect_target_failures": "An attempted redirect target that fails at transport, deadline or status maps exactly as the same failure on an initial request.",
-      "rule": "Every failure of a feed, primary or reobservation logical fetch maps to exactly one existing rev4 state through source_health.mappings. No new global state is added."
+      "rule": "Every failure of a feed, primary or backfill logical fetch maps through source_health.mappings to exactly one existing rev4 state, or to an explicit NO_PROVIDER_HEALTH_STATE outcome (local persistence failure, cancellation, ownership failure, commit failure, non-gating diagnostics). No new global state is added. When a generic mapping key and a specific key both describe a failure, the specific key wins.",
+      "successful_check": "a successful non-zero feed or primary check records no failure state; its cycle conclusion or processing outcome is the success record"
     },
     "mappings": {
-      "Content-Type outside the surface's accepted media": "PARSER_FAILED",
+      "COLLECTOR_CLOCK_ANOMALY on a response": "NO_PROVIDER_HEALTH_STATE: timing diagnostic (timestamps.collector_clock_anomaly); non-qualifying for anchor and satisfaction",
+      "Content-Type missing, unparseable, conflicting, or outside the surface's accepted media (http_policy.content_type_gate)": "PARSER_FAILED",
       "DNS resolution failure, or DNS still unresolved at the physical-attempt total deadline": "SOURCE_UNAVAILABLE",
       "HTTP 204 No Content received (unsupported)": "SOURCE_UNAVAILABLE",
       "HTTP 206 Partial Content received (unsupported)": "SOURCE_UNAVAILABLE",
       "HTTP 304 Not Modified received (unsupported)": "SOURCE_UNAVAILABLE",
+      "LIVE discovery cycle with no CYCLE_CANDIDATE (zero_assertion.cycle_definition)": "EVENTS_OBSERVED_ZERO",
       "TCP connection refused, reset, unreachable, or connect timeout": "SOURCE_UNAVAILABLE",
       "TLS handshake failure, certificate or hostname verification failure, or TLS stall": "SOURCE_UNAVAILABLE",
       "cancellation after grant, before or during network I/O": "no source-health result about the provider; the logical fetch is non-qualifying, its unit stays consumed, and zero is blocked for the affected cycle or candidate",
@@ -3430,8 +3926,7 @@
       "feed XML external resource resolution attempted or required": "PARSER_FAILED",
       "feed XML malformed": "PARSER_FAILED",
       "feed fetch failed / timeout / unexpected HTTP status": "SOURCE_UNAVAILABLE",
-      "feed fetched and parsed, all relevant items deterministically classified, zero IN_SCOPE_V1 admitted, zero unresolved candidates": "EVENTS_OBSERVED_ZERO",
-      "feed item cannot be deterministically classified (UNRESOLVED_CANDIDATE)": "PARSER_FAILED",
+      "feed item cannot be deterministically classified (UNRESOLVED_CANDIDATE)": "PARSER_FAILED on discovery_feed, recorded in the cycle in which the item is a CYCLE_CANDIDATE",
       "feed title matches but primary page title does not (classification conflict)": "PARSER_FAILED",
       "feed well-formed but required RSS structure or item fields missing or invalid": "PARSER_FAILED",
       "final HTTP status is not exactly 200": "SOURCE_UNAVAILABLE",
@@ -3439,26 +3934,24 @@
       "invalid UTF-8 under strict decoding": "PARSER_FAILED",
       "normalization persistence failure": "no ingested_at, no EventRevision visibility",
       "official statement date absent, unparseable or ambiguous": "PARSER_FAILED",
-      "persisted raw digest mismatch or impossible persisted raw provenance at verified replay": "fail closed at verified replay (design NORMALIZED_PRESENT_RAW_CORRUPT); no network repair, no parse, no zero",
+      "persisted raw digest mismatch or impossible persisted raw provenance, detected anywhere (raw_policy.integrity_verification)": "NO_PROVIDER_HEALTH_STATE; processing outcome CORRUPTION_FAIL_CLOSED if the record has no terminal outcome yet; no parse, no network repair, no zero",
       "physical-attempt total deadline expiry at any stage": "SOURCE_UNAVAILABLE",
       "positive feed candidate but primary statement fetch failed": "SOURCE_UNAVAILABLE",
       "primary required HTML anchor absent, duplicated or structurally ambiguous": "PARSER_FAILED",
       "primary statement HTML malformed": "PARSER_FAILED",
-      "raw integrity failure": "fail closed at verified replay",
-      "raw/per-response persistence failure before durability": "NO source-health state about the provider: local fail-closed; the response is treated as never observed (no anchor, no satisfaction, no parse) and the feed cycle or candidate is incomplete, so EVENTS_OBSERVED_ZERO is blocked",
+      "raw/per-response persistence failure before durability": "NO_PROVIDER_HEALTH_STATE: local fail-closed; response treated as never observed; LOCAL_PERSISTENCE_FAILED under retry_policy.local_failure; the cycle or candidate is incomplete",
       "read inactivity timeout before the complete admitted body": "SOURCE_UNAVAILABLE",
       "redirect Location missing or malformed": "SOURCE_UNAVAILABLE",
       "redirect destination rejected by the allowlist": "SOURCE_UNAVAILABLE",
       "redirect status outside the allowed set": "SOURCE_UNAVAILABLE",
       "redirect target rejected by URL security validation": "SOURCE_UNAVAILABLE",
       "redirect transition limit exceeded": "SOURCE_UNAVAILABLE",
+      "release line anchor or grammar unrecognised, including unsupported or missing zone labels": "NOT a health failure - RELEASE_TIME_UNPARSED diagnostic; declared_release_at null; EventRevision not withheld",
       "release line is 'For immediate release'": "NOT a health failure - event valid, source_available_at unavailable",
-      "release line unrecognised / malformed": "PARSER_FAILED",
-      "release line uses an unsupported zone label (bare ET, Eastern, local time, any label other than EST/EDT) or no zone": "PARSER_FAILED",
       "surface not polled this interval": "SOURCE_NOT_CHECKED",
       "waiting for FIX15 admission (window, spacing or embargo)": "no failure state; see failure_classification_v1.rate_limited_state"
     },
-    "never": "a network failure is missingness, NEVER evidence of zero events. And an absence claim requires MORE than retrieval and parsing: it requires COMPLETE deterministic classification of every relevant item with zero unresolved candidates. Fetch + parse success alone is NOT sufficient to assert absence.",
+    "never": "a network failure is missingness, NEVER evidence of zero events. EVENTS_OBSERVED_ZERO additionally requires that the specific LIVE discovery cycle has no CYCLE_CANDIDATE (zero_assertion.cycle_definition); fetch + parse success alone is NOT sufficient.",
     "new_global_state_added": false,
     "record_fields": [
       "provider_id",
@@ -3477,7 +3970,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 19,
+  "spec_revision": 20,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -3498,13 +3991,28 @@
     "49f8050facabbb705ab7b5d1ab2b76fb9cf8af5a6bcd284c1f3bd0bf33bfee17",
     "6915677689a774884f764788597ec8941775fec4e117cf9b1370bd0d46158038",
     "5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7",
-    "dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d"
+    "dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d",
+    "83df6d2dcee58073bc4775b296b58f8b4384de4311328892a8f2cd7f445eb5fe"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
     "allowlisted_hosts": [
       "www.federalreserve.gov"
     ],
+    "backfill_manifest": {
+      "dedupe": "entries with equal source_item_id are one entry",
+      "entry_origin": "each entry must be an official statement URL copied from an official Federal Reserve page; entries are never constructed from dates (operator obligation, recorded as provenance text per entry)",
+      "form": "an operator-supplied finite list of absolute URL strings, persisted durably as a raw artefact with its SHA-256 BEFORE any backfill request",
+      "health": "per-entry outcomes are recorded on primary_statement with observation_mode HISTORICAL_BACKFILL; a manifest run never asserts EVENTS_OBSERVED_ZERO",
+      "id": "HISTORICAL_BACKFILL_MANIFEST_V1",
+      "max_entries": 1000,
+      "order": "ascending lowercase-hex source_item_id, independent of operator order",
+      "over_limit": "manifest rejected whole",
+      "per_entry_work": "one HISTORICAL_BACKFILL acquisition per entry per manifest run, under revision_policy.reobservation_scheduler.retry_policy",
+      "role": "the ONLY discovery input of HISTORICAL_BACKFILL in V1; no archive, calendar or other HTML listing page is fetched or crawled",
+      "run": "one manifest run = one durable manifest record, identified by its commit_seq; resubmitting byte-identical content is a new explicit operator run",
+      "validation": "every entry passes the full V1 URL/identity rules, require_https_host and surfaces.primary.path_constraint (PRIMARY_STATEMENT_PATH_V1); any invalid entry rejects the WHOLE manifest (fail closed, no request)"
+    },
     "discovery": {
       "media": "RSS 2.0 / XML",
       "method": "GET",
@@ -3524,13 +4032,72 @@
     "primary": {
       "media": "HTML",
       "method": "GET",
-      "path_constraint": "/newsevents/pressreleases/monetary<YYYYMMDD><suffix>.htm",
+      "path_constraint": "PRIMARY_STATEMENT_PATH_V1: ^/newsevents/pressreleases/monetary(?P<date>[0-9]{8})a\\.htm$ with <date> a valid proleptic Gregorian YYYYMMDD; ASCII only; no query; no fragment",
+      "path_constraint_evidence": "every statement page in the bound evidence (fomc_dom_anchor_evidence_v1: 20211215a, 20240320a, 20251210a, 20260128a, 20260617a; provider: 20260617a, 20260729a) uses suffix 'a'. Suffixes b, a1, a2 and others are NOT admitted as primary statements in V1; such items stay in the statement family and are UNRESOLVED, never DEFINITELY_OUT_OF_SCOPE.",
       "path_constraint_role": "VALIDATION of an officially supplied link, never a construction rule",
       "role": "PRIMARY SEMANTIC AUTHORITY - source content, date and release instant",
-      "url_source": "MUST come from an official discovery link (live feed item <link>, or an official FOMC calendar/archive link in backfill). URLs are NEVER constructed from a date."
+      "url_source": "MUST come from an official LIVE feed item <link> or a validated HISTORICAL_BACKFILL_MANIFEST_V1 entry. URLs are NEVER constructed from a date."
+    },
+    "statement_family_path": {
+      "evidence": "provider rev3 feed_item_guid: every monetary-feed item link follows monetary{YYYYMMDD}{a|b}{n}; statements and non-statement monetary releases share this family, so the family is a relevance boundary, NOT a statement discriminator",
+      "grammar": "^/newsevents/pressreleases/monetary(?P<date>[0-9]{8})(?P<letter>[a-z])(?P<n>[0-9]*)\\.htm$ with a valid Gregorian <date>",
+      "id": "STATEMENT_FAMILY_PATH_V1",
+      "prefix": "/newsevents/pressreleases/monetary",
+      "role": "structural relevance boundary for LIVE feed items (item_predicate.feed_item_classification_v1)"
     }
   },
   "timestamps": {
+    "canonical_serialization": {
+      "applies_to": [
+        "observed_at",
+        "ingested_at",
+        "raw_committed_at",
+        "reobservation anchor A",
+        "due_at",
+        "attempt outcome instants",
+        "next_eligible_at",
+        "declared_release_at"
+      ],
+      "binding": "the existing repo primitive scripts/trading_lab/market_data_store.py::_canonical_timestamp: a timezone-aware instant converted to UTC and serialized with Python datetime.isoformat(), i.e. 'YYYY-MM-DDTHH:MM:SS+00:00' or 'YYYY-MM-DDTHH:MM:SS.ffffff+00:00' when the microsecond field is non-zero",
+      "case_notation": "timestamps written with a 'Z' suffix in adversarial cases are notation for UTC instants, not the persisted serialization",
+      "comparison": "All ordering, equality and arithmetic use parsed timezone-aware instants. Lexical comparison of timestamp strings is FORBIDDEN.",
+      "determinism": "the same instant always serializes to the same string; revision identity inputs that include timestamps use this serialization",
+      "id": "CANONICAL_UTC_TIMESTAMP_V1",
+      "precision": "the resolution of that primitive (Python datetime, microseconds). No truncation, rounding or widening beyond what the primitive represents; no separate FOMC precision regime."
+    },
+    "collector_clock_anomaly": {
+      "checks": {
+        "evaluation_order": "verdicts are computed in commit_seq order of per-response records, live and in replay",
+        "reference": "the TRUSTED reference of R: among per-response records of R's limiter epoch with commit_seq smaller than R's, the one with the largest commit_seq whose verdict is not COLLECTOR_CLOCK_ANOMALY; if none, the epoch record. Anomalous records are never references.",
+        "server_time": "usable iff exactly one parseable IMF-fixdate Date value is present: server_time = Date + Age, where Age counts only if exactly one Age value is present and it is a non-negative decimal integer (RFC 9111); otherwise Age = 0",
+        "verdict": "COLLECTOR_CLOCK_ANOMALY iff the applicable check fails",
+        "with_server_time": "|observed_at - server_time| <= 90 seconds (covers transfer time up to the 60 s physical-attempt deadline plus margin). When server_time is usable this check alone decides; a monotonic mismatch is then a legitimate clock correction and the response becomes the next trusted reference.",
+        "without_server_time": "both |(observed_at - reference_wall) - (monotonic_at_observation - reference_monotonic)| <= 60 seconds AND |(observed_at - epoch_wall_utc) - (monotonic_at_observation - epoch_monotonic)| <= 90 seconds"
+      },
+      "design_binding": "design rev4 clock_anomaly_policy case 'collector clock anomaly' (effect: diagnostic flag, causal-quality degradation, or fail closed; never rewrite one timestamp from another)",
+      "effects": {
+        "obligation_satisfaction": "cannot satisfy any obligation",
+        "processing": "the response receives NO further processing: no Content-Type gate, no parse, no classification, no EventRevision; its bytes remain raw provenance only",
+        "raw_and_provenance": "persisted normally (raw-first)",
+        "reobservation_anchor": "cannot establish the anchor",
+        "retry_episode": "counts as one non-qualifying attempt outcome CLOCK_ANOMALY of its episode (bounded)",
+        "visibility": "each anomaly is a durable timing diagnostic record, visible to operators; it is not a rev4 source-health state",
+        "zero": "an anomalous feed record starts no discovery cycle"
+      },
+      "id": "COLLECTOR_CLOCK_CHECK_V1",
+      "limitation": "a wall clock that is wrong from epoch begin and a response without a usable Date header cannot be detected locally; this residual is stated, not hidden",
+      "monotonic_clock": "the FIX15 limiter monotonic domain with CLOCK_MONOTONIC semantics (NTP-slewed, not RAW; Python time.monotonic on Linux)",
+      "persisted_inputs": [
+        "per limiter epoch: an epoch record (epoch_wall_utc, epoch_monotonic) taken at epoch begin",
+        "per response: observed_at (wall UTC) and the monotonic reading taken at the same event, with the limiter epoch id",
+        "per response: the received HTTP Date and Age field values or their recorded absence"
+      ],
+      "replay": "the verdict is recomputed offline from the persisted inputs and must equal the recorded verdict; a mismatch fails closed",
+      "residual": "undetected: a wall-clock error of at most 90 s (against server_time, or cumulatively against the epoch record when no server_time exists), and any error present at epoch begin when no response carries a usable server_time. Early satisfaction is bounded by that residual only while the server time is truthful: a cache serving a stale Date without Age by s seconds, combined with a collector clock wrong in the same direction, can mask an error up to s + 90 s. A cache serving a stale Date without Age with a correct collector clock makes responses anomalous (fail-safe, visible). After a server-verified correction larger than 90 s, responses without Date fail the epoch-record check until a new epoch (fail-safe, visible).",
+      "stage_position": "evaluated immediately after durable raw persistence and before every other processing stage; an anomalous response's health record is NO_PROVIDER_HEALTH_STATE with the COLLECTOR_CLOCK_ANOMALY diagnostic",
+      "transience": "With a usable server_time, any response whose wall clock agrees with the server within 90 s is trusted, so a correction (NTP step, resumed VM) causes no outage. A wall clock that stays wrong keeps responses anomalous (fail-safe) until corrected; anomalous responses never become references.",
+      "verdict": "An observation for which the applicable check (checks.verdict) fails carries COLLECTOR_CLOCK_ANOMALY. Its observed_at is preserved exactly as recorded (never rewritten)."
+    },
     "content_source_available_at": {
       "consequence": "revision availability is bounded by observed_at and commit-bound ingested_at, and is revision-specific",
       "design_compatibility": "design rev4 already supports a null source_available_at bounded by observed_at; NO new design primitive is introduced",
@@ -3549,7 +4116,7 @@
         "observed_at",
         "ingested_at"
       ],
-      "null_when": "the release line is \"For immediate release\" (valid revision). When no accepted grammar matches, no value is derived AND the page is PARSER_FAILED with no EventRevision (timestamps.unrecognised_release_syntax).",
+      "null_when": "the release line is 'For immediate release', or timestamps.unrecognised_release_syntax applies (RELEASE_TIME_UNPARSED). Neither withholds the EventRevision.",
       "nullable": true,
       "role": "PROVIDER-DECLARED RELEASE TIME FOR THE LOGICAL EVENT - NON-GATING PROVENANCE ONLY",
       "stored_alongside": [
@@ -3596,6 +4163,7 @@
     },
     "observed_at": {
       "definition": "the instant the collector successfully receives the PRIMARY statement raw bytes used for that revision",
+      "event": "the collector wall-clock reading taken at http_policy.physical_attempt_deadline.ends_at (a): the instant the complete decoded body of the final exact-200 response is available, with transfer framing and content-coding trailers verified; serialized under timestamps.canonical_serialization",
       "historical_backfill": "the actual backfill collection instant; NEVER reconstructed",
       "is_not": [
         "feed publication time",
@@ -3615,7 +4183,7 @@
       "clock_grammar": {
         "H": "decimal 1..12 written without a leading zero ('2', '12'); '02' or '0' is unrecognised",
         "MM": "exactly two decimal digits 00..59",
-        "anything_else": "unrecognised -> timestamps.unrecognised_release_syntax",
+        "anything_else": "unrecognised -> timestamps.unrecognised_release_syntax (RELEASE_TIME_UNPARSED, non-gating)",
         "conversion": "a.m.: 12 -> 00, otherwise H; p.m.: 12 -> 12, otherwise H+12; local time is on official_statement_date; then apply the literal zone offset",
         "example_noon": "'12:30 p.m. EDT' on 2026-06-17 -> 2026-06-17T16:30:00Z",
         "meridiem": "exactly 'a.m.' or 'p.m.' as in accepted_grammar"
@@ -3654,7 +4222,7 @@
             "no zone label",
             "any label other than exactly EST or EDT"
           ],
-          "verdict": "No accepted grammar matches: declared_release_at = null, no zone guess, PARSER_FAILED under timestamps.unrecognised_release_syntax and the 'release line unrecognised / malformed' mapping."
+          "verdict": "No accepted grammar matches: declared_release_at = null, no zone guess, RELEASE_TIME_UNPARSED diagnostic; the EventRevision is not withheld (timestamps.unrecognised_release_syntax)."
         }
       }
     },
@@ -3692,10 +4260,13 @@
       "why": "design rev4 offers the field, but no VERIFIED provider signal establishes the public availability time of a specific content revision. Absence recorded honestly rather than filled with a proxy."
     },
     "unrecognised_release_syntax": {
+      "applies_to": [
+        "no accepted grammar matches (including ET, Eastern, local time, missing zone, NBSP or case variants, P.M., noon, leading zero)",
+        "release-line anchor absent, duplicated, empty or containing multiple declarations"
+      ],
       "distinct_from": "immediate_release, which is recognised and valid",
-      "event_revision_created": false,
-      "stage_effect": "An unrecognised release line (including any unsupported or missing zone label) is PARSER_FAILED at the release-line stage: first failure wins, no classification completes, no EventRevision is created and zero is blocked. declared_release_at.null_when 'no accepted grammar matches' therefore never yields an admitted revision; only the recognised 'For immediate release' form yields a revision with declared_release_at = null.",
-      "verdict": "PARSER_FAILED"
+      "event_effect": "if title, date, classification and every other content requirement succeed, the IN_SCOPE_V1 EventRevision is created with declared_release_at = null and declared_release_text as extracted (or null)",
+      "verdict": "RELEASE_TIME_UNPARSED - NON-GATING: declared_release_at = null with a durable release-time parse diagnostic; NOT a source-health failure and NOT a reason to withhold the EventRevision"
     }
   },
   "url_canonicalization": {
@@ -3855,7 +4426,14 @@
       "re-observation scheduler status, satisfaction, retry and selection policy",
       "physical-attempt deadline",
       "source-health failure classification",
-      "EST/EDT zone label policy"
+      "EST/EDT zone label policy",
+      "feed item classification and cycle-local zero",
+      "bounded retry episode policy",
+      "backfill manifest surface",
+      "Content-Type gate",
+      "collector clock check",
+      "canonical timestamp binding",
+      "newer-content barrier"
     ],
     "silent_mutation": "FORBIDDEN"
   },
@@ -3886,26 +4464,25 @@
   },
   "zero_assertion": {
     "blocked_by": [
-      "an UNRESOLVED_CANDIDATE in the cycle",
-      "a candidate whose primary fetch failed",
-      "a candidate whose primary parse failed",
-      "a discovery/primary classification conflict",
-      "feed parser failure",
-      "feed source unavailable",
-      "a relevant candidate whose primary acquisition is pending, awaiting admission or in flight",
-      "a transport failure, deadline expiry or non-200 final status on the feed or a relevant candidate",
-      "a raw persistence failure for the feed or a relevant candidate",
-      "a relevant IN_SCOPE_V1 candidate whose normalized EventRevision commit failed or is not yet durable",
-      "an anchored relevant item that has never been successfully classified"
+      "no cycle: feed source unavailable, feed raw persistence failure or feed COLLECTOR_CLOCK_ANOMALY",
+      "NOT_ZERO: feed integrity failure, Content-Type or parse failure of the cycle's feed record",
+      "NOT_ZERO: any CYCLE_CANDIDATE in the cycle, including an UNRESOLVED_CANDIDATE, a classification conflict, an unidentifiable link, a retitled item, or an item with a pending, in-flight, failing or SUSPENDED LIVE acquisition"
     ],
     "cycle_definition": {
-      "LIVE": "One discovery cycle = one feed poll logical fetch plus the primary acquisitions created for the relevant unanchored candidates it lists (revision_policy.reobservation_scheduler.candidate_acquisition). The cycle's zero decision is made only after all of them and their classification/commit have concluded.",
-      "already_classified_item": "An item already classified by an earlier successful primary parse stays classified. A later reobservation failure (transport or parse) of that item is recorded as primary health and neither reclassifies it nor blocks zero of a later cycle.",
-      "epoch_interruption": "a cycle interrupted by a limiter-epoch change never asserts EVENTS_OBSERVED_ZERO (candidate_acquisition.restart)",
-      "never_classified_item": "An item that has never been successfully classified (for example anchored but every primary parse failed) stays unresolved and blocks zero for every cycle that lists it.",
-      "recorded_state": "An item's recorded classification state for LIVE cycles is its FIRST successful classification. Later changed-content outcomes (including a non-matching later page title or a later PARSER_FAILED) are revision/health outcomes only and never change the recorded state or zero eligibility.",
-      "relevant_items": "the relevant items listed by that cycle's feed observation",
-      "shared_acquisition": "Every cycle whose feed observation lists an item satisfying acquisition_predicate that is unanchored, or whose acquisition is pending or in flight at that observation, includes that item: its zero decision waits for the conclusion of the (possibly shared, deduped) acquisition and its post-durable processing. If that acquisition admits an IN_SCOPE_V1 event, every cycle that waited on it is non-zero."
+      "backfill_isolation": "HISTORICAL_BACKFILL backlog, failures or suspended entries never block a LIVE cycle unless the same item is itself a CYCLE_CANDIDATE of that cycle; a manifest run never asserts zero",
+      "boundary": "B = that feed record's commit_seq (durable_ordering)",
+      "conclusion_record": "one durable, immutable cycle conclusion {cycle_id, B, result: EVENTS_OBSERVED_ZERO | NOT_ZERO, per-item classification, reasons}, committed with its feed item conclusions and acquisitions. If the feed record fails integrity verification, Content-Type, parsing or any other stage, the conclusion is NOT_ZERO with that reason.",
+      "cycle_id": "the per-response record id of the durable qualifying LIVE feed observation that starts the cycle",
+      "evaluation": "immediately after the feed parse, from the pre-cycle state only; no waiting on acquisitions, because any CYCLE_CANDIDATE already makes the cycle NOT_ZERO",
+      "id": "LIVE_DISCOVERY_CYCLE_V1",
+      "immutability": "later cycles, later observations, later revisions (including H2) and later retries never rewrite an earlier cycle conclusion",
+      "items": "every item listed by that feed observation",
+      "newly_admitted": "NEWLY_ADMITTED(C) = source items whose FIRST committed IN_SCOPE_V1 EventRevision (smallest commit_seq over all modes) derives from a LIVE acquisition created by cycle C. It is reporting provenance; zero is decided by precondition 5.",
+      "no_cycle": "a feed dispatch with a non-qualifying outcome (transport/status failure, raw persistence loss, COLLECTOR_CLOCK_ANOMALY, cancellation) produces a source-health record or diagnostic and no cycle; a qualifying feed record always starts a cycle, even if its processing then fails (NOT_ZERO conclusion). SOURCE_NOT_CHECKED/RATE_LIMITED diagnostics are not cycles.",
+      "pre_cycle_state": "exactly the durable records with commit_seq < B",
+      "recovery": "every cycle-starting feed record without a conclusion is concluded at recovery from its own pre-cycle state (commit_seq < B), which is fixed and therefore gives the same result whenever it is evaluated; no new feed poll is dispatched while any feed record lacks its conclusion (live_feed_cadence)",
+      "reobservation_independence": "reobservation outcomes (satisfied, failed, parser-failed, H2 barrier) of KNOWN items never change zero for any cycle",
+      "starts_from": "every durable qualifying (final 200, complete, not COLLECTOR_CLOCK_ANOMALY) LIVE feed per-response record starts exactly one cycle"
     },
     "design_alignment": "design rev4 missingness_policy.never_encoded_as_zero = true; unresolved classification is not zero",
     "downstream_restriction": "EVENTS_OBSERVED_ZERO from this provider MUST NOT be interpreted downstream as \"the Federal Reserve/FOMC produced no monetary-policy event\". No model or feature may treat it as a complete-world event count unless a future coverage contract establishes completeness. This binds later InformationSnapshot composition.",
@@ -3917,22 +4494,19 @@
       "a complete-world absence assertion"
     ],
     "partial_cycle": {
-      "example": "Feed succeeds and lists 3 relevant candidates; 2 primary acquisitions succeed and 1 fails: the 2 are retained, the failed one remains unresolved with SOURCE_UNAVAILABLE on primary_statement, and EVENTS_OBSERVED_ZERO is impossible for the cycle.",
-      "retry": "the failed candidate is acquired again only when a later successful cycle lists it, or once after restart (revision_policy.reobservation_scheduler.candidate_acquisition.restart)",
-      "rule": "Candidate outcomes are independent. Successful durable observations, anchors, obligations and revisions of some candidates are retained when another candidate fails; there is no all-or-nothing cycle rollback."
+      "example": "Feed lists 3 new statement candidates; 2 acquisitions succeed and 1 fails: 2 retained, 1 stays an unconcluded acquisition under retry_policy, the cycle is NOT_ZERO, and every later cycle listing the failed item is NOT_ZERO until its acquisition concludes",
+      "rule": "Candidate outcomes are independent. Successful durable observations, anchors, obligations and revisions of some candidates are retained when another candidate fails; there is no rollback. The cycle is NOT_ZERO."
     },
     "preconditions_all_required": [
-      "1. the discovery feed fetch succeeded",
+      "1. the cycle's LIVE discovery feed fetch succeeded with a qualifying final 200 and no COLLECTOR_CLOCK_ANOMALY",
       "2. the raw feed artefact was durably persisted",
       "3. the feed parse succeeded",
-      "4. every feed item relevant to this capture scope was classified deterministically",
-      "5. unresolved_candidate_count = 0",
-      "6. no primary-page fetch or parse remains unresolved for a candidate that could affect the V1 result",
-      "7. the number of newly admitted IN_SCOPE_V1 events = 0",
-      "8. every relevant candidate's primary acquisition in this cycle has concluded: none pending, awaiting FIX15 admission or in flight",
-      "9. every relevant item listed by this cycle's feed observation that has a durable qualifying primary observation has durably concluded post-durable processing (classification and, when IN_SCOPE_V1, normalized EventRevision commit), whether that observation belongs to this cycle or an earlier one",
-      "10. no relevant source failure, parser failure, raw persistence failure, deadline expiry or unclassified relevant candidate exists in this cycle"
+      "4. every feed item was classified by item_predicate.feed_item_classification_v1 against the pre-cycle state",
+      "5. the cycle has zero CYCLE_CANDIDATEs (every item is DEFINITELY_OUT_OF_SCOPE or KNOWN)",
+      "6. consequently no candidate of this cycle is pending, failing, suspended or unresolved",
+      "7. the number of NEWLY_ADMITTED events of this cycle = 0 (implied by 5)"
     ],
+    "scope_statement": "EVENTS_OBSERVED_ZERO is a property of one LIVE discovery cycle: no NEW candidate appeared in that cycle's feed observation relative to the durable pre-cycle state. It never states that earlier UNRESOLVED items were negatively resolved; consumers needing that read the item records.",
     "semantic_scope": "ZERO CONFIRMED V1-SUBSET EVENTS. Precisely: \"no new events matching federal_reserve_fomc_capture_v1's frozen V1 predicate were confirmed during this successful discovery cycle.\"",
     "state": "EVENTS_OBSERVED_ZERO"
   }
