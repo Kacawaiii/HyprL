@@ -7,13 +7,13 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 21 — authoritative)
-12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4
+CAPTURE SPEC HASH  (revision 22 — authoritative)
+ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
         → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30
-        → dd0cff22 → 83df6d2d → 83caecb0 (rev 20)
+        → dd0cff22 → 83df6d2d → 83caecb0 (rev 20) → 12f929f4 (rev 21)
 
 BINDS
   event intelligence design rev4
@@ -31,7 +31,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 21.**
+writing revision 22.**
 
 ---
 
@@ -285,8 +285,10 @@ An item is **concluded** in exactly two ways:
    conclude one**.
 2. **By an operator resolution with a cutoff.** The resolution is valid only if
    every per-response record of the item is already processing-terminal, no LIVE
-   episode or manual episode of LIVE work is open, and no acquisition is still
-   waiting for its episode when it commits. It covers exactly
+   episode or manual episode of LIVE work is open, and no acquisition could still
+   open its episode (it has none while the item has no LIVE anchor) when it
+   commits. An acquisition that can no longer open, because an operator retry
+   already anchored the item, never blocks a resolution (`FOMC247`). It covers exactly
    the records up to its own commit sequence, and **any later record re-opens the
    item**. There is no same-content exemption; a resolution is a decision about
    the durable state at its cutoff, never a permanent permission.
@@ -841,7 +843,8 @@ raw/normalized commits and scheduled recheck observations retain their own
 timestamps without creating another anchor or resetting the grid. A restart at
 A+2 minutes leaves the first target A+300, never restart+300.
 
-FIX15's limiter may delay a target A+300 until an actual start at A+312. A and
+The due margin and FIX15 may delay a target A+300 well past it: in `FOMC107` the
+first grant for O300 comes at 18:08:54 for A = 18:00:05. A and
 the other targets A+3600, A+86400 and A+604800 remain unchanged. The limiter's
 monotonic timestamp is for rate-duration comparisons; the schedule anchor is
 canonical UTC `observed_at`. The entire REV16 `rate_limiter` contract is
@@ -951,7 +954,7 @@ Everything else follows from that one rule:
 | O300, O3600, O86400 all overdue | **one** real current fetch satisfies all three; O604800 waits for its own `due_at`; no catch-up GETs, no claim about the past |
 | observation at A+4000 | satisfies O300 and O3600, not O86400 |
 | observation at 18:30, O3600 due 19:00 | satisfies nothing for O3600 — no early credit |
-| limiter delays O300 to A+312 | satisfied; lateness is not failure; no target moves |
+| O300 due 18:05:05, `NOW_LB` passes due + 92 s at the 18:08:15 feed record, grant 18:08:24 | satisfied at A+500; lateness is not failure; no target moves |
 | same bytes H1 again | satisfied; no new revision |
 | changed bytes H2 | satisfied at raw durability; the new revision follows downstream |
 | durable body, then parser failure | satisfied; health `PARSER_FAILED`; no normalized success |
@@ -1049,7 +1052,10 @@ Rechecks of one item open one episode at a time, with the smallest due offset
 first. A new episode never fires within 60 s of the item's last failure.
 Transport must start within 1 s of the limiter grant. If `TRANSPORT_INVOKED` has
 not committed by then, the grant is abandoned: nothing is sent and the work
-waits 60 s. If that `TRANSPORT_INVOKED` still commits later, it counts. The rule is conservative, because an attempt can
+waits 60 s. If that `TRANSPORT_INVOKED` still commits later, it counts. This 1 s
+bound is what FIX15's "immediately initiate" means here: committing
+`TRANSPORT_INVOKED` is the only step allowed between the grant and the transport
+call, and an abandoned grant can never be kept or revived. The rule is conservative, because an attempt can
 be counted without traffic but never the reverse. A suspended recheck stays suspended; a later offset's own episode
 may still satisfy it by coalescing. A LIVE item therefore has at most five
 autonomous episodes, one acquisition plus four offsets, giving an **absolute
@@ -1666,15 +1672,17 @@ is `PARSER_FAILED`, with no sniffing.
 ### Every failure has one health state
 
 Each failure maps to one rev4 state or to no provider health state. When several
-conditions apply, this fixed precedence decides:
+conditions apply, this fixed precedence decides. The clock check is **not** a
+stage that stops processing: a clock-unverified response keeps its diagnostic,
+is still processed, and gets the health state of any later failure:
 
 | precedence | condition | state |
 |---|---|---|
 | 1 | raw digest mismatch | no provider health state; `CORRUPTION_FAIL_CLOSED` |
 | 2 | local persistence failure | no provider health state |
-| 3 | response not `LIVE_ELIGIBLE` (fails its own clock check) | no provider health state; `CLOCK_INELIGIBLE` diagnostic; still processed |
-| 4 | DNS, TCP, TLS, timeouts, redirect failure, non-200, truncation, content coding | `SOURCE_UNAVAILABLE` |
-| 5 | size, Content-Type, charset, UTF-8, XML security/syntax, feed structure, title/date anchors | `PARSER_FAILED` |
+| 3 | DNS, TCP, TLS, timeouts, redirect failure, non-200, truncation, content coding | `SOURCE_UNAVAILABLE` |
+| 4 | size, Content-Type, charset, UTF-8, XML security/syntax, feed structure, title/date anchors | `PARSER_FAILED` (a clock-unverified response also keeps its `CLOCK_UNVERIFIED` diagnostic) |
+| 5 | response not `LIVE_ELIGIBLE` (fails its own clock check) and nothing above applies | no provider health state; `CLOCK_INELIGIBLE` diagnostic; still processed |
 | 6 | everything else, including healthy negatives, conflicts, new items and release-clock diagnostics | no failure state |
 
 A routine non-statement is a successful check, not a parser failure. A recheck
@@ -1892,9 +1900,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Two hundred and forty-six cases, decided in advance
+## 11. Two hundred and forty-seven cases, decided in advance
 
-`FOMC01`–`FOMC246` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC247` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -2081,7 +2089,7 @@ F01–F49 retain their commitments.
 | `FOMC104` — transient observation 18:00:05, crash before raw/observation durability | no reconstructible anchor survives; a later qualifying durable observation may establish the first anchor |
 | `FOMC105` — raw durable 18:00:06, crash before normalized commit, restart 18:02:05 | recover A=18:00:05; first target remains 18:05:05 |
 | `FOMC106` — first H1 at A=18:00:05; later recheck H2 at 19:00:07 | same source item's A is unchanged; content revision does not reset future targets |
-| `FOMC107` — target A+300, limiter delays actual start until A+312 | A and targets A+3600/A+86400/A+604800 stay fixed; satisfaction of the late observation per `FOMC118` |
+| `FOMC107` — due O300 recheck delayed by FIX15 spacing and class rotation to a grant at 18:08:54 | A and targets A+3600/A+86400/A+604800 stay fixed; satisfied by the 18:08:55 observation |
 
 Revision 18 adds **F52 — DURABLE REOBSERVATION ANCHOR IMPLIES FOUR REQUIRED
 LOGICAL OBLIGATIONS** and **F53 — REOBSERVATION OBLIGATION IDENTITY IS DERIVED
@@ -2109,7 +2117,7 @@ every earlier verdict keep their commitments; `FOMC04`, `FOMC89`, `FOMC105` and
 |---|---|
 | `FOMC116` — offline across O300's due time, restart later | still `PENDING_DUE`; real later observation; no backdating |
 | `FOMC117` — O300/O3600/O86400 overdue, one fetch at A+2d | one logical fetch satisfies all three; O604800 pending |
-| `FOMC118` — limiter delays O300 to A+312 | satisfied; no drift |
+| `FOMC118` — earliest reachable O300: `NOW_LB` passes due + 92 s after the 18:08:15 feed record, grant 18:08:24 | satisfied at A+500; lateness visible; no drift |
 | `FOMC119` — observation at A+1800 | O300 satisfied; O3600 stays pending |
 | `FOMC120` — same H1 recheck | satisfied; no new revision |
 | `FOMC121` — H2 durable, crash before revision commit | satisfied; revision appended idempotently after recovery |
@@ -2202,7 +2210,7 @@ FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
 | `FOMC173` — backward wall step mid-episode | no close, no reopen |
 | `FOMC174` — six failed O300 attempts | one final suspended episode |
 | `FOMC175` — O3600 success after O300 suspended | O300 satisfied, episode not reopened |
-| `FOMC176` — restart during backoff | no shortened wait |
+| `FOMC176` — restart during a 3600 s backoff | wait recomputed from durable records (`NOW_LB` ≥ avail + 3600); no wall deadline kept |
 | `FOMC177` — relist of a suspended acquisition | no new episode |
 | `FOMC178` — routine non-statement | healthy negative |
 | `FOMC179` — CDATA, entities, whitespace in RSS titles | deterministic normalization |
@@ -2232,7 +2240,7 @@ FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
 | `FOMC203` — resolution attempted while an observation is unprocessed | invalid; concludes nothing |
 | `FOMC204` — backfill fetch of a LIVE-anchored item | never satisfies LIVE rechecks |
 | `FOMC205` — unidentifiable statement item rotates out of the feed | durable record; not zero until an operator resolves it |
-| `FOMC206` — verified response 3 s before due | non-satisfying attempt; no stall |
+| `FOMC206` — O300 before `PENDING_DUE` | dispatch refused; no attempt burned; a verified recheck can never be early |
 | `FOMC207` — `TRANSPORT_INVOKED` ACK lost, no transport | counts; closed as interrupted; nothing in flight |
 | `FOMC208` — parser-failed backfill-only item | `SOURCE_ACTIVITY_NO_REVISION` |
 | `FOMC209` — unverified newer H2 after V1 | barrier, never evidence |
@@ -2268,15 +2276,19 @@ FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
 | `FOMC239` — late old-epoch feed with the exact title after a retitling feed | `LATE_EVIDENCE` classified after the newer record; marker; outstanding |
 | `FOMC240` — V1 current vs barrier over V1 | different snapshot identities |
 | `FOMC241` — attempt interrupted at 600 s, its stale response arrives after a newer conflict | `LATE_EVIDENCE`, processed as unverified; item stays outstanding; snapshot barrier |
-| `FOMC242` — CDN serves a 200 HTML maintenance page as the feed | terminal parser failure; polling continues |
+| `FOMC242` — CDN serves a 200 HTML maintenance page as the feed (also when clock-unverified) | terminal parser failure; `PARSER_FAILED` health plus clock diagnostic; polling continues |
 | `FOMC243` — live read with everything unresolved and no FOMC item yet | FOMC-level unresolved, never an empty resolved part |
 | `FOMC244` — unresolved live read, later resolved; replay at the same horizon | unresolved again, same identity |
 | `FOMC245` — newest feed record has no conclusion yet, an older cycle was zero | `DISCOVERY_PENDING`; the older zero is not shown |
 | `FOMC246` — A (LIVE), B (LIVE), then A via backfill | current A, but not LIVE-available |
+| `FOMC247` — operator retry anchors an item before its acquisition opens; conflict | acquisition can no longer open; RESOLVE valid; without an anchor it stays invalid |
 
 These are specification cases only; no fixture, capture or runtime is created
-or exercised here. Revision 21 is authoritative, but an independent global review
-of it is still pending and no implementation is authorized.
+or exercised here. Revision 22 (FIX21) closes the three blockers of the REV21
+global review: the clock verdict no longer stops processing (D1), a resolution
+is blocked only by an acquisition that can still open (D2, `FOMC247`), and
+`FOMC05`, `FOMC107`, `FOMC118`, `FOMC176` and `FOMC206` now match the active
+rules (D3). This document authorizes no implementation.
 
 ## 12. What this does not establish
 

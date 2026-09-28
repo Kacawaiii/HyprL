@@ -22,7 +22,7 @@
     },
     "FOMC05": {
       "case": "feed shows item, primary page unavailable",
-      "verdict": "NO EventRevision; SOURCE_UNAVAILABLE; discovery raw retained; retried on a later normal poll; observed_at NEVER taken from discovery"
+      "verdict": "NO EventRevision; SOURCE_UNAVAILABLE on primary_statement; discovery raw retained; the primary fetch is retried only as further attempts of the item's single LIVE_ACQUISITION episode (retry_policy: at most 6 TRANSPORT_INVOKED, backoff per time_basis); a later poll that lists the item again creates no episode, attempt or primary request (polling.retry_policy.candidate_retry_binding); observed_at NEVER taken from discovery"
     },
     "FOMC06": {
       "case": "primary page observed 90s after declared release",
@@ -150,10 +150,10 @@
       "verdict": "A new immutable content revision may be created under existing semantics, but original A and its target grid remain unchanged. The recheck observation retains its own observed_at without becoming a second anchor; no checkpoint satisfaction rule is added."
     },
     "FOMC107": {
-      "actual_request_start_utc": "2026-09-22T18:05:17Z",
       "anchor_at": "2026-09-22T18:00:05Z",
-      "case": "RATE LIMITER DELAYS ACTUAL RECHECK - target A+300, physical start prevented until A+312",
+      "case": "FIX15 SPACING AND CLASS ROTATION DELAY A DUE O300 RECHECK",
       "expected": {
+        "O300": "SATISFIED by the 18:08:55 observation (lateness 230 s visible)",
         "anchor_after_delay": "2026-09-22T18:00:05Z",
         "other_target_times_utc": [
           "2026-09-22T19:00:05Z",
@@ -163,7 +163,29 @@
         "rate_limiter_delay_reanchors": false
       },
       "target_utc": "2026-09-22T18:05:05Z",
-      "verdict": "FIX15 remains authoritative for actual start admission. Delay changes neither A nor later targets. Satisfaction of the late qualifying observation follows revision_policy.reobservation_scheduler (FOMC118)."
+      "timeline_utc": {
+        "NOW_LB_after_each": [
+          "2026-09-22T18:04:43Z",
+          "2026-09-22T18:05:43Z",
+          "2026-09-22T18:06:43Z"
+        ],
+        "PENDING_DUE_threshold": "NOW_LB >= due_at + 92 = 2026-09-22T18:06:37Z, first met after the 18:08:15 feed record",
+        "grants": {
+          "18:08:14": "feed poll (FEED_DISCOVERY)",
+          "18:08:24": "another item's due recheck with an earlier next eligible instant (REOBSERVATION)",
+          "18:08:34": "backfill entry (HISTORICAL_BACKFILL)",
+          "18:08:44": "LIVE acquisition (FEED_DISCOVERY)",
+          "18:08:54": "this O300 recheck (REOBSERVATION)"
+        },
+        "note": "grant instants shown on an accurate wall clock; FIX15 itself compares monotonic instants",
+        "recheck_observed_at": "2026-09-22T18:08:55Z",
+        "verified_feed_observed_at": [
+          "2026-09-22T18:06:15Z",
+          "2026-09-22T18:07:15Z",
+          "2026-09-22T18:08:15Z"
+        ]
+      },
+      "verdict": "FIX15 spacing and selection decide when the due recheck starts; the delay changes neither A nor any target, and the late verified observation satisfies O300."
     },
     "FOMC108": {
       "case": "CRASH BEFORE SCHEDULER MATERIALIZATION",
@@ -413,14 +435,22 @@
     },
     "FOMC118": {
       "anchor_at": "2026-09-22T18:00:05Z",
-      "case": "LATE O300 FROM LIMITER - due A+300, FIX15 first grant at A+312, qualifying R observed at A+313",
+      "case": "EARLIEST REACHABLE O300: THE DUE MARGIN PLUS FIX15 SPACING",
       "expected": {
         "O300": "SATISFIED",
         "O3600_due": "2026-09-22T19:00:05Z",
+        "lateness_seconds_visible": 200,
         "limiter_wait_is_failure": false,
         "target_drift": false
       },
-      "verdict": "Late-but-qualifying observation satisfies O300; lateness is not failure and no target moves."
+      "timeline_utc": {
+        "PENDING_DUE_threshold": "NOW_LB >= 2026-09-22T18:06:37Z",
+        "R_observed_at": "2026-09-22T18:08:25Z (A+500)",
+        "due_at_O300": "2026-09-22T18:05:05Z",
+        "recheck_grant": "2026-09-22T18:08:24Z (10 s spacing after the feed grant)",
+        "verified_reference": "feed record observed_at 2026-09-22T18:08:15Z (its grant 18:08:14) -> NOW_LB 2026-09-22T18:06:43Z"
+      },
+      "verdict": "Late-but-qualifying observation satisfies O300; lateness from the due margin and the limiter is not failure and no target moves."
     },
     "FOMC119": {
       "anchor_at": "2026-09-22T18:00:05Z",
@@ -974,10 +1004,13 @@
     "FOMC176": {
       "case": "RESTART DURING A 3600 s BACKOFF",
       "expected": {
-        "attempt_before_persisted_not_before": false,
-        "extra_attempts": 0
+        "attempt_number_preserved": true,
+        "extra_attempts": 0,
+        "new_epoch_embargo": "the FIX15 60 s embargo also applies",
+        "persisted_wall_deadline": false,
+        "wait": "attempt k+1 only when NOW_LB >= avail(outcome of attempt k) + 3600, recomputed after restart from the durable outcome record, its avail and later verified responses"
       },
-      "verdict": "Restart keeps the persisted wait (subject only to local clock error) and never adds attempts."
+      "verdict": "Restart recomputes the wait from durable records and server-attested time; no wall-clock deadline survives a restart and no attempt is added."
     },
     "FOMC177": {
       "case": "FEED RELISTS AN ITEM WHOSE LIVE ACQUISITION IS SUSPENDED",
@@ -1234,13 +1267,32 @@
       "verdict": "An unidentifiable item cannot silently disappear into zero."
     },
     "FOMC206": {
-      "case": "O300 EPISODE: FIRST RESPONSE VERIFIED BUT observed_at 3 s BEFORE due_at",
+      "anchor_at": "2026-09-22T18:00:05Z",
+      "case": "O300 RECHECK IS NEVER DISPATCHED BEFORE PENDING_DUE",
       "expected": {
-        "attempt": "NON_SATISFYING (obligation still PENDING)",
-        "attempts_counted": 1,
-        "backoff": "60 s"
+        "O300_EPISODE_OPEN_before_the_18_08_15_record": false,
+        "O300_attempts_before_18_08_15": 0,
+        "O300_units_before_18_08_15": 0,
+        "any_verified_O300_response": "observed_at > due_at + 2 s, so it satisfies",
+        "first_O300_grant_not_before": "2026-09-22T18:08:24Z"
       },
-      "verdict": "An early qualifying response consumes an attempt and never stalls the episode."
+      "replaced_premise": "the former premise (a CLOCK_VERIFIED response observed 3 s before due_at inside an O300 episode) is unreachable: PENDING_DUE needs a verified W with W.observed_at >= due_at + 184, whose serve instant is >= due_at + 94; any later request R has a later serve instant and R.observed_at > serve instant - 92 >= due_at + 2. The remaining non-satisfying path inside an open episode (a CLOCK_UNVERIFIED response) is FOMC173.",
+      "timeline_utc": {
+        "FIX15_would_grant_from": "2026-09-22T18:06:25Z",
+        "NOW_LB_after_each": [
+          "2026-09-22T18:04:43Z",
+          "2026-09-22T18:05:43Z",
+          "2026-09-22T18:06:43Z"
+        ],
+        "PENDING_DUE_threshold": "NOW_LB >= 2026-09-22T18:06:37Z",
+        "due_at_O300": "2026-09-22T18:05:05Z",
+        "verified_feed_observed_at": [
+          "2026-09-22T18:06:15Z",
+          "2026-09-22T18:07:15Z",
+          "2026-09-22T18:08:15Z"
+        ]
+      },
+      "verdict": "Early dispatch is refused; an early verified reobservation cannot occur, so no attempt is burned."
     },
     "FOMC207": {
       "case": "TRANSPORT_INVOKED COMMITS BUT ITS ACK IS LOST; transport never called",
@@ -1374,7 +1426,7 @@
         "anchor": false,
         "item": "OUTSTANDING until a LIVE_ELIGIBLE record or RESOLVE",
         "processed": true,
-        "resolve_valid_after_processing": "only once operator_resolution.validity holds (no LIVE episode open, every per-response item record terminal)",
+        "resolve_valid_after_processing": "only once operator_resolution.validity holds (every per-response item record terminal, no LIVE or manual-LIVE episode open, no OPENABLE LIVE_ACQUISITION)",
         "revision": "created (content evidence)",
         "satisfies": false
       },
@@ -1565,7 +1617,15 @@
       "expected": {
         "failed_feed_item": "clears at the next LIVE_ELIGIBLE parseable feed",
         "next_poll": "due normally",
-        "record": "FEED_RECORD_TERMINAL (channel-level PARSER_FAILED)"
+        "record": "FEED_RECORD_TERMINAL (channel-level PARSER_FAILED)",
+        "variant_clock_unverified": {
+          "cycle": "none",
+          "diagnostics": "CLOCK_UNVERIFIED on the record, CLOCK_INELIGIBLE on the poll attempt",
+          "failed_feed_item": "clears at the next LIVE_ELIGIBLE parseable feed",
+          "health": "PARSER_FAILED (failure_classification_v1.precedence)",
+          "next_poll": "due normally",
+          "record": "FEED_RECORD_TERMINAL (channel-level PARSER_FAILED), failed-feed item created"
+        }
       },
       "verdict": "A malformed feed never stops polling."
     },
@@ -1600,6 +1660,26 @@
         "strict_live_consumer": "CURRENT_REVISION_NOT_LIVE_AVAILABLE (latest LIVE_ELIGIBLE record carries B)"
       },
       "verdict": "A return seen only through backfill is never LIVE-available."
+    },
+    "FOMC247": {
+      "case": "MANUAL_RETRY ANCHORS AN ITEM BEFORE ITS LIVE_ACQUISITION EPISODE OPENS; OUTCOME CLASSIFICATION_CONFLICT",
+      "expected": {
+        "Q": "never OPENABLE after c5 (the item has a LIVE anchor); never opens; concluded by R1 (candidate_acquisition.conclusion)",
+        "RESOLVE_at_c7": "valid: every per-response item record terminal, no LIVE or manual-LIVE episode open, no OPENABLE acquisition",
+        "control_FOMC219": "the autonomous episode already exists; its EPISODE_SUCCEEDED is derivable from the manual anchor, so it is not open and does not block RESOLVE",
+        "control_no_anchor": "acquisition record exists without EPISODE_OPEN and no LIVE anchor exists (no MANUAL_RETRY, or its only response CLOCK_UNVERIFIED): Q is OPENABLE and a RESOLVE is invalid",
+        "extra_keys": 0,
+        "item_after_c7": "concluded until a later item record (e.g. the O300 EPISODE_OPEN) re-opens it",
+        "item_before_c7": "OUTSTANDING (CLASSIFICATION_CONFLICT, F24)"
+      },
+      "timeline_commit_seq": [
+        "c1: feed record classification creates candidate X and LIVE_ACQUISITION Q (no EPISODE_OPEN yet)",
+        "c2: operator MANUAL_RETRY record naming work Q; c3: its EPISODE_OPEN (MANUAL_RETRY key)",
+        "c4: TRANSPORT_INVOKED; c5: LIVE_ELIGIBLE per-response record R1 = the attempt's outcome; X's anchor A = R1.observed_at; processing outcome CLASSIFICATION_CONFLICT",
+        "c6: manual EPISODE_SUCCEEDED (retried work satisfied, retry_policy.manual_retry.closure)",
+        "c7: RESOLVE for X (no reobservation obligation due yet)"
+      ],
+      "verdict": "An acquisition that can no longer open never blocks RESOLVE; one that can still open always does."
     },
     "FOMC25": {
       "case": "POSITIVE FEED CANDIDATE, PRIMARY FETCH FAILS",
@@ -2403,7 +2483,7 @@
       "fragment-only Location counting as a transition (FOMC79)",
       "malformed percent and HTTP-downgrade Locations (FOMC80, FOMC81)",
       "a two-hop relative chain proving the base advances per hop (FOMC82)",
-      "a synthetic scheduler clock proving missed/overdue survival and coalescing (FOMC116-FOMC119)",
+      "a synthetic server-attested clock (verified Date/Age responses driving NOW_LB) proving missed/overdue survival, the PENDING_DUE margin, refusal of early dispatch and coalescing (FOMC107, FOMC116-FOMC119, FOMC206)",
       "same-body, changed-body and parser-failure reobservations proving satisfaction at the durable observation boundary (FOMC120-FOMC122)",
       "a crash after durable reobservation before the completion cache, and a lost ACK, proving no duplicate GET (FOMC124-FOMC125)",
       "a local synthetic slow-drip, DNS-hang, TLS-hang and header-hang server proving the 60-second physical-attempt deadline (FOMC127-FOMC130)",
@@ -2415,7 +2495,7 @@
       "a backfill manifest fixture proving validation, dedupe, ordering, no recheck grid and LIVE non-pre-emption (FOMC147-FOMC149)",
       "Content-Type gate fixtures (FOMC151-FOMC153), a late-DNS fixture (FOMC154), canonical timestamp boundary fixtures (FOMC155), a clock-check fixture (FOMC156), a corruption-during-processing fixture (FOMC157) and a non-gating release-clock fixture (FOMC158)",
       "fixtures for FOMC123 and FOMC131-FOMC135",
-      "outstanding-relevant and zero fixtures (FOMC168-FOMC169, FOMC177-FOMC182)",
+      "outstanding-relevant and zero fixtures (FOMC168-FOMC169, FOMC177-FOMC182, FOMC247 and its no-anchor control)",
       "snapshot selection fixtures on commit_seq prefixes (FOMC170-FOMC172, FOMC183, FOMC194)",
       "durable episode fixtures including clock steps and restarts (FOMC173-FOMC176)",
       "manifest byte fixtures (FOMC184-FOMC185), reconciliation fixtures (FOMC186-FOMC187, FOMC196)",
@@ -3001,7 +3081,7 @@
     "F70": "DURABLE ORDER IS commit_seq; AVAILABILITY IS SERVER-ATTESTED. Every transaction commits. Its availability is the observed_at + 92 s of the first (by commit_seq) verified response, other than LATE_EVIDENCE, whose request began after it (never earlier than its own observed_at or earlier availability), unresolved until then. No local reading other than a verified observed_at enters availability; nothing is reordered or re-stamped.",
     "F71": "CAUSAL EFFECTS NEED LIVE_ELIGIBLE; PROCESSING NEEDS ONLY PROCESSABLE. Every PROCESSABLE record is processed regardless of clock evidence. Only a LIVE_ELIGIBLE record (PROCESSABLE, LIVE, verified by its own server Date/Age) anchors, starts a cycle, satisfies, succeeds, concludes or proves LIVE availability. Under causal_predicates.assumption, clock faults never stall capture and never create early visibility.",
     "F72": "RAW CORRUPTION FAILS CLOSED EVERYWHERE. A digest mismatch found in processing, recovery, reconciliation or replay prevents parsing, yields CORRUPTION_FAIL_CLOSED, marks dependent revisions NORMALIZED_PRESENT_RAW_CORRUPT and never triggers a refetch.",
-    "F73": "OPERATOR RESOLUTIONS HAVE A COMMIT_SEQ CUTOFF. A RESOLVE is valid only when every per-response item record is RECORD_PROCESSING_TERMINAL and no LIVE episode or MANUAL_RETRY episode of LIVE work of the item is open; it covers exactly the records up to its own commit_seq; any later item record re-opens the item; there is no content-based exemption.",
+    "F73": "OPERATOR RESOLUTIONS HAVE A COMMIT_SEQ CUTOFF. A RESOLVE is valid only when, at its commit_seq, every per-response item record is RECORD_PROCESSING_TERMINAL, no LIVE episode or MANUAL_RETRY episode of LIVE work of the item is open and no LIVE_ACQUISITION of the item is still OPENABLE (no EPISODE_OPEN while the item has no LIVE anchor); it covers exactly the records up to its own commit_seq; any later item record re-opens the item; there is no content-based exemption.",
     "F74": "EVENT REVISIONS ARE MODE-NEUTRAL; AVAILABILITY IS OBSERVATION-SPECIFIC. A revision is keyed by content hash; each qualifying IN_SCOPE observation links to it with its own mode and availability; LIVE availability requires a LIVE link; backfill never taints or pre-empts LIVE.",
     "F75": "LOCAL PROCESSING WORK DERIVES FROM DURABLE RECORDS AND HAS ONE OWNER. The epoch owner, driven by a periodic tick, runs at most one fenced run per record with a 600 s deadline; dead runs count toward the poison guard; derivable scheduler records are re-derived until committed; local failures never cause provider traffic.",
     "F76": "HTTP CLOCK HEADERS ARE PARSED STRICTLY. Only the final 200 response's single Date (strict IMF-fixdate, no leap second) and at most one Age (0..2147483647; <= 86400 for the clock check) are clock evidence; duplicates or invalid values make the reference unusable.",
@@ -4045,7 +4125,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 21 (FIX20) closes the REV20 final review with a simplified runtime model: zero derives from ITEM_SEMANTICALLY_CONCLUDED item state with operator-resolution commit_seq cutoffs and per-record feed classification; PROCESSABLE (fixed at commit) governs local processing and LIVE_ELIGIBLE (own server-verified clock, reference age 0) governs every causal effect; availability, due and backoff use one server-attested time scale (92 s bound) so no local clock fault stalls capture or creates early visibility; attempts are counted by atomic durable TRANSPORT_INVOKED records and have exactly one outcome (absolute 120 bound; late responses are unverified fail-safe evidence); processing has one timer-driven owner with fenced, deadline-bounded runs; FOMC_CURRENT_CONTENT_SELECTION_V1 reads only within the commit_seq prefix P(T) of a persisted read horizon. No runtime or implementation approval.",
+  "revision_note": "Spec revision 22 (FIX21) closes the three blockers of the REV21 global review: the collector clock verdict is no longer a stage of the stopping failure chain and the health precedence is aligned (D1); RESOLVE is blocked only by a LIVE_ACQUISITION that is still OPENABLE (D2, FOMC247); FOMC05, FOMC107, FOMC118, FOMC176 and FOMC206 now match the active retry, time-basis and PENDING_DUE rules (D3); the 1 s grant-to-transport bound is tied to FIX15 immediate initiation. The revision 21 model is otherwise unchanged: zero from ITEM_SEMANTICALLY_CONCLUDED item state with RESOLVE cutoffs; PROCESSABLE for local processing and LIVE_ELIGIBLE for causal effects; one server-attested time scale (92 s); atomic TRANSPORT_INVOKED accounting with one outcome per attempt (120 autonomous bound); snapshot reads within P(T) of a persisted horizon. No runtime or implementation approval.",
   "revision_policy": {
     "newer_content_barrier": {
       "clears": "when snapshot_binding.algorithm reaches step 4 or 5",
@@ -4412,7 +4492,7 @@
       "replay_role": "Offline replay never runs the scheduler and needs no network. Obligation status is derivable offline from durable records.",
       "retry_policy": {
         "attempt_classification": "an attempt is SATISFYING iff a LIVE_ELIGIBLE record (for HISTORICAL_BACKFILL work: a CLOCK_VERIFIED PROCESSABLE HISTORICAL_BACKFILL record) linked to it satisfies the episode's work; every other counted attempt is NON_SATISFYING, including a LIVE_ELIGIBLE record that leaves the obligation PENDING; such records still count for processing, revisions and snapshots.",
-        "attempt_consumption": "For every logical fetch (episode attempt or feed poll), after ownership, URL validation and the FIX15 grant, the task commits TRANSPORT_INVOKED as its last step before the first transport call. The TRANSPORT_INVOKED transaction atomically requires: the current limiter-epoch fencing token, for episode work the episode open and fewer than 6 TRANSPORT_INVOKED records for the episode, and no attempt of the same item (for a feed poll: no feed poll) without an outcome; otherwise it does not commit and nothing is sent. Transport must start within 1 s of the grant; if TRANSPORT_INVOKED has not committed by then, the grant is abandoned (FIX15 unit consumed, no network I/O) and the work gets a local non-durable hold of 60 s. Once TRANSPORT_INVOKED is durable the attempt COUNTS, whatever happens next. Selection, limiter waiting, ownership failure and validation count nothing. Redirect hops belong to the same attempt (FIX15 units each; at most 4 physical requests per attempt).",
+        "attempt_consumption": "For every logical fetch (episode attempt or feed poll), after ownership, URL validation and the FIX15 grant, the task commits TRANSPORT_INVOKED as its last step before the first transport call. The TRANSPORT_INVOKED transaction atomically requires: the current limiter-epoch fencing token, for episode work the episode open and fewer than 6 TRANSPORT_INVOKED records for the episode, and no attempt of the same item (for a feed poll: no feed poll) without an outcome; otherwise it does not commit and nothing is sent. Transport must start within 1 s of the grant; if TRANSPORT_INVOKED has not committed by then, the grant is abandoned (FIX15 unit consumed, no network I/O) and the work gets a local non-durable hold of 60 s. This 1 s bound is the frozen meaning, for FOMC V1, of FIX15 'immediately initiate' (rate_limiter.admission.atomic_steps step 5 and rate_limiter.admission.immediate_initiation): committing TRANSPORT_INVOKED is the only step allowed between the grant and the transport call, the grant instant remains the accounting, window and spacing instant, and an abandoned grant can never be kept, reused or revived. Once TRANSPORT_INVOKED is durable the attempt COUNTS, whatever happens next. Selection, limiter waiting, ownership failure and validation count nothing. Redirect hops belong to the same attempt (FIX15 units each; at most 4 physical requests per attempt).",
         "attempt_outcome_fence": {
           "consequence": "attempt outcomes and LIVE_ELIGIBLE records of each item, and of the feed, commit in request order; a late response can only add fail-safe discovery and reopen state, never a conclusion, anchor, satisfaction or current content",
           "counting": "LATE_EVIDENCE adds no attempt and no request: its attempt was already counted",
@@ -4728,19 +4808,19 @@
   "source_health": {
     "failure_classification_v1": {
       "commit_failure": "normalization/EventRevision commit failure after durable raw keeps the existing mapping (no ingested_at, no EventRevision visibility), never becomes EVENTS_OBSERVED_ZERO, and blocks zero for the affected cycle.",
-      "first_failure_wins": "The processing order is: validation, FIX15 admission, transport, status gate, bounded body production, durable persistence, collector clock check, media type, charset/UTF-8, XML security, XML syntax, feed structure, HTML title/date anchors, classification, normalization, commit. The first failing stage determines the state and later stages do not run. Concurrent limits during the network phase are ordered by which occurred first.",
+      "first_failure_wins": "The failure chain is: validation, FIX15 admission, transport, status gate, bounded body production, durable persistence, media type, charset/UTF-8, XML security, XML syntax, feed structure, HTML title/date anchors, classification, normalization, commit. The first failing stage of this chain determines the failure state and later stages of the chain do not run. The collector clock check (timestamps.collector_clock_check) is not a stage of this chain: it is evaluated on every admitted complete final-200 response after durable persistence, records its verdict and diagnostic, and never stops or skips a later stage (causal_predicates.PROCESSABLE); its only effect is to withhold effects that require LIVE_ELIGIBLE. Concurrent limits during the network phase are ordered by which occurred first.",
       "logical_fetch_result": "A logical fetch's health result is the outcome of its last physical attempt, recorded on the fetched surface (discovery_feed or primary_statement). A reobservation failure is recorded on primary_statement and never marks the feed or the provider globally unavailable.",
       "missingness": "Every failure state is missingness; none is evidence of zero events (source_health.never).",
       "precedence": {
         "order": [
           "RAW_CORRUPTION (NO_PROVIDER_HEALTH_STATE + CORRUPTION_FAIL_CLOSED)",
           "LOCAL_PERSISTENCE_FAILURE (NO_PROVIDER_HEALTH_STATE)",
-          "CLOCK_UNVERIFIED (NO_PROVIDER_HEALTH_STATE)",
           "SOURCE_UNAVAILABLE (transport, deadline, redirect, status, truncation, content-coding)",
           "PARSER_FAILED (size, Content-Type, charset, UTF-8, XML security/syntax, feed structure, title/date anchors)",
+          "CLOCK_UNVERIFIED when no earlier entry applies (NO_PROVIDER_HEALTH_STATE)",
           "no failure state (successful check, including healthy negatives, conflicts and non-gating diagnostics)"
         ],
-        "rule": "when several conditions apply to one response or record, the recorded state is the first applicable entry of this ordered list"
+        "rule": "when several conditions apply to one response or record, the recorded health state is the first applicable entry of this ordered list. Independently of that state, a CLOCK_UNVERIFIED record always keeps its durable CLOCK_UNVERIFIED diagnostic (CLOCK_INELIGIBLE on its attempt) and is still processed to its terminal outcome; the clock verdict never replaces a processing outcome"
       },
       "rate_limited_state": "RATE_LIMITED ('client ceiling reached') is only a non-failure diagnostic meaning work waited for FIX15 admission. It is never SOURCE_UNAVAILABLE, PARSER_FAILED or EVENTS_OBSERVED_ZERO, never fails or satisfies an obligation, and is not a discovery cycle. Whether and how often such diagnostic records are written affects no traffic, observation, revision, obligation, zero or replay decision (rate_limiter.wait_semantics).",
       "redirect_target_failures": "An attempted redirect target that fails at transport, deadline or status maps exactly as the same failure on an initial request.",
@@ -4748,7 +4828,7 @@
       "successful_check": "a successful non-zero feed or primary check records no failure state; its cycle conclusion or processing outcome is the success record"
     },
     "mappings": {
-      "CLOCK_UNVERIFIED response (timestamps.collector_clock_check)": "NO_PROVIDER_HEALTH_STATE: durable timing diagnostic; non-qualifying",
+      "CLOCK_UNVERIFIED response (timestamps.collector_clock_check)": "durable CLOCK_UNVERIFIED diagnostic on the record and CLOCK_INELIGIBLE diagnostic on its attempt; health state per failure_classification_v1.precedence: PARSER_FAILED when a later processing stage fails, otherwise NO_PROVIDER_HEALTH_STATE; the attempt is non-qualifying; the record is still processed to a terminal outcome if PROCESSABLE",
       "Content-Type missing, unparseable, conflicting, or outside the surface's accepted media (http_policy.content_type_gate)": "PARSER_FAILED",
       "DNS resolution failure, or DNS still unresolved at the physical-attempt total deadline": "SOURCE_UNAVAILABLE",
       "HTTP 204 No Content received (unsupported)": "SOURCE_UNAVAILABLE",
@@ -4776,7 +4856,7 @@
       "feed channel structure missing or invalid (no item list extractable)": "PARSER_FAILED on discovery_feed; the feed record becomes a failed-feed item (zero_assertion.outstanding_relevant_item)",
       "feed fetch failed / timeout / unexpected HTTP status": "SOURCE_UNAVAILABLE",
       "feed item with missing, duplicated, invalid or child-element title/link/guid": "no failure state for the feed: an item-level UNIDENTIFIABLE_ITEM record (feed_item_classification_v2 step 1); the rest of the feed is processed normally",
-      "feed or primary response not LIVE_ELIGIBLE (clock unverified)": "NO_PROVIDER_HEALTH_STATE: durable CLOCK_INELIGIBLE diagnostic; the attempt is terminal; the record is still processed if PROCESSABLE",
+      "feed or primary response not LIVE_ELIGIBLE (clock unverified)": "as for a CLOCK_UNVERIFIED response (LATE_EVIDENCE is treated identically, retry_policy.attempt_outcome_fence): CLOCK_INELIGIBLE diagnostic; the attempt is terminal; the record is still processed if PROCESSABLE and its health state follows failure_classification_v1.precedence",
       "final HTTP status is not exactly 200": "SOURCE_UNAVAILABLE",
       "identical verified primary body yields a conflicting derived date (determinism failure)": "PARSER_FAILED with determinism-failure diagnostic; no new content revision",
       "internal processing error": "NO_PROVIDER_HEALTH_STATE: INTERNAL_PROCESSING_ERROR outcome, outstanding",
@@ -4820,7 +4900,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 21,
+  "spec_revision": 22,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
@@ -4843,7 +4923,8 @@
     "5cec4f305b2a62210b4ec03c233699e43741abc6626053fdc1a788b43fddadb7",
     "dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d",
     "83df6d2dcee58073bc4775b296b58f8b4384de4311328892a8f2cd7f445eb5fe",
-    "83caecb05154829d59d9c9430d27ed27178706488764b0c875b2826822d46910"
+    "83caecb05154829d59d9c9430d27ed27178706488764b0c875b2826822d46910",
+    "12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",
@@ -4929,7 +5010,7 @@
       "unverified_effects": {
         "causal": "never LIVE_ELIGIBLE and never CAUSALLY_ADMISSIBLE: cannot anchor, satisfy, start a cycle, conclude an item or be availability evidence; it may reopen an item (outstanding_relevant_item.concluded)",
         "episode": "its attempt is NON_SATISFYING",
-        "health": "NO_PROVIDER_HEALTH_STATE with a durable CLOCK_UNVERIFIED diagnostic",
+        "health": "a durable CLOCK_UNVERIFIED diagnostic in every case; the health state follows source_health.failure_classification_v1.precedence (PARSER_FAILED when a later processing stage fails, otherwise NO_PROVIDER_HEALTH_STATE)",
         "observed_at": "null; wall_at_receipt is provenance only",
         "processing": "processed to a terminal local outcome if PROCESSABLE (causal_predicates.PROCESSABLE); outcomes are non-causal",
         "raw": "persisted normally (raw-first)"
@@ -5373,7 +5454,7 @@
       "form": "an explicit durable operator record {item_key: {kind: SOURCE_ITEM | UNIDENTIFIABLE_ITEM | FAILED_FEED, value}, action, reason text, operator identity}; never produced by automated code",
       "id": "OPERATOR_RESOLUTION_V2",
       "replay": "operator records are ordinary records in commit_seq order",
-      "validity": "a RESOLVE is valid only if, at its commit_seq, every per-response item record is RECORD_PROCESSING_TERMINAL no LIVE episode or MANUAL_RETRY episode of LIVE work of the item is open, and no LIVE_ACQUISITION of the item lacks its EPISODE_OPEN (derivable terminal records are committed first). An invalid RESOLVE is recorded and concludes nothing."
+      "validity": "a RESOLVE is valid only if, in the durable state at its commit_seq c: every per-response item record is RECORD_PROCESSING_TERMINAL; no LIVE episode or MANUAL_RETRY episode of LIVE work of the item is open (derivable EPISODE_SUCCEEDED/SUSPENDED records are committed first); and no LIVE_ACQUISITION of the item is OPENABLE. A LIVE_ACQUISITION is OPENABLE at c iff its acquisition record has commit_seq < c, it has no EPISODE_OPEN with commit_seq < c, and the item has no LIVE anchor with commit_seq < c (retry_policy.opening_conditions.LIVE_ACQUISITION). An anchor is permanent, so an acquisition that is not OPENABLE at c never becomes openable later. An invalid RESOLVE is recorded and concludes nothing."
     },
     "outstanding_relevant_item": {
       "concluded": "In a prefix, an item is ITEM_SEMANTICALLY_CONCLUDED iff EITHER (1) NATURAL: every per-response item record is RECORD_PROCESSING_TERMINAL, no LIVE episode or MANUAL_RETRY episode of LIVE work of the item is open (a derivable EPISODE_SUSPENDED or EPISODE_SUCCEEDED counts as committed), no marker exists after the latest valid resolution (or at all, if none), the processing outcome of the item's latest LIVE_ELIGIBLE record is a normalized IN_SCOPE_V1 outcome or DEFINITELY_OUT_OF_SCOPE, and every later PROCESSABLE LIVE record has an outcome of that same class (non-PROCESSABLE failures reopen nothing; they are attempt outcomes) (a later non-eligible record may reopen, never conclude); OR (2) RESOLVED: a valid RESOLVE exists and no item record has commit_seq greater than its commit_seq. Otherwise the item is OUTSTANDING. HISTORICAL_BACKFILL episodes never count here.",
