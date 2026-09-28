@@ -14,7 +14,7 @@ from scripts.trading_lab.fomc import clock as clockmod
 from scripts.trading_lab.fomc import identity, ledger, processing, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.limiter import Limiter
-from scripts.trading_lab.fomc.store import FomcStore, Rejected
+from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt, Rejected
 from scripts.trading_lab.fomc.transport import FetchResult, Transport
 
 CLASS_ORDER = ("FEED_DISCOVERY", "REOBSERVATION", "HISTORICAL_BACKFILL")
@@ -270,6 +270,22 @@ class Collector:
                 break
             out.append(done)
         return out
+
+    def verify_integrity(self) -> list[int]:
+        """RAW_INTEGRITY_EVERYWHERE_V1 outside replay: a mismatch found after a terminal outcome is a
+        separate durable diagnostic; the outcome is never replaced and nothing is refetched."""
+        corrupt = []
+        for resp in self.store.rows("RESPONSE"):
+            try:
+                self.store.read_raw(resp.body["raw_sha"])
+            except RawCorrupt:
+                corrupt.append(resp.seq)
+                if state.processing_outcome(self.store, resp.seq) is not None and not self.store.rows(
+                        "INTEGRITY_DIAGNOSTIC", key=str(resp.seq)):
+                    self.store.append("INTEGRITY_DIAGNOSTIC", [("INTEGRITY_DIAGNOSTIC", str(resp.seq),
+                                                               {"record": resp.seq, "raw_sha": resp.body["raw_sha"]})])
+        self.process_pending()
+        return corrupt
 
     # ------------------------------------------------------------------ operator actions ----------
     def resolve(self, item_key: str, reason: str = "operator decision") -> dict:
