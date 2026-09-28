@@ -65,6 +65,12 @@ class Collector:
         if result.kind == "RESPONSE_200":
             try:
                 digest = self.store.put_raw(result.body)
+            except RawCorrupt:
+                # The immutable slot for these bytes holds other bytes: never overwrite it. Existing
+                # records get integrity diagnostics (their terminal outcomes stay); this record commits
+                # with its digest and its processing reaches CORRUPTION_FAIL_CLOSED. No refetch.
+                digest = spec.sha256_bytes(result.body)
+                self._diagnose(digest)
             except OSError:
                 ledger.commit_attempt_outcome(self.store, attempt, "LOCAL_PERSISTENCE_FAILED")
                 return {"status": "LOCAL_PERSISTENCE_FAILED"}
@@ -271,6 +277,13 @@ class Collector:
             out.append(done)
         return out
 
+    def _diagnose(self, digest: str) -> None:
+        for resp in self.store.rows("RESPONSE"):
+            if (resp.body["raw_sha"] == digest and state.processing_outcome(self.store, resp.seq) is not None
+                    and not self.store.rows("INTEGRITY_DIAGNOSTIC", key=str(resp.seq))):
+                self.store.append("INTEGRITY_DIAGNOSTIC", [("INTEGRITY_DIAGNOSTIC", str(resp.seq),
+                                                           {"record": resp.seq, "raw_sha": digest})])
+
     def verify_integrity(self) -> list[int]:
         """RAW_INTEGRITY_EVERYWHERE_V1 outside replay: a mismatch found after a terminal outcome is a
         separate durable diagnostic; the outcome is never replaced and nothing is refetched."""
@@ -280,10 +293,7 @@ class Collector:
                 self.store.read_raw(resp.body["raw_sha"])
             except RawCorrupt:
                 corrupt.append(resp.seq)
-                if state.processing_outcome(self.store, resp.seq) is not None and not self.store.rows(
-                        "INTEGRITY_DIAGNOSTIC", key=str(resp.seq)):
-                    self.store.append("INTEGRITY_DIAGNOSTIC", [("INTEGRITY_DIAGNOSTIC", str(resp.seq),
-                                                               {"record": resp.seq, "raw_sha": resp.body["raw_sha"]})])
+                self._diagnose(resp.body["raw_sha"])
         self.process_pending()
         return corrupt
 

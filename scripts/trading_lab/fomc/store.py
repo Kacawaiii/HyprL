@@ -153,24 +153,43 @@ class FomcStore:
         return self.root / "raw" / digest[:2] / digest
 
     def put_raw(self, data: bytes) -> str:
-        """Durably write body bytes before the record that references them commits (raw-first)."""
+        """Durably write body bytes before the record that references them commits (raw-first).
+
+        Raw is immutable: a digest path is published once with os.link (atomic create-if-absent) and
+        never overwritten. If the path already holds other bytes, that corruption is reported
+        (RawCorrupt) and left untouched - it is never repaired by a rewrite."""
         digest = spec.sha256_bytes(data)
         path = self._raw_path(digest)
-        if path.exists() and spec.sha256_bytes(path.read_bytes()) == digest:
+        if os.path.lexists(path):
+            self._verify_existing(path, digest)
             return digest
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(f".tmp{os.getpid()}.{threading.get_ident()}")
+        tmp = path.with_name(f".{digest}.tmp{os.getpid()}.{threading.get_ident()}")
         with open(tmp, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            self._verify_existing(path, digest)  # a concurrent writer won the race
+        finally:
+            os.unlink(tmp)
         fd = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(fd)
         finally:
             os.close(fd)
         return digest
+
+    @staticmethod
+    def _verify_existing(path: Path, digest: str) -> None:
+        try:
+            existing = path.read_bytes()
+        except OSError as exc:
+            raise RawCorrupt(f"raw {digest} exists but is unreadable") from exc
+        if spec.sha256_bytes(existing) != digest:
+            raise RawCorrupt(f"raw {digest} exists with different bytes; it is never overwritten")
 
     def read_raw(self, digest: str) -> bytes:
         """RAW_INTEGRITY_EVERYWHERE_V1: every consumer re-verifies the digest before use."""

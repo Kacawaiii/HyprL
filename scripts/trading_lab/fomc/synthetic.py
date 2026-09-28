@@ -46,6 +46,7 @@ class SyntheticResponse:
     body: bytes = b""
     headers: list[tuple[str, str]] = field(default_factory=list)
     date: str | None = "auto"  # "auto": the true server time; None: no Date line
+    stall_s: float = 0.0  # real seconds to wait before sending the status line (deadline tests)
 
 
 class _UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -71,6 +72,9 @@ class LocalProvider:
                 resp = route(count) if callable(route) else route
                 if resp is None:
                     resp = SyntheticResponse(status=404, body=b"not found", headers=[("Content-Type", "text/plain")])
+                if resp.stall_s:
+                    import time as _time
+                    _time.sleep(resp.stall_s)
                 self.send_response_only(resp.status)
                 if resp.date == "auto":
                     self.send_header("Date", format_datetime(provider.clock.true, usegmt=True))
@@ -108,28 +112,28 @@ class LocalProvider:
             pass
 
 
-class _UnixHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, socket_path: str, timeout: float):
-        super().__init__(spec.ALLOWED_HOST, timeout=timeout)
-        self._socket_path = socket_path
-
-    def connect(self):
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        sock.connect(self._socket_path)
-        self.sock = sock
-
-
 class LocalConnector:
     """Test connector: the logical URL stays https://www.federalreserve.gov/...; only the socket goes to
     the local provider (plain HTTP over a Unix socket instead of TLS on 443). URL admission, identity,
-    redirect validation, limiter grants and deadlines are unchanged."""
+    redirect validation, limiter grants and the physical-attempt deadline are unchanged."""
+
+    tls = False
 
     def __init__(self, socket_path: str):
         self.socket_path = socket_path
 
-    def open(self, timeout: float) -> http.client.HTTPConnection:
-        return _UnixHTTPConnection(self.socket_path, timeout)
+    def resolve(self):
+        return [self.socket_path]
+
+    def connect(self, address, timeout: float):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(address)
+        except BaseException:
+            sock.close()
+            raise
+        return sock
 
 
 FEED_PATH = "/feeds/press_monetary.xml"

@@ -17,7 +17,11 @@ POLICY_ID = "FOMC_CURRENT_CONTENT_SELECTION_V1"
 BARRIER = "CURRENT_CONTENT_UNAVAILABLE_DUE_TO_NEWER_UNNORMALIZED_SOURCE"
 
 
-class ReplayFailed(RuntimeError):
+class SnapshotFailed(RuntimeError):
+    """A verified snapshot depends on raw bytes that are absent or corrupt: it fails closed."""
+
+
+class ReplayFailed(SnapshotFailed):
     """Verified replay fails closed (corrupt raw, verdict mismatch, re-derivation mismatch)."""
 
 
@@ -37,7 +41,8 @@ def prefix(store: FomcStore, T: datetime, H: int) -> tuple[str, int]:
     return "FOMC_RESOLVED", end
 
 
-def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set) -> dict:
+def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set) -> tuple[dict, set]:
+    """The item's selection state and the raw digests that state is derived from."""
     recs = state.primary_responses(store, sid, upto=P)
     O = recs[-1] if recs else None
     E = next((r for r in reversed(recs) if state.verified(r)), None)
@@ -54,14 +59,14 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
         return {"record": record.seq, "mode": record.body["mode"], "verdict": "CLOCK_VERIFIED" if state.verified(record) else "CLOCK_UNVERIFIED",
                 "outcome": o.body["outcome"] if o else "PENDING"}
 
-    out = {"sid": sid}
+    out, deps = {"sid": sid}, set()
     if O is not None:
         H = O.body["raw_sha"]
         integrity = store.rows("INTEGRITY_DIAGNOSTIC", key=str(O.seq), upto=P)
         o_outcome = state.processing_outcome(store, O.seq, upto=P)
         current = None
         if integrity or (o_outcome and o_outcome.body["outcome"] == "CORRUPTION_FAIL_CLOSED"):
-            out.update(step=3, state=BARRIER, newest=exposed(O))
+            out.update(step=3, state=BARRIER, newest=exposed(O))  # states the corruption; derived from no raw
         elif state.verified(O) and verified_revision(H):
             current = verified_revision(H)
             out.update(step=4, state="CURRENT_REVISION")
@@ -74,6 +79,8 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
             out.update(step=7, state="NOT_IN_V1_SCOPE")
         else:
             out.update(step=8, state="SOURCE_ACTIVITY_NO_REVISION", newest=exposed(O))
+        if out["step"] in (6, 7, 8) and o_outcome is not None:
+            deps.add(H)  # the exposed outcome (or the negative) was derived from O's bytes
         if current:
             revision = store.rows("REVISION", key=current, upto=P)[0].body
             cur_links = [{"record": l.body["record"], "mode": l.body["mode"], "observed_at": l.body["observed_at"],
@@ -82,28 +89,31 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
             live = [r for r in recs if state.live_eligible(r)]
             out.update(revision=current, content_hash=revision["content_hash"], normalized=revision, links=cur_links,
                        live_available=bool(live) and live[-1].body["raw_sha"] == revision["content_hash"])
+            deps.add(revision["content_hash"])  # a revision binds the raw it came from
     elif f"SOURCE_ITEM:{sid}" in outstanding_keys:
         out.update(step=8, state="SOURCE_ACTIVITY_NO_REVISION")
     else:
         out.update(step=9, state="NOT_OBSERVED")
-    return out
+    return out, deps
 
 
-def _discovery(store: FomcStore, P: int) -> dict:
+def _discovery(store: FomcStore, P: int) -> tuple[dict, set]:
+    """The discovery state and the raw digests it is derived from (the concluding feed record)."""
     feeds = state.feed_responses(store, upto=P)
     if not feeds:
-        return {"state": "NO_CURRENT_CYCLE"}
+        return {"state": "NO_CURRENT_CYCLE"}, set()
     F = feeds[-1]
     outcome = state.processing_outcome(store, F.seq, upto=P)
     if outcome is None or outcome.body["outcome"] not in state.FEED_TERMINAL:
-        return {"state": "DISCOVERY_PENDING", "feed_record": F.seq}
+        return {"state": "DISCOVERY_PENDING", "feed_record": F.seq}, set()
     if not state.live_eligible(F):
-        return {"state": "NO_CURRENT_CYCLE", "feed_record": F.seq}
+        return {"state": "NO_CURRENT_CYCLE", "feed_record": F.seq}, set()
     conclusion = store.rows("CYCLE_CONCLUSION", key=str(F.seq), upto=P)
     if not conclusion:
-        return {"state": "DISCOVERY_PENDING", "feed_record": F.seq}
+        return {"state": "DISCOVERY_PENDING", "feed_record": F.seq}, set()
     body = conclusion[0].body
-    return {"state": body["result"], "cycle_id": body["cycle_id"], "B": body["B"]}
+    deps = set() if outcome.body["outcome"] == "CORRUPTION_FAIL_CLOSED" else {F.body["raw_sha"]}
+    return {"state": body["result"], "cycle_id": body["cycle_id"], "B": body["B"]}, deps
 
 
 def events_as_of(store: FomcStore, T: datetime, H: int | None = None, *, mode: str = "DURABLE_OBSERVED") -> dict:
@@ -119,10 +129,27 @@ def events_as_of(store: FomcStore, T: datetime, H: int | None = None, *, mode: s
             outstanding_keys = {i["key"] for i in state.outstanding(store, upto=P)}
             sids = sorted({c.key for c in store.rows("CANDIDATE", upto=P)} |
                           {r.body["sid"] for r in store.rows("RESPONSE", upto=P) if r.body.get("surface") == "primary"})
-            snap.update(P=P, discovery=_discovery(store, P),
-                        items=[_item_state(store, sid, P, table, outstanding_keys) for sid in sids])
+            discovery, deps = _discovery(store, P)
+            item_states = []
+            for sid in sids:
+                item, item_deps = _item_state(store, sid, P, table, outstanding_keys)
+                item_states.append(item)
+                deps |= item_deps
+            _verify_dependencies(store, deps)
+            snap.update(P=P, discovery=discovery, items=item_states)
     snap["identity"] = spec.sha256_canonical(snap)
     return snap
+
+
+def _verify_dependencies(store: FomcStore, digests: set) -> None:
+    """RAW_INTEGRITY_EVERYWHERE_V1 at read time: every raw a verified snapshot depends on is re-read
+    and re-hashed now, so physical corruption fails the read closed even for an old (T, H) and
+    without any earlier verify_integrity(). Read-only: nothing is written or fetched."""
+    for digest in sorted(digests):
+        try:
+            store.read_raw(digest)
+        except RawCorrupt as exc:
+            raise SnapshotFailed(f"snapshot depends on raw {digest}: {exc}") from exc
 
 
 def replay(store: FomcStore, T: datetime, H: int) -> dict:
