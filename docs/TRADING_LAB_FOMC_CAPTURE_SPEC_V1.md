@@ -7,13 +7,13 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 20 — authoritative)
-83caecb05154829d59d9c9430d27ed27178706488764b0c875b2826822d46910
+CAPTURE SPEC HASH  (revision 21 — authoritative)
+12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
         → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30
-        → dd0cff22 → 83df6d2d (rev 19)
+        → dd0cff22 → 83df6d2d → 83caecb0 (rev 20)
 
 BINDS
   event intelligence design rev4
@@ -31,7 +31,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 20.**
+writing revision 21.**
 
 ---
 
@@ -63,10 +63,9 @@ URLs are never constructed from a date. A statement URL must arrive from an
 official discovery link: a LIVE feed item's `<link>`, or an entry of a validated
 backfill manifest (§6). The path grammar is a **validation** of an officially
 supplied link, never a recipe for building one. Since revision 20 it is exact:
-`/newsevents/pressreleases/monetary<YYYYMMDD>a.htm`, with a real calendar date.
-Every statement page in the bound evidence uses the `a` suffix. Other suffixes
-(`b`, `a1`, …) are never fetched as statements, but they stay inside the monetary
-*family* and are never treated as definitely unrelated.
+`/newsevents/pressreleases/monetary<YYYYMMDD><letter><digits>.htm`, with a real
+calendar date. Statements and other monetary releases share this family, so the
+suffix letter says nothing about relevance. The titles decide (§3).
 
 Allowlist: `www.federalreserve.gov`, exactly. The apex domain is *not*
 included, because no canonical redirect requirement was ever verified for it —
@@ -206,25 +205,28 @@ Heuristic broadening and automatic alternative-node search are forbidden. That i
 deliberate drift detection, not a limitation to be engineered around.
 
 ### Three outcomes, not two
-### Three outcomes, not two
 
-| state | meaning |
-|---|---|
-| `IN_SCOPE_V1` | the exact predicate succeeds on **both** surfaces |
-| `DEFINITELY_OUT_OF_SCOPE` | excluded by a frozen deterministic rule needing **no** semantic guessing — deliberately narrow |
-| `UNRESOLVED_CANDIDATE` | on the official monetary surface, fails the positive predicate, and cannot be proven outside the domain without guessing |
+Every **new** feed item in the monetary family is fetched once, whatever its
+suffix or feed title. The titles are normalized first: parsed XML text, NFC,
+ASCII whitespace collapsed and trimmed, NBSP kept, no case folding. Then the
+primary page decides:
 
-**A non-match defaults to `UNRESOLVED_CANDIDATE`.** Unknown relevance resolves
-to unresolved, never to a negative — and there is no frozen safe negative rule
-for a differently-titled official monetary item, so the default is what
-actually applies in practice.
+| feed title exact? | primary title exact? | outcome |
+|---|---|---|
+| yes | yes (and the date anchor succeeds) | `IN_SCOPE_V1` |
+| no | no (title anchor extracted) | `DEFINITELY_OUT_OF_SCOPE`, a **healthy** negative for the V1 subset |
+| one of them | the other not | `CLASSIFICATION_CONFLICT`, unresolved |
+| title anchor fails | — | `PARSER_FAILED`, unresolved |
 
-No revision is created either way. The difference is that an unresolved
-candidate **blocks the zero assertion** for that cycle.
+A negative needs positive evidence: a successfully parsed page whose title fails
+the V1 predicate. URL shape is never negative evidence. A safe official link
+outside the family is an **unsupported discovery shape**: it is unresolved and
+never fetched, and only an operator resolution concludes it. A differently-titled
+FOMC action with a differently-titled feed item is outside V1 and not captured.
+Zero is a V1-subset assertion and never says that no FOMC action happened.
 
 V1 is deliberately not widened with keyword lists, semantic similarity, an LLM,
-regex over body text, or hardcoded emergency-action vocabulary. Honest
-incompleteness beats speculative coverage.
+regex over body text, or hardcoded emergency-action vocabulary.
 
 ### What the scope actually claims
 
@@ -243,62 +245,81 @@ with *coverage completeness*.
 
 ### Zero means one specific thing
 
-Revision 20 makes zero a property of **one LIVE discovery cycle**. A cycle is
-started by one durable, clock-checked feed observation; its boundary B is that
-record's position in the store's commit order. Every feed item is classified
-against the durable state *before* B:
+Zero is a property of **one LIVE discovery cycle**, started by one durable feed
+record that is `LIVE_ELIGIBLE` (defined below). Its boundary B is that record's
+position in the store's commit order. The cycle can be zero only if:
 
-| item | class | blocks zero? |
-|---|---|---|
-| link outside the `…/pressreleases/monetary` family, other title | `DEFINITELY_OUT_OF_SCOPE` | no |
-| in the family (or statement title), already admitted, or already concluded unresolved, before B | `KNOWN` | no |
-| new, statement title, exact `monetary<date>a.htm` path | candidate → LIVE acquisition | **yes** |
-| new, any other title or path shape, or an unidentifiable link | candidate → `UNRESOLVED_CANDIDATE` | **yes** |
-| not yet admitted, and its LIVE acquisition is still pending, failing or suspended | candidate | **yes, every cycle that lists it** |
+1. the feed record is `LIVE_ELIGIBLE` and parses;
+2. every earlier processable LIVE feed record was already **terminal** before B
+   (classified, or ended in a terminal failure such as a channel-level parser
+   failure, so a malformed feed never blocks polling). Every
+   processable LIVE feed record is classified, even one whose clock check
+   failed, and **strictly in commit order** against every earlier
+   classification. So a listing seen during a clock fault is never skipped, and
+   neither is a late response from an old or interrupted poll: it is classified
+   as unverified evidence, so its exact title still raises a marker;
+3. it lists **no new item**: nothing unidentifiable, no new feed candidate, no
+   first sighting of an unsupported path, and no *new* GUID or feed-title value
+   (each new value raises a diagnostic exactly once);
+4. the durable state before B holds **no outstanding relevant item**, whether the
+   feed still lists it or not.
 
-`EVENTS_OBSERVED_ZERO` requires, all together:
+Two terms are kept apart. A record is **processing-terminal**
+(`RECORD_PROCESSING_TERMINAL`) once its local processing has a final outcome. An
+item is **semantically concluded** (`ITEM_SEMANTICALLY_CONCLUDED`) by the rule
+below. **An item may contribute to zero only if it is semantically concluded.**
+The items are:
 
-1. a qualifying LIVE feed fetch with no clock anomaly
-2. the raw feed artefact durably persisted
-3. the feed parse succeeded
-4. every item classified by the table above
-5. **no candidate** in the cycle — every item definitely out of scope or known
+- LIVE feed candidates;
+- unidentifiable feed items, which get an item-level record, never just a
+  feed-level `PARSER_FAILED`;
+- feeds whose own processing failed.
 
-so no candidate can be pending, failing or unresolved, and nothing is newly
-admitted. The verdict needs no waiting: any candidate already makes the cycle
-`NOT_ZERO`. It is written once, durably, and **never rewritten** by later cycles,
-rechecks, H2 revisions or retries. A feed record left without a verdict by a crash
-is concluded at recovery from the same fixed pre-cycle state, and no new poll
-starts until it is. An item concluded unresolved is known in later cycles,
-unless the Fed retitles it to the exact statement title, which makes it a
-candidate again.
+An item is **concluded** in exactly two ways:
 
-Fetch and parse success alone is **not** sufficient. What the state asserts is:
+1. **Naturally.** Every per-response record is processing-terminal, no LIVE
+   episode or manual episode of LIVE work is open, no marker exists after the latest valid resolution, and the item's
+   latest `LIVE_ELIGIBLE` record ended in a normalized in-scope outcome or a
+   healthy `DEFINITELY_OUT_OF_SCOPE`. Every later processable LIVE record must
+   have an outcome of the same class: a clock-ineligible record **may reopen an item, never
+   conclude one**.
+2. **By an operator resolution with a cutoff.** The resolution is valid only if
+   every per-response record of the item is already processing-terminal, no LIVE
+   episode or manual episode of LIVE work is open, and no acquisition is still
+   waiting for its episode when it commits. It covers exactly
+   the records up to its own commit sequence, and **any later record re-opens the
+   item**. There is no same-content exemption; a resolution is a decision about
+   the durable state at its cutoff, never a permanent permission.
 
-> no new events matching this spec's frozen V1 predicate were confirmed during
-> this successful discovery cycle
+Everything else is outstanding: a pending, retrying or suspended fetch, a parser
+failure, a title conflict, an unsupported path, a corrupt raw, an internal error,
+an item seen only through clock-ineligible observations, or anything newer than
+the last resolution. GUIDs are provenance. A new GUID on a known URL, or a
+known GUID on a new URL, raises a diagnostic once per value and makes that cycle
+not zero. A missing GUID raises one diagnostic per item and never blocks zero.
+None of these is a marker. Two markers remain, both cleared only by a resolution and only
+up to its cutoff: a feed retitle to the exact statement title, and a missing or
+invalid title when the item is first seen.
 
-and never *"zero FOMC events"*, *"no FOMC statement occurred"* or any
-complete-world claim. Downstream, it **may not** be read as *"the Federal
-Reserve produced no monetary-policy event"*, and no model or feature may treat
-it as a complete-world event count without a future coverage contract — a
-constraint that binds later InformationSnapshot composition.
+A channel-level malformed feed clears once a later feed parses. That leaves a
+stated residual: an item that appears only in malformed feeds is lost. A local
+processing defect in a feed needs an operator. Backfill observations never count
+here, and operator retries of LIVE work are LIVE observations. A real statement
+whose page will not parse therefore blocks zero until it is concluded, even after
+it leaves the feed. That fail-safe cost is intended.
 
-An emergency inter-meeting action is the highest-impact event class and the one
-most likely to carry a non-standard title. It makes its cycle `NOT_ZERO` as an
-unresolved candidate, and stays on record as an unresolved item. After that it is
-*known*, so it no longer blocks later cycles. The feed carries many
-non-statement monetary items, so without this rule zero could never be reached.
-A zero never claims that an earlier unresolved item was harmless; it only says
-nothing *new* appeared in that cycle.
+A routine non-statement makes its first cycle non-zero while it is being
+investigated. It then concludes as a healthy negative and blocks nothing; no
+`PARSER_FAILED` is recorded. That assumes its page carries the usual title
+anchor, which is expected but not evidenced: the DOM evidence covers statements
+only. A page without it stays outstanding until a later observation or an
+operator concludes it. Backfill work never blocks a LIVE cycle. A
+backfilled item seen by the LIVE feed for the first time is a new candidate
+there.
 
-"Newly admitted" has one meaning: an item's first committed in-scope revision
-(by commit order, over all modes) derives from a LIVE acquisition that the cycle
-created. An already admitted statement appearing again is not new. An item known
-only through backfill gets one LIVE acquisition when the feed lists it, but that
-acquisition cannot make the cycle non-zero. Backfill work never blocks a LIVE
-cycle. Candidates succeed or fail independently: two successes out of three are
-kept, with no rollback, and the cycle is not zero.
+The verdict is computed from the fixed pre-cycle state, written once, and never
+rewritten. "Newly admitted" is reporting provenance: the items a cycle
+discovered that were later admitted, by whatever observation.
 
 ## 4. Time — the part worth getting right
 
@@ -384,9 +405,15 @@ possibly-later body onto the original release instant — the HIGH that R1 found
 So a content revision is bounded by what HyprL can actually prove:
 
 ```
-live_observed_available_at = observed_at
-durable_available_at       = max(observed_at, ingested_at)
+live_observed_available_at = observed_at            (diagnostic only)
+durable_available_at       = avail of the link's commit (server-attested, ≥ observed_at)
 ```
+
+Worked example: a statement observed at 18:00:47 commits at once. The next
+feed poll's request starts after that commit, and its verified response has
+`observed_at` 18:01:40. So the statement's availability is 18:01:40 + 92 s =
+**18:03:12**. Snapshots at 18:00:49 and 18:03:11 do not show it; the snapshot at
+18:03:12 does.
 
 This needs **no design change**: rev4 already supports a null
 `source_available_at` bounded by `observed_at`, and V1 simply always takes that
@@ -394,7 +421,7 @@ branch.
 
 This applies even to the *first* live body. A statement declared at 14:00:00 and
 first received at 14:00:47 cannot be proven byte-for-byte to have existed at
-14:00:00 — so it is visible from observation and commit, not from 14:00. That
+14:00:00 — so it is visible from observation and durable commit, not from 14:00. That
 closes a subtle 47-second retroprojection.
 
 ### The timestamps that are not it — and one rejected suggestion
@@ -476,9 +503,11 @@ The RSS `<guid>` is stored as **discovery provenance**, and is neither business
 identity nor revision identity nor proof that content is unchanged. Backfill
 cannot depend on it at all, since historical statements fall outside current
 feed depth. Provider-side uniqueness is not contractually documented, so
-identity quality stays **GOOD**, not EXCELLENT — and both conflict directions
-(one GUID → two items, one item → incompatible GUIDs) **fail closed**. Never
-"latest wins."
+identity quality stays **GOOD**, not EXCELLENT. Since revision 21 the URL is the
+identity and the GUID is provenance only. One GUID on two URLs never merges them,
+and a changed GUID never splits an item. Each new value raises one diagnostic
+that makes its cycle not zero, without withholding any event. Never "latest
+wins."
 
 A date correction alone is not an identity conflict. With the same URL and
 GUID, it preserves `source_item_id`; historical backfill (manifest) observations
@@ -511,7 +540,7 @@ The JSON freezes this conceptual order:
 10. Never recompute `source_item_id` from the final URL.
 
 Computing a candidate identity does not admit an event. Primary classification,
-normalization, raw-first ordering and commit-bound visibility still apply.
+normalization, raw-first ordering and server-attested visibility still apply.
 The existing normalized field `canonical_source_url` carries the identity URL;
 no field is renamed and no normalized or raw schema is expanded.
 
@@ -716,7 +745,7 @@ revision and never silently mutate normalized state. Existing raw and
 immutable revisions remain intact; this diagnostic adds no global health state.
 
 Each revision still has `source_available_at = null`, `source_updated_at = null`
-and its own actual `observed_at` and commit-bound `ingested_at`. Identity repair
+and availability carried per observation link (`observed_at` and server-attested `ingested_at`). Identity repair
 never rewrites an existing revision's `observed_at`, `ingested_at` or
 `declared_release_at`. D2 is metadata, not proof of when a correction occurred
 or when its bytes became public. FIX1 visibility and FIX2 scope/zero semantics
@@ -759,7 +788,7 @@ the logical source item. Raw commit time never replaces that value.
 | qualifying raw/observation becomes durable | 18:00:06 | anchor becomes persistently available/reconstructible; A stays 18:00:05 |
 | normalized EventRevision commit | 18:00:07 | not required to establish anchor; A stays 18:00:05 |
 
-`ingested_at` remains the distinct normalized commit timestamp. It has no anchor
+`ingested_at` is the server-attested availability of the commit. It has no anchor
 authority even if it happens to equal `observed_at`. Neither `declared_release_at`
 nor restart time nor the monotonic limiter-start timestamp can replace A. A
 declared release at 14:00 followed by the first qualifying primary observation
@@ -937,102 +966,233 @@ satisfaction therefore never reads as "checked at +5 min".
 
 Only a **LIVE** observation can anchor the grid. A backfill fetch never creates
 the four rechecks: fetching a 2021 page today cannot tell what it said five
-minutes after release. Each response's wall clock is checked. When the response
-carries a usable `Date`, the server time is `Date + Age`, so a CDN-cached page is
-not mistaken for a clock fault. That check alone decides: the wall clock must
-agree with it within 90 s (transfer time plus margin). Without a `Date`, the wall
-clock may drift from the monotonic clock by at most 60 s since the latest
-*trusted* response, and 90 s since the epoch began. A failing response is flagged
-`COLLECTOR_CLOCK_ANOMALY` and is never trusted. It keeps its `observed_at` but is
-not processed, cannot anchor or satisfy anything, and never becomes the baseline.
-A bogus jump therefore cannot pre-satisfy later obligations. A real correction
-that agrees with the server is simply trusted, so there is no outage. The stated
-residuals are a wall-clock error of at most 90 s, and an error already present
-at epoch start when no response carries a usable `Date`. Both assume the server
-time is truthful: a cache that serves a stale `Date` without `Age` can hide more.
-Each anomaly is a visible diagnostic.
+minutes after release.
 
-### Retrying, finitely, and surviving crashes
+**Every response checks the clock against its own server time.** A final 200
+counts only if its strictly parsed `Date` (IMF-fixdate, exactly one line, no leap
+second), plus a valid `Age` (at most one line, at most 86400 s), agrees with the
+local wall clock within 90 s. Otherwise the response is `CLOCK_UNVERIFIED`. It is
+persisted **and processed like any other response**, but it can never anchor,
+satisfy a recheck, start a cycle, conclude an item or serve as availability
+evidence. Only the final response's `Date`
+counts, never a redirect's.
 
-Revision 19 retried a failing page about once a minute, forever. Revision 20
-replaces that with `BOUNDED_RETRY_EPISODE_V1`. Each work item — a LIVE
-acquisition, an anchored item's reobservation, or a backfill manifest entry — is
-retried in **episodes**:
+There is no trust state, bootstrap or baseline. A bogus clock step or a broken
+header affects only the responses it touches, and a corrected clock verifies
+again at once.
 
-```
-attempt 1                       when the episode opens
-attempts 2..6 after failures    +60 s, +300 s, +900 s, +3600 s, +14400 s
-after the 6th failure           SUSPENDED — no autonomous traffic
-```
+**Capture never stalls on clock uncertainty; causal visibility waits instead.**
+The host must be NTP-disciplined, but that is defense in depth, not proof. Two
+orthogonal predicates (`CAUSAL_PREDICATES_V2`) carry every clock rule:
 
-Suspension is a retry state, not an obligation status: the obligations stay
-`PENDING` and auditable. An anchored item wakes only when a *later* offset falls
-due. It therefore has at most four episodes, and a dead anchored item costs at
-most 4 × 6 logical fetches × 4 hops = 96 requests, plus 24 for its LIVE
-acquisition. A new episode needs an offset later than any covered at an earlier
-suspension, so clock steps cannot multiply episodes. Backoff and cadence are
-measured on the monotonic clock within an epoch. A suspended acquisition wakes
-only on an explicit, durable operator retry; a backfill entry also wakes with a
-new manifest run.
+- **`PROCESSABLE`**, fixed at commit: an admitted, complete final 200 whose raw
+  bytes and digest committed. Every such record is parsed, classified and
+  processed to a final local outcome, whatever the clock says. Corruption found
+  later never changes it; it produces a diagnostic and a snapshot barrier.
+- **`LIVE_ELIGIBLE`**: `PROCESSABLE`, LIVE mode, and verified by **its own**
+  server `Date`/`Age`. Only it can anchor, start a cycle, satisfy a recheck,
+  succeed an episode, conclude an item or prove LIVE availability.
 
-Episodes live in the store. Before each fetch a durable dispatch record is
-written, and after it an outcome record. After a restart the attempt number and
-next eligible time are recomputed from those records, so a reboot never resets a
-dead item to "try again now". A dispatch with no outcome counts as one failed
-attempt (the design's "refetch" crash row, bounded by the episode).
+No record inherits clock trust from another (`CLOCK_REFERENCE_MAX_AGE` = 0), so
+no local elapsed clock enters a causal rule. That matters on this kind of host: a
+VM or WSL2 pause freezes the wall, the monotonic and the suspend-aware clocks
+alike, so none of them can prove elapsed time.
 
-A **local** failure is not a provider failure. If the page arrived but could
-not be stored, storage is retried in memory. If the bytes are lost, that counts
-as one ordinary attempt of the bounded episode, exactly like a crash (the
-design's "refetch" row) and never more. While the store cannot commit, no
-dispatch record can be written, so no request can start at all. Commit failures
-are retried locally after 60 s and never cause a request. No item is fetched
-again while an earlier durable observation of it is still unprocessed, and a
-recheck episode closes as soon as nothing is due.
+**One tolerance, derived once.** `Date` and `Age` are whole seconds, so a
+response's true serve instant lies in [`Date`+`Age`, `Date`+`Age`+2). The check
+allows 90 s between that and `observed_at`. So a verified `observed_at` is within
+**92 s** of the true serve instant. That 92 is the only tolerance any causal rule
+uses:
 
-On restart, status is recomputed from the durable anchor and observations before
-anything is dispatched. A durable reobservation followed by a crash before any
-"done" marker is already satisfied, and refetching it is forbidden. After a lost
-ACK, local durable state is read; the Fed is never asked again. A limiter epoch
-only controls who may *start* requests. A response started under the old epoch
-that commits afterwards is a normal durable observation, and live and replay
-treat it identically. Commit order means it can never displace an existing
-anchor or revision.
+- **Availability.** A transaction becomes available at the `observed_at` + 92 s
+  of the first verified response (by commit order) whose request began after it
+  committed, and
+  never earlier than its own `observed_at` or any earlier availability. That
+  request was sent after the commit was durable, so this bound holds through
+  suspends, pauses, slow commits and wall steps. Until that response arrives, the
+  transaction is unresolved and visibility waits: with an accurate clock, about
+  150–250 s after commit.
+- **Server time.** `NOW_LB` is the largest verified `observed_at` − 92 s. It is
+  never later than the true present.
+- **Due and backoff** use `NOW_LB` only (see retrying).
 
-Processing a durable observation always reaches a terminal outcome: normalized,
-same content, not in scope, `PARSER_FAILED`, or `CORRUPTION_FAIL_CLOSED`. The raw
-digest is verified before **every** parse, not only at replay. A mismatch never
-parses, never refetches and never re-opens an obligation. Any revision built on
-those bytes is marked `NORMALIZED_PRESENT_RAW_CORRUPT`.
+Nothing is ever reordered or re-stamped. `ingested_at` is the derived
+availability, and the binds declare this override of the design's `ingested_at`
+assignment. The stated residual: a cache that serves a stale `Date` without
+`Age` to a collector whose clock is equally slow can pass the check.
 
-Revisions are keyed per content hash. When a recheck brings changed content H2
-that fails to parse or classify, no revision is invented. H1 remains the latest
-*normalized* revision, but from H2's durable observation onwards the item carries
-`NEWER_DURABLE_SOURCE_CONTENT_UNNORMALIZED`. Anything asking for the latest
-source truth must see that barrier rather than a silently current H1. If the page
-later reverts to H1, the existing H1 revision is current again: A-B-A reuses
-revisions and never duplicates them.
+### Retrying, with durable episodes
 
-Once an item is anchored, LIVE discovery never fetches its primary page again;
-every later LIVE primary GET of it is reobservation work. Once O604800 is
-satisfied, or the last episode has suspended, the item generates no further
-autonomous traffic.
+Revision 21 (`BOUNDED_RETRY_EPISODE_V2`) gives every unit of autonomous work
+exactly one durable **episode**, keyed without any clock value:
+
+| work | episode key |
+|---|---|
+| first LIVE fetch of a new item | the acquisition |
+| each recheck | `(item, anchor, offset)`, one per offset |
+| each backfill entry | `(manifest, item)` |
+| operator retry | the operator record |
+
+An episode is opened by a durable record. It has 6 attempts, with backoffs of
+60 / 300 / 900 / 3600 / 14400 s, and it ends only with a durable
+`EPISODE_SUCCEEDED` or `EPISODE_SUSPENDED` record, which is final. An attempt is
+counted when its `TRANSPORT_INVOKED` record commits. That is the last step before
+the first transport call, after ownership, validation and the limiter grant.
+**Once durable, it always counts**, even if the process dies before sending
+anything. Selection, limiter waiting, ownership failure, validation and local
+work count nothing.
+Redirect hops belong to the same attempt.
+
+Clock steps, restarts, relisting and recovery can neither open, close nor reopen
+an episode. For each attempt, the first committed outcome is authoritative.
+Rechecks of one item open one episode at a time, with the smallest due offset
+first. A new episode never fires within 60 s of the item's last failure.
+Transport must start within 1 s of the limiter grant. If `TRANSPORT_INVOKED` has
+not committed by then, the grant is abandoned: nothing is sent and the work
+waits 60 s. If that `TRANSPORT_INVOKED` still commits later, it counts. The rule is conservative, because an attempt can
+be counted without traffic but never the reverse. A suspended recheck stays suspended; a later offset's own episode
+may still satisfy it by coalescing. A LIVE item therefore has at most five
+autonomous episodes, one acquisition plus four offsets, giving an **absolute
+ceiling of 5 × 6 × 4 = 120** physical requests. Backfill runs and operator
+retries are counted separately.
+
+**Timing uses server time only.**
+- **Due.** A recheck is due when `NOW_LB` ≥ its due time + 92 s. Any verified
+  response fetched after that point is late enough to satisfy it, so a wall-clock
+  jump can never burn an episode early.
+- **Backoff.** The next attempt waits until `NOW_LB` ≥ the failed outcome's
+  availability + the backoff. Both sides are server-attested, so the rule reads
+  the same after a restart, a new boot or a suspend. No local deadline or
+  elapsed-time credit is persisted.
+- **No verified responses.** Due and backoff decisions hold, so waiting never
+  burns work; an attempt already eligible when a clock fault begins may still be
+  spent unverified. Raw capture, feed polling and local processing continue.
+
+An attempt counts only as satisfying or not; the episode suspends after its
+sixth counted non-satisfying attempt.
+Recovery writes that suspension itself if a crash interrupted it, so no episode
+can stay open with nothing left to try.
+The `TRANSPORT_INVOKED` commit itself enforces the budget. It commits only with
+the current epoch's fencing token, an open episode, fewer than six attempts, and
+no other attempt of the item still in flight. Episode keys are unique at commit.
+The current limiter-epoch owner marks every older attempt without an outcome as
+`INTERRUPTED`, and every own attempt whose task ended or that has no outcome
+600 s after `TRANSPORT_INVOKED`. An attempt whose 120 s save deadline passed
+gets `LOCAL_PERSISTENCE_FAILED` instead. All of these still count.
+
+**An attempt has exactly one outcome** (`ATTEMPT_OUTCOME_FENCE_V2`). A response
+record is its attempt's outcome only while the attempt has none. A response that
+arrives after its attempt was already marked, for example `INTERRUPTED`, is still
+stored and processed, but as **`LATE_EVIDENCE`**, which every rule treats as
+clock-unverified:
+- **It can add fail-safe state.** It may create candidates, markers and
+  diagnostics, and it may reopen an item.
+- **It can never act causally.** It never concludes an item, anchors, satisfies
+  a recheck, starts a cycle, makes content current or serves as a clock
+  reference.
+
+The attempt gets no further redirect grants. Attempt outcomes and eligible
+records therefore commit in request order, and a late stale response can add
+caution but never a conclusion. The bound assumes a durable store with
+fsync-durable commits; a restored, re-initialized, replaced or forked store is
+outside V1 and invalidates it. Nothing stays in flight. Bytes lost after
+arrival count as one attempt, as a crash does. While the store cannot commit, no
+attempt can start at all.
+
+**Local processing is derived work.** Any committed response without a final
+processing outcome, and any feed record without a cycle conclusion, is required
+local work. It is reconciled at startup, on a **periodic tick of at most 60 s**, after
+every per-response commit (including a late record from an old epoch), and
+before every request. Only the current
+epoch owner processes, with at most one run per record. Each run is `RUNNING`
+with a 600 s deadline until it is terminal, or `DEAD` (epoch lost, task ended,
+deadline passed, or four failed local commits). Outcome commits are fenced to the run that is `RUNNING`; the one exception is
+the poison outcome below, which the current owner commits itself and re-derives
+until committed. A record with two
+`DEAD` runs
+ends as `INTERNAL_PROCESSING_ERROR`: fail closed, outstanding, no crash loop, and
+a feed record still gets its (not-zero) cycle conclusion. Healthy running work
+never counts toward that limit, and local failures never refetch. No new feed
+poll starts until every earlier feed record is terminal (classified, or ended in
+a terminal failure) and every cycle-starting one has its conclusion. A feed response that is not
+`LIVE_ELIGIBLE` ends its poll attempt with a `CLOCK_INELIGIBLE` diagnostic and no
+cycle, and polling continues.
+
+**Operator retries close.** A `MANUAL_RETRY` episode succeeds as soon as its work
+is satisfied by any `LIVE_ELIGIBLE` observation, before sending anything. An
+in-flight manual attempt keeps its observation. Manual episodes never touch
+autonomous ones and sit outside the 120 bound.
+
+### What a snapshot shows (`FOMC_CURRENT_CONTENT_SELECTION_V1`)
+
+`events_as_of(T)` and `InformationSnapshot(T)` read FOMC items from the longest
+commit-order prefix P(T) whose availability is resolved and ≤ T. An unresolved
+transaction ends the prefix. **Every input is read only inside P(T)**: records,
+outcomes, revisions, links and diagnostics. An outcome committed after the
+prefix is still pending for the read. For each item, the read takes the latest
+processable response in P(T) by commit order, of any mode and clock verdict.
+- If that response is verified, its content hash selects the revision.
+- If it is unverified, and the latest verified response has the same hash, that
+  revision is current.
+- A corrupt newest response, or any other mismatch, gives a barrier. Unverified
+  raw is kept as unresolved source state:
+
+| situation | snapshot state |
+|---|---|
+| H1 normalized | current = H1 |
+| H1 normalized, H2 durable but unnormalized | `CURRENT_CONTENT_UNAVAILABLE_DUE_TO_NEWER_UNNORMALIZED_SOURCE`; H1 is history only |
+| H1, then H2 normalized | current = H2 |
+| H1 → H2 → H1 | current = the existing H1 revision (no duplicate) |
+| clock-unverified H2 after H1 | barrier: newer bytes exist; they are never availability evidence |
+| clock-unverified old H1 after verified H2 | barrier, never a return to H1 |
+| backfill H2 after a LIVE H1 | unnormalized: barrier; normalized: current = H2, but not LIVE-available; LIVE zero unaffected |
+| observed item with no revision (outstanding, backfill parse failure) | `SOURCE_ACTIVITY_NO_REVISION`, never absence |
+| concluded out of scope | `NOT_IN_V1_SCOPE` |
+| revision whose only link is unverified | barrier; current needs a verified link |
+| newest record corrupted after commit | barrier, never the older revision |
+
+Revisions are keyed by content and are **mode-neutral**. Each IN_SCOPE observation
+links to its revision with its own mode and availability. Backfill H1 followed
+by LIVE H1 is one revision with two links. LIVE availability starts at the LIVE
+link, and strict causal research requires a LIVE link. Backfill never pre-empts
+LIVE discovery, anchoring or availability.
+
+Every read is evaluated over one store view whose **horizon H** (its largest
+commit sequence) is stored with the snapshot. Availability, the prefix and every
+input use only records up to H. So replaying at the same (T, H) reproduces the
+live read exactly, including an unresolved one. The selection policy, H and each
+FOMC item's selection state are bound into snapshot identity, so a store where V1 is current and one where a barrier sits
+over V1 never share an identity. Every read also carries one FOMC-level state, bound into identity, so an unresolved read is never an empty resolved one. The FOMC part of a live snapshot at `T` is
+admissible only when both hold:
+
+- a transaction already has resolved availability later than `T`;
+- nothing unresolved precedes that transaction.
+
+Otherwise the FOMC part is `FOMC_CAUSAL_VISIBILITY_UNRESOLVED` as a whole: no
+item state, zero conclusion or FOMC health is exposed. Other providers' content
+is unaffected.
+
+**Zero is only shown for the newest feed record.** A resolved read shows
+discovery from the latest processable LIVE feed record in the prefix:
+- **That record's own cycle conclusion.** ZERO or not zero, if the conclusion is
+  inside the prefix.
+- **`NO_CURRENT_CYCLE`.** When that record starts no cycle, for example because
+  its clock check failed.
+- **`DISCOVERY_PENDING`.** When that record, or its conclusion, is not yet
+  inside the prefix.
+
+An older zero is never presented as current. A consumer that requires LIVE
+availability gets `CURRENT_REVISION_NOT_LIVE_AVAILABLE` unless the item's latest
+`LIVE_ELIGIBLE` record carries the current content. A return to older content
+seen only through backfill is never LIVE-available.
 
 ### Backfill is a manifest, not a crawl
 
-`HISTORICAL_BACKFILL` no longer reads archive or calendar pages. An operator
-supplies a finite manifest of statement URLs copied from official pages, at most
-1000. It is stored durably before any request. Every entry must pass the full URL
-rules and the exact statement path grammar, or the whole manifest is rejected.
-Duplicates collapse, and entries run in `source_item_id` order.
-
-The manifest is the discovery-side half of the classifier for backfill
-observations; the page title still decides. Each observation records its own
-mode, and items are never labelled as a whole. A backfilled item that later
-appears in the LIVE feed is LIVE-acquired as usual.
-
-After +7 days, **V1 promises nothing.** That is stated as a limitation rather
-than disguised as immutability; extending the window is CaptureSpec V2.
+The manifest is UTF-8 JSON without BOM: `{"version": 1, "urls": [...]}`, with at
+most 1000 **raw** entries counted before dedupe. It is validated whole before
+any request: one bad entry rejects everything, with zero requests. Its hash,
+length, counts, canonical work list and operator provenance are stored before
+the first fetch. Replay never reads an external file.
 
 ## 7. Rate, honestly
 
@@ -1266,30 +1426,19 @@ decides **which** work takes it:
 
 | class | work |
 |---|---|
-| `FEED_DISCOVERY` | the LIVE feed poll; LIVE acquisitions of new statement candidates |
-| `REOBSERVATION` | every later LIVE primary fetch of an anchored item |
-| `HISTORICAL_BACKFILL` | manifest entries |
+| `FEED_DISCOVERY` | the LIVE feed poll; LIVE acquisition episodes |
+| `REOBSERVATION` | recheck episodes |
+| `HISTORICAL_BACKFILL` | manifest entry episodes |
 
-At each grant, a redirect follow of an in-flight fetch goes first. Otherwise the
-next class in the cycle order after the class of the **latest durable dispatch
-record** is served, skipping classes with nothing eligible. Because the rotation
-is derived from the store, a restart does not reset it.
+At each grant, redirect hops of an in-flight attempt go first. Otherwise the next
+class after the class of the latest durable `TRANSPORT_INVOKED` record is served,
+skipping empty classes. Inside `FEED_DISCOVERY` the poll and acquisitions
+alternate the same durable way. Within a class, episodes are ordered by
+`(next eligible instant, source_item_id)`. Suspended episodes are never eligible.
+At most one fetch per
+item is in flight across all classes. Scheduling is work-conserving.
 
-Inside `FEED_DISCOVERY` the feed poll and LIVE acquisitions alternate, again by
-the latest durable dispatch, so a steady poll cannot starve a new statement.
-Within a class, items are served by `(next_eligible_at, source_item_id)`. A
-fresh obligation is eligible at its `due_at`, and a retry only after its backoff,
-so healthy work is never buried behind retries. Suspended items are not eligible
-at all: a hundred dead pages cost nothing until a wake condition. The feed polls
-every 60 s after its last durable dispatch, with no catch-up polls.
-
-A LIVE acquisition is durable work from the moment its cycle is concluded. A
-later feed that no longer lists the item never cancels it, because dispatch reads
-acquisition records, not the latest feed.
-
-Scheduling is work-conserving: if work is eligible and the limiter would admit a
-start, the start happens. The only in-flight limits are one feed poll and one
-fetch per work item.
+Provider requests ignore ambient proxy settings (`HTTPS_PROXY` and similar).
 
 ### Accounting does not redefine observations or source health
 
@@ -1516,24 +1665,20 @@ is `PARSER_FAILED`, with no sniffing.
 
 ### Every failure has one health state
 
-`source_health.mappings` maps every failure without adding a state to the rev4
-vocabulary. The first failing stage decides, and a specific mapping beats a
-generic one:
+Each failure maps to one rev4 state or to no provider health state. When several
+conditions apply, this fixed precedence decides:
 
-| failure | state |
-|---|---|
-| DNS, TCP/connect, TLS, read timeout, total deadline, truncation, content-coding error, redirect failure/limit, final non-200 | `SOURCE_UNAVAILABLE` |
-| oversize, Content-Type, charset, invalid UTF-8, XML security/syntax, feed structure, title/date anchors, classification conflict | `PARSER_FAILED` |
-| release-clock anchor or grammar failure | not a failure — `RELEASE_TIME_UNPARSED` diagnostic, event kept |
-| raw digest mismatch, anywhere | no provider health state; `CORRUPTION_FAIL_CLOSED` if the record had no outcome yet; no parse, no network repair |
-| raw persistence failure | no provider health state; response never observed; episode suspends, no refetch |
-| collector clock anomaly (checked right after raw persistence) | no provider health state; visible timing diagnostic; not processed; cannot anchor or satisfy |
-| revision commit failure | no `ingested_at`, no visibility; retried locally |
-| waiting for the limiter | not a failure; `RATE_LIMITED` is at most a non-material diagnostic |
-| cancellation after grant | no provider health state; unit consumed; not qualifying |
+| precedence | condition | state |
+|---|---|---|
+| 1 | raw digest mismatch | no provider health state; `CORRUPTION_FAIL_CLOSED` |
+| 2 | local persistence failure | no provider health state |
+| 3 | response not `LIVE_ELIGIBLE` (fails its own clock check) | no provider health state; `CLOCK_INELIGIBLE` diagnostic; still processed |
+| 4 | DNS, TCP, TLS, timeouts, redirect failure, non-200, truncation, content coding | `SOURCE_UNAVAILABLE` |
+| 5 | size, Content-Type, charset, UTF-8, XML security/syntax, feed structure, title/date anchors | `PARSER_FAILED` |
+| 6 | everything else, including healthy negatives, conflicts, new items and release-clock diagnostics | no failure state |
 
-A recheck failure is recorded on `primary_statement` only and never marks the
-feed or the provider unavailable.
+A routine non-statement is a successful check, not a parser failure. A recheck
+failure is recorded on `primary_statement` only.
 
 ## 7b. XML parsing has no expansion path
 
@@ -1747,9 +1892,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. One hundred and sixty-seven cases, decided in advance
+## 11. Two hundred and forty-six cases, decided in advance
 
-`FOMC01`–`FOMC167` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC246` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -1770,7 +1915,7 @@ boundaries. Revision 10 adds seven strict UTF-8 decoding cases:
 | `FOMC19` | body corrected upstream at 16:00, first backfilled in 2026 | at 14:30 the fetched body is **not visible**; no claim about the uncaptured original either |
 | `FOMC20` | live correction, both bodies print the same release line | neither revision inherits 14:00 |
 | `FOMC21` | first live fetch 47 s after the declared release | still `source_available_at = null` |
-| `FOMC22` | unscheduled monetary action, different title | unresolved candidate; **zero prohibited** |
+| `FOMC22` | unscheduled monetary action, different titles | healthy out-of-V1-scope after its page is read; first cycle not zero |
 | `FOMC23` | feed title matches, primary title differs | conflict; no event, no zero, no silent downgrade |
 | `FOMC24` | clean cycle, no matches, no unresolved | zero **permitted**, scoped to the V1 subset |
 | `FOMC25` | positive candidate, primary fetch fails | unresolved; zero prohibited |
@@ -2002,41 +2147,135 @@ and `FOMC134` are updated to the new rules.
 
 | case | frozen verdict |
 |---|---|
-| `FOMC136` — 4 known statements + 11 links outside the family | zero |
-| `FOMC137` — new in-family item, unknown title | its cycle not zero; later cycles see it as known |
-| `FOMC138` — only out-of-family or known items | zero |
+| `FOMC136` — 4 concluded statements + 11 concluded non-statements, nothing outstanding | zero |
+| `FOMC137` — new in-family item, non-statement title | fetched once; healthy negative; its cycle not zero, later cycles may be |
+| `FOMC138` — only concluded items, nothing outstanding | zero |
 | `FOMC139` — admitted item reappears | known, not newly admitted |
 | `FOMC140` — new statement admitted after its cycle concluded | cycle not zero; admission attributed to it |
 | `FOMC141` — H1 normalized, H2 durable but parser-failed | no H2 revision; newer-content barrier |
-| `FOMC142` — anchored page 404 forever | ≤ 4 episodes × 6 fetches; then silence |
-| `FOMC143` — restart after 3 failures | attempt 4 at third failure + 900 s |
+| `FOMC142` — anchored page 404 forever | one episode per offset key, 6 attempts each; then silence |
+| `FOMC143` — restart after 3 failures | attempt 4 after the embargo and the persisted 900 s wait |
 | `FOMC144` — 100 suspended items + feed + fresh recheck + backfill | nothing starves |
 | `FOMC145` — body received, local store fails, bytes lost | one ordinary episode attempt, never an extra retry |
 | `FOMC146` — urllib `AllowlistedRedirectHandler` | not conforming |
 | `FOMC147` — manifest duplicates, other order | deduplicated, `source_item_id` order |
 | `FOMC148` — backfill of a 2021 statement | no anchor, no rechecks |
-| `FOMC149` — backfilled item appears LIVE | LIVE acquisition and grid; known for zero |
-| `FOMC150` — old-epoch response commits after new epoch | valid; same in live and replay |
+| `FOMC149` — backfilled item appears LIVE | new LIVE candidate; not zero until concluded; revision reused with a LIVE link |
+| `FOMC150` — old-epoch response commits after new epoch | normal before the owner's `INTERRUPTED`, otherwise `LATE_EVIDENCE`; same in live and replay |
 | `FOMC151` — no Content-Type | `PARSER_FAILED` |
 | `FOMC152` — `text/html` and `application/json` | `PARSER_FAILED` |
 | `FOMC153` — `Text/HTML ; Charset="utf-8"; foo=bar` | accepted |
 | `FOMC154` — DNS answer at 61 s | no TCP, no HTTP byte |
 | `FOMC155` — due-time equality at sub-second precision | parsed instants decide |
-| `FOMC156` — wall clock jumps a day forward | anomaly; not processed; never a reference; nothing pre-satisfied |
+| `FOMC156` — wall clock jumps a day forward | capture continues; nothing visible or due early |
 | `FOMC157` — corrupt raw during processing | no parse, no refetch |
 | `FOMC158` — `2:00&nbsp;p.m. ET` | null release time; statement kept |
-| `FOMC159` — candidate vanishes from the next feed | acquisition still required |
-| `FOMC160` — clean LIVE cycle, 300 backfill entries pending | zero |
+| `FOMC159` — candidate vanishes from the next feed | acquisition still required; later cycles not zero |
+| `FOMC160` — clean LIVE cycle, 300 backfill entries pending | zero if nothing LIVE is outstanding |
 | `FOMC161` — H1 → H2 → H1 | H1's revision reused and current; no duplicate |
-| `FOMC162` — unresolved item retitled to the statement title | candidate again; cycle not zero |
-| `FOMC163` — NTP steps the clock back 3 s | no anomaly |
+| `FOMC162` — known item's feed title changes | cycle not zero (diagnostic); classification unchanged; no traffic |
+| `FOMC163` — NTP steps the clock back 3 s | still verified |
 | `FOMC164` — crash after durable success, before outcome record | success; no duplicate GET |
-| `FOMC165` — NTP corrects a 5-min-fast clock, server time agrees | not anomalous; re-baselines |
-| `FOMC166` — bogus 280 s forward step | anomaly; nothing pre-satisfied |
-| `FOMC167` — CDN-cached page, old `Date`, `Age: 1200` | not anomalous |
+| `FOMC165` — host clock 5 min fast | responses unverified but processed; no causal effect until corrected |
+| `FOMC166` — bogus 280 s forward step | unverified against its own `Date`; nothing pre-satisfied |
+| `FOMC167` — CDN-cached page, old `Date`, `Age: 1200` | server time = Date + Age; usable |
+
+Revision 21 closes the REV20 final review. It rewrites F23, F24, F59, F61, F63–F66,
+F68, F70 and F71, and adds F73–F77:
+
+- outstanding items persist until concluded;
+- revisions are mode-neutral, while availability is specific to each observation;
+- local processing work derives from durable records;
+- HTTP clock headers are parsed strictly;
+- the GUID is provenance, the URL is identity.
+
+Older cases whose verdicts changed are updated, in particular FOMC22–25,
+FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
+
+| case | frozen verdict |
+|---|---|
+| `FOMC168` — statement parse fails, still listed | outstanding; not zero |
+| `FOMC169` — unresolved acquisition omitted by next feed | not zero |
+| `FOMC170` — H1 normalized, H2 unnormalized | snapshot does not return H1 as current |
+| `FOMC171` — A → B → A | existing A revision current |
+| `FOMC172` — H2 later normalized | barrier clears |
+| `FOMC173` — backward wall step mid-episode | no close, no reopen |
+| `FOMC174` — six failed O300 attempts | one final suspended episode |
+| `FOMC175` — O3600 success after O300 suspended | O300 satisfied, episode not reopened |
+| `FOMC176` — restart during backoff | no shortened wait |
+| `FOMC177` — relist of a suspended acquisition | no new episode |
+| `FOMC178` — routine non-statement | healthy negative |
+| `FOMC179` — CDATA, entities, whitespace in RSS titles | deterministic normalization |
+| `FOMC180` — unforeseen safe feed path | unresolved; zero blocked |
+| `FOMC181` — one GUID, two URLs | no merge; diagnostic |
+| `FOMC182` — one URL, new GUID | one item; diagnostic |
+| `FOMC183` — backfill H1 then LIVE H1 | one revision, LIVE link |
+| `FOMC184` — manifest with 1001 raw entries | rejected, 0 requests |
+| `FOMC185` — one invalid entry in 1000 | rejected, 0 requests |
+| `FOMC186` — late old-epoch record | processed on commit (as `LATE_EVIDENCE` if its attempt already has an outcome) |
+| `FOMC187` — cycle conclusion commit fails | local retry, no refetch |
+| `FOMC188` — host 1 day off, invalid `Date` | unverified; no admission |
+| `FOMC189` — duplicate `Date` | reference unusable |
+| `FOMC190` — no `Age` | Age = 0 |
+| `FOMC191` — `Age: 90000` | reference unusable; unverified |
+| `FOMC192` — only the redirect has a valid `Date` | no clock evidence |
+| `FOMC193` — response without `Date` | unverified |
+| `FOMC194` — raw commit during backward step | available at max(next verified `observed_at` + 92 s, own `observed_at`) |
+| `FOMC195` — `HTTPS_PROXY` set | ignored |
+| `FOMC196` — processing always throws | `INTERNAL_PROCESSING_ERROR`, no loop |
+| `FOMC197` — out-of-scope item rechecked with the statement title | re-opened; not zero |
+| `FOMC198` — backfill H2 fails to parse on a LIVE-admitted item | snapshot barrier; zero unaffected |
+| `FOMC199` — unsupported path, later operator-resolved | first cycle not zero; then non-blocking |
+| `FOMC200` — crash between feed commit and its conclusion | reconciliation concludes it; no deadlock |
+| `FOMC201` — host suspends 8 h between two transactions | each available from the next verified response; nothing early |
+| `FOMC202` — feed retitled to statement title, recheck says out of scope | still outstanding |
+| `FOMC203` — resolution attempted while an observation is unprocessed | invalid; concludes nothing |
+| `FOMC204` — backfill fetch of a LIVE-anchored item | never satisfies LIVE rechecks |
+| `FOMC205` — unidentifiable statement item rotates out of the feed | durable record; not zero until an operator resolves it |
+| `FOMC206` — verified response 3 s before due | non-satisfying attempt; no stall |
+| `FOMC207` — `TRANSPORT_INVOKED` ACK lost, no transport | counts; closed as interrupted; nothing in flight |
+| `FOMC208` — parser-failed backfill-only item | `SOURCE_ACTIVITY_NO_REVISION` |
+| `FOMC209` — unverified newer H2 after V1 | barrier, never evidence |
+| `FOMC210` — feed processing always crashes, item rotates out | feed record outstanding; not zero |
+| `FOMC211` — resolved item, then any new LIVE observation | re-opened; not zero |
+| `FOMC212` — two spellings, titles and GUIDs in one feed record | one item; one diagnostic per new value; not zero |
+| `FOMC213` — crash before writing the 6th-attempt suspension | recovery writes it |
+| `FOMC214` — `TRANSPORT_INVOKED` not committed within 1 s | nothing sent; not counted |
+| `FOMC215` — unverified old H1 after verified H2 | barrier, never H1 |
+| `FOMC216` — legitimate NTP step of +120 s | committed; available from the next verified response |
+| `FOMC217` — exact-title item with missing `<link>`, rotated out | item-level record; not zero until resolved |
+| `FOMC218` — commits after a boot before any verified response | unresolved, then bounded by the first verified response |
+| `FOMC219` — operator retry anchors while acquisition in backoff | acquisition episode succeeds; nothing left open |
+| `FOMC220` — `TRANSPORT_INVOKED` commits late, repeatedly | each counts; may suspend after six; bound kept |
+| `FOMC221` — valid statement with unverified clock | processed and revisioned; no anchor; item outstanding until eligible or validly resolved |
+| `FOMC222` — feed response fails its clock check | classified; poll ends, no cycle, `CLOCK_INELIGIBLE`; polling continues |
+| `FOMC223` — last verified response 20 days old, clock 600 s slow | nothing eligible, nothing early; due work held |
+| `FOMC224` — first primary response unverified, a later one verified | anchor on the first eligible record; no new keys |
+| `FOMC225` — two processing runs for one record | one running run; every dead run counts, running ones never |
+| `FOMC226` — manual retry open when autonomous work succeeds | manual episode succeeds before dispatch |
+| `FOMC227` — restart in a new boot mid-backoff, clock off a year | waits on server time only; bounded |
+| `FOMC228` — verified record 90 s ahead of true time | available no earlier than its `observed_at` |
+| `FOMC229` — VM paused an hour inside a fetch | eligible if committed before its attempt's outcome; available only after the next verified response |
+| `FOMC230` — suspend between a transaction's wall reading and its commit | available from a response sent after the durable commit |
+| `FOMC231` — late old-epoch feed response after a newer poll | `LATE_EVIDENCE`, classified next, no cycle; its new items become candidates |
+| `FOMC232` — item listed only during a clock fault, then dropped | candidate created; later cycles not zero until concluded |
+| `FOMC233` — concluded negative, later unverified recheck shows the statement title | reopened |
+| `FOMC234` — quiet period, poll task dies after `TRANSPORT_INVOKED` | interrupted at the next tick; polling resumes |
+| `FOMC235` — wall clock +7 days while O604800 pending | not opened; no attempt burned |
+| `FOMC236` — reboots every 30 min during a 14400 s backoff | attempt 6 still becomes eligible |
+| `FOMC237` — live read before the newest outcome commits; later replay | identical (inputs only from P(T)) |
+| `FOMC238` — newest primary record corrupted after commit | barrier; never the older revision |
+| `FOMC239` — late old-epoch feed with the exact title after a retitling feed | `LATE_EVIDENCE` classified after the newer record; marker; outstanding |
+| `FOMC240` — V1 current vs barrier over V1 | different snapshot identities |
+| `FOMC241` — attempt interrupted at 600 s, its stale response arrives after a newer conflict | `LATE_EVIDENCE`, processed as unverified; item stays outstanding; snapshot barrier |
+| `FOMC242` — CDN serves a 200 HTML maintenance page as the feed | terminal parser failure; polling continues |
+| `FOMC243` — live read with everything unresolved and no FOMC item yet | FOMC-level unresolved, never an empty resolved part |
+| `FOMC244` — unresolved live read, later resolved; replay at the same horizon | unresolved again, same identity |
+| `FOMC245` — newest feed record has no conclusion yet, an older cycle was zero | `DISCOVERY_PENDING`; the older zero is not shown |
+| `FOMC246` — A (LIVE), B (LIVE), then A via backfill | current A, but not LIVE-available |
 
 These are specification cases only; no fixture, capture or runtime is created
-or exercised here. Revision 20 is authoritative, but an independent global review
+or exercised here. Revision 21 is authoritative, but an independent global review
 of it is still pending and no implementation is authorized.
 
 ## 12. What this does not establish
