@@ -286,9 +286,21 @@ class Collector:
                 work["anchor"] = due[0]["anchor"]
             ledger.open_episode(self.store, key, {"kind": "MANUAL_RETRY", "work": work, "sid": work["sid"]})
 
+    @staticmethod
+    def _opening_instant(target: dict):
+        """The server-time instant a first attempt's opening condition starts to hold, when it has one:
+        a REOBSERVATION is PENDING_DUE from NOW_LB >= due_at + 92 s. Other work is eligible from its
+        durable opening record, which orders before any server-time instant."""
+        if target["kind"] != "REOBSERVATION":
+            return None
+        return clockmod.parse_iso(target["anchor"]) + timedelta(seconds=target["offset"] + spec.CLOCK_ERROR_BOUND_S)
+
     def _ready(self, episode, table, lb, store) -> tuple[bool, float]:
+        """(eligible now, next eligible instant) for the episode's next attempt (retry_policy.schedule,
+        first_attempt_eligibility); the instant orders eligible work within its class."""
         body = episode.body
         sid = body["sid"]
+        opening = None
         outcomes = state.attempt_outcomes(store, episode.key)
         if any(o is None for _a, o in outcomes) or len(outcomes) >= spec.ATTEMPTS_PER_EPISODE:
             return False, 0.0
@@ -300,16 +312,17 @@ class Collector:
             last = outcomes[-1][1]
             gap = spec.BACKOFF_S[len(outcomes) - 1]
         else:
+            opening = self._opening_instant(body["work"] if body["kind"] == "MANUAL_RETRY" else body)
             prior = [o for e in state.item_episodes(store, sid, live_only=False) if e.key != episode.key
                      for _a, o in state.attempt_outcomes(store, e.key) if o is not None and o.body["outcome"] != "RESPONSE"]
             if not prior:
-                return True, 0.0
+                return True, opening.timestamp() if opening else float("-inf")
             last, gap = prior[-1], spec.FIRST_ATTEMPT_GAP_S
         start = state.avail_of(table, last.seq)
         if start is None or lb is None:
             return False, 0.0  # held until verified server time exists: never burned by waiting
         threshold = start + timedelta(seconds=gap)
-        return lb >= threshold, threshold.timestamp()
+        return lb >= threshold, max(threshold, opening).timestamp() if opening else threshold.timestamp()
 
     def feed_poll_due(self, view=None) -> bool:
         view = view or self.store.view()
@@ -330,17 +343,28 @@ class Collector:
         for episode in view.rows("EPISODE_OPEN"):
             if state.derived_status(view, episode) != "OPEN":
                 continue
-            ready, order = self._ready(episode, table, lb, view)
+            ready, instant = self._ready(episode, table, lb, view)
             if not ready:
                 continue
-            body = episode.body
-            kind = body["work"]["kind"] if body["kind"] == "MANUAL_RETRY" else body["kind"]
-            work.append({"class": CLASS_OF[kind], "episode": episode, "order": (order, body["sid"])})
+            target = episode.body["work"] if episode.body["kind"] == "MANUAL_RETRY" else episode.body
+            work.append({"class": CLASS_OF[target["kind"]], "episode": episode, "order": _order(target, instant)})
         return work
 
     def step(self) -> dict | None:
-        """One selection decision (ELIGIBLE_CLASS_ALTERNATION_V1) and its logical fetch."""
+        """One selection decision (ELIGIBLE_CLASS_ALTERNATION_V1) and its logical fetch. A redirect
+        continuation never reaches a decision: it is followed inside its logical fetch, on its own
+        grant, before any new attempt, and creates no TRANSPORT_INVOKED (rotation is unaffected)."""
         self.reconcile()
+        chosen = self.select()
+        if chosen is None:
+            return None
+        if chosen.get("poll"):
+            return self.poll_feed()
+        return self.run_episode(chosen["episode"])
+
+    def select(self) -> dict | None:
+        """The work the next selection decision takes, derived from durable records only (plus the
+        feed cadence timer); nothing is fetched."""
         work = self.eligible_work()
         if not work:
             return None
@@ -356,10 +380,7 @@ class Collector:
                 feed_ti = [t for t in invoked if t.body["class"] == "FEED_DISCOVERY"]
                 want_poll = not feed_ti or feed_ti[-1].body["kind"] != "FEED_POLL"
                 choices = [w for w in choices if bool(w.get("poll")) == want_poll]
-            chosen = sorted(choices, key=lambda w: w["order"])[0]
-            if chosen.get("poll"):
-                return self.poll_feed()
-            return self.run_episode(chosen["episode"])
+            return min(choices, key=lambda w: w["order"])
         return None
 
     def run_episode(self, episode) -> dict:
@@ -423,6 +444,15 @@ class Collector:
             body["reason"] = str(exc)
         seq = self.store.append("MANIFEST", [("MANIFEST", body["sha"], body)])
         return dict(body, seq=seq)
+
+
+def _order(target: dict, instant: float) -> tuple:
+    """Order of eligible work within its class (reobservation_scheduler.selection)."""
+    if target["kind"] == "HISTORICAL_BACKFILL":
+        return (target.get("manifest", 0), instant, target["sid"])  # (manifest commit_seq, next eligible instant, sid)
+    if target["kind"] == "REOBSERVATION":
+        return (instant, target["sid"], target["offset"])
+    return (instant, target["sid"])  # LIVE_ACQUISITION
 
 
 def _reject_duplicates(pairs):
