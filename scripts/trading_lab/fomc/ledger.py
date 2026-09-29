@@ -84,17 +84,22 @@ def commit_attempt_outcome(store: FomcStore, attempt_seq: int, outcome: str, det
         return None
 
 
-def commit_response(store: FomcStore, attempt_seq: int, fields: dict) -> tuple[int, bool]:
+class SaveExpired(Exception):
+    """The local save deadline has passed at commit time: the record is never admitted."""
+
+
+def commit_response(store: FomcStore, attempt_seq: int, fields: dict, admit=None) -> tuple[int, bool]:
     """Commit a per-response record. It is its attempt's outcome only while the attempt has none;
-    otherwise it is LATE_EVIDENCE, kept raw-first and treated as CLOCK_UNVERIFIED by every rule."""
+    otherwise it is LATE_EVIDENCE, kept raw-first and treated as CLOCK_UNVERIFIED by every rule.
+    `admit(store)` runs inside the committing transaction on both paths and may raise SaveExpired."""
     try:
         seq = store.append("RESPONSE", [
             ("RESPONSE", str(attempt_seq), dict(fields, attempt=attempt_seq, late_evidence=False)),
             ("ATTEMPT_OUTCOME", str(attempt_seq), {"attempt": attempt_seq, "outcome": "RESPONSE"}),
-        ])
+        ], admit)
         return seq, False
     except Rejected:
-        seq = store.append("RESPONSE", [("RESPONSE", str(attempt_seq), dict(fields, attempt=attempt_seq, late_evidence=True))])
+        seq = store.append("RESPONSE", [("RESPONSE", str(attempt_seq), dict(fields, attempt=attempt_seq, late_evidence=True))], admit)
         return seq, True
 
 

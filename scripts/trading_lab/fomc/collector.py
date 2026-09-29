@@ -46,6 +46,7 @@ class Collector:
         self.persist_fault = None  # test hook: raise OSError to simulate a failing local save
         self._active_attempts: dict[int, float] = {}  # own attempts whose task is alive -> TRANSPORT_INVOKED mono
         self._active_runs: dict[int, str] = {}  # record seq -> run_id of a run whose task is alive
+        self._save_deadlines: dict[int, float] = {}  # attempt -> network end + 120 s, kept from the network end
         self.reconcile()
 
     def close(self) -> None:
@@ -66,8 +67,15 @@ class Collector:
                                           may_continue=lambda a: ledger.outcome_of(self.store, a) is None)
         except Rejected as exc:
             return {"status": "REJECTED", "reason": str(exc)}
-        result.network_end_mono = self.clock.mono()
+        self.network_ended(result)
         return result
+
+    def network_ended(self, result: FetchResult) -> None:
+        """The network phase of `result` ends now: its 120 s local save deadline starts here and is
+        kept by the owner, so reconcile() can close the attempt even if the saving task is blocked."""
+        result.network_end_mono = self.clock.mono()
+        if result.kind == "RESPONSE_200":
+            self._save_deadlines[result.attempt_seq] = result.network_end_mono + spec.SAVE_DEADLINE_S
 
     def commit(self, result: FetchResult, work: dict, url: str, surface: str) -> dict:
         attempt = result.attempt_seq
@@ -75,6 +83,7 @@ class Collector:
             return self._commit(result, work, url, surface)
         finally:
             self._active_attempts.pop(attempt, None)  # the task ends here, with or without an outcome
+            self._save_deadlines.pop(attempt, None)
 
     def _commit(self, result: FetchResult, work: dict, url: str, surface: str) -> dict:
         attempt = result.attempt_seq
@@ -87,7 +96,12 @@ class Collector:
             ledger.commit_attempt_outcome(self.store, attempt, outcome, {"reason": result.reason})
             self.derive_terminals()
             return {"status": outcome, "reason": result.reason}
-        save_deadline = result.network_end_mono + spec.SAVE_DEADLINE_S
+        save_deadline = self._save_deadlines.get(attempt, result.network_end_mono + spec.SAVE_DEADLINE_S)
+
+        def admit(_store) -> None:  # inside the committing transaction: at 120 s, expired
+            if self.clock.mono() >= save_deadline:
+                raise ledger.SaveExpired()
+
         while True:
             if self.clock.mono() >= save_deadline:
                 return self._persistence_failed(attempt, "local save not durable within 120 s of the network end")
@@ -95,8 +109,11 @@ class Collector:
                 if self.persist_fault is not None:
                     self.persist_fault()
                 digest = self.store.put_raw(result.body)
-                seq, late = ledger.commit_response(self.store, attempt, self._fields(result, work, url, surface, digest))
+                seq, late = ledger.commit_response(self.store, attempt, self._fields(result, work, url, surface, digest), admit)
                 break
+            except ledger.SaveExpired:
+                # the local operation finished at or after +120 s: never a RESPONSE nor LATE_EVIDENCE
+                return self._persistence_failed(attempt, "local save not durable within 120 s of the network end")
             except RawCorrupt:
                 # The immutable slot for these bytes holds other bytes: never overwrite it. The exact
                 # bytes of this attempt are therefore not durable -> LOCAL_PERSISTENCE_FAILED, no RESPONSE.
@@ -146,6 +163,12 @@ class Collector:
         task that is still active is never declared dead before its deadline."""
         now = self.clock.mono()
         for attempt in ledger.attempts_without_outcome(self.store):
+            save_deadline = self._save_deadlines.get(attempt.seq) if attempt.body["epoch"] == self.epoch else None
+            if save_deadline is not None and now >= save_deadline:
+                # bytes in hand but not durable by +120 s, even if the saving task is still blocked
+                ledger.commit_attempt_outcome(self.store, attempt.seq, "LOCAL_PERSISTENCE_FAILED",
+                                              {"reason": "local save not durable within 120 s of the network end"})
+                continue
             started = self._active_attempts.get(attempt.seq) if attempt.body["epoch"] == self.epoch else None
             if started is not None and now - started < spec.ATTEMPT_ABSOLUTE_DEADLINE_S:
                 continue

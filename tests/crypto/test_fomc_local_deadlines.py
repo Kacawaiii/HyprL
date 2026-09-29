@@ -29,6 +29,11 @@ def _acquisition(env):
     return episode, work
 
 
+def _network_still_open(env, fetched):
+    """Model a network phase that has not ended yet: no save deadline runs until network_ended()."""
+    env.collector._save_deadlines.pop(fetched.attempt_seq, None)
+
+
 def _failing(times):
     calls = {"n": 0}
 
@@ -56,12 +61,67 @@ def test_save_retries_until_120_s_after_the_network_end_without_refetching(env, 
         assert ledger.outcome_of(env.store, ledger.attempts_of_episode(env.store, episode.key)[0].seq).body["reason"].startswith("local save")
 
 
+def _no_record_of(env, attempt):
+    """Neither a RESPONSE nor LATE_EVIDENCE exists for `attempt`."""
+    return [r for r in env.store.rows("RESPONSE") if r.body["attempt"] == attempt] == []
+
+
+def _no_false_zero_then_attempt_2(env, episode):
+    env.collector.poll_feed()  # the item is still outstanding: the next cycle cannot be a zero
+    assert env.cycles()[-1] == "NOT_ZERO"
+    env.drive(600, idle=60)
+    attempts = ledger.attempts_of_episode(env.store, episode.key)
+    assert len(attempts) == 2 and state.anchor(env.store, SID1) is not None  # the budget is kept: next is #2
+    assert env.provider.requests.count(P1) == 2
+
+
+@pytest.mark.parametrize("duration, expected", [(119.9, "RESPONSE"), (120.0, "LOCAL_PERSISTENCE_FAILED"),
+                                                (120.1, "LOCAL_PERSISTENCE_FAILED")])
+def test_a_slow_local_write_that_succeeds_is_admitted_only_before_120_s(env, monkeypatch, duration, expected):
+    episode, _work = _acquisition(env)
+    put_raw = env.store.put_raw
+
+    def slow_put_raw(body):  # starts at +0 s, succeeds after `duration`
+        env.clock.sleep(duration)
+        return put_raw(body)
+    monkeypatch.setattr(env.store, "put_raw", slow_put_raw)
+    result = env.collector.run_episode(episode)
+    monkeypatch.undo()
+    assert result["status"] == expected
+    assert env.provider.requests.count(P1) == 1
+    attempt = ledger.attempts_of_episode(env.store, episode.key)[0].seq
+    assert ledger.outcome_of(env.store, attempt).body["outcome"] == expected
+    if expected == "RESPONSE":
+        assert state.anchor(env.store, SID1) is not None
+        return
+    assert _no_record_of(env, attempt) and state.anchor(env.store, SID1) is None  # at 120 s, expired
+    _no_false_zero_then_attempt_2(env, episode)
+
+
+def test_reconcile_at_120_s_closes_a_blocked_save_and_its_late_bytes_stay_out(env):
+    episode, work = _acquisition(env)
+    fetched = env.collector.fetch(work, syn.url(P1), "primary")  # network ends; the saving task then blocks
+    env.clock.sleep(119.9)
+    env.collector.reconcile()
+    assert ledger.outcome_of(env.store, fetched.attempt_seq) is None
+    env.clock.sleep(0.1)  # +120 s, no commit() in between
+    env.collector.reconcile()
+    outcome = ledger.outcome_of(env.store, fetched.attempt_seq).body
+    assert outcome["outcome"] == "LOCAL_PERSISTENCE_FAILED" and outcome["reason"].startswith("local save")
+    late = env.collector.commit(fetched, work, syn.url(P1), "primary")  # the blocked task finally resumes
+    assert late["status"] == "LOCAL_PERSISTENCE_FAILED"
+    assert ledger.outcome_of(env.store, fetched.attempt_seq).body == outcome  # the first outcome stays
+    assert _no_record_of(env, fetched.attempt_seq) and state.anchor(env.store, SID1) is None
+    assert env.provider.requests.count(P1) == 1
+    _no_false_zero_then_attempt_2(env, episode)
+
+
 # ------------------------------------------------------------------ 600 s attempt deadline ------------
 def test_active_attempt_is_interrupted_exactly_at_600_s_and_its_late_response_is_evidence(env):
     episode, work = _acquisition(env)
     fetched = env.collector.fetch(work, syn.url(P1), "primary")  # the task is alive
     env.clock.sleep(599.5)
-    fetched.network_end_mono = env.clock.mono()  # a slow network phase (limiter waits between hops) ends at +599.5 s
+    env.collector.network_ended(fetched)  # a slow network phase (limiter waits between hops) ends at +599.5 s
     env.collector.reconcile()
     assert ledger.outcome_of(env.store, fetched.attempt_seq) is None  # never declared dead before its deadline
     env.clock.sleep(0.5)
@@ -77,7 +137,7 @@ def test_commit_after_the_attempt_deadline_closes_it_first(env):
     episode, work = _acquisition(env)
     fetched = env.collector.fetch(work, syn.url(P1), "primary")
     env.clock.sleep(600)
-    fetched.network_end_mono = env.clock.mono()  # the bytes arrive at +600 s, inside their own save deadline
+    env.collector.network_ended(fetched)  # the bytes arrive at +600 s, inside their own save deadline
     result = env.collector.commit(fetched, work, syn.url(P1), "primary")  # no reconcile in between
     assert result["late"] is True
     assert ledger.outcome_of(env.store, fetched.attempt_seq).body["outcome"] == "INTERRUPTED"
@@ -112,6 +172,7 @@ def test_a_held_feed_poll_blocks_new_polls_until_its_deadline_without_false_zero
     env.clock.sleep(60)
     poll = {"kind": "FEED_POLL", "class": "FEED_DISCOVERY", "sid": None, "mode": "LIVE"}
     fetched = env.collector.fetch(poll, spec.FEED_URL, "feed")
+    _network_still_open(env, fetched)
     polls = env.provider.requests.count(syn.FEED_PATH)
     for _ in range(9):
         env.clock.sleep(60)
@@ -121,7 +182,7 @@ def test_a_held_feed_poll_blocks_new_polls_until_its_deadline_without_false_zero
     env.clock.sleep(60)  # 600 s after TRANSPORT_INVOKED
     env.collector.step()
     assert ledger.outcome_of(env.store, fetched.attempt_seq).body["outcome"] == "INTERRUPTED"
-    fetched.network_end_mono = env.clock.mono()  # its bytes only now arrive
+    env.collector.network_ended(fetched)  # its bytes only now arrive
     assert env.collector.commit(fetched, poll, spec.FEED_URL, "feed")["late"] is True
     late = state.feed_responses(env.store)[-1]
     assert late.body["late_evidence"] and not env.store.rows("CYCLE_CONCLUSION", key=str(late.seq))  # no cycle
