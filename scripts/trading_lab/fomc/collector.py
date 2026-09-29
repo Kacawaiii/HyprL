@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import sqlite3
 import uuid
 from datetime import timedelta
 
@@ -18,6 +19,7 @@ from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt, Rejected
 from scripts.trading_lab.fomc.transport import FetchResult, Transport
 
 CLASS_ORDER = ("FEED_DISCOVERY", "REOBSERVATION", "HISTORICAL_BACKFILL")
+SAVE_RETRY_S = 5.0  # implementation choice: local save retry spacing inside the 120 s save deadline
 CLASS_OF = {"FEED_POLL": "FEED_DISCOVERY", "LIVE_ACQUISITION": "FEED_DISCOVERY", "REOBSERVATION": "REOBSERVATION",
             "HISTORICAL_BACKFILL": "HISTORICAL_BACKFILL"}
 
@@ -41,6 +43,9 @@ class Collector:
         self.transport = Transport(connector, self.limiter, wall=clock.wall, mono=clock.mono)
         self.last_feed_grant: float | None = None
         self.processing_fault = None  # test hook
+        self.persist_fault = None  # test hook: raise OSError to simulate a failing local save
+        self._active_attempts: dict[int, float] = {}  # own attempts whose task is alive -> TRANSPORT_INVOKED mono
+        self._active_runs: dict[int, str] = {}  # record seq -> run_id of a run whose task is alive
         self.reconcile()
 
     def close(self) -> None:
@@ -49,50 +54,82 @@ class Collector:
 
     # ------------------------------------------------------------------ one logical fetch ---------
     def fetch(self, work: dict, url: str, surface: str) -> FetchResult | dict:
+        """Grant, TRANSPORT_INVOKED, transport. The attempt stays active (its task alive) until commit()."""
         def invoke(grant: float) -> int:
             seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant)
+            self._active_attempts[seq] = self.clock.mono()
             if work["kind"] == "FEED_POLL":
                 self.last_feed_grant = grant
             return seq
         try:
-            return self.transport.fetch(url, surface, invoke=invoke,
-                                        may_continue=lambda a: ledger.outcome_of(self.store, a) is None)
+            result = self.transport.fetch(url, surface, invoke=invoke,
+                                          may_continue=lambda a: ledger.outcome_of(self.store, a) is None)
         except Rejected as exc:
             return {"status": "REJECTED", "reason": str(exc)}
+        result.network_end_mono = self.clock.mono()
+        return result
 
     def commit(self, result: FetchResult, work: dict, url: str, surface: str) -> dict:
         attempt = result.attempt_seq
-        if result.kind == "RESPONSE_200":
-            try:
-                digest = self.store.put_raw(result.body)
-            except RawCorrupt:
-                # The immutable slot for these bytes holds other bytes: never overwrite it. Existing
-                # records get integrity diagnostics (their terminal outcomes stay); this record commits
-                # with its digest and its processing reaches CORRUPTION_FAIL_CLOSED. No refetch.
-                digest = spec.sha256_bytes(result.body)
-                self._diagnose(digest)
-            except OSError:
-                ledger.commit_attempt_outcome(self.store, attempt, "LOCAL_PERSISTENCE_FAILED")
-                return {"status": "LOCAL_PERSISTENCE_FAILED"}
-            verified = clockmod.is_clock_verified(result.wall_at_receipt, result.date_lines, result.age_lines)
-            fields = {
-                "surface": surface, "mode": work["mode"], "sid": work.get("sid"), "work": work["kind"],
-                "episode_key": work.get("episode_key"), "request_url": url, "final_url": result.final_url,
-                "redirect_chain": [h.url for h in result.hops], "status": 200,
-                "content_type_lines": result.content_type_lines, "content_encoding": result.content_encoding,
-                "raw_sha": digest, "byte_length": len(result.body), "date_lines": result.date_lines,
-                "age_lines": result.age_lines, "wall_at_receipt": iso(result.wall_at_receipt),
-                "verdict": "CLOCK_VERIFIED" if verified else "CLOCK_UNVERIFIED",
-                "observed_at": iso(result.wall_at_receipt) if verified else None,
-            }
-            seq, late = ledger.commit_response(self.store, attempt, fields)
-            self.process_pending()
+        try:
+            return self._commit(result, work, url, surface)
+        finally:
+            self._active_attempts.pop(attempt, None)  # the task ends here, with or without an outcome
+
+    def _commit(self, result: FetchResult, work: dict, url: str, surface: str) -> dict:
+        attempt = result.attempt_seq
+        started = self._active_attempts.get(attempt)
+        if started is not None and self.clock.mono() - started >= spec.ATTEMPT_ABSOLUTE_DEADLINE_S:
+            # the 600 s bound closes the attempt first: whatever arrives now is LATE_EVIDENCE
+            ledger.commit_attempt_outcome(self.store, attempt, "INTERRUPTED", {"reason": "no outcome 600 s after TRANSPORT_INVOKED"})
+        if result.kind != "RESPONSE_200":
+            outcome = "CANCELLED_AFTER_INVOKE" if result.kind == "ABANDONED" else result.kind
+            ledger.commit_attempt_outcome(self.store, attempt, outcome, {"reason": result.reason})
             self.derive_terminals()
-            return {"status": "RESPONSE", "record": seq, "late": late, "verified": verified}
-        outcome = "CANCELLED_AFTER_INVOKE" if result.kind == "ABANDONED" else result.kind
-        ledger.commit_attempt_outcome(self.store, attempt, outcome, {"reason": result.reason})
+            return {"status": outcome, "reason": result.reason}
+        save_deadline = result.network_end_mono + spec.SAVE_DEADLINE_S
+        while True:
+            if self.clock.mono() >= save_deadline:
+                return self._persistence_failed(attempt, "local save not durable within 120 s of the network end")
+            try:
+                if self.persist_fault is not None:
+                    self.persist_fault()
+                digest = self.store.put_raw(result.body)
+                seq, late = ledger.commit_response(self.store, attempt, self._fields(result, work, url, surface, digest))
+                break
+            except RawCorrupt:
+                # The immutable slot for these bytes holds other bytes: never overwrite it. The exact
+                # bytes of this attempt are therefore not durable -> LOCAL_PERSISTENCE_FAILED, no RESPONSE.
+                # Older records sharing the digest get integrity diagnostics; their outcomes stay.
+                self._diagnose(spec.sha256_bytes(result.body))
+                return self._persistence_failed(attempt, "raw slot holds other bytes; never overwritten")
+            except (OSError, sqlite3.OperationalError):
+                self.clock.sleep(min(SAVE_RETRY_S, max(save_deadline - self.clock.mono(), 0.0)))  # retry locally, no network
+        self.process_pending()
         self.derive_terminals()
-        return {"status": outcome, "reason": result.reason}
+        return {"status": "RESPONSE", "record": seq, "late": late, "verified": self._verified(result)}
+
+    @staticmethod
+    def _verified(result: FetchResult) -> bool:
+        return clockmod.is_clock_verified(result.wall_at_receipt, result.date_lines, result.age_lines)
+
+    def _fields(self, result: FetchResult, work: dict, url: str, surface: str, digest: str) -> dict:
+        verified = self._verified(result)
+        return {
+            "surface": surface, "mode": work["mode"], "sid": work.get("sid"), "work": work["kind"],
+            "episode_key": work.get("episode_key"), "request_url": url, "final_url": result.final_url,
+            "redirect_chain": [h.url for h in result.hops], "status": 200,
+            "content_type_lines": result.content_type_lines, "content_encoding": result.content_encoding,
+            "raw_sha": digest, "byte_length": len(result.body), "date_lines": result.date_lines,
+            "age_lines": result.age_lines, "wall_at_receipt": iso(result.wall_at_receipt),
+            "verdict": "CLOCK_VERIFIED" if verified else "CLOCK_UNVERIFIED",
+            "observed_at": iso(result.wall_at_receipt) if verified else None,
+        }
+
+    def _persistence_failed(self, attempt: int, reason: str) -> dict:
+        ledger.commit_attempt_outcome(self.store, attempt, "LOCAL_PERSISTENCE_FAILED", {"reason": reason})
+        self.derive_terminals()
+        return {"status": "LOCAL_PERSISTENCE_FAILED", "reason": reason}
 
     def run(self, work: dict, url: str, surface: str) -> dict:
         result = self.fetch(work, url, surface)
@@ -105,32 +142,70 @@ class Collector:
 
     # ------------------------------------------------------------------ reconciliation ------------
     def reconcile(self) -> None:
+        """INTERRUPTED for attempts of other epochs, of ended tasks, or 600 s after TRANSPORT_INVOKED; a
+        task that is still active is never declared dead before its deadline."""
+        now = self.clock.mono()
         for attempt in ledger.attempts_without_outcome(self.store):
-            # single-threaded owner: any attempt without outcome here belongs to an ended task
-            ledger.commit_attempt_outcome(self.store, attempt.seq, "INTERRUPTED")
+            started = self._active_attempts.get(attempt.seq) if attempt.body["epoch"] == self.epoch else None
+            if started is not None and now - started < spec.ATTEMPT_ABSOLUTE_DEADLINE_S:
+                continue
+            reason = ("non-current epoch" if attempt.body["epoch"] != self.epoch
+                      else "task ended without outcome" if started is None else "no outcome 600 s after TRANSPORT_INVOKED")
+            ledger.commit_attempt_outcome(self.store, attempt.seq, "INTERRUPTED", {"reason": reason})
         self.process_pending()
         self.derive_terminals()
 
     def _dead_runs(self, seq: int) -> int:
         dead_ids = {d.body["run_id"] for d in self.store.rows("RUN_DEAD", key=str(seq))}
-        count = 0
-        for run in self.store.rows("PROCESSING_RUN", key=str(seq)):
-            if run.body["run_id"] in dead_ids or run.body["epoch"] != self.epoch:
-                count += 1
-        return count
+        return sum(1 for run in self.store.rows("PROCESSING_RUN", key=str(seq))
+                   if run.body["run_id"] in dead_ids or run.body["epoch"] != self.epoch)
+
+    def _running(self, seq: int):
+        dead_ids = {d.body["run_id"] for d in self.store.rows("RUN_DEAD", key=str(seq))}
+        runs = [r for r in self.store.rows("PROCESSING_RUN", key=str(seq))
+                if r.body["epoch"] == self.epoch and r.body["run_id"] not in dead_ids]
+        return runs[-1] if runs else None
+
+    def _mark_dead(self, seq: int, run_id: str, reason: str) -> None:
+        self.store.append("RUN_DEAD", [("RUN_DEAD", str(seq), {"run_id": run_id, "reason": reason})])
+        if self._active_runs.get(seq) == run_id:
+            self._active_runs.pop(seq)
+
+    def start_processing(self, seq: int) -> str | None:
+        run_id = processing.start_run(self.store, seq, epoch=self.epoch, start_mono=self.clock.mono())
+        if run_id is not None:
+            self._active_runs[seq] = run_id
+        return run_id
+
+    def finish_processing(self, seq: int, run_id: str) -> str | None:
+        try:
+            outcome = processing.finish_run(self.store, seq, epoch=self.epoch, run_id=run_id,
+                                            mono=self.clock.mono, fault=self.processing_fault)
+        except Exception:  # the task ended without an outcome: that run is DEAD
+            self._mark_dead(seq, run_id, "task ended without outcome")
+            return None
+        if outcome is None and state.processing_outcome(self.store, seq) is None and self._running(seq) is not None:
+            self._mark_dead(seq, run_id, "late result after the 600 s run deadline")
+        self._active_runs.pop(seq, None)
+        return outcome
 
     def process_pending(self) -> None:
         for resp in self.store.rows("RESPONSE"):
-            if state.processing_outcome(self.store, resp.seq) is not None:
+            seq = resp.seq
+            if state.processing_outcome(self.store, seq) is not None:
                 continue
-            if self._dead_runs(resp.seq) >= spec.POISON_DEAD_RUNS:
-                processing.poison(self.store, resp.seq, epoch=self.epoch)
+            running = self._running(seq)
+            if running is not None:
+                active = self._active_runs.get(seq) == running.body["run_id"]
+                if active and self.clock.mono() < running.body["deadline_mono"]:
+                    continue  # RUNNING and before its deadline: never a second run, never counted
+                self._mark_dead(seq, running.body["run_id"], "run deadline passed" if active else "task ended without outcome")
+            if self._dead_runs(seq) >= spec.POISON_DEAD_RUNS:
+                processing.poison(self.store, seq, epoch=self.epoch)
                 continue
-            try:
-                processing.process_record(self.store, resp.seq, epoch=self.epoch, fault=self.processing_fault)
-            except Exception:  # the task ended without an outcome: that run is DEAD
-                runs = self.store.rows("PROCESSING_RUN", key=str(resp.seq))
-                self.store.append("RUN_DEAD", [("RUN_DEAD", str(resp.seq), {"run_id": runs[-1].body["run_id"]})])
+            run_id = self.start_processing(seq)
+            if run_id is not None:
+                self.finish_processing(seq, run_id)
 
     def derive_terminals(self) -> None:
         for episode in self.store.rows("EPISODE_OPEN"):

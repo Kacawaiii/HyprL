@@ -74,6 +74,7 @@ class FetchResult:
     age_lines: list[str] = field(default_factory=list)
     body: bytes | None = None
     wall_at_receipt: datetime | None = None
+    network_end_mono: float | None = None  # set by the collector: start of the 120 s save deadline
 
 
 class _Fail(Exception):

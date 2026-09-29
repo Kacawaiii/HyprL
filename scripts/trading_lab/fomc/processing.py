@@ -195,15 +195,13 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
 
 
 # ------------------------------------------------------------------ one fenced run ----------------
-def process_record(store: FomcStore, seq: int, *, epoch: str, fault=None) -> str | None:
-    """Run one fenced processing run for a PROCESSABLE record; returns its terminal outcome, or None
-    when the record must wait (feed classification order) or the run was fenced out."""
+def start_run(store: FomcStore, seq: int, *, epoch: str, start_mono: float) -> str | None:
+    """Commit PROCESSING_RUN {run_id, epoch, start, deadline = start + 600 s} for a record that may be
+    processed now; None when it already has an outcome, must wait (feed order) or we are not the owner."""
     resp = next(r for r in store.rows("RESPONSE") if r.seq == seq)
-    existing = state.processing_outcome(store, seq)
-    if existing is not None:
-        return existing.body["outcome"]
-    is_feed = resp.body["surface"] == "feed"
-    if is_feed and earlier_feed_unterminated(store, seq):
+    if state.processing_outcome(store, seq) is not None:
+        return None
+    if resp.body["surface"] == "feed" and earlier_feed_unterminated(store, seq):
         return None
     run_id = uuid.uuid4().hex
 
@@ -212,11 +210,22 @@ def process_record(store: FomcStore, seq: int, *, epoch: str, fault=None) -> str
             raise Rejected("not the current owner")
 
     try:
-        store.append("PROCESSING_RUN", [("PROCESSING_RUN", str(seq), {"run_id": run_id, "epoch": epoch})], owner)
+        store.append("PROCESSING_RUN", [("PROCESSING_RUN", str(seq), {
+            "run_id": run_id, "epoch": epoch, "start_mono": start_mono,
+            "deadline_mono": start_mono + spec.RUN_DEADLINE_S})], owner)
     except Rejected:
         return None
+    return run_id
+
+
+def finish_run(store: FomcStore, seq: int, *, epoch: str, run_id: str, mono=None, fault=None) -> str | None:
+    """Compute the terminal outcome and commit it only while this run is RUNNING in the current epoch
+    and before its 600 s deadline; a late or fenced result is discarded (None)."""
+    resp = next(r for r in store.rows("RESPONSE") if r.seq == seq)
+    run = next(r for r in store.rows("PROCESSING_RUN", key=str(seq)) if r.body["run_id"] == run_id)
     if fault is not None:
-        fault(resp)  # test hook: an unexpected exception leaves the run to be marked DEAD
+        fault(resp)  # test hook: raise (the task ends) or advance the clock (the run overruns)
+    is_feed = resp.body["surface"] == "feed"
     extra: list = []
     try:
         body = store.read_raw(resp.body["raw_sha"])
@@ -244,12 +253,25 @@ def process_record(store: FomcStore, seq: int, *, epoch: str, fault=None) -> str
             raise Rejected("fenced processing run")
         if any(d.body["run_id"] == run_id for d in s.rows("RUN_DEAD", key=str(seq))):
             raise Rejected("run already DEAD")
+        if mono is not None and mono() >= run.body["deadline_mono"]:
+            raise Rejected("run past its 600 s deadline: late result discarded")
 
     try:
         store.append("PROCESSING_OUTCOME", rows, fence)
     except Rejected:
         return None
     return outcome
+
+
+def process_record(store: FomcStore, seq: int, *, epoch: str, fault=None, mono=None) -> str | None:
+    """One fenced processing run (start then finish); returns the terminal outcome or None."""
+    existing = state.processing_outcome(store, seq)
+    if existing is not None:
+        return existing.body["outcome"]
+    run_id = start_run(store, seq, epoch=epoch, start_mono=mono() if mono else 0.0)
+    if run_id is None:
+        return None
+    return finish_run(store, seq, epoch=epoch, run_id=run_id, mono=mono, fault=fault)
 
 
 def poison(store: FomcStore, seq: int, *, epoch: str) -> str | None:

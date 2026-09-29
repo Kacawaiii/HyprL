@@ -8,7 +8,7 @@ Unix-socket provider; no Federal Reserve request, fixture capture or live run is
 
 ```
 python -m scripts.trading_lab.fomc.demo          # the executable path, end to end
-python -m pytest tests/crypto/test_fomc_*.py     # 74 tests
+python -m pytest tests/crypto/test_fomc_*.py     # 87 tests
 ```
 
 `feed -> durable raw -> classification -> primary acquisition -> revision + observation link ->
@@ -34,9 +34,12 @@ cycle -> events_as_of(T, H) -> reopen -> offline replay`
 
 | rule | code | tests |
 |---|---|---|
-| F08 raw first, F72 corruption fails closed | `collector.commit`, `store.put_raw/read_raw`, `processing.process_record`, `collector.verify_integrity/_diagnose`, `snapshot._verify_dependencies/replay` | persistence `raw_is_content_addressed…`; snapshot `test_7`; hardening: corrupt or missing raw fails `events_as_of` without prior verification (old `(T, H)` too, revisions and discovery cycles), `put_raw` never overwrites, corrupt slot → `CORRUPTION_FAIL_CLOSED` + diagnostic |
+| F08 raw first, F72 corruption fails closed | `collector.commit`, `store.put_raw/read_raw`, `processing.process_record`, `collector.verify_integrity/_diagnose`, `snapshot._verify_dependencies/replay` | persistence `raw_is_content_addressed…`; snapshot `test_7`; hardening: corrupt or missing raw fails `events_as_of` without prior verification (old `(T, H)` too, revisions and discovery cycles), `put_raw` never overwrites, corrupt slot → the new attempt is `LOCAL_PERSISTENCE_FAILED` (no RESPONSE, no anchor, no recheck satisfaction, no LIVE availability; backfill, LIVE acquisition and LIVE recheck covered) + integrity diagnostics on older records, file never repaired |
 | F09/F10/F74 revisions keyed (item, hash), mode-neutral links | `processing.classify_primary` | snapshot `test_1`, `test_2`, `test_7` (A-B-A) |
 | F26–F30 identity and URL admission | `identity.admit_url`, `source_item_id` | persistence scheme/port/percent cases (FOMC31–38) |
+| local save deadline: 120 s monotonic after the network end, then `LOCAL_PERSISTENCE_FAILED`, no request | `collector._commit` (retry every `SAVE_RETRY_S` = 5 s, an implementation choice) | local_deadlines: 23 failures → saved at +115 s, 24 → `LOCAL_PERSISTENCE_FAILED` at +120 s; bytes held past it are never persisted |
+| 600 s absolute attempt deadline, INTERRUPTED, late results | `collector.reconcile` (active tasks tracked, never dead before the deadline), `collector._commit` (closes first), `ledger.commit_response` (LATE_EVIDENCE) | local_deadlines: alive at 599.5 s, INTERRUPTED at 600 s, late bytes → LATE_EVIDENCE; restart interrupts at once and keeps the budget; a held feed poll blocks polls without a cycle or zero |
+| 600 s processing-run deadline, DEAD runs, poison | `processing.start_run/finish_run` (fence rejects results at or after the deadline), `collector.process_pending/_mark_dead` | local_deadlines: no second run and no DEAD before 600 s, replaced at 600 s, 599.9 s admitted vs 600 s discarded, overrunning feed runs poisoned with a NOT_ZERO conclusion |
 | F31 decoded body cap | `transport._admit_200` | components `oversized…` (FOMC39) |
 | F60 60 s physical deadline from each grant, per hop | `transport.Deadline`, `_resolve/_connect/_hop/_admit_200`, watchdog | hardening: late DNS without TCP, late TLS, blocked/dripped headers, dripped body, per-redirect deadline, real-socket watchdog (FOMC127–130, FOMC154) |
 | F32 strict UTF-8, F33/F34 anchors, F36 XML security | `parsing` | components decoding/anchors/XML cases (FOMC41–62) |
@@ -58,10 +61,16 @@ cycle -> events_as_of(T, H) -> reopen -> offline replay`
 ## Not in this slice
 
 - No real TLS/HTTPS run: `HttpsConnector` exists but is never exercised (no network by mandate).
-- No background daemon: the collector is step-driven. The 60 s physical-attempt deadline is
-  enforced; the 600 s run deadline, the 600 s absolute attempt deadline and the 120 s save deadline
-  are not time-enforced, and ended tasks are detected at reconcile under a single-threaded owner
-  assumption.
+- No background daemon or periodic tick: the collector is step-driven. How each bound is imposed:
+  - 60 s physical deadline: during I/O (stage timeouts, socket watchdog, late-result checks).
+  - 120 s save deadline: by the save loop itself on the injectable monotonic clock.
+  - 600 s attempt and run deadlines: at the next trigger (`step`, `reconcile`, `process_pending`,
+    `commit`) and by fences that discard late results. They are **not** imposed by a timer that
+    interrupts a running task: a processing run that hangs inside the owner's own thread blocks that
+    owner until it returns (its late result is then fenced and the run marked DEAD), and an attempt
+    whose task dies silently is only interrupted when a trigger runs after its deadline.
+  - Liveness of the in-process task registry assumes one owner process; tasks of an earlier process
+    are detected by epoch (immediately), not by the deadline.
 - Snapshots do not yet expose or bind the FOMC source-health state; no `SNAPSHOT_WATERMARK` write.
 - Selection implements class rotation and (next eligible instant, source_item_id) ordering, without
   the manifest-first ordering of HISTORICAL_BACKFILL and without a dedicated FOMC126 test.

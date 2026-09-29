@@ -86,7 +86,13 @@ def test_put_raw_never_overwrites_corrupt_bytes(tmp_path):
     assert path.read_bytes() == b"corrupted"
 
 
-def test_corrupt_slot_surfaces_in_durable_processing_without_repair(env):
+def _attempt_outcomes(env, kind):
+    keys = {e.key for e in env.store.rows("EPISODE_OPEN") if e.body["kind"] == kind}
+    attempts = [t for t in env.store.rows("TRANSPORT_INVOKED") if t.key in keys]
+    return [env.store.rows("ATTEMPT_OUTCOME", key=str(t.seq))[0].body["outcome"] for t in attempts]
+
+
+def test_corrupt_slot_backfill_attempt_is_local_persistence_failed(env):
     env.feed([statement_item()])
     env.provider.routes[P1] = syn.page_response()
     env.drive(240)
@@ -96,16 +102,44 @@ def test_corrupt_slot_surfaces_in_durable_processing_without_repair(env):
     requests_before = len(env.provider.requests)
     env.collector.submit_manifest(json.dumps({"version": 1, "urls": [syn.url(P1)]}).encode(), "operator")
     env.drive(120)
-    assert path.read_bytes() == b"corrupted"  # the same bytes fetched again did not repair the slot
-    backfill = state.primary_responses(env.store, SID1)[-1]
-    assert backfill.body["mode"] == "HISTORICAL_BACKFILL" and backfill.body["raw_sha"] == live.body["raw_sha"]
-    assert state.processing_outcome(env.store, backfill.seq).body["outcome"] == "CORRUPTION_FAIL_CLOSED"
-    assert state.processing_outcome(env.store, live.seq).body["outcome"] == "NORMALIZED_REVISION_COMMITTED"  # never rewritten
-    assert env.store.rows("INTEGRITY_DIAGNOSTIC", key=str(live.seq))
-    extra = [p for p in env.provider.requests[requests_before:] if p != syn.FEED_PATH]
-    assert extra == [P1]  # only the scheduled backfill fetch; no network repair
+    assert path.read_bytes() == b"corrupted"  # never repaired
+    assert state.primary_responses(env.store, SID1) == [live]  # no RESPONSE for bytes that are not durable
+    assert _attempt_outcomes(env, "HISTORICAL_BACKFILL") == ["LOCAL_PERSISTENCE_FAILED"]
+    assert state.processing_outcome(env.store, live.seq).body["outcome"] == "NORMALIZED_REVISION_COMMITTED"
+    assert env.store.rows("INTEGRITY_DIAGNOSTIC", key=str(live.seq))  # the old record's diagnostic
+    assert [p for p in env.provider.requests[requests_before:] if p != syn.FEED_PATH] == [P1]  # no network repair
     env.drive(130)
-    assert _item(snapshot.events_as_of(env.store, env.clock.true))["step"] == 3  # explicit barrier
+    assert _item(snapshot.events_as_of(env.store, env.clock.true))["step"] == 3
+
+
+def test_corrupt_slot_live_acquisition_creates_no_anchor_or_live_availability(env):
+    env.feed([])
+    env.provider.routes[P1] = syn.page_response()
+    env.collector.submit_manifest(json.dumps({"version": 1, "urls": [syn.url(P1)]}).encode(), "operator")
+    env.drive(240)
+    backfill = state.primary_responses(env.store, SID1)[0]
+    _raw_path(env, backfill.body["raw_sha"]).write_bytes(b"corrupted")
+    env.feed([statement_item()])  # the LIVE acquisition fetches the same bytes
+    env.drive(200)
+    assert _attempt_outcomes(env, "LIVE_ACQUISITION")[0] == "LOCAL_PERSISTENCE_FAILED"
+    assert state.primary_responses(env.store, SID1, mode="LIVE") == []
+    assert state.anchor(env.store, SID1) is None and state.obligations(env.store, SID1) == []
+    assert env.cycles()[-1] == "NOT_ZERO"  # the candidate stays outstanding
+    item = _item(snapshot.events_as_of(env.store, env.clock.true))
+    assert item["state"] == snapshot.BARRIER and "live_available" not in item
+
+
+def test_corrupt_slot_live_recheck_does_not_satisfy(env):
+    env.feed([statement_item()])
+    env.provider.routes[P1] = syn.page_response()
+    env.drive(240)
+    anchor = state.anchor(env.store, SID1)
+    _raw_path(env, anchor.body["raw_sha"]).write_bytes(b"corrupted")
+    env.drive(900, idle=60)  # the O300 recheck fetches the same bytes
+    assert _attempt_outcomes(env, "REOBSERVATION")[0] == "LOCAL_PERSISTENCE_FAILED"
+    assert state.primary_responses(env.store, SID1) == [anchor]
+    o300 = state.obligations(env.store, SID1)[0]
+    assert o300["offset"] == 300 and o300["satisfied"] is False
 
 
 # ------------------------------------------------------------------ 3. physical-attempt deadline -----
