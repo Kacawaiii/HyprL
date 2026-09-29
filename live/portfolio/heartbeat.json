@@ -1,13 +1,13 @@
 {
-  "ts": "2026-09-25T23:46:06.231159+00:00",
-  "ok": true,
-  "equity": 107795.77,
+  "ts": "2026-09-29T00:47:55.204807+00:00",
+  "ok": false,
+  "equity": 107570.69,
   "mode": "live",
-  "orders": 0,
-  "sent": 0,
-  "failed": 0,
+  "orders": 3,
+  "sent": 2,
+  "failed": 1,
   "api_failed": 0,
-  "blocked": 0,
+  "blocked": 1,
   "deferred": 0,
   "skipped_short_targets": 0,
   "planning_errors": 0,
@@ -19,5 +19,7 @@
   "actual_trend_positions": 4,
   "open_orders_at_start": 0,
   "reconciled_state": 0,
-  "issues": []
+  "issues": [
+    "LQD [shortability]: asset is not shortable"
+  ]
 }
