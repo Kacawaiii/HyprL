@@ -47,6 +47,10 @@ class Collector:
         self._active_attempts: dict[int, float] = {}  # own attempts whose task is alive -> TRANSPORT_INVOKED mono
         self._active_runs: dict[int, str] = {}  # record seq -> run_id of a run whose task is alive
         self._save_deadlines: dict[int, float] = {}  # attempt -> network end + 120 s, kept from the network end
+        # step-driven use processes inline; the autonomous service (service.py) sets inline = False and
+        # dispatch_run, so that only its owner thread reconciles and processing runs in worker threads
+        self.inline = True
+        self.dispatch_run = None
         self.reconcile()
 
     def close(self) -> None:
@@ -57,8 +61,9 @@ class Collector:
     def fetch(self, work: dict, url: str, surface: str) -> FetchResult | dict:
         """Grant, TRANSPORT_INVOKED, transport. The attempt stays active (its task alive) until commit()."""
         def invoke(grant: float) -> int:
-            seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant)
-            self._active_attempts[seq] = self.clock.mono()
+            with self.store._lock:  # durable record and task registration are seen together by reconcile()
+                seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant)
+                self._active_attempts[seq] = self.clock.mono()
             if work["kind"] == "FEED_POLL":
                 self.last_feed_grant = grant
             return seq
@@ -94,7 +99,8 @@ class Collector:
         if result.kind != "RESPONSE_200":
             outcome = "CANCELLED_AFTER_INVOKE" if result.kind == "ABANDONED" else result.kind
             ledger.commit_attempt_outcome(self.store, attempt, outcome, {"reason": result.reason})
-            self.derive_terminals()
+            if self.inline:
+                self.derive_terminals()
             return {"status": outcome, "reason": result.reason}
         save_deadline = self._save_deadlines.get(attempt, result.network_end_mono + spec.SAVE_DEADLINE_S)
 
@@ -122,8 +128,9 @@ class Collector:
                 return self._persistence_failed(attempt, "raw slot holds other bytes; never overwritten")
             except (OSError, sqlite3.OperationalError):
                 self.clock.sleep(min(SAVE_RETRY_S, max(save_deadline - self.clock.mono(), 0.0)))  # retry locally, no network
-        self.process_pending()
-        self.derive_terminals()
+        if self.inline:
+            self.process_pending()
+            self.derive_terminals()
         return {"status": "RESPONSE", "record": seq, "late": late, "verified": self._verified(result)}
 
     @staticmethod
@@ -145,7 +152,8 @@ class Collector:
 
     def _persistence_failed(self, attempt: int, reason: str) -> dict:
         ledger.commit_attempt_outcome(self.store, attempt, "LOCAL_PERSISTENCE_FAILED", {"reason": reason})
-        self.derive_terminals()
+        if self.inline:
+            self.derive_terminals()
         return {"status": "LOCAL_PERSISTENCE_FAILED", "reason": reason}
 
     def run(self, work: dict, url: str, surface: str) -> dict:
@@ -231,7 +239,10 @@ class Collector:
                 continue
             run_id = self.start_processing(seq)
             if run_id is not None:
-                self.finish_processing(seq, run_id)
+                if self.dispatch_run is not None:
+                    self.dispatch_run(seq, run_id)  # the service's worker thread; the owner never waits on it
+                else:
+                    self.finish_processing(seq, run_id)
 
     def derive_terminals(self) -> None:
         view = self.store.view()  # SUCCEEDED and SUSPENDED are monotone: a view can only miss one for now

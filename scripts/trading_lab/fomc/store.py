@@ -38,6 +38,42 @@ UNIQUE_KINDS = (
 )
 
 
+# STORE_OPENING_RULE: a store records the schema version and spec hash it was written with. An existing
+# store is inspected through a read-only connection before anything else; unless both match this code
+# it is rejected (StoreRejected) before any write, pragma, DDL, epoch or request. There is no automatic
+# migration: rows are append-only and never rewritten, so an older layout (LINK `mode`, REVISION
+# without the normalized fields, no source-health rows, no schema version) cannot be upgraded in
+# place without inventing history. Open such a store with the code that wrote it, or start a new one.
+SCHEMA_VERSION = "fomc-store-v2"
+
+
+class StoreRejected(RuntimeError):
+    """An existing store this code must not open; nothing was written to it."""
+
+
+def _admit_existing(db: Path) -> None:
+    if not db.exists():
+        return
+    wal = db.with_name(db.name + "-wal")
+    # read-only; without WAL frames the file alone is the store, so `immutable` creates no side file
+    immutable = "" if wal.exists() and wal.stat().st_size else "&immutable=1"
+    conn = sqlite3.connect(f"file:{db}?mode=ro{immutable}", uri=True)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not tables:
+            return  # an empty file: a new store
+        meta = dict(conn.execute("SELECT name, value FROM meta")) if "meta" in tables else {}
+    finally:
+        conn.close()
+    version = meta.get("schema_version")
+    if version != SCHEMA_VERSION:
+        raise StoreRejected(f"store {db.parent} has schema {version or 'unversioned (written before ' + SCHEMA_VERSION + ')'}; "
+                            f"this code opens only {SCHEMA_VERSION}. No migration: open it with the code that wrote it "
+                            "or start a new store")
+    if meta.get("spec_hash") != spec.SPEC_HASH:
+        raise StoreRejected(f"store {db.parent} is bound to spec {meta.get('spec_hash')}, this code implements {spec.SPEC_HASH}")
+
+
 class Rejected(RuntimeError):
     """An atomic predicate failed; nothing was committed."""
 
@@ -57,6 +93,7 @@ class Row:
 class FomcStore:
     def __init__(self, root: Path, *, wall_clock: Callable[[], datetime]):
         self.root = Path(root)
+        _admit_existing(self.root / "fomc.sqlite3")  # before any write (STORE_OPENING_RULE)
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "raw").mkdir(exist_ok=True)
         self._wall = wall_clock
@@ -90,6 +127,7 @@ class FomcStore:
                     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)"
                 )
                 self._conn.execute("INSERT OR IGNORE INTO meta VALUES ('spec_hash', ?)", (spec.SPEC_HASH,))
+                self._conn.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
                 bound = self._conn.execute("SELECT value FROM meta WHERE name = 'spec_hash'").fetchone()[0]
                 self._conn.execute("COMMIT")
             except BaseException:

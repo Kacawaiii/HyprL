@@ -6,9 +6,15 @@ Implements `docs/artifacts/fomc_capture_spec_v1.json` **revision 22**
 authoritative. This is an **offline slice**: every source is synthetic and served by a local
 Unix-socket provider; no Federal Reserve request, fixture capture or live run is part of it.
 
+**Capture verdict: NOT READY. One capture blocker remains (`COMMIT_FSYNC_120S`, below).** The
+autonomous service, the TLS connector, the store opening rule and a prolonged crash/restart run are
+delivered and verified; real capture stays refused by the code (`service.CAPTURE_BLOCKERS`).
+
 ```
-python -m scripts.trading_lab.fomc.demo          # the executable path, end to end
-python -m pytest tests/crypto/test_fomc_*.py     # 119 tests
+python -m scripts.trading_lab.fomc.demo                 # the executable path, end to end
+python -m pytest tests/crypto/test_fomc_*.py            # 138 passed + 2 strict xfail (the blocker)
+python -m scripts.trading_lab.fomc.soak --hours 26      # prolonged run with crashes, verified (~95 s)
+python -m scripts.trading_lab.fomc.service --store DIR  # real capture: refused while blocked (exit 3)
 ```
 
 `feed -> durable raw -> classification -> primary acquisition -> revision + observation link ->
@@ -29,6 +35,8 @@ cycle -> events_as_of(T, H) -> reopen -> offline replay`
 | `state.py` | LIVE_ELIGIBLE, server-attested `avail`, `NOW_LB`, anchors, obligations, episodes, item conclusion, RESOLVE validity |
 | `collector.py` | single owner (flock + epoch), fetch/commit, reconciliation, episodes, class rotation and per-class ordering (`select`), operator actions, manifests, integrity diagnostics |
 | `snapshot.py` | P(T) under horizon H, read state, 9-step selection, discovery state, source health, identity, read-time raw dependency checks, verified replay (health re-derived) |
+| `service.py` | the autonomous owner: tick loop, task closure at the 60/120/600 s bounds, worker threads, restart; the real-capture entry point, refused while `CAPTURE_BLOCKERS` is non-empty |
+| `soak.py` | the prolonged synthetic run with faults, crashes and restarts, and its verification |
 | `synthetic.py`, `demo.py` | simulated clock, local provider, fixtures, the demo |
 
 ## Proven guarantees: invariant → code → test
@@ -71,28 +79,89 @@ Each row is exercised by the named tests (offline, synthetic sources). Anything 
 | no quadratic store re-reads in derivations and snapshots, answers unchanged | `store.FomcStore.view/_Mirror/StoreView`; every `state` derivation, `processing.cycle_conclusion/classify_feed/earlier_feed_unterminated`, `collector.open_episodes/eligible_work/derive_terminals/process_pending`, `snapshot.events_as_of/replay` read one view | read_cost: `events_as_of` and `outstanding` through the view equal direct SQL reads at > 20 (T, H) pairs (resolved and unresolved); a cold reader loads the store once (3 queries, rows + txns read once), then 1 query and 0 rows per operation; the same derivations (6 queries, 0 rows) and the same 300 s of capture (210 queries, 75 rows for 50 new rows + txns) cost exactly the same on a 20-min and a 40-min store. Before (11f56bc, 30-/60-min stores): a snapshot cost 95/125 queries and 742/1342 rows, a cycle conclusion 101/161 queries and 341/611 rows, `eligible_work` 65/95 queries and 631/1171 rows |
 | no items × records in-memory work, answers unchanged | incremental aggregates fed by the mirror: `state.NowLb` (running maximum, exact at any horizon), `state.OpenWork` (attempts without outcome, records without processing outcome, non-terminal LIVE feed records; used only by a view at the head, older views rescan); per-view memo of LIVE_ELIGIBLE FEED_CLASSIFIED records; failed feeds found through the outcome index | read_cost `in_memory_work…` (12 items, 20- vs 40-min stores, work counted as rows handed out by the view): outstanding, cycle conclusion, open_episodes, derive_terminals, process_pending, feed_poll_due cost exactly the same on both sizes, the last two nothing; events_as_of and eligible_work grow by at most the added rows + txns (the availability table, once). Before: eligible_work 1187 → 1627 rows (+440 for +140 rows) and open_episodes 660 → 900. `selection_snapshots_and_replay_equal_the_full_scan_path`: a 25-min run with a failing item gives the same `TRANSPORT_INVOKED` sequence (class, kind, item, episode, grant instant), snapshot and replay with the aggregates as with SQL reads and full rescans |
 
+| autonomous service: every tick closes what reached its bound (LOCAL_PERSISTENCE_FAILED 120 s after the network end while the save task is still blocked, INTERRUPTED 600 s after TRANSPORT_INVOKED, DEAD run 600 s after its start, replacement, poison) and hands work to worker threads; the owner never runs or waits on a task; late results are fenced | `service.FomcService.tick/fetch_in_flight`, `collector.inline/dispatch_run`, `collector.fetch` (TRANSPORT_INVOKED and task registration under one lock) | service: autonomous capture (anchor, O300, zero); hung save: nothing before +120 s, LPF at the first tick after it while the task is still parked, >= 24 owner ticks during the hang, polling and attempt #2 continue around the parked task, its release writes no RESPONSE or LATE_EVIDENCE; task stuck after TRANSPORT_INVOKED: INTERRUPTED at +600 s, attempt #2 counted after it, late result fenced; hung processing run: DEAD and replaced at +600 s, INTERNAL_PROCESSING_ERROR at +1200 s, feed polled throughout, never a zero, one outcome; network stall cut by the physical deadline (scaled to 0.5 s) while the owner ticked >= 10 times |
+| restart: a new owner interrupts every earlier-epoch attempt at once; no budget or key is recreated | `collector.reconcile` (epoch), unique keys and durable attempt counts | service `restart_interrupts…`: the dead owner's parked attempt INTERRUPTED (non-current epoch) when the new owner starts, attempt #2 in the same episode, keys unique; soak: two crashes |
+| production TLS connector: SNI, chain and hostname verification; an invalid certificate is SOURCE_UNAVAILABLE, never an exception out of the fetch | `transport.HttpsConnector.context/wrap`, `transport._connect` (TLS failures mapped) | tls (local CA and certificates, server on a Unix socket, production `connect` and `wrap`): valid certificate: 200 with SNI `www.federalreserve.gov`, TLS >= 1.2; wrong name, expired, self-signed: SOURCE_UNAVAILABLE with the verification error, no request sent; the system trust store rejects the local CA; the context requires CERT_REQUIRED and hostname checking. Found and fixed: a certificate failure used to escape the transport as an exception |
+| STORE_OPENING_RULE: an existing store with another schema version (including the unversioned stores of earlier checkpoints) or another spec hash is rejected before any write; no migration | `store._admit_existing` (read-only; `immutable` when there are no WAL frames), `SCHEMA_VERSION = fomc-store-v2` | store_opening: unversioned, later version, other spec: `StoreRejected`, every byte of the directory unchanged (also with pending WAL frames), no owner lock taken; a current store reopens and a new store is versioned |
+| prolonged run with faults, two owner crashes and restarts, verified after reopening | `soak.run/verify` | soak (8 h in the suite; 26 h by CLI, ~95 s): every hourly snapshot re-reads identically at its (T, H), verified replay of a subset equals them, `verify_health` passes, one processing outcome per record, <= 1 open attempt at the end, unique keys, <= 6 attempts per key, <= 120 requests per LIVE item, limiter spacing and window across restarts, every zero cycle LIVE_ELIGIBLE with nothing outstanding and every earlier feed record terminal before B, LPF without a late record, every recheck due long enough ago served. 26 h result: 3 boots, 6325 transactions, 1577 attempts and requests, 1557 cycles (1547 zero), 6 revisions, 5 rechecks served, 25 snapshots re-read, 6 replayed |
+
+## Capture blocker: COMMIT_FSYNC_120S
+
+- **Rule at stake.** A local save that starts before +120 s (after the network end) and finishes at or
+  after it must never create a RESPONSE; at +120 s the owner commits LOCAL_PERSISTENCE_FAILED.
+- **What holds.** The admission check runs inside the write transaction; a save blocked anywhere
+  *before* the COMMIT (raw write, `fsync` of the raw file, retries) is closed by the owner at +120 s
+  and its late bytes never become RESPONSE or LATE_EVIDENCE (tested, also through the service).
+- **What does not.** SQLite's `COMMIT` (its `fsync` under `synchronous=FULL`) runs after the check and
+  can be neither bounded nor cancelled: a COMMIT stalled in `fsync` past +120 s still makes the
+  RESPONSE durable, and while it stalls it holds the store's write lock, so the owner can neither tick
+  nor write LOCAL_PERSISTENCE_FAILED. Reproduced by two strict-xfail tests (a COMMIT that returns 130 s
+  after the check; a COMMIT blocked while the owner tries to tick):
+  `python -m pytest tests/crypto/test_fomc_service.py -k capture_blocker --runxfail`.
+- **Why no fix here.** Every durable decision is itself a COMMIT that can stall the same way. The only
+  design that proves "durable before +120 s" is two-phase (write the record, then a confirmation whose
+  recorded check instant is before +120 s). It contradicts the spec's PROCESSABLE rule (fixed by the
+  record's own transaction), and the owner would still wait behind the single SQLite writer. Killing
+  the process does not undo WAL frames already written. The resolution is therefore a spec decision:
+  either amend the bound to the admission-check instant and treat a stalled `fsync` as a storage fault
+  with an operational alarm, or adopt two-phase admission with bounded store waits for the owner.
+  `CAPTURE_BLOCKERS` stays non-empty until then.
+
+## Capture protocol (for the day the blocker is lifted)
+
+Preconditions: the blocker's resolution merged, its two tests passing as ordinary tests and
+`CAPTURE_BLOCKERS = ()`; an NTP-disciplined host (`causal_predicates.production_requirement`); a new,
+empty store directory (a store is never reused across schema versions: STORE_OPENING_RULE).
+
+```
+cd ~/HyprL && git fetch origin && git checkout <reviewed commit> && git status --short   # clean tree
+python -c "from scripts.trading_lab.fomc import spec; print(spec.verify_spec_binding())"
+# expected: ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678
+python -m pytest tests/crypto/test_fomc_*.py -q                  # everything passes, no xfail left
+python -m scripts.trading_lab.fomc.soak --hours 26              # ends with "soak verified"
+timedatectl show -p NTPSynchronized --value                      # yes
+STORE=/srv/hyprl/fomc/store-$(date -u +%Y%m%dT%H%M%SZ)           # a new directory, never an old store
+nohup python -m scripts.trading_lab.fomc.service --store "$STORE" --tick 1 >> "$STORE.log" 2>&1 &
+```
+
+During capture, read through a separate process that never starts a collector (opening a `FomcStore`
+adds no row; a second owner of the same store is refused):
+
+```
+python - "$STORE" <<'PY'
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from scripts.trading_lab.fomc import snapshot
+from scripts.trading_lab.fomc.store import FomcStore
+store = FomcStore(Path(sys.argv[1]), wall_clock=lambda: datetime.now(timezone.utc))
+snap = snapshot.events_as_of(store, datetime.now(timezone.utc))
+print(snap["read_state"], snap.get("discovery"), snap.get("health"), snap["H"], snap["identity"])
+PY
+```
+
+Stop with `kill -INT <pid>` (a kill or a crash is also safe: the next start interrupts the old epoch's
+attempts). Afterwards, offline and on a copy of the store, verify a recorded `(T, H)` with
+`snapshot.replay(store, T, H)` and `snapshot.verify_health(store, H)`.
+
 ## Remaining limits
 
 Not proven by this slice, or outside it:
 
-- No real TLS/HTTPS run: `HttpsConnector` exists but is never exercised (no network by mandate).
-- No background daemon or periodic tick: the collector is step-driven. How each bound is imposed:
-  - 60 s physical deadline: during I/O (stage timeouts, socket watchdog, late-result checks).
-  - 120 s save deadline: by the admission check inside the write transaction and by `reconcile()`, on
-    the injectable monotonic clock. **Exact scope of that check:** it runs after `BEGIN IMMEDIATE` and
-    before the rows are inserted and before SQLite's `COMMIT`. The `COMMIT` itself (its `fsync` under
-    `synchronous=FULL`) and the `fsync` calls of `put_raw` are not bounded by this code: a `COMMIT`
-    that starts before +120 s and blocks can make the RESPONSE durable after +120 s, and `reconcile()`
-    in the same process waits for the same store lock, so it cannot write `LOCAL_PERSISTENCE_FAILED`
-    meanwhile. Tests exercise slow operations *before* the check (+119.9 / +120.0 / +120.1 s); no test
-    shows a blocking `fsync` bounded, and none is claimed.
-  - 600 s attempt and run deadlines: at the next trigger (`step`, `reconcile`, `process_pending`,
-    `commit`) and by fences that discard late results. They are **not** imposed by a timer that
-    interrupts a running task: a processing run that hangs inside the owner's own thread blocks that
-    owner until it returns (its late result is then fenced and the run marked DEAD), and an attempt
-    whose task dies silently is only interrupted when a trigger runs after its deadline.
-  - Liveness of the in-process task registry assumes one owner process; tasks of an earlier process
-    are detected by epoch (immediately), not by the deadline.
+- The capture blocker above (`COMMIT_FSYNC_120S`).
+- No real network run (by mandate): the TLS connector is proven against a local server and local
+  certificates over a Unix socket; public DNS, TCP to port 443 and the provider's real certificate
+  chain are first exercised on capture day.
+- Spec deviation, liveness only: the service keeps one logical fetch in flight at a time, whereas
+  `selection.work_conserving` forbids serializing logical fetches below FIX15 and the one-in-flight
+  rules. A slow fetch (up to 60 s per physical attempt) or a task stuck until its 600 s bound delays
+  every other fetch, feed polls included. It never creates a zero (no cycle without a poll), an extra
+  request or a budget. To decide before acceptance: concurrent logical fetches, or accept the deviation.
+- Bounds are closed at the first owner tick at or after them (1 s in production, never before). A hung
+  task keeps its thread until the process exits; it is fenced, not killed. `settle_s` (waiting for
+  workers between ticks) exists only for simulated clocks.
+- The step-driven path (`Collector.step`, used by most tests and the demo) still runs tasks inline in
+  the caller's thread; only the service gives the non-blocking guarantees.
 - `SNAPSHOT_WATERMARK`: not written, because it is not needed to satisfy `live_watermark`. The last
   transaction of a store is always UNRESOLVED (its V must come later), so a read at T is resolved
   exactly when some later transaction has already been resolved by a later verified response with
@@ -123,6 +192,6 @@ Not proven by this slice, or outside it:
   discovery lookup of the latest feed record, `open_episodes` walking every manifest entry and
   operator record, `derive_terminals` every episode. The head aggregates serve only views at the head;
   an older view (a snapshot at an old H) rescans, which is exact but linear.
-- No store migration: rows written by earlier checkpoints (LINK `mode`, REVISION without the new
-  fields, no health rows) are not upgraded; the slice has no production store.
+- No store migration, by rule (STORE_OPENING_RULE): stores of earlier checkpoints are rejected, not
+  upgraded; the slice has no production store.
 - Official historical fixtures and real capture are separate, later steps.

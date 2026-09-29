@@ -34,6 +34,9 @@ class HttpsConnector:
 
     tls = True
 
+    def __init__(self, cafile: str | None = None):
+        self.cafile = cafile  # None: the system trust store (production); a file: tests with a local CA
+
     def resolve(self):
         return socket.getaddrinfo(spec.ALLOWED_HOST, 443, type=socket.SOCK_STREAM)
 
@@ -48,9 +51,13 @@ class HttpsConnector:
             raise
         return sock
 
+    def context(self) -> ssl.SSLContext:
+        """Certificate chain and hostname verification required, TLS >= 1.2 (Python defaults)."""
+        return ssl.create_default_context(cafile=self.cafile)
+
     def wrap(self, sock, timeout: float):
         sock.settimeout(timeout)
-        return ssl.create_default_context().wrap_socket(sock, server_hostname=spec.ALLOWED_HOST)
+        return self.context().wrap_socket(sock, server_hostname=spec.ALLOWED_HOST)  # SNI and name check
 
 
 @dataclass
@@ -184,6 +191,10 @@ class Transport:
                 if getattr(self.connector, "tls", False):
                     sock = self.connector.wrap(sock, deadline.timeout(spec.READ_TIMEOUT_S, "TLS"))
                     deadline.check("TLS")
+            except OSError as exc:  # handshake, certificate or hostname verification failure, TLS stall
+                sock.close()
+                deadline.check("TLS")
+                raise _Fail("SOURCE_UNAVAILABLE", f"TLS: {type(exc).__name__}: {getattr(exc, 'verify_message', None) or exc}") from exc
             except BaseException:
                 sock.close()
                 raise
