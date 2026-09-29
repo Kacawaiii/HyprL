@@ -5,7 +5,7 @@ validity (causal_predicates, revision_policy.reobservation_*, retry_policy, zero
 
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -79,10 +79,61 @@ def availability(store: FomcStore, horizon: int) -> list[Avail]:
     return out
 
 
+class NowLb:
+    """Incremental SERVER_NOW_LB: the running maximum of verified non-late observed_at - 92 s, kept at
+    each commit_seq where it rises, so its value at any horizon is one bisection."""
+
+    def __init__(self):
+        self.seqs: list[int] = []
+        self.values: list[datetime] = []
+
+    def add(self, row: Row) -> None:
+        if row.kind == "RESPONSE" and verified(row):
+            value = observed_at(row) - BOUND
+            if not self.values or value > self.values[-1]:
+                self.seqs.append(row.seq)
+                self.values.append(value)
+
+    def at(self, upto: int) -> datetime | None:
+        i = bisect_right(self.seqs, upto) - 1
+        return self.values[i] if i >= 0 else None
+
+
+class OpenWork:
+    """Incremental sets at the store's head: attempts without an outcome, records without a processing
+    outcome, and LIVE feed records that are not FEED_RECORD_TERMINAL. Exact for a view at the head
+    (StoreView.at_head); an older view derives the same sets by scanning."""
+
+    def __init__(self):
+        self.attempts: dict[int, Row] = {}
+        self.pending: dict[int, Row] = {}
+        self.feeds: dict[int, Row] = {}
+
+    def add(self, row: Row) -> None:
+        if row.kind == "TRANSPORT_INVOKED":
+            self.attempts[row.seq] = row
+        elif row.kind == "ATTEMPT_OUTCOME":
+            self.attempts.pop(row.body["attempt"], None)
+        elif row.kind == "RESPONSE":
+            self.pending[row.seq] = row
+            if row.body.get("surface") == "feed" and row.body["mode"] == "LIVE":
+                self.feeds[row.seq] = row
+        elif row.kind == "PROCESSING_OUTCOME":
+            self.pending.pop(row.body["record"], None)
+            if row.body["outcome"] in FEED_TERMINAL:
+                self.feeds.pop(row.body["record"], None)
+
+
+def open_work(store: FomcStore) -> OpenWork | None:
+    """The head sets for this view, or None when the view is older than the head."""
+    view = store.view()
+    return view.aggregate("open_work", OpenWork) if view.at_head() else None
+
+
 def now_lb(store: FomcStore, horizon: int | None = None) -> datetime | None:
     """SERVER_NOW_LB: max verified non-late observed_at - 92 s."""
-    times = [observed_at(r) for r in store.view(horizon).rows("RESPONSE") if verified(r)]
-    return max(times) - BOUND if times else None
+    view = store.view(horizon)
+    return view.aggregate("now_lb", NowLb).at(view.upto)
 
 
 def avail_of(table: list[Avail], seq: int) -> datetime | None:
@@ -142,8 +193,10 @@ def work_satisfied(store: FomcStore, episode: Row, *, upto: int | None = None) -
     if kind == "REOBSERVATION":
         due = parse_iso(body["anchor"]) + timedelta(seconds=body["offset"])
         return any(live_eligible(r) and observed_at(r) >= due for r in primary_responses(store, body["sid"], upto=upto))
-    if kind == "HISTORICAL_BACKFILL":
-        return any(verified(r) for a in ledger.attempts_of_episode(store, episode.key, upto=upto)
+    if kind == "HISTORICAL_BACKFILL":  # the entry's own episode, and a manual retry of it, satisfy the entry
+        from scripts.trading_lab.fomc.identity import backfill_episode_key
+        keys = {episode.key, backfill_episode_key(body["manifest"], body["sid"])}
+        return any(verified(r) for key in sorted(keys) for a in ledger.attempts_of_episode(store, key, upto=upto)
                    for r in store.rows("RESPONSE", key=str(a.seq), upto=upto))
     raise ValueError(kind)
 
@@ -220,11 +273,8 @@ def concluded(store: FomcStore, item: dict, *, upto: int) -> bool:
     if item["type"] == "FAILED_FEED":
         if item["reason"] != "PARSER_FAILED":
             return False
-        for f in feed_responses(store, upto=upto):
-            o = processing_outcome(store, f.seq, upto=upto)
-            if f.seq > item["seq"] and live_eligible(f) and o is not None and o.body["outcome"] == "FEED_CLASSIFIED":
-                return True
-        return False
+        healthy = _classified_live_feeds(store.view(upto))
+        return bisect_right(healthy, item["seq"]) < len(healthy)  # a later LIVE_ELIGIBLE FEED_CLASSIFIED record
     return _naturally_concluded(store, item["sid"], upto, last_resolution)
 
 
@@ -247,15 +297,29 @@ def _naturally_concluded(store: FomcStore, sid: str, upto: int, last_resolution:
     return all(outcome_class(outcomes[r.seq].body["outcome"]) == kind for r in live if r.seq > latest.seq)
 
 
+def _classified_live_feeds(view) -> list[int]:
+    """Sorted seqs of LIVE_ELIGIBLE feed records whose outcome is FEED_CLASSIFIED (once per view)."""
+    def compute():
+        records = (view.row_at("RESPONSE", o.body["record"]) for o in view.select("PROCESSING_OUTCOME", "outcome", "FEED_CLASSIFIED"))
+        return sorted(r.seq for r in records if r.body.get("surface") == "feed" and live_eligible(r))
+    return view.memo("classified_live_feeds", compute)
+
+
+FEED_FAILURES = ("PARSER_FAILED", "INTERNAL_PROCESSING_ERROR", "CORRUPTION_FAIL_CLOSED")
+
+
 def items(store: FomcStore, *, upto: int) -> list[dict]:
+    store = store.view(upto)
     out = [{"type": "CANDIDATE", "key": f"SOURCE_ITEM:{c.key}", "sid": c.key, "shape": c.body["shape"], "seq": c.seq}
            for c in store.rows("CANDIDATE", upto=upto)]
     out += [{"type": "UNIDENTIFIABLE", "key": f"UNIDENTIFIABLE_ITEM:{u.key}", "seq": u.seq}
             for u in store.rows("UNIDENTIFIABLE", upto=upto)]
-    for f in feed_responses(store, upto=upto):
-        o = processing_outcome(store, f.seq, upto=upto)
-        if o is not None and o.body["outcome"] in ("PARSER_FAILED", "INTERNAL_PROCESSING_ERROR", "CORRUPTION_FAIL_CLOSED"):
-            out.append({"type": "FAILED_FEED", "key": f"FAILED_FEED:{f.seq}", "seq": f.seq, "reason": o.body["outcome"]})
+    failed = sorted(((o.body["record"], o.body["outcome"]) for reason in FEED_FAILURES
+                     for o in store.select("PROCESSING_OUTCOME", "outcome", reason)))
+    for record, outcome in failed:  # commit order of the feed records, as a scan of the feed would give
+        f = store.row_at("RESPONSE", record)
+        if f.body.get("surface") == "feed" and f.body["mode"] == "LIVE":
+            out.append({"type": "FAILED_FEED", "key": f"FAILED_FEED:{f.seq}", "seq": f.seq, "reason": outcome})
     return out
 
 

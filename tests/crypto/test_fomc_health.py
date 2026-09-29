@@ -163,3 +163,142 @@ def test_health_is_exposed_only_when_resolved_bound_to_identity_and_replayed(env
             snapshot.replay(tampered, T, H)
     finally:
         tampered.close()
+
+
+# ------------------------------------------------------------------ corruption after the outcome -----
+def _raw(env, digest):
+    return env.root / "raw" / digest[:2] / digest
+
+
+def test_corruption_found_after_the_outcome_keeps_it_and_commits_diagnostic_and_health_together(env):
+    env.feed([statement_item()])
+    env.provider.routes[P1] = syn.page_response()
+    env.drive(240)
+    store = env.store
+    H1 = store.horizon()
+    T1 = _T(store, H1)
+    old = snapshot.events_as_of(store, T1, H1)
+    assert next(i for i in old["items"] if i["sid"] == SID1)["state"] == "CURRENT_REVISION"
+    record = state.primary_responses(store, SID1)[-1]
+    kept = state.processing_outcome(store, record.seq).body["outcome"]
+    requests, invoked = len(env.provider.requests), len(store.rows("TRANSPORT_INVOKED"))
+    _raw(env, record.body["raw_sha"]).write_bytes(b"corrupted")
+    assert env.collector.verify_integrity() == [record.seq]
+    assert env.collector.verify_integrity() == [record.seq]  # still corrupt; diagnosed once
+    diagnostic = store.rows("INTEGRITY_DIAGNOSTIC", key=str(record.seq))
+    assert len(diagnostic) == 1 and diagnostic[0].body == {"record": record.seq, "raw_sha": record.body["raw_sha"], "outcome": kept}
+    same_txn = [r for r in store.rows() if r.seq == diagnostic[0].seq]
+    assert sorted(r.kind for r in same_txn) == ["INTEGRITY_DIAGNOSTIC", "SOURCE_HEALTH"]  # one atomic transaction
+    check = next(r for r in same_txn if r.kind == "SOURCE_HEALTH")
+    assert check.key == "primary_statement"
+    assert (check.body["result_state"], check.body["reason"], check.body["outcome"], check.body["record"]) == \
+        (NO_PROVIDER, "RAW_CORRUPTION", kept, record.seq)
+    assert state.processing_outcome(store, record.seq).body["outcome"] == kept  # the terminal outcome is kept
+    assert len(env.provider.requests) == requests and len(store.rows("TRANSPORT_INVOKED")) == invoked  # no refetch
+    env.drive(130)  # later verified feed polls resolve the diagnostic; the +300 s recheck is not due yet
+    H2 = store.horizon()
+    T2 = _T(store, H2)
+    snap = snapshot.events_as_of(store, T2, H2)
+    assert snap["read_state"] == "FOMC_RESOLVED" and snap["P"] >= diagnostic[0].seq
+    item = next(i for i in snap["items"] if i["sid"] == SID1)
+    assert item["step"] == 3 and item["state"] == snapshot.BARRIER and "revision" not in item  # corruption barrier
+    assert snap["health"]["primary_statement"]["reason"] == "RAW_CORRUPTION"
+    assert snap["health"]["primary_statement"]["record"] == record.seq == item["newest"]["record"]  # consistent
+    assert snap["health"]["discovery_feed"]["result_state"] in (None, "EVENTS_OBSERVED_ZERO")  # the feed is untouched
+    with pytest.raises(snapshot.SnapshotFailed):
+        snapshot.events_as_of(store, T1, H1)  # the older (T, H) depended on that raw: it fails closed
+    snapshot.verify_health(store, H2)  # health, diagnostic included, re-derives
+    with pytest.raises(snapshot.ReplayFailed):
+        snapshot.replay(store, T2, H2)  # the corrupt raw fails verified replay closed
+
+
+# ------------------------------------------------------------------ health replay, field by field ----
+@pytest.fixture
+def health_store(env, tmp_path):
+    """A store with the three kinds of health rows: an attempt outcome (404), a processed record and
+    an integrity diagnostic."""
+    env.feed([statement_item()])
+    env.drive(90)  # the first acquisition attempt meets a 404
+    env.provider.routes[P1] = syn.page_response()
+    env.drive(400)
+    record = state.anchor(env.store, SID1)
+    assert record is not None
+    _raw(env, record.body["raw_sha"]).write_bytes(b"corrupted")
+    env.collector.verify_integrity()
+    env.store._conn.execute("PRAGMA wal_checkpoint(FULL)")
+    rows = env.store.rows("SOURCE_HEALTH")
+    kinds = {"attempt": next(r for r in rows if r.body["outcome"] == "SOURCE_UNAVAILABLE"),
+             "record": next(r for r in rows if r.body["record"] == record.seq and r.body["reason"] != "RAW_CORRUPTION"),
+             "diagnostic": next(r for r in rows if r.body["reason"] == "RAW_CORRUPTION")}
+    return env, kinds, tmp_path
+
+
+def _copy(env, tmp_path, name, sql, args=()):
+    copy = tmp_path / name
+    shutil.copytree(env.root, copy)
+    with sqlite3.connect(copy / "fomc.sqlite3") as conn:
+        assert conn.execute(sql, args).rowcount == 1
+    return FomcStore(copy, wall_clock=env.clock.wall)
+
+
+FIELDS = {"provider_id": '"another_provider"', "surface": '"discovery_feed"', "check_at": '"2026-06-17T18:00:00+00:00"',
+          "result_state": '"EVENTS_OBSERVED_ZERO"', "reason": '"CLOCK_UNVERIFIED"', "outcome": '"INTERRUPTED"',  # held by none of the rows
+          "attempt": "999", "record": "999", "sid": '"0000"', "diagnostics": '{"reason": "edited"}'}
+
+
+def test_health_replay_checks_every_durable_field_of_every_row(health_store):
+    env, kinds, tmp_path = health_store
+    H = env.store.horizon()
+    snapshot.verify_health(env.store, H)  # the untouched store re-derives
+    undetected = []
+    for kind, row in kinds.items():
+        edits = [(field, "UPDATE rec SET body = json_set(body, ?, json(?)) WHERE kind = 'SOURCE_HEALTH' AND commit_seq = ?",
+                  (f"$.{field}", value, row.seq)) for field, value in FIELDS.items()]
+        edits.append(("key", "UPDATE rec SET key = 'discovery_feed' WHERE kind = 'SOURCE_HEALTH' AND commit_seq = ?", (row.seq,)))
+        for field, sql, args in edits:
+            copy = _copy(env, tmp_path, f"{kind}-{field}", sql, args)
+            try:
+                edited = next(r for r in copy.rows("SOURCE_HEALTH") if r.seq == row.seq)
+                assert (edited.key, edited.body) != (row.key, row.body)  # the edit really changed the row
+                snapshot.verify_health(copy, H)
+                undetected.append((kind, field, row.body.get(field)))
+            except snapshot.ReplayFailed:
+                pass
+            finally:
+                copy.close()
+    assert undetected == []  # every isolated edit of every field of every kind of row fails closed
+
+
+def test_health_replay_binds_check_at_to_durable_provenance_and_fails_on_missing_rows(health_store):
+    env, kinds, tmp_path = health_store
+    H = env.store.horizon()
+    edits = {
+        "attempt-wall": ("UPDATE txn SET wall_at_commit = '2026-06-17T18:00:00+00:00' WHERE commit_seq = ?", kinds["attempt"].seq),
+        "diagnostic-wall": ("UPDATE txn SET wall_at_commit = '2026-06-17T18:00:00+00:00' WHERE commit_seq = ?", kinds["diagnostic"].seq),
+        "record-receipt": ("UPDATE rec SET body = json_set(body, '$.wall_at_receipt', '2026-06-17T18:00:01+00:00') "
+                           "WHERE kind = 'RESPONSE' AND commit_seq = ?", kinds["record"].body["record"]),
+        "health-deleted": ("DELETE FROM rec WHERE kind = 'SOURCE_HEALTH' AND commit_seq = ?", kinds["record"].seq),
+        "diagnostic-health-deleted": ("DELETE FROM rec WHERE kind = 'SOURCE_HEALTH' AND commit_seq = ?", kinds["diagnostic"].seq),
+        "diagnostic-deleted": ("DELETE FROM rec WHERE kind = 'INTEGRITY_DIAGNOSTIC' AND commit_seq = ?", kinds["diagnostic"].seq),
+        "diagnostic-outcome": ("UPDATE rec SET body = json_set(body, '$.outcome', 'PARSER_FAILED') "
+                               "WHERE kind = 'INTEGRITY_DIAGNOSTIC' AND commit_seq = ?", kinds["diagnostic"].seq),
+    }
+    for name, (sql, seq) in edits.items():
+        copy = _copy(env, tmp_path, name, sql, (seq,))
+        try:
+            with pytest.raises(snapshot.ReplayFailed):
+                snapshot.verify_health(copy, H)
+        finally:
+            copy.close()
+    # the diagnosed raw restored to its original bytes: raw is never repaired, so replay refuses it
+    record = env.store.row_at("RESPONSE", kinds["diagnostic"].body["record"])
+    restored = tmp_path / "restored"
+    shutil.copytree(env.root, restored)
+    (restored / "raw" / record.body["raw_sha"][:2] / record.body["raw_sha"]).write_bytes(
+        env.provider.routes[P1].body)
+    copy = FomcStore(restored, wall_clock=env.clock.wall)
+    try:
+        with pytest.raises(snapshot.ReplayFailed, match="verifies again"):
+            snapshot.verify_health(copy, H)
+    finally:
+        copy.close()

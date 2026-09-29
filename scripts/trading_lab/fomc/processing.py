@@ -24,6 +24,9 @@ def _diag(kind: str, *parts, marker: bool = False, sid: str | None = None, value
 
 def earlier_feed_unterminated(store: FomcStore, seq: int) -> bool:
     store = store.view()
+    head = state.open_work(store)
+    if head is not None:
+        return any(s < seq for s in head.feeds)
     for f in state.feed_responses(store, upto=seq - 1):
         o = state.processing_outcome(store, f.seq)
         if o is None or o.body["outcome"] not in state.FEED_TERMINAL:
@@ -215,8 +218,9 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
 
 
 def record_health(resp: Row, outcome: str, cycle, reason: str | None) -> tuple[str, str, dict]:
-    """The source-health result of a processed record, committed with its processing outcome."""
-    surface = "discovery_feed" if resp.body["surface"] == "feed" else "primary_statement"
+    """The source-health result of a processed record, committed with its processing outcome; every
+    field repeats durable data (the record, its outcome row, the cycle of the same transaction)."""
+    surface = health.surface_of_record(resp.body)
     result = health.for_record(state.verified(resp), outcome, cycle[2]["result"] if cycle else None)
     return health.row(surface, resp.body["wall_at_receipt"], result, outcome=outcome, attempt=resp.body["attempt"],
                       record=resp.seq, sid=resp.body.get("sid"), diagnostics={"reason": reason})
@@ -317,12 +321,13 @@ def process_record(store: FomcStore, seq: int, *, epoch: str, fault=None, mono=N
 def poison(store: FomcStore, seq: int, *, epoch: str) -> str | None:
     """POISON_GUARD: after two DEAD runs the current owner commits INTERNAL_PROCESSING_ERROR."""
     resp = store.row_at("RESPONSE", seq)
-    rows = [("PROCESSING_OUTCOME", str(seq), {"record": seq, "outcome": "INTERNAL_PROCESSING_ERROR"})]
+    rows = [("PROCESSING_OUTCOME", str(seq), {"record": seq, "outcome": "INTERNAL_PROCESSING_ERROR",
+                                              "reason": health.POISON_REASON})]
     cycle = None
     if resp.body["surface"] == "feed" and state.live_eligible(resp):
         cycle = cycle_conclusion(store, resp, [], "INTERNAL_PROCESSING_ERROR")
         rows.append(cycle)
-    rows.append(record_health(resp, "INTERNAL_PROCESSING_ERROR", cycle, "two DEAD processing runs"))
+    rows.append(record_health(resp, "INTERNAL_PROCESSING_ERROR", cycle, health.POISON_REASON))
 
     def owner(s: FomcStore) -> None:
         if ledger.current_epoch(s) != epoch:

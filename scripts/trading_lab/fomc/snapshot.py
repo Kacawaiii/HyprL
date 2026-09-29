@@ -182,34 +182,65 @@ def replay(store: FomcStore, T: datetime, H: int) -> dict:
             derived, detail, _rows = processing.classify_primary(view, resp, body)
             if state.outcome_class(derived) != state.outcome_class(recorded.body["outcome"]):
                 raise ReplayFailed(f"primary record {resp.seq} re-derives {derived}")
-    _replay_health(view)
+    verify_health(store, H)
     return events_as_of(store, T, H)
 
 
-def _replay_health(view) -> None:
-    """Every source-health result re-derives from the outcome committed in its own transaction, and
-    every outcome that has a health mapping carries exactly one (fail closed otherwise)."""
-    by_txn = {}
+def verify_health(store: FomcStore, H: int) -> None:
+    """Replay of source health up to H, fail closed. Every health row must equal, field for field
+    (key, provider_id, surface, check_at, result_state, reason, outcome, attempt, record, sid,
+    diagnostics), the row re-derived from the durable data of its own transaction:
+    - a processing outcome: from its record (surface, verdict, wall_at_receipt), the outcome row and
+      the cycle conclusion of the same transaction;
+    - a non-response attempt outcome: from its TRANSPORT_INVOKED and the outcome row, check_at being
+      the transaction's wall_at_commit;
+    - an integrity diagnostic: from the diagnosed record, the terminal outcome it keeps (committed
+      earlier), check_at being the transaction's wall_at_commit; the diagnosed raw must still fail its
+      digest (raw is never repaired).
+    Every such transaction carries exactly one health row and no other transaction carries any.
+    Limit: check_at repeats local wall readings (a transaction's wall_at_commit, a record's
+    wall_at_receipt); replay proves the row repeats them, not that the readings were true, and a
+    consistent rewrite of a reading together with its copy is not detectable."""
+    view = store.view(H)
+    walls = {seq: wall for seq, _kind, wall in view.txns()}
+    actual: dict[int, object] = {}
     for row in view.rows("SOURCE_HEALTH"):
-        if row.seq in by_txn:
+        if row.seq in actual:
             raise ReplayFailed(f"transaction {row.seq} carries two source-health results")
-        by_txn[row.seq] = row
-    expected = {}
+        actual[row.seq] = row
+    expected: dict[int, tuple] = {}
     for outcome in view.rows("PROCESSING_OUTCOME"):
         resp = view.row_at("RESPONSE", outcome.body["record"])
         cycle = view.rows("CYCLE_CONCLUSION", key=str(resp.seq))
-        cycle_row = ("CYCLE_CONCLUSION", str(resp.seq), cycle[0].body) if cycle and cycle[0].seq == outcome.seq else None
-        surface = "discovery_feed" if resp.body["surface"] == "feed" else "primary_statement"
-        expected[outcome.seq] = (surface, health.for_record(state.verified(resp), outcome.body["outcome"],
-                                                            cycle_row[2]["result"] if cycle_row else None), resp.seq)
+        cycle = cycle[0] if cycle and cycle[0].seq == outcome.seq else None
+        result = health.for_record(state.verified(resp), outcome.body["outcome"], cycle.body["result"] if cycle else None)
+        expected[outcome.seq] = health.row(health.surface_of_record(resp.body), resp.body["wall_at_receipt"], result,
+                                           outcome=outcome.body["outcome"], attempt=resp.body["attempt"], record=resp.seq,
+                                           sid=resp.body.get("sid"), diagnostics={"reason": outcome.body.get("reason")})
     for outcome in view.rows("ATTEMPT_OUTCOME"):
         result = None if outcome.body["outcome"] == "RESPONSE" else health.for_attempt_outcome(outcome.body["outcome"])
-        if result is not None:
-            invoked = view.row_at("TRANSPORT_INVOKED", outcome.body["attempt"])
-            expected[outcome.seq] = (health.surface_of(invoked.body["kind"]), result, None)
-    if set(by_txn) != set(expected):
-        raise ReplayFailed("source-health results do not match the outcomes that determine them")
-    for seq, (surface, (result_state, reason), record) in expected.items():
-        body = by_txn[seq].body
-        if (by_txn[seq].key, body["result_state"], body["reason"], body.get("record")) != (surface, result_state, reason, record):
+        if result is None:
+            continue
+        invoked = view.row_at("TRANSPORT_INVOKED", outcome.body["attempt"])
+        expected[outcome.seq] = health.row(health.surface_of(invoked.body["kind"]), walls[outcome.seq], result,
+                                           outcome=outcome.body["outcome"], attempt=outcome.body["attempt"], record=None,
+                                           sid=invoked.body.get("sid"), diagnostics={"reason": outcome.body.get("reason")})
+    for diag in view.rows("INTEGRITY_DIAGNOSTIC"):
+        resp = view.row_at("RESPONSE", diag.body["record"])
+        kept = state.processing_outcome(view, resp.seq, upto=diag.seq - 1) if resp is not None else None
+        if kept is None or diag.body != {"record": resp.seq, "raw_sha": resp.body["raw_sha"], "outcome": kept.body["outcome"]}:
+            raise ReplayFailed(f"integrity diagnostic {diag.seq} does not match a record with an earlier terminal outcome")
+        try:
+            store.read_raw(resp.body["raw_sha"])
+        except RawCorrupt:
+            pass
+        else:
+            raise ReplayFailed(f"integrity diagnostic {diag.seq}: the diagnosed raw verifies again (repaired or replaced)")
+        expected[diag.seq] = health.row(health.surface_of_record(resp.body), walls[diag.seq], health.for_integrity_diagnostic(),
+                                        outcome=kept.body["outcome"], attempt=resp.body["attempt"], record=resp.seq,
+                                        sid=resp.body.get("sid"), diagnostics={"reason": health.DIAGNOSTIC_REASON})
+    if set(actual) != set(expected):
+        raise ReplayFailed("source-health results do not match the transactions that determine them")
+    for seq, (_kind, surface, body) in expected.items():
+        if actual[seq].key != surface or actual[seq].body != body:
             raise ReplayFailed(f"source-health result of transaction {seq} does not re-derive")

@@ -27,12 +27,16 @@ def outcome_of(store: FomcStore, attempt_seq: int) -> Row | None:
 
 
 def attempts_without_outcome(store: FomcStore, *, sid: str | None = None, feed: bool = False) -> list[Row]:
+    from scripts.trading_lab.fomc import state  # state derives from the ledger: imported late
     store = store.view()  # inside a write transaction the view is the committed state under the lock
-    done = {row.key for row in store.rows("ATTEMPT_OUTCOME")}
+    head = state.open_work(store)
+    if head is not None:
+        candidates = list(head.attempts.values())
+    else:
+        done = {row.key for row in store.rows("ATTEMPT_OUTCOME")}
+        candidates = [row for row in store.rows("TRANSPORT_INVOKED") if str(row.seq) not in done]
     out = []
-    for row in store.rows("TRANSPORT_INVOKED"):
-        if str(row.seq) in done:
-            continue
+    for row in candidates:
         if feed and row.key == FEED_KEY:
             out.append(row)
         elif sid is not None and row.body.get("sid") == sid:
@@ -83,12 +87,13 @@ def commit_attempt_outcome(store: FomcStore, attempt_seq: int, outcome: str, det
     rows = [("ATTEMPT_OUTCOME", str(attempt_seq), body)]
     invoked = store.row_at("TRANSPORT_INVOKED", attempt_seq)
     result = health.for_attempt_outcome(outcome)
+    wall = store.wall_iso()  # check_at = the wall_at_commit of this transaction (durable provenance)
     if result is not None and invoked is not None:
-        rows.append(health.row(health.surface_of(invoked.body["kind"]), store.wall_iso(), result, outcome=outcome,
+        rows.append(health.row(health.surface_of(invoked.body["kind"]), wall, result, outcome=outcome,
                                attempt=attempt_seq, record=None, sid=invoked.body.get("sid"),
-                               diagnostics={"reason": (detail or {}).get("reason")}))
+                               diagnostics={"reason": body.get("reason")}))
     try:
-        return store.append("ATTEMPT_OUTCOME", rows)
+        return store.append("ATTEMPT_OUTCOME", rows, wall_at_commit=wall)
     except Rejected:
         return None
 

@@ -193,3 +193,62 @@ def test_backfill_is_ordered_by_manifest_then_next_eligible_instant_then_sid_and
     record = next(r for r in env.store.rows("RESPONSE") if r.body["attempt"] == hops[0].seq)
     assert record.body["redirect_chain"] == [syn.url(redirected), syn.url(redirected + "x")]
     _limiter_respected(env)
+
+
+# ------------------------------------------------------------------ MANUAL_RETRY of a backfill entry ---
+def test_manual_retry_of_a_backfill_entry_never_in_the_feed_keeps_mode_rank_and_budgets(env):
+    pool = sorted((syn.statement_path(f"2018{m:02d}{d:02d}") for m in range(1, 13) for d in (1, 8, 15, 22)),
+                  key=lambda p: identity.source_item_id(syn.url(p)))
+    x, m2_paths = pool[-1], pool[:40]  # every manifest-2 sid sorts before x
+    sid_x = identity.source_item_id(syn.url(x))
+    for p in m2_paths:
+        env.provider.routes[p] = syn.page_response()
+    env.feed([])  # x is never listed by the feed
+    m1 = _manifest(env, [x])  # x answers 404 until the retry
+    env.drive(int(6.5 * 3600), idle=60)
+    auto = identity.backfill_episode_key(m1, sid_x)
+    assert ledger.episode_status(env.store, auto) == "SUSPENDED"
+    assert len(ledger.attempts_of_episode(env.store, auto)) == spec.ATTEMPTS_PER_EPISODE
+    with pytest.raises(ValueError):
+        env.collector.manual_retry({"kind": "HISTORICAL_BACKFILL", "sid": identity.source_item_id(syn.url(m2_paths[0]))})
+    env.provider.routes[x] = syn.page_response()
+    m2 = _manifest(env, m2_paths)
+    op = env.collector.manual_retry({"kind": "HISTORICAL_BACKFILL", "sid": sid_x})
+    assert env.store.row_at("OPERATOR", op).body["work"] == {
+        "kind": "HISTORICAL_BACKFILL", "sid": sid_x, "manifest": m1, "url": syn.url(x), "mode": "HISTORICAL_BACKFILL"}
+    manual = identity.manual_episode_key(op)
+    _choice_now, first = _same_choice_after_restart(env, "HISTORICAL_BACKFILL")
+    assert first == manual  # manifest-1 rank: ahead of every manifest-2 entry, before and after restart
+    episode = next(e for e in env.store.rows("EPISODE_OPEN") if e.key == manual)
+    work, url = env.collector.work_of(episode)
+    assert url == syn.url(x) and work["mode"] == "HISTORICAL_BACKFILL" and work["class"] == "HISTORICAL_BACKFILL"
+    crashed = env.collector.fetch(work, url, "primary")  # the request is served...
+    env.restart()  # ...and the task dies before its commit
+    assert ledger.outcome_of(env.store, crashed.attempt_seq).body["outcome"] == "INTERRUPTED"
+    for _ in range(900):
+        if env.collector.step() is None:
+            env.clock.sleep(30)
+        done = all(ledger.attempts_of_episode(env.store, identity.backfill_episode_key(m2, identity.source_item_id(syn.url(p))))
+                   for p in m2_paths)
+        if done and ledger.episode_status(env.store, manual) == "SUCCEEDED":
+            break
+    hb = [t for t in env.store.rows("TRANSPORT_INVOKED") if t.body["class"] == "HISTORICAL_BACKFILL" and t.seq > op]
+    keys = [t.key for t in hb]
+    assert keys[0] == manual and keys.count(manual) == 2  # the crashed attempt, then its retry
+    assert [t.body["sid"] for t in hb if t.key != manual] == sorted(identity.source_item_id(syn.url(p)) for p in m2_paths)
+    assert 1 < keys.index(manual, 1) < len(keys) - 1  # retaken as soon as eligible, ahead of manifest 2's remaining entries
+    # budgets: the autonomous key is never reopened or refunded; the manual episode has its own
+    assert ledger.episode_status(env.store, auto) == "SUSPENDED" and len(ledger.attempts_of_episode(env.store, auto)) == 6
+    assert ledger.episode_status(env.store, manual) == "SUCCEEDED" and len(ledger.attempts_of_episode(env.store, manual)) == 2
+    assert env.provider.requests.count(x) == 6 + 2
+    assert all(len(ledger.attempts_of_episode(env.store, identity.backfill_episode_key(m2, identity.source_item_id(syn.url(p))))) == 1
+               for p in m2_paths)
+    record = next(r for r in env.store.rows("RESPONSE") if r.body["attempt"] == hb[keys.index(manual, 1)].seq)
+    assert (record.body["mode"], record.body["work"], record.body["request_url"]) == ("HISTORICAL_BACKFILL", "MANUAL_RETRY", syn.url(x))
+    assert state.anchor(env.store, sid_x) is None  # a backfill observation never anchors
+    assert env.store.rows("REVISION", key=f"{sid_x}:{record.body['raw_sha']}")[0].body["observation_mode"] == "HISTORICAL_BACKFILL"
+    _limiter_respected(env)
+    m3 = _manifest(env, [x])  # now in two manifests: the operator must name one
+    with pytest.raises(ValueError, match="several manifests"):
+        env.collector.manual_retry({"kind": "HISTORICAL_BACKFILL", "sid": sid_x})
+    assert env.collector.manual_retry({"kind": "HISTORICAL_BACKFILL", "sid": sid_x, "manifest": m3}) > m3

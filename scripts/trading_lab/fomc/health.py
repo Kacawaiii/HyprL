@@ -56,6 +56,20 @@ def for_record(verified: bool, outcome: str, cycle_result: str | None) -> tuple[
     return None, "NO_FAILURE"
 
 
+DIAGNOSTIC_REASON = "raw digest mismatch detected after the terminal outcome"
+POISON_REASON = "two DEAD processing runs"
+
+
+def surface_of_record(resp_body: dict) -> str:
+    return "discovery_feed" if resp_body["surface"] == "feed" else "primary_statement"
+
+
+def for_integrity_diagnostic() -> tuple[str, str]:
+    """A digest mismatch found after the record's terminal outcome: the outcome is kept, the check
+    of that surface is NO_PROVIDER_HEALTH_STATE (RAW_CORRUPTION), nothing is refetched."""
+    return NO_PROVIDER, "RAW_CORRUPTION"
+
+
 def row(surface: str, check_at: str | None, result: tuple, **provenance) -> tuple[str, str, dict]:
     state, reason = result
     return ("SOURCE_HEALTH", surface, {"provider_id": spec.PROVIDER_ID, "surface": surface, "check_at": check_at,

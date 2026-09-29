@@ -34,6 +34,7 @@ UNIQUE_KINDS = (
     "LINK",
     "CYCLE_CONCLUSION",
     "DIAGNOSTIC_ONCE",  # GUID / title diagnostics raised once per value
+    "INTEGRITY_DIAGNOSTIC",  # one per record, committed with its source-health result
 )
 
 
@@ -60,7 +61,9 @@ class FomcStore:
         (self.root / "raw").mkdir(exist_ok=True)
         self._wall = wall_clock
         self._lock = threading.RLock()
-        self.reads = {"queries": 0, "rows": 0}  # store read accounting (read-cost regression tests)
+        # read accounting (cost regression tests): SQLite queries and rows decoded, and the in-memory
+        # work of derivations, counted as the rows a view hands out (every derivation iterates them)
+        self.reads = {"queries": 0, "rows": 0, "view_rows": 0}
         self._mirror = _Mirror()
         self._conn = sqlite3.connect(self.root / "fomc.sqlite3", isolation_level=None, check_same_thread=False, timeout=30)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -101,8 +104,10 @@ class FomcStore:
 
     # ---- writes -------------------------------------------------------------------------------
     def append(self, txn_kind: str, rows: Iterable[tuple[str, str | None, dict]],
-               check: Callable[["FomcStore"], None] | None = None) -> int:
-        """Commit one transaction. `check` runs under the write lock and may raise Rejected."""
+               check: Callable[["FomcStore"], None] | None = None, *, wall_at_commit: str | None = None) -> int:
+        """Commit one transaction. `check` runs under the write lock and may raise Rejected. A caller
+        that records the commit's wall reading inside a row passes it as `wall_at_commit`, so the row
+        repeats the transaction's own durable provenance exactly."""
         rows = list(rows)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -110,7 +115,7 @@ class FomcStore:
                 if check is not None:
                     check(self)
                 cur = self._conn.execute(
-                    "INSERT INTO txn (kind, wall_at_commit) VALUES (?, ?)", (txn_kind, iso(self._wall()))
+                    "INSERT INTO txn (kind, wall_at_commit) VALUES (?, ?)", (txn_kind, wall_at_commit or iso(self._wall()))
                 )
                 seq = cur.lastrowid
                 for ordinal, (kind, key, body) in enumerate(rows):
@@ -250,6 +255,17 @@ class _Mirror:
         self.by_kind: dict[str, tuple[list, list]] = {}
         self.by_key: dict[tuple, tuple[list, list]] = {}
         self.by_field: dict[tuple, dict] = {}
+        self.aggregates: dict[str, object] = {}  # incremental derived state, fed row by row
+
+    def aggregate(self, name: str, factory):
+        """An incremental aggregate (an object with add(row)), built once from every mirrored row and
+        then extended with each new row, so derivations never rescan for it."""
+        agg = self.aggregates.get(name)
+        if agg is None:
+            agg = self.aggregates[name] = factory()
+            for row in self.all[0]:
+                agg.add(row)
+        return agg
 
     @staticmethod
     def _push(indexed: tuple[list, list], row: Row) -> None:
@@ -268,6 +284,8 @@ class _Mirror:
             for (kind, field), index in self.by_field.items():
                 if row.kind == kind:
                     self._push(index.setdefault(self._value(row.body.get(field)), ([], [])), row)
+            for agg in self.aggregates.values():
+                agg.add(row)
         for txn in txns:
             self.txns[0].append(txn)
             self.txns[1].append(txn[0])
@@ -290,10 +308,27 @@ class StoreView:
 
     def __init__(self, store: FomcStore, mirror: _Mirror, upto: int):
         self.store, self._mirror, self.upto = store, mirror, upto
+        self._memo: dict = {}
+
+    def at_head(self) -> bool:
+        """True while no row newer than this view's horizon has been mirrored: aggregates that
+        describe the mirror's head then describe this view exactly."""
+        return self.upto == self._mirror.upto
+
+    def aggregate(self, name: str, factory):
+        return self._mirror.aggregate(name, factory)
+
+    def memo(self, key, compute):
+        """A derivation computed once per view (a view never changes)."""
+        if key not in self._memo:
+            self._memo[key] = compute()
+        return self._memo[key]
 
     def _cut(self, indexed: tuple[list, list], upto: int | None) -> list:
         limit = self.upto if upto is None else min(upto, self.upto)
-        return indexed[0][:bisect_right(indexed[1], limit)]
+        out = indexed[0][:bisect_right(indexed[1], limit)]
+        self.store.reads["view_rows"] += len(out)
+        return out
 
     def horizon(self) -> int:
         return self.upto
@@ -317,6 +352,7 @@ class StoreView:
     def row_at(self, kind: str, seq: int) -> Row | None:
         rows, seqs = self._mirror.by_kind.get(kind, self._EMPTY)
         i = bisect_right(seqs, min(seq, self.upto)) - 1
+        self.store.reads["view_rows"] += 1
         return rows[i] if i >= 0 and seqs[i] == seq else None
 
     def read_raw(self, digest: str) -> bytes:

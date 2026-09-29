@@ -12,7 +12,7 @@ import uuid
 from datetime import timedelta
 
 from scripts.trading_lab.fomc import clock as clockmod
-from scripts.trading_lab.fomc import identity, ledger, processing, spec, state
+from scripts.trading_lab.fomc import health, identity, ledger, processing, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.limiter import Limiter
 from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt, Rejected
@@ -214,7 +214,9 @@ class Collector:
 
     def process_pending(self) -> None:
         view = self.store.view()
-        pending = [r.seq for r in view.rows("RESPONSE") if state.processing_outcome(view, r.seq) is None]
+        head = state.open_work(view)  # a fresh view is at the head
+        pending = sorted(head.pending) if head is not None else \
+            [r.seq for r in view.rows("RESPONSE") if state.processing_outcome(view, r.seq) is None]
         for seq in pending:  # commit order; only this loop commits outcomes for these records
             if state.processing_outcome(self.store, seq) is not None:
                 continue
@@ -383,12 +385,17 @@ class Collector:
             return min(choices, key=lambda w: w["order"])
         return None
 
-    def run_episode(self, episode) -> dict:
+    def work_of(self, episode) -> tuple[dict, str]:
+        """The logical fetch of an episode: its work and the URL of the retried work."""
         body = episode.body
         target = body["work"] if body["kind"] == "MANUAL_RETRY" else body
         work = {"kind": body["kind"], "class": CLASS_OF[target["kind"]], "episode_key": episode.key,
                 "sid": body["sid"], "mode": target["mode"]}
-        return self.run(work, target["url"], "primary")
+        return work, target["url"]
+
+    def run_episode(self, episode) -> dict:
+        work, url = self.work_of(episode)
+        return self.run(work, url, "primary")
 
     def run_until_idle(self, max_steps: int = 50) -> list[dict]:
         out = []
@@ -400,11 +407,25 @@ class Collector:
         return out
 
     def _diagnose(self, digest: str) -> None:
-        for resp in self.store.rows("RESPONSE"):
-            if (resp.body["raw_sha"] == digest and state.processing_outcome(self.store, resp.seq) is not None
-                    and not self.store.rows("INTEGRITY_DIAGNOSTIC", key=str(resp.seq))):
-                self.store.append("INTEGRITY_DIAGNOSTIC", [("INTEGRITY_DIAGNOSTIC", str(resp.seq),
-                                                           {"record": resp.seq, "raw_sha": digest})])
+        """For every record with these bytes and a terminal outcome: keep the outcome, and commit the
+        integrity diagnostic and the surface's NO_PROVIDER_HEALTH_STATE (RAW_CORRUPTION) in one
+        transaction, once per record. A record without an outcome is left to processing, which fails
+        closed (CORRUPTION_FAIL_CLOSED) with its own health result. Nothing is fetched."""
+        view = self.store.view()
+        for resp in view.select("RESPONSE", "raw_sha", digest):
+            outcome = state.processing_outcome(view, resp.seq)
+            if outcome is None or view.rows("INTEGRITY_DIAGNOSTIC", key=str(resp.seq)):
+                continue
+            wall = self.store.wall_iso()
+            rows = [("INTEGRITY_DIAGNOSTIC", str(resp.seq), {"record": resp.seq, "raw_sha": digest,
+                                                             "outcome": outcome.body["outcome"]}),
+                    health.row(health.surface_of_record(resp.body), wall, health.for_integrity_diagnostic(),
+                               outcome=outcome.body["outcome"], attempt=resp.body["attempt"], record=resp.seq,
+                               sid=resp.body.get("sid"), diagnostics={"reason": health.DIAGNOSTIC_REASON})]
+            try:
+                self.store.append("INTEGRITY_DIAGNOSTIC", rows, wall_at_commit=wall)
+            except Rejected:
+                pass  # already diagnosed (unique per record)
 
     def verify_integrity(self) -> list[int]:
         """RAW_INTEGRITY_EVERYWHERE_V1 outside replay: a mismatch found after a terminal outcome is a
@@ -431,9 +452,27 @@ class Collector:
         return {"seq": seq, "valid": body["valid"], "validity": body["validity"]}
 
     def manual_retry(self, work: dict, reason: str = "operator retry") -> int:
-        work = dict(work, url=self._url_of(work["sid"]),
-                    mode="HISTORICAL_BACKFILL" if work["kind"] == "HISTORICAL_BACKFILL" else "LIVE")
+        """MANUAL_RETRY of a named work item (retry_policy.manual_retry). Backfill work is the validated
+        manifest entry (manifest record, source item): its URL and manifest come from that entry, never
+        from the feed, and the observation keeps mode HISTORICAL_BACKFILL."""
+        kind, sid = work["kind"], work["sid"]
+        if kind == "HISTORICAL_BACKFILL":
+            manifest, url = self._manifest_entry(sid, work.get("manifest"))
+            work = {"kind": kind, "sid": sid, "manifest": manifest, "url": url, "mode": "HISTORICAL_BACKFILL"}
+        elif kind in ("LIVE_ACQUISITION", "REOBSERVATION"):
+            work = dict(work, url=self._url_of(sid), mode="LIVE")
+        else:
+            raise ValueError(f"MANUAL_RETRY is valid only for LIVE_ACQUISITION, REOBSERVATION or HISTORICAL_BACKFILL work, not {kind}")
         return self.store.append("OPERATOR", [("OPERATOR", work["sid"], {"action": "MANUAL_RETRY", "work": work, "reason": reason})])
+
+    def _manifest_entry(self, sid: str, manifest: int | None) -> tuple[int, str]:
+        found = [(m.seq, e["url"]) for m in self.store.view().rows("MANIFEST") if m.body["valid"]
+                 for e in m.body["entries"] if e["sid"] == sid and (manifest is None or m.seq == manifest)]
+        if not found:
+            raise ValueError("no validated manifest entry for this source item")
+        if len(found) > 1:
+            raise ValueError("the source item is in several manifests: name the manifest record")
+        return found[0]
 
     def submit_manifest(self, raw: bytes, provenance: str) -> dict:
         body = {"sha": spec.sha256_bytes(raw), "length": len(raw), "provenance": provenance, "valid": False}
@@ -449,7 +488,7 @@ class Collector:
 def _order(target: dict, instant: float) -> tuple:
     """Order of eligible work within its class (reobservation_scheduler.selection)."""
     if target["kind"] == "HISTORICAL_BACKFILL":
-        return (target.get("manifest", 0), instant, target["sid"])  # (manifest commit_seq, next eligible instant, sid)
+        return (target["manifest"], instant, target["sid"])  # (manifest commit_seq, next eligible instant, sid)
     if target["kind"] == "REOBSERVATION":
         return (instant, target["sid"], target["offset"])
     return (instant, target["sid"])  # LIVE_ACQUISITION
