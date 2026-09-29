@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from scripts.trading_lab.fomc import identity, ledger, parsing, spec, state
+from scripts.trading_lab.fomc import health, identity, ledger, parsing, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt, Rejected, Row
 
@@ -179,22 +179,56 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
     else:
         semantics, declared, release_text = "UNPARSED", None, None
     revision_key = f"{sid}:{fields['raw_sha']}"
+    canonical = identity.admit_url(fields["request_url"]).canonical  # the pre-redirect discovery link (FIX4)
+    # immutable properties of the (source item, content hash) revision: all derived from its bytes and
+    # the frozen spec. V1 has no verified revision-specific availability timestamp, so the content
+    # timestamps stay null and their trust verdict is UNTRUSTED (only observed_at and avail bound it);
+    # the declared release is provider metadata for the logical event, trusted as a claim only.
     normalized = {
-        "source_item_id": sid, "content_hash": fields["raw_sha"], "capture_spec_hash": spec.SPEC_HASH,
-        "provider_id": spec.PROVIDER_ID, "event_family": spec.EVENT_FAMILY, "classification_state": "IN_SCOPE_V1",
-        "canonical_source_url": store.rows("CANDIDATE", key=sid)[0].body["url"] if store.rows("CANDIDATE", key=sid) else fields["request_url"],
-        "official_statement_date": statement_date.isoformat(), "title": title,
+        "revision_id": revision_key, "source_item_id": sid, "content_hash": fields["raw_sha"],
+        "canonical_source_url": canonical, "provider_id": spec.PROVIDER_ID, "provider_class": spec.PROVIDER_CLASS,
+        "source_tier": spec.SOURCE_TIER, "event_family": spec.EVENT_FAMILY, "taxonomy_type": spec.TAXONOMY_TYPE,
+        "taxonomy_version": spec.TAXONOMY_VERSION, "capture_spec_id": spec.CAPTURE_SPEC_ID,
+        "capture_spec_hash": spec.SPEC_HASH, "capture_scope_id": spec.CAPTURE_SCOPE_ID,
+        "classification_state": "IN_SCOPE_V1", "official_statement_date": statement_date.isoformat(), "title": title,
         "declared_release_at": iso(declared) if declared else None, "declared_release_text": release_text,
-        "declared_release_semantics": semantics, "content_source_available_at": None, "source_updated_at": None,
-        "created_by_mode": fields["mode"],
+        "declared_release_semantics": semantics,
+        "timestamp_semantics": "EXACT_INSTANT" if declared else "UNKNOWN",
+        "declared_release_trust_verdict": "TRUSTED_EXACT" if declared else "UNKNOWN",
+        "content_source_available_at": None, "source_updated_at": None, "timestamp_trust_verdict": "UNTRUSTED",
+        "observation_mode": fields["mode"],  # creation provenance only (revision_mode_neutrality.design_field)
     }
     existing = store.rows("REVISION", key=revision_key)
     rows = [] if existing else [("REVISION", revision_key, normalized)]
-    rows.append(("LINK", str(resp.seq), {"record": resp.seq, "revision": revision_key, "mode": fields["mode"],
-                                          "observed_at": fields["observed_at"] if state.verified(resp) else None,
-                                          "verified": state.verified(resp)}))
+    verified = state.verified(resp)
+    rows.append(("LINK", str(resp.seq), {  # what belongs to this observation, fixed at its commit
+        "record": resp.seq, "revision": revision_key, "observation_mode": fields["mode"],
+        "observed_at": fields["observed_at"] if verified else None, "verified": verified,
+        "source_observation_id": spec.sha256_canonical(["SourceObservation", spec.PROVIDER_ID, sid, fields["raw_sha"]]),
+        "raw_artifact_identities_and_hashes": [{
+            "record": resp.seq, "raw_sha256": fields["raw_sha"], "byte_length": fields["byte_length"],
+            "request_url": fields["request_url"], "final_url": fields["final_url"], "redirect_chain": fields["redirect_chain"]}],
+        "rss_guid_if_available": _rss_guid(store, sid, canonical, resp.seq),
+    }))
     outcome = "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION" if existing else "NORMALIZED_REVISION_COMMITTED"
     return outcome, {"revision": revision_key, "release": semantics}, rows
+
+
+def record_health(resp: Row, outcome: str, cycle, reason: str | None) -> tuple[str, str, dict]:
+    """The source-health result of a processed record, committed with its processing outcome."""
+    surface = "discovery_feed" if resp.body["surface"] == "feed" else "primary_statement"
+    result = health.for_record(state.verified(resp), outcome, cycle[2]["result"] if cycle else None)
+    return health.row(surface, resp.body["wall_at_receipt"], result, outcome=outcome, attempt=resp.body["attempt"],
+                      record=resp.seq, sid=resp.body.get("sid"), diagnostics={"reason": reason})
+
+
+def _rss_guid(store: FomcStore, sid: str, url: str, upto: int) -> str | None:
+    """The first RSS GUID the LIVE feed recorded for this canonical link before the observation
+    (discovery provenance only, never identity); None when no feed listed one."""
+    for d in store.view(upto).select("DIAGNOSTIC_ONCE", "sid", sid):
+        if d.body["type"] == "GUID_SEEN" and d.body["value"][0] == url:
+            return d.body["value"][1]
+    return None
 
 
 # ------------------------------------------------------------------ one fenced run ----------------
@@ -247,8 +281,11 @@ def finish_run(store: FomcStore, seq: int, *, epoch: str, run_id: str, mono=None
         else:
             outcome, detail, extra = classify_primary(store, resp, body)
     rows = [("PROCESSING_OUTCOME", str(seq), {"record": seq, "outcome": outcome, **detail})] + extra
+    cycle = None
     if is_feed and state.live_eligible(resp):
-        rows.append(cycle_conclusion(store, resp, detail.get("raised", []), None if outcome == "FEED_CLASSIFIED" else outcome))
+        cycle = cycle_conclusion(store, resp, detail.get("raised", []), None if outcome == "FEED_CLASSIFIED" else outcome)
+        rows.append(cycle)
+    rows.append(record_health(resp, outcome, cycle, detail.get("reason")))
 
     def fence(s: FomcStore) -> None:
         runs = s.rows("PROCESSING_RUN", key=str(seq))
@@ -281,8 +318,11 @@ def poison(store: FomcStore, seq: int, *, epoch: str) -> str | None:
     """POISON_GUARD: after two DEAD runs the current owner commits INTERNAL_PROCESSING_ERROR."""
     resp = store.row_at("RESPONSE", seq)
     rows = [("PROCESSING_OUTCOME", str(seq), {"record": seq, "outcome": "INTERNAL_PROCESSING_ERROR"})]
+    cycle = None
     if resp.body["surface"] == "feed" and state.live_eligible(resp):
-        rows.append(cycle_conclusion(store, resp, [], "INTERNAL_PROCESSING_ERROR"))
+        cycle = cycle_conclusion(store, resp, [], "INTERNAL_PROCESSING_ERROR")
+        rows.append(cycle)
+    rows.append(record_health(resp, "INTERNAL_PROCESSING_ERROR", cycle, "two DEAD processing runs"))
 
     def owner(s: FomcStore) -> None:
         if ledger.current_epoch(s) != epoch:

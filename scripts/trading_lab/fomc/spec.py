@@ -22,6 +22,34 @@ FEED_URL = "https://www.federalreserve.gov/feeds/press_monetary.xml"
 FEED_TITLE_EXACT = "Federal Reserve issues FOMC statement"
 PRIMARY_TITLE_EXACT = "Federal Reserve issues FOMC statement"
 USER_AGENT = "hyprl-trading-lab-event-capture/1.0"
+CAPTURE_SPEC_ID = "federal_reserve_fomc_capture_v1"
+CAPTURE_SCOPE_ID = "standard_fomc_statement_release_pattern_v1"  # scope.capture_scope_id
+PROVIDER_CLASS = "CENTRAL_BANK_GOVERNMENT"
+SOURCE_TIER = "TIER_1_OFFICIAL"
+TAXONOMY_TYPE = "CENTRAL_BANK"
+TAXONOMY_VERSION = "trading-lab.event-taxonomy.v1"  # binds.taxonomy_version
+
+# normalized_minimum_fields (27): each spec name, the key it is stored under, and where it lives.
+# A revision is keyed by (source item, content hash) and immutable; what differs per observation lives
+# on its observation-to-revision link (revision_mode_neutrality). observation_mode and ingested_at are
+# on both: on the revision they are creation provenance (the creating observation's mode, the avail
+# of the creating transaction); on a link they are that observation's own.
+NORMALIZED_KEYS = {
+    "content_source_available_at_always_null_in_v1": "content_source_available_at",
+    "declared_release_at_nullable": "declared_release_at",
+    "source_updated_at_always_null_in_v1": "source_updated_at",
+}
+REVISION_FIELDS = (
+    "canonical_source_url", "capture_scope_id", "capture_spec_hash", "capture_spec_id", "classification_state",
+    "content_source_available_at", "declared_release_at", "declared_release_text", "declared_release_trust_verdict",
+    "event_family", "ingested_at", "observation_mode", "official_statement_date", "provider_class", "provider_id",
+    "revision_id", "source_item_id", "source_tier", "source_updated_at", "taxonomy_type", "taxonomy_version",
+    "timestamp_semantics", "timestamp_trust_verdict",
+)
+OBSERVATION_FIELDS = (
+    "ingested_at", "observation_mode", "observed_at", "raw_artifact_identities_and_hashes", "rss_guid_if_available",
+    "source_observation_id",
+)
 
 # causal_predicates.constants
 CLOCK_CHECK_TOLERANCE_S = 90

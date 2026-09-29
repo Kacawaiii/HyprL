@@ -5,7 +5,7 @@ responses, and episode open/terminal records (retry_policy, attempt_outcome_fenc
 
 from __future__ import annotations
 
-from scripts.trading_lab.fomc import spec
+from scripts.trading_lab.fomc import health, spec
 from scripts.trading_lab.fomc.store import FomcStore, Rejected, Row
 
 FEED_KEY = "FEED"
@@ -77,10 +77,18 @@ def transport_invoked(store: FomcStore, *, epoch: str, work: dict, grant_mono: f
 
 
 def commit_attempt_outcome(store: FomcStore, attempt_seq: int, outcome: str, detail: dict | None = None) -> int | None:
-    """Commit a non-response outcome; returns None when the attempt already has one (first wins)."""
+    """Commit a non-response outcome with its source-health result, in one transaction; returns None
+    when the attempt already has an outcome (first wins, and no health result is written)."""
     body = {"attempt": attempt_seq, "outcome": outcome, **(detail or {})}
+    rows = [("ATTEMPT_OUTCOME", str(attempt_seq), body)]
+    invoked = store.row_at("TRANSPORT_INVOKED", attempt_seq)
+    result = health.for_attempt_outcome(outcome)
+    if result is not None and invoked is not None:
+        rows.append(health.row(health.surface_of(invoked.body["kind"]), store.wall_iso(), result, outcome=outcome,
+                               attempt=attempt_seq, record=None, sid=invoked.body.get("sid"),
+                               diagnostics={"reason": (detail or {}).get("reason")}))
     try:
-        return store.append("ATTEMPT_OUTCOME", [("ATTEMPT_OUTCOME", str(attempt_seq), body)])
+        return store.append("ATTEMPT_OUTCOME", rows)
     except Rejected:
         return None
 

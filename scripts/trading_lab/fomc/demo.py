@@ -30,8 +30,11 @@ def _drive(collector, clock, seconds, idle=30):
 def _show(label, snap):
     print(f"\n== {label}: T={snap['T']} H={snap['H']} read_state={snap['read_state']}")
     print(f"   discovery={snap.get('discovery')}  identity={snap['identity'][:16]}")
+    if "health" in snap:
+        print("   health " + "  ".join(f"{surface}={h['result_state']}" + (f"/{h['reason']}" if h.get("reason") else "")
+                                     for surface, h in snap["health"].items()))
     for item in snap.get("items", []):
-        extra = f" hash={item['content_hash'][:12]} live={item['live_available']} links={[l['mode'] for l in item['links']]}" \
+        extra = f" hash={item['content_hash'][:12]} live={item['live_available']} links={[l['observation_mode'] for l in item['links']]}" \
             if item["state"] == "CURRENT_REVISION" else ""
         print(f"   item {item['sid'][:12]} step={item['step']} {item['state']}{extra}")
 

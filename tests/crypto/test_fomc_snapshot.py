@@ -64,15 +64,16 @@ def test_2_backfill_then_live_same_content_one_revision(env):
     env.drive(240)
     backfill = item_state(snapshot.events_as_of(env.store, env.clock.true))
     assert backfill["state"] == "CURRENT_REVISION" and backfill["live_available"] is False
-    assert [l["mode"] for l in backfill["links"]] == ["HISTORICAL_BACKFILL"]
+    assert [l["observation_mode"] for l in backfill["links"]] == ["HISTORICAL_BACKFILL"]
     assert env.cycles() and all(c == "EVENTS_OBSERVED_ZERO" for c in env.cycles())  # backfill never blocks LIVE zero
     env.feed([statement_item()])
     env.drive(300)
     live = item_state(snapshot.events_as_of(env.store, env.clock.true))
     assert len(env.store.rows("REVISION")) == 1
     assert live["revision"] == backfill["revision"] and live["live_available"] is True
-    modes = {l["mode"]: l["avail"] for l in live["links"]}
-    assert set(modes) == {"HISTORICAL_BACKFILL", "LIVE"} and modes["LIVE"] > modes["HISTORICAL_BACKFILL"]
+    modes = {l["observation_mode"]: l["ingested_at"] for l in live["links"]}
+    assert set(modes) == {"HISTORICAL_BACKFILL", "LIVE"}
+    assert datetime.fromisoformat(modes["LIVE"]) > datetime.fromisoformat(modes["HISTORICAL_BACKFILL"])
     assert "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION" in env.outcomes()
 
 
@@ -217,3 +218,31 @@ def test_discovery_pending_never_shows_an_older_zero_fomc245(env):
     assert "DISCOVERY_PENDING" in seen
     after = seen[seen.index("DISCOVERY_PENDING"):]
     assert "EVENTS_OBSERVED_ZERO" not in after[: after.index("NOT_ZERO")]  # the older zero is never current
+
+
+def test_live_watermark_rule_holds_at_every_t_without_a_watermark_transaction(env):
+    """live_watermark: the FOMC part is admissible iff the view up to H holds a transaction W with a
+    resolved avail > T and no UNRESOLVED transaction before W. Any later transaction resolved by a later
+    verified response is such a W, so no SNAPSHOT_WATERMARK transaction is needed (one would itself
+    wait for the same later verified response)."""
+    env.feed([statement_item()])
+    env.provider.routes[P1] = syn.page_response()
+    env.drive(900)
+    store, H = env.store, env.store.horizon()
+    table = state.availability(store, H)
+    instants = sorted({e.avail for e in table if e.resolved})
+    second = timedelta(seconds=1)
+    probes = [t + d for t in instants for d in (-second, 0 * second, second)] + [env.clock.wall() + timedelta(hours=1)]
+    for T in probes:
+        W = next((e for e in table if not e.resolved or e.avail > T), None)
+        admissible = W is not None and W.resolved
+        snap = snapshot.events_as_of(store, T, H)
+        assert (snap["read_state"] == "FOMC_RESOLVED") == admissible
+        if not admissible:  # nothing FOMC is exposed: no item, cycle, zero or health state
+            assert set(snap) == {"policy", "spec_hash", "T", "H", "mode", "read_state", "identity"}
+    assert store.rows("SNAPSHOT_WATERMARK") == []
+    late = instants[-1]  # beyond the last resolved avail: unresolved at this H, whatever waits
+    assert snapshot.events_as_of(store, late, H)["read_state"] == "FOMC_CAUSAL_VISIBILITY_UNRESOLVED"
+    env.drive(130)  # the next verified responses resolve it at a later horizon
+    assert snapshot.events_as_of(store, late, store.horizon())["read_state"] == "FOMC_RESOLVED"
+    assert snapshot.replay(store, late, H)["read_state"] == "FOMC_CAUSAL_VISIBILITY_UNRESOLVED"  # same (T, H), same result

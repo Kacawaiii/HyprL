@@ -127,6 +127,10 @@ class FomcStore:
                 self._conn.execute("ROLLBACK")
                 raise
 
+    def wall_iso(self) -> str:
+        """The local wall-clock reading, as provenance only (never a causal input)."""
+        return iso(self._wall())
+
     # ---- reads (inside or outside a write transaction) ------------------------------------------
     def horizon(self) -> int:
         with self._lock:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from scripts.trading_lab.fomc import clock as clockmod
-from scripts.trading_lab.fomc import parsing, processing, spec, state
+from scripts.trading_lab.fomc import health, parsing, processing, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt
 
@@ -83,9 +83,9 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
         if out["step"] in (6, 7, 8) and o_outcome is not None:
             deps.add(H)  # the exposed outcome (or the negative) was derived from O's bytes
         if current:
-            revision = store.rows("REVISION", key=current, upto=P)[0].body
-            cur_links = [{"record": l.body["record"], "mode": l.body["mode"], "observed_at": l.body["observed_at"],
-                          "avail": iso(state.avail_of(table, l.seq)) if state.avail_of(table, l.seq) else None}
+            created = store.rows("REVISION", key=current, upto=P)[0]
+            revision = dict(created.body, ingested_at=iso(state.avail_of(table, created.seq)))  # resolved within P(T)
+            cur_links = [dict(l.body, ingested_at=iso(state.avail_of(table, l.seq)))
                          for l in links if l.body["revision"] == current and l.body["verified"]]
             live = [r for r in recs if state.live_eligible(r)]
             out.update(revision=current, content_hash=revision["content_hash"], normalized=revision, links=cur_links,
@@ -138,7 +138,7 @@ def events_as_of(store: FomcStore, T: datetime, H: int | None = None, *, mode: s
                 item_states.append(item)
                 deps |= item_deps
             _verify_dependencies(store, deps)
-            snap.update(P=P, discovery=discovery, items=item_states)
+            snap.update(P=P, discovery=discovery, items=item_states, health=health.exposed(store, P))
     snap["identity"] = spec.sha256_canonical(snap)
     return snap
 
@@ -182,4 +182,34 @@ def replay(store: FomcStore, T: datetime, H: int) -> dict:
             derived, detail, _rows = processing.classify_primary(view, resp, body)
             if state.outcome_class(derived) != state.outcome_class(recorded.body["outcome"]):
                 raise ReplayFailed(f"primary record {resp.seq} re-derives {derived}")
+    _replay_health(view)
     return events_as_of(store, T, H)
+
+
+def _replay_health(view) -> None:
+    """Every source-health result re-derives from the outcome committed in its own transaction, and
+    every outcome that has a health mapping carries exactly one (fail closed otherwise)."""
+    by_txn = {}
+    for row in view.rows("SOURCE_HEALTH"):
+        if row.seq in by_txn:
+            raise ReplayFailed(f"transaction {row.seq} carries two source-health results")
+        by_txn[row.seq] = row
+    expected = {}
+    for outcome in view.rows("PROCESSING_OUTCOME"):
+        resp = view.row_at("RESPONSE", outcome.body["record"])
+        cycle = view.rows("CYCLE_CONCLUSION", key=str(resp.seq))
+        cycle_row = ("CYCLE_CONCLUSION", str(resp.seq), cycle[0].body) if cycle and cycle[0].seq == outcome.seq else None
+        surface = "discovery_feed" if resp.body["surface"] == "feed" else "primary_statement"
+        expected[outcome.seq] = (surface, health.for_record(state.verified(resp), outcome.body["outcome"],
+                                                            cycle_row[2]["result"] if cycle_row else None), resp.seq)
+    for outcome in view.rows("ATTEMPT_OUTCOME"):
+        result = None if outcome.body["outcome"] == "RESPONSE" else health.for_attempt_outcome(outcome.body["outcome"])
+        if result is not None:
+            invoked = view.row_at("TRANSPORT_INVOKED", outcome.body["attempt"])
+            expected[outcome.seq] = (health.surface_of(invoked.body["kind"]), result, None)
+    if set(by_txn) != set(expected):
+        raise ReplayFailed("source-health results do not match the outcomes that determine them")
+    for seq, (surface, (result_state, reason), record) in expected.items():
+        body = by_txn[seq].body
+        if (by_txn[seq].key, body["result_state"], body["reason"], body.get("record")) != (surface, result_state, reason, record):
+            raise ReplayFailed(f"source-health result of transaction {seq} does not re-derive")
