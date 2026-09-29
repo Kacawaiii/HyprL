@@ -23,6 +23,7 @@ def _diag(kind: str, *parts, marker: bool = False, sid: str | None = None, value
 
 
 def earlier_feed_unterminated(store: FomcStore, seq: int) -> bool:
+    store = store.view()
     for f in state.feed_responses(store, upto=seq - 1):
         o = state.processing_outcome(store, f.seq)
         if o is None or o.body["outcome"] not in state.FEED_TERMINAL:
@@ -32,6 +33,7 @@ def earlier_feed_unterminated(store: FomcStore, seq: int) -> bool:
 
 # ------------------------------------------------------------------ feed ---------------------------
 def classify_feed(store: FomcStore, resp: Row, feed_items: list[parsing.FeedItem]) -> tuple[list, list, list]:
+    store = store.view()
     candidates = {c.key: c for c in store.rows("CANDIDATE")}
     seen_diag = {d.key for d in store.rows("DIAGNOSTIC_ONCE")}
     unidentified = {u.key for u in store.rows("UNIDENTIFIABLE")}
@@ -126,6 +128,7 @@ def classify_feed(store: FomcStore, resp: Row, feed_items: list[parsing.FeedItem
 
 
 def cycle_conclusion(store: FomcStore, resp: Row, raised: list, failure: str | None) -> tuple[str, str, dict]:
+    store = store.view()
     reasons = []
     if failure:
         reasons.append(f"feed processing failed: {failure}")
@@ -198,7 +201,7 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
 def start_run(store: FomcStore, seq: int, *, epoch: str, start_mono: float) -> str | None:
     """Commit PROCESSING_RUN {run_id, epoch, start, deadline = start + 600 s} for a record that may be
     processed now; None when it already has an outcome, must wait (feed order) or we are not the owner."""
-    resp = next(r for r in store.rows("RESPONSE") if r.seq == seq)
+    resp = store.row_at("RESPONSE", seq)
     if state.processing_outcome(store, seq) is not None:
         return None
     if resp.body["surface"] == "feed" and earlier_feed_unterminated(store, seq):
@@ -221,7 +224,7 @@ def start_run(store: FomcStore, seq: int, *, epoch: str, start_mono: float) -> s
 def finish_run(store: FomcStore, seq: int, *, epoch: str, run_id: str, mono=None, fault=None) -> str | None:
     """Compute the terminal outcome and commit it only while this run is RUNNING in the current epoch
     and before its 600 s deadline; a late or fenced result is discarded (None)."""
-    resp = next(r for r in store.rows("RESPONSE") if r.seq == seq)
+    resp = store.row_at("RESPONSE", seq)
     run = next(r for r in store.rows("PROCESSING_RUN", key=str(seq)) if r.body["run_id"] == run_id)
     if fault is not None:
         fault(resp)  # test hook: raise (the task ends) or advance the clock (the run overruns)
@@ -276,7 +279,7 @@ def process_record(store: FomcStore, seq: int, *, epoch: str, fault=None, mono=N
 
 def poison(store: FomcStore, seq: int, *, epoch: str) -> str | None:
     """POISON_GUARD: after two DEAD runs the current owner commits INTERNAL_PROCESSING_ERROR."""
-    resp = next(r for r in store.rows("RESPONSE") if r.seq == seq)
+    resp = store.row_at("RESPONSE", seq)
     rows = [("PROCESSING_OUTCOME", str(seq), {"record": seq, "outcome": "INTERNAL_PROCESSING_ERROR"})]
     if resp.body["surface"] == "feed" and state.live_eligible(resp):
         rows.append(cycle_conclusion(store, resp, [], "INTERNAL_PROCESSING_ERROR"))

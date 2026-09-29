@@ -213,8 +213,9 @@ class Collector:
         return outcome
 
     def process_pending(self) -> None:
-        for resp in self.store.rows("RESPONSE"):
-            seq = resp.seq
+        view = self.store.view()
+        pending = [r.seq for r in view.rows("RESPONSE") if state.processing_outcome(view, r.seq) is None]
+        for seq in pending:  # commit order; only this loop commits outcomes for these records
             if state.processing_outcome(self.store, seq) is not None:
                 continue
             running = self._running(seq)
@@ -231,9 +232,10 @@ class Collector:
                 self.finish_processing(seq, run_id)
 
     def derive_terminals(self) -> None:
-        for episode in self.store.rows("EPISODE_OPEN"):
-            status = state.derived_status(self.store, episode)
-            if status in ("SUCCEEDED", "SUSPENDED") and ledger.episode_status(self.store, episode.key) == "OPEN":
+        view = self.store.view()  # SUCCEEDED and SUSPENDED are monotone: a view can only miss one for now
+        for episode in view.rows("EPISODE_OPEN"):
+            status = state.derived_status(view, episode)
+            if status in ("SUCCEEDED", "SUSPENDED") and ledger.episode_status(view, episode.key) == "OPEN":
                 ledger.close_episode(self.store, episode.key, status, "derived")
 
     # ------------------------------------------------------------------ episodes ------------------
@@ -241,12 +243,12 @@ class Collector:
         return self.store.rows("CANDIDATE", key=sid)[0].body["url"]
 
     def open_episodes(self) -> None:
-        store = self.store
+        store = self.store.view()  # decisions read the view; each open is atomic and unique by key
         for acq in store.rows("ACQUISITION"):
             sid = acq.key
             key = identity.acquisition_episode_key(sid, acq.seq)
             if state.anchor(store, sid) is None and not store.rows("EPISODE_OPEN", key=key):
-                ledger.open_episode(store, key, {"kind": "LIVE_ACQUISITION", "sid": sid, "url": acq.body["url"], "mode": "LIVE"})
+                ledger.open_episode(self.store, key, {"kind": "LIVE_ACQUISITION", "sid": sid, "url": acq.body["url"], "mode": "LIVE"})
         for cand in store.rows("CANDIDATE"):
             sid = cand.key
             if any(e.body["kind"] == "REOBSERVATION" and state.derived_status(store, e) == "OPEN"
@@ -259,7 +261,7 @@ class Collector:
                         a = state.anchor(s, sid)
                         if a is None or a.body["observed_at"] != ob["anchor"] or ob["offset"] not in spec.OFFSETS_S:
                             raise Rejected("REOBSERVATION key does not match the item's anchor and frozen offsets")
-                    ledger.open_episode(store, key, {"kind": "REOBSERVATION", "sid": sid, "url": cand.body["url"],
+                    ledger.open_episode(self.store, key, {"kind": "REOBSERVATION", "sid": sid, "url": cand.body["url"],
                                                      "anchor": ob["anchor"], "offset": ob["offset"], "mode": "LIVE"}, check)
                     break
         for manifest in store.rows("MANIFEST"):
@@ -268,7 +270,7 @@ class Collector:
             for entry in manifest.body["entries"]:
                 key = identity.backfill_episode_key(manifest.seq, entry["sid"])
                 if not store.rows("EPISODE_OPEN", key=key):
-                    ledger.open_episode(store, key, {"kind": "HISTORICAL_BACKFILL", "sid": entry["sid"], "url": entry["url"],
+                    ledger.open_episode(self.store, key, {"kind": "HISTORICAL_BACKFILL", "sid": entry["sid"], "url": entry["url"],
                                                      "manifest": manifest.seq, "mode": "HISTORICAL_BACKFILL"})
         for op in store.rows("OPERATOR"):
             if op.body["action"] != "MANUAL_RETRY":
@@ -282,10 +284,9 @@ class Collector:
                 if not due or not due[0]["pending_due"]:
                     continue
                 work["anchor"] = due[0]["anchor"]
-            ledger.open_episode(store, key, {"kind": "MANUAL_RETRY", "work": work, "sid": work["sid"]})
+            ledger.open_episode(self.store, key, {"kind": "MANUAL_RETRY", "work": work, "sid": work["sid"]})
 
-    def _ready(self, episode, table, lb) -> tuple[bool, float]:
-        store = self.store
+    def _ready(self, episode, table, lb, store) -> tuple[bool, float]:
         body = episode.body
         sid = body["sid"]
         outcomes = state.attempt_outcomes(store, episode.key)
@@ -310,24 +311,26 @@ class Collector:
         threshold = start + timedelta(seconds=gap)
         return lb >= threshold, threshold.timestamp()
 
-    def feed_poll_due(self) -> bool:
-        if ledger.attempts_without_outcome(self.store, feed=True):
+    def feed_poll_due(self, view=None) -> bool:
+        view = view or self.store.view()
+        if ledger.attempts_without_outcome(view, feed=True):
             return False
-        if processing.earlier_feed_unterminated(self.store, self.store.horizon() + 1):
+        if processing.earlier_feed_unterminated(view, view.horizon() + 1):
             return False
         return self.last_feed_grant is None or self.clock.mono() >= self.last_feed_grant + spec.FEED_CADENCE_S
 
     def eligible_work(self) -> list[dict]:
         self.open_episodes()
-        table = state.availability(self.store, self.store.horizon())
-        lb = state.now_lb(self.store)
+        view = self.store.view()
+        table = state.availability(view, view.horizon())
+        lb = state.now_lb(view)
         work = []
-        if self.feed_poll_due():
+        if self.feed_poll_due(view):
             work.append({"class": "FEED_DISCOVERY", "poll": True, "order": (0.0, "")})
-        for episode in self.store.rows("EPISODE_OPEN"):
-            if state.derived_status(self.store, episode) != "OPEN":
+        for episode in view.rows("EPISODE_OPEN"):
+            if state.derived_status(view, episode) != "OPEN":
                 continue
-            ready, order = self._ready(episode, table, lb)
+            ready, order = self._ready(episode, table, lb, view)
             if not ready:
                 continue
             body = episode.body
@@ -341,7 +344,7 @@ class Collector:
         work = self.eligible_work()
         if not work:
             return None
-        invoked = self.store.rows("TRANSPORT_INVOKED")
+        invoked = self.store.view().rows("TRANSPORT_INVOKED")
         last_class = invoked[-1].body["class"] if invoked else None
         start = (CLASS_ORDER.index(last_class) + 1) if last_class in CLASS_ORDER else 0
         for i in range(len(CLASS_ORDER)):

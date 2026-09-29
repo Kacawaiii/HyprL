@@ -27,6 +27,7 @@ def outcome_of(store: FomcStore, attempt_seq: int) -> Row | None:
 
 
 def attempts_without_outcome(store: FomcStore, *, sid: str | None = None, feed: bool = False) -> list[Row]:
+    store = store.view()  # inside a write transaction the view is the committed state under the lock
     done = {row.key for row in store.rows("ATTEMPT_OUTCOME")}
     out = []
     for row in store.rows("TRANSPORT_INVOKED"):

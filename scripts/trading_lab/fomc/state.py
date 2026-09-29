@@ -5,6 +5,7 @@ validity (causal_predicates, revision_policy.reobservation_*, retry_policy, zero
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -51,18 +52,19 @@ def availability(store: FomcStore, horizon: int) -> list[Avail]:
     """CAUSAL_AVAILABILITY_V3 over txns <= horizon: avail(X) = max(V.observed_at + 92, observed_at
     concerned by X, avail of earlier txns), V = first verified non-late response whose
     TRANSPORT_INVOKED is after X; unresolved until V exists."""
-    responses = store.rows("RESPONSE", upto=horizon)
+    store = store.view(horizon)
+    responses = store.rows("RESPONSE")
     refs = [r for r in responses if verified(r)]  # already in commit order
     concerned: dict[int, datetime] = {}
     for r in responses:
         if verified(r):
             concerned[r.seq] = max(concerned.get(r.seq, observed_at(r)), observed_at(r))
-    for link in store.rows("LINK", upto=horizon):
+    for link in store.rows("LINK"):
         if link.body.get("observed_at"):
             t = parse_iso(link.body["observed_at"])
             concerned[link.seq] = max(concerned.get(link.seq, t), t)
     out, pointer, previous = [], 0, None
-    for seq, _kind, _wall in store.txns(upto=horizon):
+    for seq, _kind, _wall in store.txns():
         while pointer < len(refs) and refs[pointer].body["attempt"] <= seq:
             pointer += 1
         if pointer == len(refs) or (out and not out[-1].resolved):
@@ -79,25 +81,25 @@ def availability(store: FomcStore, horizon: int) -> list[Avail]:
 
 def now_lb(store: FomcStore, horizon: int | None = None) -> datetime | None:
     """SERVER_NOW_LB: max verified non-late observed_at - 92 s."""
-    times = [observed_at(r) for r in store.rows("RESPONSE", upto=horizon) if verified(r)]
+    times = [observed_at(r) for r in store.view(horizon).rows("RESPONSE") if verified(r)]
     return max(times) - BOUND if times else None
 
 
 def avail_of(table: list[Avail], seq: int) -> datetime | None:
-    for entry in table:
-        if entry.seq == seq:
-            return entry.avail if entry.resolved else None
+    i = bisect_left(table, seq, key=lambda entry: entry.seq)  # the table is in commit_seq order
+    if i < len(table) and table[i].seq == seq:
+        return table[i].avail if table[i].resolved else None
     return None
 
 
 # ------------------------------------------------------------------ records by item ---------------
 def primary_responses(store: FomcStore, sid: str, *, upto: int | None = None, mode: str | None = None) -> list[Row]:
-    return [r for r in store.rows("RESPONSE", upto=upto)
-            if r.body.get("surface") == "primary" and r.body.get("sid") == sid and (mode is None or r.body["mode"] == mode)]
+    return [r for r in store.select("RESPONSE", "sid", sid, upto=upto)
+            if r.body.get("surface") == "primary" and (mode is None or r.body["mode"] == mode)]
 
 
 def feed_responses(store: FomcStore, *, upto: int | None = None) -> list[Row]:
-    return [r for r in store.rows("RESPONSE", upto=upto) if r.body.get("surface") == "feed" and r.body["mode"] == "LIVE"]
+    return [r for r in store.select("RESPONSE", "surface", "feed", upto=upto) if r.body["mode"] == "LIVE"]
 
 
 def processing_outcome(store: FomcStore, record_seq: int, *, upto: int | None = None) -> Row | None:
@@ -141,8 +143,8 @@ def work_satisfied(store: FomcStore, episode: Row, *, upto: int | None = None) -
         due = parse_iso(body["anchor"]) + timedelta(seconds=body["offset"])
         return any(live_eligible(r) and observed_at(r) >= due for r in primary_responses(store, body["sid"], upto=upto))
     if kind == "HISTORICAL_BACKFILL":
-        attempts = {a.seq for a in ledger.attempts_of_episode(store, episode.key, upto=upto)}
-        return any(r.body["attempt"] in attempts and verified(r) for r in store.rows("RESPONSE", upto=upto))
+        return any(verified(r) for a in ledger.attempts_of_episode(store, episode.key, upto=upto)
+                   for r in store.rows("RESPONSE", key=str(a.seq), upto=upto))
     raise ValueError(kind)
 
 
@@ -169,10 +171,8 @@ def derived_status(store: FomcStore, episode: Row, *, upto: int | None = None) -
 
 def item_episodes(store: FomcStore, sid: str, *, upto: int | None = None, live_only: bool = True) -> list[Row]:
     out = []
-    for e in store.rows("EPISODE_OPEN", upto=upto):
+    for e in store.select("EPISODE_OPEN", "sid", sid, upto=upto):  # every episode body carries its item's sid
         work = e.body["work"] if e.body["kind"] == "MANUAL_RETRY" else e.body
-        if work.get("sid") != sid:
-            continue
         if live_only and work["kind"] == "HISTORICAL_BACKFILL":
             continue
         out.append(e)
@@ -194,12 +194,12 @@ def item_record_seqs(store: FomcStore, sid: str, *, upto: int | None = None) -> 
 
 
 def markers(store: FomcStore, sid: str, *, upto: int | None = None) -> list[Row]:
-    return [d for d in store.rows("DIAGNOSTIC_ONCE", upto=upto) if d.body.get("marker") and d.body.get("sid") == sid]
+    return [d for d in store.select("DIAGNOSTIC_ONCE", "sid", sid, upto=upto) if d.body.get("marker")]
 
 
 def resolutions(store: FomcStore, item_key: str, *, upto: int | None = None) -> list[Row]:
-    return [r for r in store.rows("OPERATOR", upto=upto)
-            if r.body["action"] == "RESOLVE" and r.body["item_key"] == item_key and r.body["valid"]]
+    return [r for r in store.select("OPERATOR", "item_key", item_key, upto=upto)
+            if r.body["action"] == "RESOLVE" and r.body["valid"]]
 
 
 def concluded(store: FomcStore, item: dict, *, upto: int) -> bool:
@@ -260,6 +260,7 @@ def items(store: FomcStore, *, upto: int) -> list[dict]:
 
 
 def outstanding(store: FomcStore, *, upto: int) -> list[dict]:
+    store = store.view(upto)
     return [item for item in items(store, upto=upto) if not concluded(store, item, upto=upto)]
 
 
@@ -277,6 +278,7 @@ def resolve_validity(store: FomcStore, item_key: str) -> tuple[bool, str]:
     kind, _, value = item_key.partition(":")
     if kind != "SOURCE_ITEM":
         return True, "valid"
+    store = store.view()  # refreshed under the write lock: exactly the committed state
     upto = store.horizon()
     live = primary_responses(store, value, upto=upto, mode="LIVE")
     if any(processing_outcome(store, r.seq) is None for r in live):

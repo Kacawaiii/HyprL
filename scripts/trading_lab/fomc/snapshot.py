@@ -25,10 +25,10 @@ class ReplayFailed(SnapshotFailed):
     """Verified replay fails closed (corrupt raw, verdict mismatch, re-derivation mismatch)."""
 
 
-def prefix(store: FomcStore, T: datetime, H: int) -> tuple[str, int]:
+def prefix(store: FomcStore, T: datetime, H: int, table=None) -> tuple[str, int]:
     """Return (read_state, P): P is the longest prefix with resolved avail <= T; the FOMC part is
     admissible only if the next transaction is resolved (its avail > T)."""
-    table = state.availability(store, H)
+    table = state.availability(store, H) if table is None else table
     end, beyond = 0, None
     for entry in table:
         if entry.resolved and entry.avail <= T:
@@ -46,7 +46,8 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
     recs = state.primary_responses(store, sid, upto=P)
     O = recs[-1] if recs else None
     E = next((r for r in reversed(recs) if state.verified(r)), None)
-    links = [link for link in store.rows("LINK", upto=P) if link.body["revision"].startswith(sid + ":")]
+    links = sorted((link for rev in store.select("REVISION", "source_item_id", sid, upto=P)
+                    for link in store.select("LINK", "revision", rev.key, upto=P)), key=lambda link: link.seq)
 
     def verified_revision(content_hash):
         key = f"{sid}:{content_hash}"
@@ -117,18 +118,19 @@ def _discovery(store: FomcStore, P: int) -> tuple[dict, set]:
 
 
 def events_as_of(store: FomcStore, T: datetime, H: int | None = None, *, mode: str = "DURABLE_OBSERVED") -> dict:
+    store = store.view(H)  # one consistent view of the horizon: no re-read of the store
     H = store.horizon() if H is None else H
     snap = {"policy": POLICY_ID, "spec_hash": spec.SPEC_HASH, "T": iso(T), "H": H, "mode": mode}
     if mode != "DURABLE_OBSERVED":
         snap["read_state"] = "FOMC_NOT_ADMISSIBLE_IN_MODE"
     else:
-        read_state, P = prefix(store, T, H)
+        table = state.availability(store, H)
+        read_state, P = prefix(store, T, H, table)
         snap["read_state"] = read_state
         if read_state == "FOMC_RESOLVED":
-            table = state.availability(store, H)
             outstanding_keys = {i["key"] for i in state.outstanding(store, upto=P)}
             sids = sorted({c.key for c in store.rows("CANDIDATE", upto=P)} |
-                          {r.body["sid"] for r in store.rows("RESPONSE", upto=P) if r.body.get("surface") == "primary"})
+                          {r.body["sid"] for r in store.select("RESPONSE", "surface", "primary", upto=P)})
             discovery, deps = _discovery(store, P)
             item_states = []
             for sid in sids:
@@ -154,7 +156,8 @@ def _verify_dependencies(store: FomcStore, digests: set) -> None:
 
 def replay(store: FomcStore, T: datetime, H: int) -> dict:
     """Offline verified replay at (T, H): no network, no scheduler; fails closed on any mismatch."""
-    for resp in store.rows("RESPONSE", upto=H):
+    view = store.view(H)
+    for resp in view.rows("RESPONSE"):
         try:
             body = store.read_raw(resp.body["raw_sha"])
         except RawCorrupt as exc:
@@ -163,7 +166,7 @@ def replay(store: FomcStore, T: datetime, H: int) -> dict:
                                               resp.body["date_lines"], resp.body["age_lines"])
         if ("CLOCK_VERIFIED" if verified else "CLOCK_UNVERIFIED") != resp.body["verdict"]:
             raise ReplayFailed(f"clock verdict of record {resp.seq} does not re-derive")
-        recorded = state.processing_outcome(store, resp.seq, upto=H)
+        recorded = state.processing_outcome(view, resp.seq)
         if recorded is None or recorded.body["outcome"] in ("INTERNAL_PROCESSING_ERROR", "CORRUPTION_FAIL_CLOSED"):
             continue
         if resp.body["surface"] == "feed":
@@ -176,7 +179,7 @@ def replay(store: FomcStore, T: datetime, H: int) -> dict:
             if derived != recorded.body["outcome"]:
                 raise ReplayFailed(f"feed record {resp.seq} re-derives {derived}")
         else:
-            derived, detail, _rows = processing.classify_primary(store, resp, body)
+            derived, detail, _rows = processing.classify_primary(view, resp, body)
             if state.outcome_class(derived) != state.outcome_class(recorded.body["outcome"]):
                 raise ReplayFailed(f"primary record {resp.seq} re-derives {derived}")
     return events_as_of(store, T, H)
