@@ -51,7 +51,7 @@ class StoreBusy(RuntimeError):
 # migration: rows are append-only and never rewritten, so an older layout (LINK `mode`, REVISION
 # without the normalized fields, no source-health rows, no schema version) cannot be upgraded in
 # place without inventing history. Open such a store with the code that wrote it, or start a new one.
-SCHEMA_VERSION = "fomc-store-v3"  # spec revision 23: STORAGE_INCIDENT records
+SCHEMA_VERSION = "fomc-store-v4"  # spec revision 24: content identity on revisions and links
 
 
 class StoreRejected(RuntimeError):

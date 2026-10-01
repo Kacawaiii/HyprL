@@ -1722,6 +1722,57 @@
       },
       "verdict": "A stalled store stops traffic and decisions; recovery is first-outcome reconciliation from durable state."
     },
+    "FOMC251": {
+      "case": "SAME STATEMENT, NEW CLOUDFLARE BYTES - two responses differ only in the e-mail obfuscation keys and the challenge parameters",
+      "expected": {
+        "obligations": "satisfied by each qualifying record as before",
+        "outcome_of_second": "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION",
+        "records": "two records, two raws, two raw_sha256, two links",
+        "revisions": "one: same content identity"
+      },
+      "verdict": "Per-response Cloudflare bytes no longer fabricate revisions."
+    },
+    "FOMC252": {
+      "case": "REAL CHANGE NEXT TO CLOUDFLARE BYTES - the statement text, a rate, the date, the title, the release line or the effective e-mail address changes, with new Cloudflare keys",
+      "expected": {
+        "address": "a changed effective address changes the identity even though its obfuscated form is re-keyed",
+        "revisions": "a new revision for each change"
+      },
+      "verdict": "Only the proved-volatile values are neutralized."
+    },
+    "FOMC253": {
+      "case": "FALSE OR AMBIGUOUS MARKER - the statement text contains '/cdn-cgi/l/email-protection#...' or '__CF$cv$params', an obfuscated value decodes outside printable ASCII, the challenge script differs, or the raw is not strict UTF-8",
+      "expected": {
+        "canonicalization": "REFUSED with its reason",
+        "identity": "the raw bytes: no merge with any other content"
+      },
+      "verdict": "Unknown structure fails closed."
+    },
+    "FOMC254": {
+      "case": "A-B-A ACROSS CLOUDFLARE BYTES - content A, then B, then A again with other Cloudflare keys",
+      "expected": {
+        "revisions": "two; the third observation links to A's revision",
+        "snapshot": "CURRENT_REVISION A (step 4)"
+      },
+      "verdict": "Revision reuse follows content identity."
+    },
+    "FOMC255": {
+      "case": "BACKFILL THEN LIVE WITH DIFFERENT CLOUDFLARE BYTES",
+      "expected": {
+        "live_available": "only from the LIVE link's availability; the backfill link never makes it LIVE-available",
+        "revisions": "one"
+      },
+      "verdict": "Mode neutrality is unchanged."
+    },
+    "FOMC256": {
+      "case": "CORRUPT RAW OF THE NEWEST SAME-CONTENT RECORD - its content identity equals the current revision's, its raw bytes no longer match raw_sha256",
+      "expected": {
+        "read": "fails closed (the read depends on that raw)",
+        "replay": "fails closed",
+        "revision": "never served from the stored identity alone"
+      },
+      "verdict": "Content identity never replaces raw integrity."
+    },
     "FOMC26": {
       "case": "OFFICIAL DATE CORRECTION ON SAME URL - R3/X6",
       "initial_observation": {
@@ -2537,7 +2588,8 @@
       "durable episode fixtures including clock steps and restarts (FOMC173-FOMC176)",
       "manifest byte fixtures (FOMC184-FOMC185), reconciliation fixtures (FOMC186-FOMC187, FOMC196)",
       "clock-check and header-parser fixtures (FOMC188-FOMC193) and a proxy-environment fixture (FOMC195)",
-      "a local synthetic store whose COMMIT or raw write stalls, proving LOCAL_SAVE_ADMISSION_BOUND_V1 and STORAGE_INCIDENT_V1 (FOMC248-FOMC250)"
+      "a local synthetic store whose COMMIT or raw write stalls, proving LOCAL_SAVE_ADMISSION_BOUND_V1 and STORAGE_INCIDENT_V1 (FOMC248-FOMC250)",
+      "official statement responses with differing Cloudflare bytes proving FOMC_CANON_V1 (FOMC251-FOMC256): kept local (redistribution.raw_storage), cited by URL and digest"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -2970,11 +3022,11 @@
     "date_correction": {
       "downstream_dedupe": "D1 and corrected D2 are revision metadata of the SAME source_item_id; downstream MUST NOT count them as two independent logical FOMC events merely because the date changed",
       "existing_guid_conflicts": "preserved unchanged; apply conflict_policy if independently triggered. A date correction by itself is NOT an identity conflict, and is never a reason to split the item.",
-      "revision_metadata": "official_statement_date belongs to the observed content revision. If H1/D1 becomes H2/D2 with a changed body hash, append a NEW immutable content revision under the SAME source_item_id. Retain H1/D1 intact; no overwrite. Identical-body discrepancies follow parser_policy.official_statement_date_determinism.",
+      "revision_metadata": "official_statement_date belongs to the observed content revision. If H1/D1 becomes H2/D2 with a changed content identity hash, append a NEW immutable content revision under the SAME source_item_id. Retain H1/D1 intact; no overwrite. Identical-body discrepancies follow parser_policy.official_statement_date_determinism.",
       "rule": "same provider_id + same event_family + same canonical_primary_statement_url => SAME logical source item, regardless of an official_statement_date correction",
       "visibility": "each revision keeps source_available_at = null and source_updated_at = null; availability is carried per observation-to-revision link (observed_at and avail, revision_mode_neutrality). Identity repair never rewrites observed_at, ingested_at or declared_release_at. D2 is metadata, not source_updated_at, correction timing or content-vintage evidence; no retroactive availability change.",
-      "with_guid": "same canonical primary URL and same RSS GUID with D1 -> D2: SAME source_item_id; append a revision if the body hash changes",
-      "without_guid": "same canonical primary URL in historical archive/backfill with no RSS GUID and D1 -> D2: SAME source_item_id; append a revision if the body hash changes. GUID absence does not alter logical identity."
+      "with_guid": "same canonical primary URL and same RSS GUID with D1 -> D2: SAME source_item_id; append a revision if the content identity hash changes",
+      "without_guid": "same canonical primary URL in historical archive/backfill with no RSS GUID and D1 -> D2: SAME source_item_id; append a revision if the content identity hash changes. GUID absence does not alter logical identity."
     },
     "discovery_link_mutation": "a change in the official discovery link from U1 to a differently normalized U2 is NOT a redirect-topology change. The existing item keeps its stored U1-derived identity. A newly discovered U2 follows existing conflict/dedupe semantics only; no alias inference, identity rewrite or 'latest URL wins'.",
     "excluded_from_logical_identity": [
@@ -3035,7 +3087,7 @@
     "redirect_identity_role": "NON-IDENTIFYING TRANSPORT PROVENANCE: redirect destinations and the ordered redirect chain MUST NOT replace the discovered identity URL, merge or split items, or re-key source_item_id. Redirect differences alone are NOT identity conflicts; existing independent GUID conflicts remain unchanged.",
     "redirect_topology_change_behavior": "for the same provider_id, event_family and normalized official discovery URL, U1 -> U2 then U1 -> U3 yields the SAME canonical_primary_statement_url = normalize(U1) and the SAME source_item_id. Transport movement alone creates neither a logical item nor a content revision: identical body follows same_item_same_body_hash; changed body follows same_item_different_body_hash under that same item.",
     "reobservation_identity_stability": "scheduled re-observations retain the stored canonical_primary_statement_url derived from original discovery U1. A request may start from that official identity URL; the final destination observed that day MUST NOT recompute or rewrite item identity. No scheduler, recheck-anchor or deadline semantics change.",
-    "revision_id": "revision_policy.revision_mode_neutrality: an EventRevision is keyed by (source item, content hash); the design rev4 derivation from (observation, content_hash, gating timestamps) is overridden (binds.design_overrides)",
+    "revision_id": "revision_policy.revision_mode_neutrality: an EventRevision is keyed by (source item, content identity hash) (revision_policy.content_identity); the design rev4 derivation from (observation, content_hash, gating timestamps) is overridden (binds.design_overrides)",
     "rss_guid_role": "OFFICIAL DISCOVERY IDENTIFIER AND PROVENANCE ONLY - not business identity, not revision identity, not proof of unchanged content",
     "rss_guid_stored": [
       "guid_value",
@@ -3043,7 +3095,7 @@
       "canonical_primary_link"
     ],
     "source_item_id": "SHA-256 using canonical_serialization over the ordered JSON array [provider_id, event_family, canonical_primary_statement_url], containing exactly those three string values in that order. No other field participates in the logical item hash or identity dedupe.",
-    "source_observation_id": "design rev4: derived from (provider, source_item_id, content_hash); NEVER URL alone",
+    "source_observation_id": "design rev4: derived from (provider, source_item_id, content_hash) with content_hash = the content identity hash (revision_policy.content_identity); NEVER URL alone",
     "uniqueness_claim": "NOT contractually documented by the provider; identity quality remains GOOD, not EXCELLENT"
   },
   "invariants": {
@@ -3127,7 +3179,8 @@
     "F78": "AN ATTEMPT HAS ONE OUTCOME; LATE RESPONSES ARE FAIL-SAFE EVIDENCE. Every logical fetch has at most one outcome, the first committed; a per-response record is its attempt's outcome only while the attempt has none. A later response is kept and processed as unverified LATE_EVIDENCE: it can add candidates, markers and diagnostics or reopen an item, never conclude, anchor, satisfy, start a cycle or become current content.",
     "F79": "ZERO IS EXPOSED ONLY FOR THE NEWEST FEED RECORD. A snapshot shows EVENTS_OBSERVED_ZERO only when it is the conclusion of the latest processable LIVE feed record in P(T); otherwise NO_CURRENT_CYCLE or DISCOVERY_PENDING. An older zero is never presented as current.",
     "F80": "THE 120-SECOND LOCAL BOUND IS AN ADMISSION BOUND. A per-response record is admitted only by a check inside its committing transaction, before its insertions, strictly before 120 s after the network end; at or after it nothing is admitted and the attempt gets LOCAL_PERSISTENCE_FAILED. The instant at which an admitted COMMIT becomes durable is not bounded; observed_at, commit_seq and avail are never adjusted for it.",
-    "F81": "A STALLED STORE IS A STORAGE INCIDENT, NEVER A DECISION. It is detected without the store, raises an alert, stops every new FIX15 grant while it lasts and promises no durable decision; when the store commits again the first committed outcome of each attempt stands, with no repair request, no new key and no refunded attempt."
+    "F81": "A STALLED STORE IS A STORAGE INCIDENT, NEVER A DECISION. It is detected without the store, raises an alert, stops every new FIX15 grant while it lasts and promises no durable decision; when the store commits again the first committed outcome of each attempt stands, with no repair request, no new key and no refunded attempt.",
+    "F82": "RAW INTEGRITY AND CONTENT IDENTITY ARE DISTINCT. raw_sha256 is the integrity of the received bytes; a revision is keyed by the FOMC_CANON_V1 content identity, which neutralizes only the three proved-volatile Cloudflare spans (keeping effective e-mail addresses) and refuses, without merging, anything unrecognized. Admission parses the original document; a read that depends on a content identity verifies the raws it is derived from."
   },
   "item_predicate": {
     "backfill_discovery_side": "a HISTORICAL_BACKFILL_MANIFEST_V1 entry replaces the feed-title conjunct for backfill observations (primary_classification_v2.inputs)",
@@ -3322,6 +3375,7 @@
     "timestamp_trust_verdict"
   ],
   "parser_policy": {
+    "admission_on_original_document": "admission, decoding, anchor extraction, classification and normalization always run on the original raw document; canonicalization (revision_policy.content_identity) runs afterwards for identity only and can never remove an anomaly from admission",
     "anchor_cardinality_failure": {
       "distinction": "STRUCTURAL extraction failure of the TITLE or DATE anchor - absent or duplicated - is PARSER_FAILED. Release-line anchor failures (absent, duplicated, empty or multiple declarations) are NON-GATING RELEASE_TIME_UNPARSED under timestamps.unrecognised_release_syntax. A successful unique title extraction that merely differs from the expected title keeps the FIX2 classification/conflict semantics.",
       "new_global_health_state": false,
@@ -3932,6 +3986,7 @@
     "hash_algorithm_note": "repo primitive sha256_bytes; no second digest algorithm introduced",
     "hash_before_text_decode": true,
     "hash_is_not_vintage_proof": "the raw body hash is provenance for WHAT HYPRL ACTUALLY OBSERVED AND WHEN. It does not become proof of historical content existence merely because the same normalized record also carries a declared_release_at recovered from the page.",
+    "integrity_is_not_identity": "raw_sha256 identifies the exact received bytes and is the only integrity key; the content identity (revision_policy.content_identity) identifies revisions and never replaces raw_sha256 in storage, integrity verification, corruption handling or replay",
     "integrity_verification": {
       "id": "RAW_INTEGRITY_EVERYWHERE_V1",
       "later_detection": "a mismatch found after a terminal outcome exists is recorded as a separate durable integrity diagnostic (live operation only); dependent revisions are NORMALIZED_PRESENT_RAW_CORRUPT and verified snapshots depending on them fail closed",
@@ -4165,8 +4220,28 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 23 (FIX22) records one spec decision and makes the grant dispatch of concurrent logical fetches explicit. (1) LOCAL_SAVE_ADMISSION_BOUND_V1 (retry_policy.local_failure.admission_bound): the 120 s local bound is an ADMISSION bound, checked atomically inside the committing transaction before its insertions. A COMMIT begun after that check may become durable later: the physical duration of durability is not guaranteed. A stalled COMMIT or fsync is a storage incident (storage_incident, STORAGE_INCIDENT_V1): detected without the store, alerted, no new FIX15 grant while it lasts, no durable decision promised while the store cannot write, first-outcome reconciliation when it writes again, no repair request and no budget recreated. observed_at stays the receipt reading and causal_predicates.avail is unchanged; no timestamp is rewritten to hide the delay. The reading of revision 22 under which no record could become durable at or after +120 s is ABANDONED as unenforceable (admission_bound.guarantee_abandoned); the bound on the admission instant replaces it (admission_bound.guarantee_obtained). (2) selection.grant_dispatch states how grants are attributed when logical fetches run concurrently; ELIGIBLE_CLASS_ALTERNATION_V1, FIX15 and the one-in-flight rules are unchanged. Invariants F80-F81 and cases FOMC248-FOMC250 are added. The revision 22 model is otherwise unchanged. This document authorizes no capture.",
+  "revision_note": "Spec revision 24 (FIX23) separates raw integrity from content identity. The 2026-10-01 pilot showed that statement pages carry bytes that change on every response (Cloudflare e-mail obfuscation and challenge parameters), so a revision keyed by the raw body hash turned every observation of an unchanged statement into a new EventRevision. FOMC_CONTENT_IDENTITY_V1 (revision_policy.content_identity) keys revisions by the SHA-256 of canonical bytes produced by FOMC_CANON_V1, which neutralizes only three proved-volatile Cloudflare spans (e-mail obfuscation re-keyed so that the effective address stays in the identity; the challenge parameters emptied inside the exact challenge script) and keeps every other byte; anything unrecognized is REFUSED and keeps raw identity, so nothing merges silently. raw_sha256 stays the integrity of the received bytes; admission parsing runs on the original document; availability, observed_at, modes, anchors, rechecks and budgets are unchanged. Invariant F82 and cases FOMC251-FOMC256 are added. The revision 23 model is otherwise unchanged. This document authorizes no capture.",
   "revision_policy": {
+    "content_identity": {
+      "bounds": "at most 16 CF_EMAIL_LINK, 16 CF_EMAIL_SPAN and 1 CF_CHALLENGE_PARAMS spans per record",
+      "canonicalizer_id": "FOMC_CANON_V1",
+      "evidence": "2026-10-01 pilot (spec revision 23): 33 responses of 17 statement URLs; every byte difference between responses of the same URL lay in these three spans; all 33 are CANONICAL under FOMC_CANON_V1 (65 e-mail links, 32 e-mail spans, 33 challenge parameter pairs), giving one content identity per URL, and the admission parse of each canonical document equals that of its original",
+      "id": "FOMC_CONTENT_IDENTITY_V1",
+      "input": "the complete admitted final-200 body bytes of the record (its raw), after raw digest verification. Canonicalization runs only after the record's admission parsing and classification, which always operate on the original document (parser_policy.admission_on_original_document)",
+      "obfuscated_value": "H matches [0-9a-f]{4,2048} with an even length. Decoding: k = the first byte of H (two hex digits); each following byte of H XOR k gives the decoded bytes, which must be 1..1023 bytes of printable ASCII 0x20-0x7E. Re-keying: H is replaced by '00' followed by the lowercase hex of the decoded bytes, so the effective address (for example media@frb.gov, or a share-link body) stays in the content identity and only the per-response key is removed",
+      "precondition": "the raw decodes as strict UTF-8 (parser_policy.text_decoding_v1); otherwise REFUSED",
+      "raw_integrity": "raw_sha256 remains the SHA-256 of the received bytes: storage, immutability, integrity verification, corruption handling and replay use it. Every response keeps its own record, metadata, raw and observation-to-revision link; the link carries both raw_sha256 and content_identity_sha256. A read that depends on a content identity re-reads and verifies the raws it is derived from (the latest record, the latest verified record, the creating raw of the current revision and each exposed link), so a corrupt raw fails it closed even when its content identity equals another record's",
+      "refusal": "REFUSED when: the precondition fails; the number of occurrences of any of the byte strings 'email-protection', '__cf_email__', 'data-cfemail', '__CF$cv$params' differs from the number covered by matched spans (a marker in text, an unknown structure or an ambiguous one); a matched span fails its decoding or context rule; a bound is exceeded; spans overlap. A REFUSED record's canonical bytes are its raw bytes and its refusal reason is recorded: it never merges with any other content (fail closed)",
+      "replay": "replay recomputes every link's content identity from its verified raw and fails closed on a mismatch",
+      "scope": "primary statement records; feed records, raw storage, raw integrity and request accounting are unaffected",
+      "serialization": "canonical bytes = the raw bytes with the replacements applied left to right; content_identity_sha256 = lowercase hex SHA-256 of the canonical bytes; an EventRevision is keyed by (source_item_id, content_identity_sha256); the canonicalizer is identified by canonicalizer_id and bound by this CaptureSpec hash",
+      "spans": {
+        "CF_CHALLENGE_PARAMS": "the bytes window.__CF$cv$params={r:'R',t:'T'} with R = exactly 16 lowercase hex digits and T = 4..64 characters of [A-Za-z0-9+/] followed by at most two '=', whose strict base64 decoding is 1..20 ASCII digits; the enclosing element from the nearest preceding '<script>' to the following '</script>', with R and T removed, must have SHA-256 f69b046ab2c86664e4f0d0ab8179163a3d0333c65183fc32b5976fbf9159a7b2 and be immediately followed by '</body>'; R and T are replaced by the empty string",
+        "CF_EMAIL_LINK": "the bytes href=\"/cdn-cgi/l/email-protection#H\" where the nearest '<' before them begins '<a ' and is followed by no '>' before them (inside an <a> start tag); H is re-keyed (obfuscated_value)",
+        "CF_EMAIL_SPAN": "the bytes <span class=\"__cf_email__\" data-cfemail=\"H\">[email&#160;protected]</span>; H is re-keyed (obfuscated_value)"
+      },
+      "unchanged_bytes": "every byte outside the three spans' replaced values is kept: no removal or normalization of scripts, attributes, numbers, dates, URLs or whitespace"
+    },
     "newer_content_barrier": {
       "clears": "when snapshot_binding.algorithm reaches step 4 or 5",
       "definition": "exactly snapshot_binding.algorithm steps 3 and 6 on the prefix P(T)",
@@ -4631,7 +4706,7 @@
       },
       "satisfaction": {
         "boundary": "QUALIFYING_DURABLE_PRIMARY_SOURCE_OBSERVATION",
-        "changed_content": "A qualifying R with a changed body hash satisfies eligible obligations at R's durability boundary. Downstream parsing/normalization then appends the new immutable revision under existing rules. Satisfaction neither waits for nor depends on that commit, and a later normalization or commit failure cannot un-satisfy.",
+        "changed_content": "A qualifying R with a changed content identity hash satisfies eligible obligations at R's durability boundary. Downstream parsing/normalization then appends the new immutable revision under existing rules. Satisfaction neither waits for nor depends on that commit, and a later normalization or commit failure cannot un-satisfy.",
         "coalescing": {
           "allowed": true,
           "example": "Observation at A+4000 satisfies O300 and O3600; O86400 and O604800 stay PENDING.",
@@ -4687,7 +4762,7 @@
           "same_source_item_required": true
         },
         "rule": "Obligation (S,A,o) is SATISFIED iff there exists a LIVE_ELIGIBLE record R of S with R.observed_at >= A + o (canonical instants; equality satisfies). Otherwise it is PENDING.",
-        "same_content": "A qualifying R whose body hash equals a prior hash of S satisfies every eligible obligation under coalescing. It creates no new EventRevision (revision_policy.same_item_same_body_hash).",
+        "same_content": "A qualifying R whose content identity hash (content_identity) equals a prior one of S satisfies every eligible obligation under coalescing. It creates no new EventRevision (revision_policy.same_item_same_body_hash, read with the content identity hash).",
         "satisfying_observation_for_audit": "the qualifying record of S with the smallest commit_seq among those with observed_at >= A + o; any exported or cached SATISFIED status MUST carry that record's id and observed_at so lateness (observed_at - due_at) is always visible."
       },
       "selection": {
@@ -4762,11 +4837,11 @@
       "backfill_then_live": "BACKFILL H1 creates V1; a later LIVE H1 observation links to V1 (no duplicate) and makes V1 LIVE-available from that link's availability instant",
       "design_field": "design rev4 per_revision_fields.observation_mode is kept on the revision as CREATION PROVENANCE ONLY (the mode of the observation that created it); it has no gating or admissibility role for FOMC",
       "id": "REVISION_MODE_NEUTRALITY_V1",
-      "rule": "An EventRevision is keyed by (source item, content hash) and is mode-neutral. Each PROCESSABLE observation whose processing concludes IN_SCOPE_V1 commits an observation-to-revision link (creating the revision if it does not exist). The link carries the observation's observation_mode and observed_at and its own ingested_at (= avail of its transaction, durable_ordering.commit_instant)."
+      "rule": "An EventRevision is keyed by (source item, content identity hash) (content_identity) and is mode-neutral. Each PROCESSABLE observation whose processing concludes IN_SCOPE_V1 commits an observation-to-revision link (creating the revision if it does not exist). The link carries the observation's observation_mode, observed_at, raw_sha256, content identity hash and its own ingested_at (= avail of its transaction, durable_ordering.commit_instant)."
     },
     "same_item_different_body_hash": "EventRevisions are keyed per (source item, content hash). A hash without a revision gets one only when an observation carrying it concludes IN_SCOPE_V1; otherwise no revision is invented and snapshot_binding exposes the newer unnormalized content. A hash that already has a revision reuses it (A-B-A).",
-    "same_item_same_body_hash": "same content revision; NO duplicate revision created",
-    "unchanged_refetch": "still raw-first with auditable observation metadata; no duplicate normalized revision",
+    "same_item_same_body_hash": "same content identity hash (revision_policy.content_identity): same content revision; NO duplicate revision created",
+    "unchanged_refetch": "still raw-first with auditable observation metadata (its own record and raw); no duplicate normalized revision when its content identity hash (content_identity) equals an existing revision's",
     "upstream_immutability_assumed": false,
     "upstream_semantics": "UNKNOWN - never treated as immutable"
   },
@@ -4826,8 +4901,8 @@
   ],
   "snapshot_binding": {
     "algorithm": [
-      "1. O_latest = the item's latest (by commit_seq) PROCESSABLE primary record within P(T), any mode and clock verdict; H = its body hash",
-      "2. E_latest = the item's latest CLOCK_VERIFIED PROCESSABLE primary record within P(T)",
+      "1. O_latest = the item's latest (by commit_seq) PROCESSABLE primary record within P(T), any mode and clock verdict; H = its content identity hash (revision_policy.content_identity), recomputed from its verified raw",
+      "2. E_latest = the item's latest CLOCK_VERIFIED PROCESSABLE primary record within P(T); its hash is its content identity hash, recomputed from its verified raw",
       "3. if an integrity diagnostic for O_latest exists within P(T): CURRENT_CONTENT_UNAVAILABLE_DUE_TO_NEWER_UNNORMALIZED_SOURCE (corrupt newest source; never a fallback)",
       "4. else if O_latest is CLOCK_VERIFIED and an IN_SCOPE_V1 EventRevision of the item with hash H and a CLOCK_VERIFIED link exist within P(T): CURRENT_REVISION with that revision (A-B-A reuse)",
       "5. else if O_latest is not CLOCK_VERIFIED, E_latest exists with hash H, and an IN_SCOPE_V1 revision with hash H and a CLOCK_VERIFIED link exist within P(T): CURRENT_REVISION with that revision",
@@ -4851,7 +4926,7 @@
     "read_horizon": "every read is evaluated over one consistent store view whose horizon H is the largest commit_seq it contains; H is persisted with the snapshot and bound into its identity. avail, P(T), the watermark and every input are computed only from records with commit_seq <= H. A resolved avail never changes when H grows, so replay with the same (T, H) reproduces the live read exactly, including a FOMC_CAUSAL_VISIBILITY_UNRESOLVED result (design replay_policy exact replay).",
     "read_state": "every events_as_of(T)/InformationSnapshot(T) read carries one provider-level FOMC state: FOMC_RESOLVED when live_watermark holds, FOMC_CAUSAL_VISIBILITY_UNRESOLVED otherwise, and FOMC_NOT_ADMISSIBLE_IN_MODE for RETROSPECTIVE_SOURCE reads. Under any state other than FOMC_RESOLVED no FOMC item state, cycle or zero conclusion, revision or FOMC source-health state is exposed, whether or not any FOMC item would be listed; an empty FOMC part is never presented as resolved",
     "replay": "the same (T, H) gives the same states and the same snapshot identity offline",
-    "strict_consumers": "a consumer requiring LIVE availability receives, for a CURRENT_REVISION, nothing current plus CURRENT_REVISION_NOT_LIVE_AVAILABLE unless the item's latest LIVE_ELIGIBLE primary record within P(T) carries the current revision's hash (a return to older content seen only through backfill or unverified records is never LIVE-available)",
+    "strict_consumers": "a consumer requiring LIVE availability receives, for a CURRENT_REVISION, nothing current plus CURRENT_REVISION_NOT_LIVE_AVAILABLE unless the item's latest LIVE_ELIGIBLE primary record within P(T) carries the current revision's content identity hash (a return to older content seen only through backfill or unverified records is never LIVE-available)",
     "ties": "commit_seq is a total order over transactions and every per-response or outcome record has its own transaction; P(T) is a prefix",
     "unresolved_state": "FOMC_CAUSAL_VISIBILITY_UNRESOLVED (read_state)"
   },
@@ -4951,7 +5026,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 23,
+  "spec_revision": 24,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "storage_incident": {
     "alert": "one operational alert when an incident starts and one when it ends, emitted outside the store, carrying the stalled operation, its duration and the number of logical fetches in flight; an alert is not a source-health result",
@@ -4989,7 +5064,8 @@
     "83df6d2dcee58073bc4775b296b58f8b4384de4311328892a8f2cd7f445eb5fe",
     "83caecb05154829d59d9c9430d27ed27178706488764b0c875b2826822d46910",
     "12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4",
-    "ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678"
+    "ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678",
+    "3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",

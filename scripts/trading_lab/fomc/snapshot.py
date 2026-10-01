@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from scripts.trading_lab.fomc import clock as clockmod
-from scripts.trading_lab.fomc import health, parsing, processing, spec, state
+from scripts.trading_lab.fomc import canon, health, parsing, processing, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt
 
@@ -41,7 +41,18 @@ def prefix(store: FomcStore, T: datetime, H: int, table=None) -> tuple[str, int]
     return "FOMC_RESOLVED", end
 
 
-def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set) -> tuple[dict, set]:
+def content_identity(store: FomcStore, digest: str, cache: dict) -> str:
+    """FOMC_CONTENT_IDENTITY_V1 of a record, recomputed from its raw, which is verified first: a corrupt
+    raw fails the read closed even when its content identity would equal another record's."""
+    if digest not in cache:
+        try:
+            cache[digest] = canon.canonicalize(store.read_raw(digest)).content_sha256
+        except RawCorrupt as exc:
+            raise SnapshotFailed(f"snapshot depends on raw {digest}: {exc}") from exc
+    return cache[digest]
+
+
+def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set, cache: dict) -> tuple[dict, set]:
     """The item's selection state and the raw digests that state is derived from."""
     recs = state.primary_responses(store, sid, upto=P)
     O = recs[-1] if recs else None
@@ -61,17 +72,21 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
                 "outcome": o.body["outcome"] if o else "PENDING"}
 
     out, deps = {"sid": sid}, set()
+
+    def content(record):  # its content identity; the read now depends on its raw
+        deps.add(record.body["raw_sha"])
+        return content_identity(store, record.body["raw_sha"], cache)
+
     if O is not None:
-        H = O.body["raw_sha"]
         integrity = store.rows("INTEGRITY_DIAGNOSTIC", key=str(O.seq), upto=P)
         o_outcome = state.processing_outcome(store, O.seq, upto=P)
         current = None
         if integrity or (o_outcome and o_outcome.body["outcome"] == "CORRUPTION_FAIL_CLOSED"):
             out.update(step=3, state=BARRIER, newest=exposed(O))  # states the corruption; derived from no raw
-        elif state.verified(O) and verified_revision(H):
+        elif state.verified(O) and verified_revision(H := content(O)):
             current = verified_revision(H)
             out.update(step=4, state="CURRENT_REVISION")
-        elif not state.verified(O) and E is not None and E.body["raw_sha"] == H and verified_revision(H):
+        elif not state.verified(O) and E is not None and content(E) == (H := content(O)) and verified_revision(H):
             current = verified_revision(H)
             out.update(step=5, state="CURRENT_REVISION")
         elif any(store.rows("REVISION", key=l.body["revision"], upto=P) for l in links):
@@ -81,7 +96,7 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
         else:
             out.update(step=8, state="SOURCE_ACTIVITY_NO_REVISION", newest=exposed(O))
         if out["step"] in (6, 7, 8) and o_outcome is not None:
-            deps.add(H)  # the exposed outcome (or the negative) was derived from O's bytes
+            deps.add(O.body["raw_sha"])  # the exposed outcome (or the negative) was derived from O's bytes
         if current:
             created = store.rows("REVISION", key=current, upto=P)[0]
             revision = dict(created.body, ingested_at=iso(state.avail_of(table, created.seq)))  # resolved within P(T)
@@ -89,8 +104,9 @@ def _item_state(store: FomcStore, sid: str, P: int, table, outstanding_keys: set
                          for l in links if l.body["revision"] == current and l.body["verified"]]
             live = [r for r in recs if state.live_eligible(r)]
             out.update(revision=current, content_hash=revision["content_hash"], normalized=revision, links=cur_links,
-                       live_available=bool(live) and live[-1].body["raw_sha"] == revision["content_hash"])
-            deps.add(revision["content_hash"])  # a revision binds the raw it came from
+                       live_available=bool(live) and content(live[-1]) == revision["content_hash"])
+            deps.add(revision["first_raw_sha256"])  # a revision binds the raw that created it
+            deps.update(l["raw_artifact_identities_and_hashes"][0]["raw_sha256"] for l in cur_links)  # and each exposed link
     elif f"SOURCE_ITEM:{sid}" in outstanding_keys:
         out.update(step=8, state="SOURCE_ACTIVITY_NO_REVISION")
     else:
@@ -132,9 +148,9 @@ def events_as_of(store: FomcStore, T: datetime, H: int | None = None, *, mode: s
             sids = sorted({c.key for c in store.rows("CANDIDATE", upto=P)} |
                           {r.body["sid"] for r in store.select("RESPONSE", "surface", "primary", upto=P)})
             discovery, deps = _discovery(store, P)
-            item_states = []
+            item_states, cache = [], {}
             for sid in sids:
-                item, item_deps = _item_state(store, sid, P, table, outstanding_keys)
+                item, item_deps = _item_state(store, sid, P, table, outstanding_keys, cache)
                 item_states.append(item)
                 deps |= item_deps
             _verify_dependencies(store, deps)
@@ -182,6 +198,11 @@ def replay(store: FomcStore, T: datetime, H: int) -> dict:
             derived, detail, _rows = processing.classify_primary(view, resp, body)
             if state.outcome_class(derived) != state.outcome_class(recorded.body["outcome"]):
                 raise ReplayFailed(f"primary record {resp.seq} re-derives {derived}")
+            link = view.rows("LINK", key=str(resp.seq))
+            if link:  # the content identity re-derives from the verified raw, and so does its revision key
+                content = canon.canonicalize(body).content_sha256
+                if (link[0].body["content_sha256"], link[0].body["revision"]) != (content, f"{resp.body['sid']}:{content}"):
+                    raise ReplayFailed(f"content identity of record {resp.seq} does not re-derive")
     verify_health(store, H)
     return events_as_of(store, T, H)
 

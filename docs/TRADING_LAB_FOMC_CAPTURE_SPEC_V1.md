@@ -7,14 +7,14 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 23 — authoritative)
-3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9
+CAPTURE SPEC HASH  (revision 24 — authoritative)
+235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
         → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30
         → dd0cff22 → 83df6d2d → 83caecb0 (rev 20) → 12f929f4 (rev 21)
-        → ba6a01e5 (rev 22)
+        → ba6a01e5 (rev 22) → 3fc2f9a7 (rev 23)
 
 BINDS
   event intelligence design rev4
@@ -32,7 +32,8 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 23.**
+writing revision 24.** Its evidence is the local raw of the revision-23 pilot
+(no new download).
 
 ---
 
@@ -753,6 +754,28 @@ never rewrites an existing revision's `observed_at`, `ingested_at` or
 `declared_release_at`. D2 is metadata, not proof of when a correction occurred
 or when its bytes became public. FIX1 visibility and FIX2 scope/zero semantics
 remain unchanged.
+
+### Raw integrity is not content identity (revision 24)
+
+The first real pilot showed that a statement page is not byte-stable: Cloudflare
+re-encodes the obfuscated e-mail addresses with a new key on every response and
+injects a challenge script whose ray and timestamp change every time. Keyed by
+the raw body hash, every recheck of an unchanged statement became a new revision.
+
+Revision 24 keeps `raw_sha256` as the integrity of the bytes received — storage,
+immutability, corruption handling and replay all still use it, and every
+response keeps its own record, raw and observation link. A revision is now keyed
+by a separate **content identity** (`FOMC_CONTENT_IDENTITY_V1`): the SHA-256 of
+canonical bytes produced by `FOMC_CANON_V1`, which touches exactly three spans.
+The two e-mail obfuscation forms are *re-keyed*, not removed: the hidden address
+(`media@frb.gov`, or the share link's body) stays in the identity, only the
+per-response key goes. The challenge parameters `r` and `t` are emptied, but
+only inside the exact challenge script, recognized by its digest and its place
+just before `</body>`. Every other byte is kept. A marker anywhere else, an
+ambiguous structure or invalid UTF-8 is **refused**: the record keeps its raw
+identity and never merges with anything. Admission still parses the original
+document, and a read that relies on a content identity re-verifies the raws it
+comes from.
 
 ### The recheck anchor is exactly the original primary observed_at
 
@@ -1938,9 +1961,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Two hundred and fifty cases, decided in advance
+## 11. Two hundred and fifty-six cases, decided in advance
 
-`FOMC01`–`FOMC250` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC256` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -2323,6 +2346,12 @@ FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
 | `FOMC248` — admission check passes at +40 s, the `COMMIT` returns at +170 s | valid record and outcome; `observed_at` unchanged; available only after it was durable; storage incident, no grant meanwhile |
 | `FOMC249` — a local write hangs, the admission check runs at +120.0 s | nothing admitted; `LOCAL_PERSISTENCE_FAILED`; at +119.9 s the record is admitted |
 | `FOMC250` — a `COMMIT` stalls 300 s while a poll and a recheck are due | alert; no grant, no decision; afterwards first-outcome reconciliation, no repair request, budgets unchanged |
+| `FOMC251` — two responses differ only in Cloudflare keys and challenge parameters | two records and raws, one revision |
+| `FOMC252` — text, rate, date, title, release line or effective e-mail address changes | a new revision each time |
+| `FOMC253` — a Cloudflare marker in the text, an ambiguous structure, invalid UTF-8 | canonicalization refused; raw identity; no merge |
+| `FOMC254` — A, B, then A with other Cloudflare bytes | A's revision reused |
+| `FOMC255` — backfill then LIVE with different Cloudflare bytes | one revision; LIVE availability only from the LIVE link |
+| `FOMC256` — the newest same-content record's raw is corrupt | the read and replay fail closed |
 
 These are specification cases only; no fixture, capture or runtime is created
 or exercised here. Revision 22 (FIX21) closes the three blockers of the REV21
@@ -2332,7 +2361,8 @@ is blocked only by an acquisition that can still open (D2, `FOMC247`), and
 rules (D3). Revision 23 (FIX22) records one decision — the 120 s local bound
 governs admission, not durability, and a stalled store is a storage incident
 (`FOMC248`–`FOMC250`, invariants F80–F81) — and states how grants are dispatched
-to concurrent fetches. This document authorizes no capture.
+to concurrent fetches. Revision 24 (FIX23) separates raw integrity from content
+identity (`FOMC251`–`FOMC256`, invariant F82). This document authorizes no capture.
 
 ## 12. What this does not establish
 

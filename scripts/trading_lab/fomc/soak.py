@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 
-from scripts.trading_lab.fomc import ledger, processing, snapshot, spec, state
+from scripts.trading_lab.fomc import canon, ledger, processing, snapshot, spec, state
 from scripts.trading_lab.fomc import synthetic as syn
 from scripts.trading_lab.fomc.collector import Collector
 from scripts.trading_lab.fomc.service import FomcService
@@ -124,6 +124,8 @@ def run(root: Path, *, hours: float = 26.0, tick_s: float = 10.0, progress=None)
     provider = syn.LocalProvider(clock)
     r = _Run(root, clock, provider)
     started_real = time.monotonic()
+    real_digest = canon.CHALLENGE_SCRIPT_SHA256
+    canon.CHALLENGE_SCRIPT_SHA256 = syn.CF_SCRIPT_SHA256  # synthetic Cloudflare pages carry the synthetic script
     try:
         provider.routes[syn.FEED_PATH] = syn.feed_response([])
         r.start(tick_s)
@@ -134,10 +136,10 @@ def run(root: Path, *, hours: float = 26.0, tick_s: float = 10.0, progress=None)
 
         schedule = [
             (at(600), "feed lists statement A", lambda: (
-                provider.routes.__setitem__(A, syn.page_response(body="The Committee decided to maintain the target range.")),
+                provider.routes.__setitem__(A, syn.cloudflare_route(page_url=syn.url(A), body="The Committee decided to maintain the target range.")),
                 provider.routes.__setitem__(syn.FEED_PATH, syn.feed_response([_item(A, "gA")])))),
             (at(2400), "statement A corrected upstream", lambda: provider.routes.__setitem__(
-                A, syn.page_response(body="The Committee decided to lower the target range."))),
+                A, syn.cloudflare_route(page_url=syn.url(A), body="The Committee decided to lower the target range."))),
             (at(4000), "backfill manifest of three historical statements", lambda: (
                 provider.routes.__setitem__(BACKFILL[0], syn.page_response(date_text="January 29, 2025")),
                 provider.routes.__setitem__(BACKFILL[2], syn.page_response(date_text="May 7, 2025", date=STALE_DATE)),
@@ -147,7 +149,7 @@ def run(root: Path, *, hours: float = 26.0, tick_s: float = 10.0, progress=None)
                 BACKFILL[1], syn.page_response(date_text="March 19, 2025"))),
             (at(7200), "feed lists statement C; its first save will hang", lambda: (
                 r.armed.__setitem__("save", {"match": lambda data: b"July 29, 2026" in data}),
-                provider.routes.__setitem__(C, syn.page_response(date_text="July 29, 2026")),
+                provider.routes.__setitem__(C, syn.cloudflare_route(page_url=syn.url(C), date_text="July 29, 2026")),
                 provider.routes.__setitem__(syn.FEED_PATH, syn.feed_response([_item(A, "gA"), _item(C, "gC")])))),
             (at(10000), "the next statement record's first processing run will hang", lambda: r.armed.__setitem__(
                 "run", {"match": lambda resp: resp.body["surface"] == "primary"})),
@@ -203,6 +205,7 @@ def run(root: Path, *, hours: float = 26.0, tick_s: float = 10.0, progress=None)
         r.log.append(f"{clock.true.isoformat()} clean stop")
         summary = verify(r)
     finally:
+        canon.CHALLENGE_SCRIPT_SHA256 = real_digest
         for release in r.releases:
             if release is not None and not any(f.get("release") is release and f.get("crash") for f in r.armed.values()):
                 release.set()

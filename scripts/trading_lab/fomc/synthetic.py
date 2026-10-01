@@ -4,6 +4,9 @@ that stands in for www.federalreserve.gov, and fixture builders. Nothing here to
 
 from __future__ import annotations
 
+import base64
+import hashlib
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
@@ -177,6 +180,40 @@ HTML_HEADERS = [("Content-Type", "text/html; charset=UTF-8")]
 
 def feed_response(items: list[dict], **kw) -> SyntheticResponse:
     return SyntheticResponse(body=feed_xml(items), headers=list(FEED_HEADERS), **kw)
+
+
+# A representative challenge script for synthetic pages (not Cloudflare's own bytes, which stay local):
+# tests pin canon.CHALLENGE_SCRIPT_SHA256 to CF_SCRIPT_SHA256 to exercise the same context rule.
+CF_SCRIPT = "<script>(function(){var p=\"window.__CF$cv$params={r:'%s',t:'%s'}\";document.cf=p;})();</script>"
+CF_SCRIPT_SHA256 = hashlib.sha256((CF_SCRIPT % ("", "")).encode()).hexdigest()
+
+
+def obfuscate(text: str, key: int) -> str:
+    """Cloudflare's e-mail obfuscation: the key byte, then each byte XOR the key, in lowercase hex."""
+    return f"{key:02x}" + "".join(f"{b ^ key:02x}" for b in text.encode())
+
+
+def cloudflare_html(*, key: int, ray: str, stamp: int, email: str = "media@frb.gov", page_url: str = "",
+                    script: str | None = None, **kw) -> bytes:
+    """A statement page carrying the three Cloudflare spans with per-response values."""
+    html = statement_html(**kw).decode("utf-8")
+    share = (f'<a class="shareDL__link" href="/cdn-cgi/l/email-protection#{obfuscate("?body=" + page_url, key)}">'
+             "Email</a>")
+    contact = (f'<p>For media inquiries, please email <a href="/cdn-cgi/l/email-protection#{obfuscate(email, key ^ 0x5A)}">'
+               f'<span class="__cf_email__" data-cfemail="{obfuscate(email, key ^ 0x33)}">[email&#160;protected]</span></a>'
+               " or call 202-452-2955.</p>")
+    challenge = (script or CF_SCRIPT) % (ray, base64.b64encode(str(stamp).encode()).decode())
+    html = html.replace('<div id="lastUpdate">', share + contact + '<div id="lastUpdate">', 1)
+    return html.replace("</body>", challenge + "</body>", 1).encode("utf-8")
+
+
+def cloudflare_route(**kw):
+    """A route answering each request with new Cloudflare keys and parameters (same statement otherwise)."""
+    def route(count: int) -> SyntheticResponse:
+        n = count + 1
+        body = cloudflare_html(key=(37 * n) % 251 + 1, ray=f"{(0x9E3779B97F4A7C15 * n) % 2**64:016x}", stamp=1790879000 + n, **kw)
+        return SyntheticResponse(body=body, headers=list(HTML_HEADERS))
+    return route
 
 
 def page_response(**kw) -> SyntheticResponse:

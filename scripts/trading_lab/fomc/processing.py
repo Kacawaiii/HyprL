@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from scripts.trading_lab.fomc import health, identity, ledger, parsing, spec, state
+from scripts.trading_lab.fomc import canon, health, identity, ledger, parsing, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt, Rejected, Row
 
@@ -181,14 +181,19 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
         release_text = parsed.release_segments[0]
     else:
         semantics, declared, release_text = "UNPARSED", None, None
-    revision_key = f"{sid}:{fields['raw_sha']}"
+    # content identity (FOMC_CONTENT_IDENTITY_V1): computed only now, after admission and classification
+    # on the original document; raw_sha256 stays the integrity of the received bytes
+    content = canon.canonicalize(body)
+    revision_key = f"{sid}:{content.content_sha256}"
     canonical = identity.admit_url(fields["request_url"]).canonical  # the pre-redirect discovery link (FIX4)
     # immutable properties of the (source item, content hash) revision: all derived from its bytes and
     # the frozen spec. V1 has no verified revision-specific availability timestamp, so the content
     # timestamps stay null and their trust verdict is UNTRUSTED (only observed_at and avail bound it);
     # the declared release is provider metadata for the logical event, trusted as a claim only.
     normalized = {
-        "revision_id": revision_key, "source_item_id": sid, "content_hash": fields["raw_sha"],
+        "revision_id": revision_key, "source_item_id": sid, "content_hash": content.content_sha256,
+        "content_identity": {"canonicalizer": canon.CANONICALIZER_ID, "status": content.status, "reason": content.reason},
+        "first_raw_sha256": fields["raw_sha"],  # the raw of the observation that created the revision
         "canonical_source_url": canonical, "provider_id": spec.PROVIDER_ID, "provider_class": spec.PROVIDER_CLASS,
         "source_tier": spec.SOURCE_TIER, "event_family": spec.EVENT_FAMILY, "taxonomy_type": spec.TAXONOMY_TYPE,
         "taxonomy_version": spec.TAXONOMY_VERSION, "capture_spec_id": spec.CAPTURE_SPEC_ID,
@@ -207,14 +212,16 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
     rows.append(("LINK", str(resp.seq), {  # what belongs to this observation, fixed at its commit
         "record": resp.seq, "revision": revision_key, "observation_mode": fields["mode"],
         "observed_at": fields["observed_at"] if verified else None, "verified": verified,
-        "source_observation_id": spec.sha256_canonical(["SourceObservation", spec.PROVIDER_ID, sid, fields["raw_sha"]]),
+        "source_observation_id": spec.sha256_canonical(["SourceObservation", spec.PROVIDER_ID, sid, content.content_sha256]),
+        "content_sha256": content.content_sha256, "canonicalization": content.summary(),
         "raw_artifact_identities_and_hashes": [{
             "record": resp.seq, "raw_sha256": fields["raw_sha"], "byte_length": fields["byte_length"],
             "request_url": fields["request_url"], "final_url": fields["final_url"], "redirect_chain": fields["redirect_chain"]}],
         "rss_guid_if_available": _rss_guid(store, sid, canonical, resp.seq),
     }))
     outcome = "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION" if existing else "NORMALIZED_REVISION_COMMITTED"
-    return outcome, {"revision": revision_key, "release": semantics}, rows
+    return outcome, {"revision": revision_key, "release": semantics, "content_sha256": content.content_sha256,
+                     "canonicalization": content.status}, rows
 
 
 def record_health(resp: Row, outcome: str, cycle, reason: str | None) -> tuple[str, str, dict]:

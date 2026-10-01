@@ -1,14 +1,16 @@
 # FOMC V1 — offline integrated slice
 
-Implements `docs/artifacts/fomc_capture_spec_v1.json` **revision 23**
-(`3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9`, superseding revision 22
-`ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678`; pinned in
+Implements `docs/artifacts/fomc_capture_spec_v1.json` **revision 24**
+(`235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36`, superseding revision 23
+`3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9`; pinned in
 `scripts/trading_lab/fomc/spec.py` and checked by `verify_spec_binding`). The JSON stays
 authoritative. This is an **offline slice**: every source is synthetic and served by a local
 Unix-socket provider; no Federal Reserve request, fixture capture or live run is part of it.
 
-**Status (2026-10-01): runtime finished; 24 h real pilot capture IN PROGRESS, not yet validated** (see
-"Pilot capture"). **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
+**Status (2026-10-01):** runtime revision 24 finished and verified offline (content identity, below);
+the 24 h real pilot keeps running on revision 23 with its own store and closure (corrected closure tool
+redeployed, see "Pilot capture"); the pilot is not validated yet; the revision-24 launch is prepared, not
+started. **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
 revision 23 (the 120 s bound governs admission, a stalled store is a storage incident) and its
 implementation. Serialized fetches are replaced by central grant dispatch with concurrent logical
 fetches (`work_conserving`). `service.CAPTURE_BLOCKERS` is empty. Nothing has been captured: the first
@@ -16,8 +18,8 @@ real run is the capture protocol below; what remains unproven offline is listed 
 
 ```
 python -m scripts.trading_lab.fomc.demo                         # the executable path, end to end
-python -m pytest tests/crypto/test_fomc_*.py                    # 149 tests, no xfail
-python -m scripts.trading_lab.fomc.soak --hours 26              # prolonged run, verified (~75 s)
+python -m pytest tests/crypto/test_fomc_*.py                    # 180 tests (one private proof skips without the local fixtures)
+python -m scripts.trading_lab.fomc.soak --hours 26              # prolonged run, verified (~70 s)
 python -m scripts.trading_lab.fomc.service --store DIR --check  # capture preflight, no network
 ```
 
@@ -34,13 +36,15 @@ cycle -> events_as_of(T, H) -> reopen -> offline replay`
 | `limiter.py` | FIX15 rolling window, spacing, embargo |
 | `transport.py` | manual redirect loop, per-hop admission and grant, 60 s deadline from each grant over DNS/TCP/TLS/write/headers/body/decoding (stage timeouts, watchdog, late-result checks), bounded decoded body |
 | `parsing.py` | Content-Type gate, strict UTF-8, secure RSS (expat), token-bounded HTML anchors, grammars |
-| `processing.py` | one terminal outcome per PROCESSABLE record, feed classification + cycle, primary classification + revision/link (27 normalized fields), fenced runs, poison guard, the record's source-health result |
+| `processing.py` | one terminal outcome per PROCESSABLE record, feed classification + cycle, primary classification on the original document + revision keyed by content identity / link with its own raw (27 normalized fields), fenced runs, poison guard, the record's source-health result |
+| `canon.py` | FOMC_CANON_V1: the content identity of a statement record (three Cloudflare spans neutralized, effective addresses kept, unknown structure refused) |
 | `health.py` | source health per surface: mappings, precedence, the persisted row, the exposed state |
 | `state.py` | LIVE_ELIGIBLE, server-attested `avail`, `NOW_LB`, anchors, obligations, episodes, item conclusion, RESOLVE validity |
 | `collector.py` | single owner (flock + epoch), fetch/commit, reconciliation, episodes, class rotation and per-class ordering (`select`), operator actions, manifests, integrity diagnostics |
 | `snapshot.py` | P(T) under horizon H, read state, 9-step selection, discovery state, source health, identity, read-time raw dependency checks, verified replay (health re-derived) |
+| `pilot.py` | pilot tooling, no provider request: snapshot reads, fixture export, supervision, closure (copy, re-read and replay of every recorded read, health replay, audit, recheck status, separate integrity and duration verdicts) |
 | `service.py` | the autonomous owner: storage watch and incidents, task closure at the 60/120/600 s bounds, central grant dispatch to concurrent fetch workers, processing workers, clean stop, restart; the capture entry point and its `--check` preflight |
-| `soak.py` | the prolonged synthetic run with faults, a storage incident, crashes, restarts and a clean stop, and its verification |
+| `soak.py` | the prolonged synthetic run (statement pages with per-response Cloudflare bytes) with faults, a storage incident, crashes, restarts and a clean stop, and its verification |
 | `synthetic.py`, `demo.py` | simulated clock, local provider, fixtures, the demo |
 
 ## Proven guarantees: invariant → code → test
@@ -88,9 +92,37 @@ Each row is exercised by the named tests (offline, synthetic sources). Anything 
 | LOCAL_SAVE_ADMISSION_BOUND_V1 (rev 23, F80, FOMC248/249): admission checked inside the transaction before its insertions, at 120 s expired; an admitted COMMIT may become durable later and is valid; observed_at and avail untouched | `ledger.commit_response(admit)`, `collector._commit` | local_deadlines: +119.9 s admitted, +120.0 and +120.1 s nothing; service `admitted_commit_stalled_past_120_s…` (the old blocker's physical delay, now the contract): the COMMIT returns 130 s after the check, the record is the outcome, `observed_at` = receipt reading (before the stall), available only after the release (avail > release instant), one request, no LPF |
 | STORAGE_INCIDENT_V1 (rev 23, F81, FOMC250): detection without the store, alert, no grant, no durable decision while the store cannot write, first-outcome reconciliation, no repair request, no budget recreated | `store.stalled` (operation markers outside the lock), `service.watch_storage/_alert/_record_incidents`, monitor thread, `limiter.suspended` | service: COMMIT stalled 130 s: incident from 10 s, one STARTED and one ENDED alert, no start during it, the owner keeps ticking with StoreBusy, STORAGE_INCIDENT record; `stalled_store_stops_grants…`: a COMMIT stalls 300 s while another item's admission bound passes: no grant and no decision during it, then the stalled record stands and the other attempt gets LPF at the first commit, no repair request, attempt #2 in the same episode, keys unique; a stalled raw write is an incident too, LPF still committed at 120 s since SQLite can write; the owner's own COMMIT stalling is detected by the monitor without the owner |
 | clean stop and restart: a clean stop leaves no attempt without outcome and grants nothing more; a new owner interrupts an earlier epoch's attempts at once; no budget or key recreated | `service.stop`, `collector.close_attempts` (epoch), unique keys and durable attempt counts | service `clean_stop…` (nothing left, nothing interrupted by the next owner), `restart_interrupts…`; soak: two crashes and a clean stop |
+| FOMC_CONTENT_IDENTITY_V1 (rev 24, F82, FOMC251-256): `raw_sha256` stays the integrity of the received bytes; a revision is keyed by the SHA-256 of FOMC_CANON_V1 canonical bytes; admission parses the original document; reads that rely on a content identity verify the raws it comes from; replay re-derives every link's identity | `canon.canonicalize`, `processing.classify_primary` (REVISION `content_hash`/`first_raw_sha256`/`content_identity`, LINK `content_sha256`/`canonicalization`/own raw), `snapshot.content_identity/_item_state`, `snapshot.replay` | content_identity: only the three spans change and the re-keyed address stays; text, rate, date, title, release line, effective address or share target changed: a new identity; a marker in the text, a link outside `<a>`, an altered span, an altered or misplaced challenge script, invalid UTF-8, odd or non-printable values, a bound exceeded: REFUSED, raw identity, no merge; per-response Cloudflare bytes: one revision, one record, raw and link each (FOMC251); A-B-A reuses A (FOMC254); backfill then LIVE: one revision, LIVE availability only from the LIVE link (FOMC255); a page rejected on its original document stays rejected; a corrupt newest raw with an equal identity fails the read and replay closed (FOMC256); same (T, H) after reopening and replay, identical; an altered stored identity fails replay. Private proof on the official fixtures (local only); soak 26 h with Cloudflare pages keeps 6 revisions |
+| pilot closure states what it proves (rev23-compatible, commit `909399fa`) | `pilot.audit/_in_flight_overlaps/fix15_coverage/recheck_status/verify_copy/pilot_duration/close` | pilot: overlaps per source item across classes, the feed apart; FIX15 over redirect hops NOT_PROVEN, never PASS; a premature stop keeps integrity VALID but duration NOT_ACCOMPLISHED; unresolved reads re-read and replayed; recheck status from durable records (SATISFIED, IN_PROGRESS, SUSPENDED, PENDING_DUE, NOT_YET_DUE by NOW_LB) |
 | production TLS connector: SNI, chain and hostname verification; an invalid certificate is SOURCE_UNAVAILABLE, never an exception out of the fetch | `transport.HttpsConnector.context/wrap`, `transport._connect` (TLS failures mapped) | tls (local CA and certificates, server on a Unix socket, production `connect` and `wrap`): valid certificate: 200 with SNI `www.federalreserve.gov`, TLS >= 1.2; wrong name, expired, self-signed: SOURCE_UNAVAILABLE with the verification error, no request sent; the system trust store rejects the local CA; the context requires CERT_REQUIRED and hostname checking. Found and fixed: a certificate failure used to escape the transport as an exception |
 | STORE_OPENING_RULE: an existing store with another schema version (unversioned, `fomc-store-v2` of the previous checkpoint, or later) or another spec hash (including revision 22) is rejected before any write; no migration | `store._admit_existing` (read-only; `immutable` when there are no WAL frames), `SCHEMA_VERSION = fomc-store-v3` | store_opening: unversioned, v2, v4, revision-22 spec, other spec: `StoreRejected`, every byte of the directory unchanged (also with pending WAL frames), no owner lock taken; a current store reopens and a new store is versioned; service `capture_preflight_refuses_an_incompatible_store` |
 | prolonged run with faults, a storage incident, two owner crashes and restarts and a clean stop, verified after reopening | `soak.run/verify` | soak (8 h in the suite; 26 h by CLI, ~75 s): every hourly snapshot re-reads identically at its (T, H), verified replay of a subset equals them, `verify_health` passes, one processing outcome per record, no attempt left without outcome, one fetch per item and one poll in flight, <= 6 attempts per key, <= 120 requests per LIVE item, FIX15 across restarts, no start during the incident, every zero cycle LIVE_ELIGIBLE with nothing outstanding and every earlier feed record terminal before B, LPF without a late record, every recheck due long enough ago served. 26 h: 3 boots, 6322 transactions, 1576 attempts and requests, 1556 cycles (1544 zero), 6 revisions, 5 rechecks served, one incident (210 s) with its two alerts, 25 snapshots re-read, 6 replayed |
+
+## Spec revision 24: raw integrity and content identity
+
+**Evidence, from bytes already acquired (no new download).** In the revision-23 pilot store, 33 statement
+responses of 17 URLs: every line that differed between responses of the same URL held one of three
+Cloudflare spans, and nothing else differed:
+- `href="/cdn-cgi/l/email-protection#H"` in `<a>` start tags (the share link and the media contact);
+- `<span class="__cf_email__" data-cfemail="H">[email&#160;protected]</span>`;
+- `window.__CF$cv$params={r:'<16 hex>',t:'<base64 of a Unix time>'}` in one challenge script, always the
+  same 906 bytes once r and t are removed (SHA-256 `f69b046a…`), always right before `</body>`.
+`H` is lowercase hex of even length: a key byte then the address XOR the key. Every value decodes to
+printable ASCII: `media@frb.gov` (32 spans and 32 links) and `?body=<the page's own URL>` (33 share links).
+Only the key and r/t change between responses.
+
+**Decision (FOMC_CANON_V1, `revision_policy.content_identity`).** Re-key both e-mail forms to key 0 (the
+effective address stays in the identity), empty r and t inside the digest-checked challenge script, keep
+every other byte; refuse (raw identity, no merge) on any marker outside these exact structures, invalid
+UTF-8, a value that does not decode to printable ASCII, an altered script, or more than 16/16/1 spans.
+Under it the 33 real responses are all CANONICAL (65 links, 32 spans, 33 parameter pairs neutralized), 16
+raw identities merge into one content identity per URL, and the admission parse of every canonical
+document equals that of its original. The three official fixtures are CANONICAL with the expected spans.
+
+**Binding.** Revision 24 hash `235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36`,
+superseding `3fc2f9a7…` (revision 23); 82 invariants (F82), 256 cases (FOMC251-FOMC256); canonicalizer
+`FOMC_CANON_V1`, content identity `FOMC_CONTENT_IDENTITY_V1`; stores `fomc-store-v4`. A revision-23 store
+(the running pilot's) is rejected by this code, and nothing migrates it.
 
 ## Spec revision 23: the guarantee abandoned and the guarantee obtained
 
@@ -240,14 +272,55 @@ item, one processing outcome per record, unique keys, no false zero). Report:
 `$RUN/closure-report.json`; result notice in the journal. To run it by hand:
 `python -m scripts.trading_lab.fomc.pilot close --store $RUN/store --unit fomc-pilot --copy $RUN/closure-copy-manual --snapshots $RUN/snapshots.jsonl --report $RUN/closure-report-manual.json`.
 
+**Closure tool corrected and redeployed without touching the capture.** The first closure tool checked
+in-flight overlaps per episode key, reported FIX15 as passed from the initial grants alone, gave one
+verdict for integrity and duration, and re-read only resolved reads. Commit `909399fa` (rev23-compatible)
+fixes all four and reports recheck status from durable records. It runs from its own detached worktree
+`/home/kyo/fomc-pilot/closure-code-909399f`, so later commits cannot change it. At 18:51 UTC the original
+supervisor was stopped (it holds no closure state) and `fomc-pilot-supervisor-v2` (PID 70712) started
+with the same closure instant `2026-10-02T18:31:14Z`, `--planned-start 2026-10-01T18:21:14+00:00` and
+`--log-offset end`. The service (PID 56842) was not restarted. A dry run on a backup-API copy of the live
+store, with no service stop: copy intact, the recorded reads re-read and replayed identically, health
+replay and audit green, no in-flight overlap, FIX15 initial grants PASS (71) but all physical starts
+NOT_PROVEN (12 failed attempts have no hop record), 15 O300 rechecks SATISFIED, the later ones NOT_YET_DUE.
+The revision-23 store keeps raw-hash revisions by design: its revision churn is expected and is not
+re-keyed.
+
 **Status, kept distinct.**
-- Runtime: finished (offline proofs above).
-- Capture: in progress since 2026-10-01T18:21:14Z.
-- Capture validated: not yet; only after the closure report is green.
+- Runtime: finished, revision 24 (offline proofs above).
+- Capture: the revision-23 pilot is in progress since 2026-10-01T18:21:14Z.
+- Capture validated: not yet; only once the closure report shows integrity VALID and duration ACCOMPLISHED.
 - Not exercised by this pilot: the O604800 (7-day) recheck; a real storage incident, restart or crash;
   MANUAL_RETRY, RESOLVE and suspension against the real provider; a real redirect, PARSER_FAILED or
   clock-unverified response (none seen so far); a new FOMC statement released during capture (the next
   meeting is after the window).
+
+## Revision-24 launch (prepared, not started)
+
+Only after the revision-23 closure: `closure-report.json` present and `systemctl --user is-active
+fomc-pilot` answering `inactive`. There is never a second emitter: the revision-23 service must be
+stopped before this one starts. Run from a detached worktree at the pushed revision-24 SHA:
+
+```
+SHA=<pushed feat/phase5 SHA>
+git -C /home/kyo/HyprL-phase5 worktree add --detach /home/kyo/fomc-pilot/code-rev24-${SHA:0:9} $SHA
+CODE=/home/kyo/fomc-pilot/code-rev24-${SHA:0:9}; cd $CODE
+python -m pytest tests/crypto/test_fomc_*.py -q && python -m scripts.trading_lab.fomc.soak --hours 26
+python -c "from scripts.trading_lab.fomc import spec; print(spec.SPEC_REVISION, spec.verify_spec_binding())"
+test "$(systemctl --user is-active fomc-pilot)" != active && timedatectl show -p NTPSynchronized --value
+RUN=/home/kyo/fomc-pilot/run-rev24-$(date -u +%Y%m%dT%H%M%SZ); mkdir -p $RUN
+cp /home/kyo/fomc-pilot/run-20261001T182106Z/fixtures-manifest.json $RUN/
+python -m scripts.trading_lab.fomc.service --store $RUN/store --check
+systemd-run --user --unit=fomc-pilot-rev24 --working-directory=$CODE --property=TimeoutStopSec=180 \
+  --property=KillMode=mixed --property=StandardOutput=append:$RUN/service.log \
+  --property=StandardError=append:$RUN/service.log -- /usr/bin/python3 -m scripts.trading_lab.fomc.service \
+  --store $RUN/store --tick 1 --manifest $RUN/fixtures-manifest.json
+START=$(date -u +%Y-%m-%dT%H:%M:%S+00:00); CLOSE=$(date -u -d '+24 hours 10 minutes' +%Y-%m-%dT%H:%M:%S+00:00)
+systemd-run --user --unit=fomc-pilot-rev24-supervisor --working-directory=$CODE -- /usr/bin/python3 \
+  -m scripts.trading_lab.fomc.pilot supervise --store $RUN/store --unit fomc-pilot-rev24 \
+  --service-log $RUN/service.log --alerts $RUN/alerts.log --snapshots $RUN/snapshots.jsonl \
+  --copy $RUN/closure-copy --report $RUN/closure-report.json --close-at $CLOSE --planned-start $START
+```
 
 ## Remaining limits
 
@@ -258,9 +331,12 @@ Not proven by this slice, or outside it:
   detected after 10 s (`storage_incident.threshold_seconds`); its durable record is written only once
   the store writes again; while the owner's own COMMIT stalls, only the monitor thread runs (alert and
   grant suspension). Alerts go to stderr (`FOMC-ALERT`); routing them to a pager is the operator's.
-- No real network run (by mandate): the TLS connector is proven against a local server and local
-  certificates over a Unix socket; public DNS, TCP to port 443 and the provider's real certificate
-  chain are first exercised on capture day.
+- FIX15 over all physical starts is NOT_PROVEN by the stores: continuation grants of redirect hops are
+  not recorded (revisions 23 and 24 alike); the closure reports it so whenever a multi-hop response or an
+  attempt without a hop record exists.
+- FOMC_CANON_V1 knows only the Cloudflare spans observed in 2026-10; if Cloudflare changes its markup,
+  records are REFUSED (raw identity, more revisions, never a wrong merge) until a new canonicalizer
+  version is specified.
 - Bounds are closed at the first owner tick at or after them (1 s in production, never before). A hung
   task keeps its thread until the process exits; it is fenced, not killed. `settle_s` (waiting for
   workers between ticks) exists only for simulated clocks.

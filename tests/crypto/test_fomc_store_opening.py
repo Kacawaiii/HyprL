@@ -42,9 +42,10 @@ def _edit_meta(root, sql, *args):
 
 @pytest.mark.parametrize("sql, args, message", [
     ("DELETE FROM meta WHERE name = 'schema_version'", (), "unversioned"),  # a store of an early checkpoint
-    ("UPDATE meta SET value = ? WHERE name = 'schema_version'", ("fomc-store-v2",), "fomc-store-v2"),  # the previous schema
-    ("UPDATE meta SET value = ? WHERE name = 'schema_version'", ("fomc-store-v4",), "fomc-store-v4"),  # a later one
-    ("UPDATE meta SET value = ? WHERE name = 'spec_hash'", (spec.SUPERSEDED_SPEC_HASH,), "bound to spec"),  # revision 22
+    ("UPDATE meta SET value = ? WHERE name = 'schema_version'", ("fomc-store-v2",), "fomc-store-v2"),  # an older schema
+    ("UPDATE meta SET value = ? WHERE name = 'schema_version'", ("fomc-store-v3",), "fomc-store-v3"),  # the rev23 pilot's
+    ("UPDATE meta SET value = ? WHERE name = 'schema_version'", ("fomc-store-v5",), "fomc-store-v5"),  # a later one
+    ("UPDATE meta SET value = ? WHERE name = 'spec_hash'", (spec.SUPERSEDED_SPEC_HASH,), "bound to spec"),  # the previous revision
     ("UPDATE meta SET value = ? WHERE name = 'spec_hash'", ("0" * 64,), "bound to spec"),
 ])
 def test_an_incompatible_store_is_rejected_before_any_activity(closed_store, sql, args, message):

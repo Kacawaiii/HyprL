@@ -145,7 +145,9 @@ def export_fixtures(store_dir: Path, out: Path, wanted: dict[str, str]) -> dict:
                 "normalized": {k: revision.get(k) for k in (
                     "official_statement_date", "title", "declared_release_at", "declared_release_text",
                     "declared_release_semantics", "timestamp_semantics", "declared_release_trust_verdict",
-                    "content_source_available_at", "observation_mode", "revision_id")} if revision else None,
+                    "content_source_available_at", "observation_mode", "revision_id", "content_hash",
+                    "first_raw_sha256", "content_identity")} if revision else None,
+                "content_identity": link[0].body.get("canonicalization") if link else None,
                 "provenance": {"store": str(store_dir), "spec_hash": spec.SPEC_HASH, "spec_revision": spec.SPEC_REVISION,
                                "acquired_by": "FomcService HISTORICAL_BACKFILL manifest (FIX15 limiter, single owner)",
                                "exported_at": iso(_now())},
