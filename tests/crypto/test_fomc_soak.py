@@ -1,5 +1,6 @@
-"""A prolonged synthetic run of the autonomous service with faults, two owner crashes and restarts,
-then snapshots re-read and replayed at their (T, H) after reopening, health replay and invariants
+"""A prolonged synthetic run of the autonomous service with faults, a storage incident, two owner crashes
+and restarts and a clean stop, then snapshots re-read and replayed at their (T, H) after reopening,
+health replay and invariants
 (scripts/trading_lab/fomc/soak.py). The suite runs 8 simulated hours; `python -m
 scripts.trading_lab.fomc.soak --hours 26` runs the full day (results in the registry)."""
 
@@ -12,6 +13,9 @@ def test_eight_hours_with_crashes_restarts_and_faults_verify(tmp_path):
     summary = soak.run(tmp_path / "store", hours=8, tick_s=10)
     log = "\n".join(summary["log"])
     assert "crash: owner dies with its save task hung" in log and "crash: owner dies with its run task hung" in log
+    assert "stalled COMMIT returned" in log and log.endswith("clean stop")
+    assert len(summary["storage_incidents"]) == 1 and summary["storage_incidents"][0] >= 200
+    assert summary["alerts"] == ["STORAGE_INCIDENT_STARTED", "STORAGE_INCIDENT_ENDED"]
     assert summary["boots"] == 3 and summary["interrupted_by_restart"] >= 1
     assert summary["local_persistence_failed"] >= 1 and summary["dead_runs"] >= 1
     assert summary["revisions"] == 6  # A, its correction, C, three backfilled statements

@@ -7,13 +7,14 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 22 — authoritative)
-ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678
+CAPTURE SPEC HASH  (revision 23 — authoritative)
+3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
         → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30
         → dd0cff22 → 83df6d2d → 83caecb0 (rev 20) → 12f929f4 (rev 21)
+        → ba6a01e5 (rev 22)
 
 BINDS
   event intelligence design rev4
@@ -31,7 +32,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 22.**
+writing revision 23.**
 
 ---
 
@@ -1083,8 +1084,36 @@ the current epoch's fencing token, an open episode, fewer than six attempts, and
 no other attempt of the item still in flight. Episode keys are unique at commit.
 The current limiter-epoch owner marks every older attempt without an outcome as
 `INTERRUPTED`, and every own attempt whose task ended or that has no outcome
-600 s after `TRANSPORT_INVOKED`. An attempt whose 120 s save deadline passed
-gets `LOCAL_PERSISTENCE_FAILED` instead. All of these still count.
+600 s after `TRANSPORT_INVOKED`. An attempt whose 120 s admission bound passed
+without an outcome gets `LOCAL_PERSISTENCE_FAILED` instead. These commits happen
+at the first trigger at which the store can commit. All of these still count.
+
+**The 120 s bound is an admission bound** (`LOCAL_SAVE_ADMISSION_BOUND_V1`,
+revision 23). A response record is admitted only by a check made inside its own
+transaction, under the store's write lock and before any of its rows is
+inserted: fewer than 120 s since the network phase ended — *at 120 s, expired*.
+A check that fails admits nothing, neither a response nor `LATE_EVIDENCE`.
+
+What the bound does **not** cover is how long the `COMMIT` that follows the
+check takes. A `COMMIT` cannot be bounded or cancelled once begun, and every
+durable decision is itself a `COMMIT`, so revision 23 abandons the reading of
+revision 22 under which nothing could become durable after +120 s. An admitted
+record that becomes durable late is a valid record and, if it commits first, its
+attempt's outcome. Nothing is rewritten to hide the delay: `observed_at` stays
+the receipt reading, and availability still comes from the first verified
+response requested after the record committed — so a record that was durable
+late is only available later, never earlier.
+
+**A stalled store is a storage incident, never a decision**
+(`STORAGE_INCIDENT_V1`). A store operation — a transaction including its
+`COMMIT` and `fsync`, or a raw-body write — in progress for 10 s is an incident.
+It is detected from in-process markers, without the store. It raises an
+operational alert, and no FIX15 grant, initial or continuation, is attributed
+while it lasts; requests already granted run to their own 60 s deadline. No
+durable decision is promised while the store cannot write. When it writes again
+the owner records the incident and reconciles from durable state: the first
+committed outcome of each attempt stands, there is no repair request, no new
+key and no refunded attempt.
 
 **An attempt has exactly one outcome** (`ATTEMPT_OUTCOME_FENCE_V2`). A response
 record is its attempt's outcome only while the attempt has none. A response that
@@ -1443,6 +1472,15 @@ alternate the same durable way. Within a class, episodes are ordered by
 `(next eligible instant, source_item_id)`. Suspended episodes are never eligible.
 At most one fetch per
 item is in flight across all classes. Scheduling is work-conserving.
+
+Logical fetches of different items and the feed poll run concurrently; there is
+no other concurrency cap. One dispatcher attributes every grant at the instant
+FIX15 would admit a start (`selection.grant_dispatch`, revision 23): a validated
+redirect hop of the in-flight attempt with the smallest `TRANSPORT_INVOKED`
+first, otherwise one selection decision whose `TRANSPORT_INVOKED` commits before
+the next decision. Work is selected only when its grant can be attributed at
+once, so nothing is selected twice and no grant is consumed for a
+`TRANSPORT_INVOKED` that does not commit.
 
 Provider requests ignore ambient proxy settings (`HTTPS_PROXY` and similar).
 
@@ -1900,9 +1938,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Two hundred and forty-seven cases, decided in advance
+## 11. Two hundred and fifty cases, decided in advance
 
-`FOMC01`–`FOMC247` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC250` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -2282,13 +2320,19 @@ FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
 | `FOMC245` — newest feed record has no conclusion yet, an older cycle was zero | `DISCOVERY_PENDING`; the older zero is not shown |
 | `FOMC246` — A (LIVE), B (LIVE), then A via backfill | current A, but not LIVE-available |
 | `FOMC247` — operator retry anchors an item before its acquisition opens; conflict | acquisition can no longer open; RESOLVE valid; without an anchor it stays invalid |
+| `FOMC248` — admission check passes at +40 s, the `COMMIT` returns at +170 s | valid record and outcome; `observed_at` unchanged; available only after it was durable; storage incident, no grant meanwhile |
+| `FOMC249` — a local write hangs, the admission check runs at +120.0 s | nothing admitted; `LOCAL_PERSISTENCE_FAILED`; at +119.9 s the record is admitted |
+| `FOMC250` — a `COMMIT` stalls 300 s while a poll and a recheck are due | alert; no grant, no decision; afterwards first-outcome reconciliation, no repair request, budgets unchanged |
 
 These are specification cases only; no fixture, capture or runtime is created
 or exercised here. Revision 22 (FIX21) closes the three blockers of the REV21
 global review: the clock verdict no longer stops processing (D1), a resolution
 is blocked only by an acquisition that can still open (D2, `FOMC247`), and
 `FOMC05`, `FOMC107`, `FOMC118`, `FOMC176` and `FOMC206` now match the active
-rules (D3). This document authorizes no implementation.
+rules (D3). Revision 23 (FIX22) records one decision — the 120 s local bound
+governs admission, not durability, and a stalled store is a storage incident
+(`FOMC248`–`FOMC250`, invariants F80–F81) — and states how grants are dispatched
+to concurrent fetches. This document authorizes no capture.
 
 ## 12. What this does not establish
 

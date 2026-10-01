@@ -1,4 +1,4 @@
-"""Constants of FOMC capture spec V1, revision 22, and the binding to its canonical hash.
+"""Constants of FOMC capture spec V1, revision 23, and the binding to its canonical hash.
 
 Every number here is copied from the authoritative JSON; `verify_spec_binding` fails if the
 JSON on disk is not the revision this code was written against.
@@ -12,8 +12,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC_PATH = ROOT / "docs" / "artifacts" / "fomc_capture_spec_v1.json"
-SPEC_HASH = "ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678"
-SPEC_REVISION = 22
+SPEC_HASH = "3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9"
+SPEC_REVISION = 23
+SUPERSEDED_SPEC_HASH = "ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678"  # revision 22
 
 PROVIDER_ID = "federal_reserve_fomc_statements_v1"
 EVENT_FAMILY = "FOMC_MONETARY_POLICY_STATEMENT"
@@ -82,7 +83,8 @@ FEED_CADENCE_S = 60
 # post_durable_processing.reconciliation and retry_policy.interrupted / local_failure
 RUN_DEADLINE_S = 600
 ATTEMPT_ABSOLUTE_DEADLINE_S = 600
-SAVE_DEADLINE_S = 120
+SAVE_DEADLINE_S = 120  # local_failure.admission_bound: an ADMISSION bound, not a durability bound
+STORAGE_STALL_THRESHOLD_S = 10  # storage_incident.threshold_seconds
 POISON_DEAD_RUNS = 2
 
 MANIFEST_MAX_RAW_ENTRIES = 1000
@@ -105,7 +107,7 @@ def sha256_bytes(raw: bytes) -> str:
 
 
 def verify_spec_binding(path: Path = SPEC_PATH) -> str:
-    """Return the canonical hash of the spec on disk; raise if it is not revision 22."""
+    """Return the canonical hash of the spec on disk; raise if it is not revision 23."""
     spec = json.loads(path.read_text(encoding="utf-8"))
     digest = sha256_canonical(spec)
     if digest != SPEC_HASH or spec.get("spec_revision") != SPEC_REVISION:

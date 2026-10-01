@@ -124,16 +124,25 @@ class OpenWork:
                 self.feeds.pop(row.body["record"], None)
 
 
-def open_work(store: FomcStore) -> OpenWork | None:
-    """The head sets for this view, or None when the view is older than the head."""
-    view = store.view()
-    return view.aggregate("open_work", OpenWork) if view.at_head() else None
+@dataclass(frozen=True)
+class OpenSets:
+    attempts: tuple  # TRANSPORT_INVOKED rows without an outcome, in commit order
+    pending: tuple  # seqs of records without a processing outcome, ascending
+    feeds: tuple  # seqs of LIVE feed records that are not FEED_RECORD_TERMINAL, ascending
+
+
+def open_work(store: FomcStore) -> OpenSets | None:
+    """A copy of the head sets for this view, or None when the view is older than the head. The copy
+    is taken under the store lock, so another thread's commit never shows through half-applied."""
+    return store.view().read_aggregate(
+        "open_work", OpenWork, head_only=True,
+        read=lambda w: OpenSets(tuple(w.attempts.values()), tuple(sorted(w.pending)), tuple(sorted(w.feeds))))
 
 
 def now_lb(store: FomcStore, horizon: int | None = None) -> datetime | None:
     """SERVER_NOW_LB: max verified non-late observed_at - 92 s."""
     view = store.view(horizon)
-    return view.aggregate("now_lb", NowLb).at(view.upto)
+    return view.read_aggregate("now_lb", NowLb, lambda lb: lb.at(view.upto))
 
 
 def avail_of(table: list[Avail], seq: int) -> datetime | None:

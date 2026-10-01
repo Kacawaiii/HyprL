@@ -121,15 +121,28 @@ class Transport:
                  io_clock: Callable[[], float] = time.monotonic, deadline_s: float = spec.ATTEMPT_DEADLINE_S):
         self.connector, self.limiter, self._wall, self._mono = connector, limiter, wall, mono
         self._io, self._deadline_s = io_clock, deadline_s
+        self._count_lock = threading.Lock()
         self.physical_requests = 0
 
+    def deadline(self) -> "Deadline":
+        """The physical-attempt deadline of a start granted now."""
+        return Deadline(self._io, self._deadline_s)
+
     def fetch(self, url: str, surface: str, *, invoke: Callable[[float], int],
-              may_continue: Callable[[int], bool]) -> FetchResult:
+              may_continue: Callable[[int], bool], started: tuple | None = None,
+              continuation: Callable[[int], tuple | None] | None = None) -> FetchResult:
         """`invoke(grant)` commits TRANSPORT_INVOKED (may raise store.Rejected: nothing is sent);
-        `may_continue(attempt)` is false once the attempt already has an outcome."""
+        `may_continue(attempt)` is false once the attempt already has an outcome.
+
+        Step-driven use waits for its own grants. A dispatcher passes `started` = (grant, deadline) for
+        a start it already granted and `continuation(attempt)`, which blocks until the dispatcher grants
+        the validated redirect hop and returns (grant, deadline), or None when no grant will come."""
         admit_url(url)  # validation precedes the grant
-        grant = self.limiter.grant()
-        deadline = Deadline(self._io, self._deadline_s)  # starts at the grant
+        if started is None:
+            grant = self.limiter.grant()
+            deadline = Deadline(self._io, self._deadline_s)  # starts at the grant
+        else:
+            grant, deadline = started
         attempt = invoke(grant)
         result = FetchResult(kind="NOT_STARTED", attempt_seq=attempt)
         if self._mono() - grant > spec.GRANT_TO_TRANSPORT_S:
@@ -141,15 +154,22 @@ class Transport:
             while True:
                 hop = Hop(url=current, grant_mono=grant)
                 result.hops.append(hop)
-                self.physical_requests += 1
+                with self._count_lock:
+                    self.physical_requests += 1
                 assert len(result.hops) <= spec.MAX_PHYSICAL_PER_ATTEMPT
                 target = self._hop(result, hop, current, deadline, cap)
                 if target is None:
                     return result
                 if not may_continue(attempt):
                     raise _Fail("SOURCE_UNAVAILABLE", "attempt already has an outcome; no continuation grant")
-                grant = self.limiter.grant()
-                deadline = Deadline(self._io, self._deadline_s)  # the next hop's own deadline
+                if continuation is None:
+                    grant = self.limiter.grant()
+                    deadline = Deadline(self._io, self._deadline_s)  # the next hop's own deadline
+                else:
+                    granted = continuation(attempt)  # the validated hop waits for the dispatcher's grant
+                    if granted is None:
+                        raise _Fail("SOURCE_UNAVAILABLE", "attempt already has an outcome; no continuation grant")
+                    grant, deadline = granted
                 current = target
         except _Fail as fail:
             result.kind, result.reason = fail.kind, fail.reason

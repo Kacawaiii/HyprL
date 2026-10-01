@@ -10,6 +10,7 @@ indexes, so a duplicate insert aborts the whole transaction.
 from __future__ import annotations
 
 from bisect import bisect_right
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -17,6 +18,7 @@ import os
 from pathlib import Path
 import sqlite3
 import threading
+import time
 from typing import Callable, Iterable
 
 from scripts.trading_lab.fomc import spec
@@ -38,13 +40,18 @@ UNIQUE_KINDS = (
 )
 
 
+class StoreBusy(RuntimeError):
+    """The store lock was not obtained within the calling thread's bound: another operation holds it
+    (possibly a stalled COMMIT). Nothing was read or written."""
+
+
 # STORE_OPENING_RULE: a store records the schema version and spec hash it was written with. An existing
 # store is inspected through a read-only connection before anything else; unless both match this code
 # it is rejected (StoreRejected) before any write, pragma, DDL, epoch or request. There is no automatic
 # migration: rows are append-only and never rewritten, so an older layout (LINK `mode`, REVISION
 # without the normalized fields, no source-health rows, no schema version) cannot be upgraded in
 # place without inventing history. Open such a store with the code that wrote it, or start a new one.
-SCHEMA_VERSION = "fomc-store-v2"
+SCHEMA_VERSION = "fomc-store-v3"  # spec revision 23: STORAGE_INCIDENT records
 
 
 class StoreRejected(RuntimeError):
@@ -91,13 +98,21 @@ class Row:
 
 
 class FomcStore:
-    def __init__(self, root: Path, *, wall_clock: Callable[[], datetime]):
+    def __init__(self, root: Path, *, wall_clock: Callable[[], datetime], mono: Callable[[], float] | None = None):
         self.root = Path(root)
         _admit_existing(self.root / "fomc.sqlite3")  # before any write (STORE_OPENING_RULE)
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "raw").mkdir(exist_ok=True)
         self._wall = wall_clock
+        self._mono = mono or time.monotonic
         self._lock = threading.RLock()
+        # storage_incident.detection: markers of the operation in progress, written by the thread that
+        # runs it and read by stalled() without the lock, so detection works while the store is stalled
+        self._depth = 0
+        self._op: tuple[str, float] | None = None  # (operation, started on the monotonic clock)
+        self._raw_ops: dict[int, float] = {}  # thread ident -> start of a raw-body write in progress
+        self._waits = threading.local()  # per-thread bound on waiting for the lock (None: unbounded)
+        self.fault = None  # test hook: fault(operation) runs inside a marked store operation (a stall)
         # read accounting (cost regression tests): SQLite queries and rows decoded, and the in-memory
         # work of derivations, counted as the rows a view hands out (every derivation iterates them)
         self.reads = {"queries": 0, "rows": 0, "view_rows": 0}
@@ -109,7 +124,7 @@ class FomcStore:
         sync = self._conn.execute("PRAGMA synchronous").fetchone()[0]
         if mode != "wal" or sync != 2:  # store_assumption: WAL + synchronous=FULL
             raise RuntimeError(f"FOMC store requires WAL/FULL, got {mode}/{sync}")
-        with self._lock:
+        with self.locked("open"):
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.execute(
@@ -137,8 +152,45 @@ class FomcStore:
             raise RuntimeError(f"store bound to spec {bound}, code implements {spec.SPEC_HASH}")
 
     def close(self) -> None:
-        with self._lock:
+        with self.locked("close"):
             self._conn.close()
+
+    # ---- the lock, its operation marker and bounded waits -----------------------------------------
+    @contextmanager
+    def locked(self, operation: str):
+        """Hold the store for one operation. The outermost holder publishes (operation, start) for
+        stalled(); a thread with a wait bound (the service owner) gets StoreBusy instead of waiting
+        behind a stalled operation."""
+        bound = getattr(self._waits, "bound", None)
+        if not (self._lock.acquire() if bound is None else self._lock.acquire(timeout=bound)):
+            raise StoreBusy(f"store busy: {self._op[0] if self._op else 'another operation'} in progress")
+        try:
+            self._depth += 1
+            if self._depth == 1:
+                self._op = (operation, self._mono())
+            yield
+        finally:
+            self._depth -= 1
+            if self._depth == 0:
+                self._op = None
+            self._lock.release()
+
+    def set_wait_bound(self, seconds: float | None) -> None:
+        """Bound how long the calling thread waits for the store (None: wait without bound)."""
+        self._waits.bound = seconds
+
+    def use_clock(self, mono: Callable[[], float]) -> None:
+        self._mono = mono
+
+    def stalled(self) -> tuple[str, float] | None:
+        """The store operation in progress for the longest time and its age in seconds, read without
+        the lock (storage_incident.detection); None when nothing is in progress."""
+        now = self._mono()
+        ops = [(f"raw_write", now - start) for start in list(self._raw_ops.values())]
+        op = self._op
+        if op is not None:
+            ops.append((op[0], now - op[1]))
+        return max(ops, key=lambda o: o[1]) if ops else None
 
     # ---- writes -------------------------------------------------------------------------------
     def append(self, txn_kind: str, rows: Iterable[tuple[str, str | None, dict]],
@@ -147,7 +199,7 @@ class FomcStore:
         that records the commit's wall reading inside a row passes it as `wall_at_commit`, so the row
         repeats the transaction's own durable provenance exactly."""
         rows = list(rows)
-        with self._lock:
+        with self.locked(f"transaction {txn_kind}"):
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 if check is not None:
@@ -161,6 +213,8 @@ class FomcStore:
                         "INSERT INTO rec (commit_seq, ord, kind, key, body) VALUES (?, ?, ?, ?, ?)",
                         (seq, ordinal, kind, key, spec.canonical_bytes(body).decode("utf-8")),
                     )
+                if self.fault is not None:
+                    self.fault(f"commit {txn_kind}")  # after the check and the insertions: the COMMIT itself stalls
                 self._conn.execute("COMMIT")
                 return seq
             except sqlite3.IntegrityError as exc:
@@ -176,7 +230,7 @@ class FomcStore:
 
     # ---- reads (inside or outside a write transaction) ------------------------------------------
     def horizon(self) -> int:
-        with self._lock:
+        with self.locked("read"):
             self.reads["queries"] += 1
             return self._conn.execute("SELECT COALESCE(MAX(commit_seq), 0) FROM txn").fetchone()[0]
 
@@ -192,7 +246,7 @@ class FomcStore:
         if upto is not None:
             sql += " AND commit_seq <= ?"; args.append(upto)
         sql += " ORDER BY commit_seq, ord"
-        with self._lock:
+        with self.locked("read"):
             out = [Row(s, k, kk, json.loads(b)) for s, k, kk, b in self._conn.execute(sql, args)]
             self.reads["queries"] += 1
             self.reads["rows"] += len(out)
@@ -207,7 +261,7 @@ class FomcStore:
         return self.view().row_at(kind, seq)
 
     def txns(self, *, upto: int | None = None, after: int = 0) -> list[tuple[int, str, str]]:
-        with self._lock:
+        with self.locked("read"):
             out = list(self._conn.execute(
                 "SELECT commit_seq, kind, wall_at_commit FROM txn WHERE commit_seq > ? AND commit_seq <= ? ORDER BY commit_seq",
                 (after, upto if upto is not None else 2**62),
@@ -220,7 +274,7 @@ class FomcStore:
         """A consistent read-only view up to min(upto, current horizon). The in-memory mirror reads
         only the rows committed since its last refresh, so repeated derivations never re-read the
         store (inside a write transaction the refresh sees exactly the committed state)."""
-        with self._lock:
+        with self.locked("read"):
             horizon = self.horizon()
             if horizon > self._mirror.upto:
                 self._mirror.add(self.rows(after=self._mirror.upto, upto=horizon),
@@ -237,8 +291,18 @@ class FomcStore:
         Raw is immutable: a digest path is published once with os.link (atomic create-if-absent) and
         never overwritten. If the path already holds other bytes, that corruption is reported
         (RawCorrupt) and left untouched - it is never repaired by a rewrite."""
+        ident = threading.get_ident()
+        self._raw_ops[ident] = self._mono()  # a raw write in progress (storage_incident.detection)
+        try:
+            return self._put_raw(data)
+        finally:
+            self._raw_ops.pop(ident, None)
+
+    def _put_raw(self, data: bytes) -> str:
         digest = spec.sha256_bytes(data)
         path = self._raw_path(digest)
+        if self.fault is not None:
+            self.fault("raw_write")
         if os.path.lexists(path):
             self._verify_existing(path, digest)
             return digest
@@ -332,9 +396,10 @@ class _Mirror:
     def field_index(self, kind: str, field: str) -> dict:
         index = self.by_field.get((kind, field))
         if index is None:
-            index = self.by_field[(kind, field)] = {}
+            index = {}
             for row in self.by_kind.get(kind, ([], []))[0]:
                 self._push(index.setdefault(self._value(row.body.get(field)), ([], [])), row)
+            self.by_field[(kind, field)] = index  # published complete
         return index
 
 
@@ -353,8 +418,14 @@ class StoreView:
         describe the mirror's head then describe this view exactly."""
         return self.upto == self._mirror.upto
 
-    def aggregate(self, name: str, factory):
-        return self._mirror.aggregate(name, factory)
+    def read_aggregate(self, name: str, factory, read, *, head_only: bool = False):
+        """read(aggregate) under the store lock, so a concurrent mirror refresh (another thread's
+        commit) never shows a half-updated aggregate. With head_only, None unless this view is at the
+        head. `read` must return a value that does not alias the aggregate's mutable state."""
+        with self.store.locked("read"):
+            if head_only and not self.at_head():
+                return None
+            return read(self._mirror.aggregate(name, factory))
 
     def memo(self, key, compute):
         """A derivation computed once per view (a view never changes)."""
@@ -382,7 +453,11 @@ class StoreView:
         return self._cut(self._mirror.by_key.get((kind, key), self._EMPTY), upto)
 
     def select(self, kind: str, field: str, value, *, upto: int | None = None) -> list[Row]:
-        return self._cut(self._mirror.field_index(kind, field).get(_Mirror._value(value), self._EMPTY), upto)
+        index = self._mirror.by_field.get((kind, field))
+        if index is None:  # built once, under the lock: a concurrent refresh extends every index
+            with self.store.locked("read"):
+                index = self._mirror.field_index(kind, field)
+        return self._cut(index.get(_Mirror._value(value), self._EMPTY), upto)
 
     def txns(self, *, upto: int | None = None) -> list[tuple[int, str, str]]:
         return self._cut(self._mirror.txns, upto)

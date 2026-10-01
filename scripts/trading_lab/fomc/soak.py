@@ -1,10 +1,11 @@
 """Prolonged synthetic run of the autonomous service, offline: a simulated clock, a local provider on a
 Unix socket, and a scripted day of FOMC traffic with faults - a correction, a historical backfill with
 a failing and a clock-unverified entry, a save that hangs past 120 s, a processing run that hangs past
-600 s, one malformed feed, and two owner crashes (during a save, during a processing run) each followed
-by a restart. Snapshots are taken every hour during the run; afterwards the store is reopened and
-verified: every snapshot re-reads identically at its (T, H), verified replay reproduces a subset,
-source health re-derives, and the capture invariants hold.
+600 s, a COMMIT stalled for 200 s (a storage incident), one malformed feed, and two owner crashes
+(during a save, during a processing run) each followed by a restart; it ends with a clean stop.
+Snapshots are taken every hour during the run; afterwards the store is reopened and verified: every
+snapshot re-reads identically at its (T, H), verified replay reproduces a subset, source health
+re-derives, and the capture invariants hold.
 
     python -m scripts.trading_lab.fomc.soak [--hours 26] [--tick 10]
 """
@@ -23,7 +24,7 @@ from scripts.trading_lab.fomc import ledger, processing, snapshot, spec, state
 from scripts.trading_lab.fomc import synthetic as syn
 from scripts.trading_lab.fomc.collector import Collector
 from scripts.trading_lab.fomc.service import FomcService
-from scripts.trading_lab.fomc.store import FomcStore
+from scripts.trading_lab.fomc.store import FomcStore, StoreBusy
 
 A = syn.statement_path("20260617")
 C = syn.statement_path("20260729")
@@ -49,12 +50,16 @@ class _Run:
     releases: list = field(default_factory=list)
     snapshots: list = field(default_factory=list)
     log: list = field(default_factory=list)
+    alerts: list = field(default_factory=list)
+    stall: dict = field(default_factory=dict)  # the storage incident: monotonic start and end of the stall
 
     def start(self, tick_s: float) -> None:
         self.boots += 1
         self.store = FomcStore(self.root, wall_clock=self.clock.wall)
-        self.collector = Collector(self.store, self.provider.connector(), self.clock, boot_id=f"boot-{self.boots}")
-        self.service = FomcService(self.collector, self.clock, tick_s=tick_s, settle_s=10.0)
+        self.collector = Collector(self.store, self.provider.connector(), self.clock, boot_id=f"boot-{self.boots}",
+                                   inline=False)
+        self.service = FomcService(self.collector, self.clock, tick_s=tick_s, settle_s=10.0, owner_wait_s=0.02,
+                                   on_alert=self.alerts.append)
         self.services.append(self.service)
         self._install_faults()
 
@@ -89,6 +94,17 @@ class _Run:
                 run.releases.append(release)
                 service.park(release)
         self.collector.processing_fault = processing_fault
+
+        def store_fault(operation: str):
+            fault = run.armed.get("commit")
+            if fault and operation == fault["operation"] and not fault.get("done"):
+                fault["done"] = True
+                release = threading.Event()
+                fault["release"] = release
+                run.releases.append(release)
+                run.stall["start"] = run.clock.mono()
+                service.park(release)  # the COMMIT does not return: the store is stalled
+        store.fault = store_fault
 
 
 def _malformed_once(provider, items):
@@ -135,12 +151,15 @@ def run(root: Path, *, hours: float = 26.0, tick_s: float = 10.0, progress=None)
                 provider.routes.__setitem__(syn.FEED_PATH, syn.feed_response([_item(A, "gA"), _item(C, "gC")])))),
             (at(10000), "the next statement record's first processing run will hang", lambda: r.armed.__setitem__(
                 "run", {"match": lambda resp: resp.body["surface"] == "primary"})),
+            (at(15000), "the next record's COMMIT stalls for 200 s: a storage incident", lambda: r.armed.__setitem__(
+                "commit", {"operation": "commit RESPONSE", "stall_s": 200})),
             (at(12600), "crash #1 armed: the next feed save hangs, then the owner dies", lambda: r.armed.__setitem__(
                 "save", {"match": lambda data: data.startswith(b"<?xml"), "crash": True})),
             (at(18000), "one malformed feed", lambda: _malformed_once(provider, [_item(A, "gA"), _item(C, "gC")])),
             (at(21600), "crash #2 armed: the next feed processing run hangs, then the owner dies", lambda: r.armed.__setitem__(
                 "run", {"match": lambda resp: resp.body["surface"] == "feed", "crash": True})),
         ]
+        schedule.sort(key=lambda event: event[0])
         next_snapshot = at(3600)
         end = at(hours * 3600)
         while clock.mono() < end:
@@ -159,20 +178,29 @@ def run(root: Path, *, hours: float = 26.0, tick_s: float = 10.0, progress=None)
                         fault["hung_since"] = clock.mono()
                 if fault and not fault.get("crash") and "hung_since" in fault and not fault["release"].is_set() \
                         and clock.mono() - fault["hung_since"] >= (300 if name == "save" else 1200):
-                    fault["release"].set()  # the hung task finally returns: its late result is fenced
+                    r.service.unpark(fault["release"])  # the hung task finally returns: its late result is fenced
                     r.log.append(f"{clock.true.isoformat()} hung {name} task released")
+            commit = r.armed.get("commit")
+            if commit and commit.get("release") is not None and not commit["release"].is_set() \
+                    and clock.mono() - r.stall["start"] >= commit["stall_s"]:
+                r.stall["end"] = clock.mono()
+                r.service.unpark(commit["release"])  # the COMMIT returns
+                r.log.append(f"{clock.true.isoformat()} stalled COMMIT returned")
             if clock.mono() >= next_snapshot:
-                snap = snapshot.events_as_of(r.store, clock.true)
-                r.snapshots.append(snap)
-                next_snapshot += 3600
-                if progress:
-                    progress(f"{clock.true.isoformat()} H={snap['H']} {snap['read_state']} "
-                             f"discovery={snap.get('discovery', {}).get('state')}")
+                try:
+                    snap = snapshot.events_as_of(r.store, clock.true)
+                except StoreBusy:
+                    snap = None  # the store is stalled: read at the next tick
+                if snap is not None:
+                    r.snapshots.append(snap)
+                    next_snapshot += 3600
+                    if progress:
+                        progress(f"{clock.true.isoformat()} H={snap['H']} {snap['read_state']} "
+                                 f"discovery={snap.get('discovery', {}).get('state')}")
             clock.sleep(tick_s)
-        for _ in range(3):  # let the last tasks finish
-            r.service.tick()
-            clock.sleep(tick_s)
-        r.collector.close()
+        left = r.service.stop(wait_s=10)  # clean stop: nothing in flight, ownership released
+        assert left == [], left
+        r.log.append(f"{clock.true.isoformat()} clean stop")
         summary = verify(r)
     finally:
         for release in r.releases:
@@ -205,7 +233,10 @@ def verify(r: _Run) -> dict:
         assert all(len(view.rows("PROCESSING_OUTCOME", key=str(x.seq))) == 1 for x in responses)  # one terminal outcome
         invoked = view.rows("TRANSPORT_INVOKED")
         open_attempts = [t for t in invoked if not view.rows("ATTEMPT_OUTCOME", key=str(t.seq))]
-        assert len(open_attempts) <= 1
+        assert open_attempts == []  # the clean stop left nothing in flight
+        for key in {t.key for t in invoked}:  # one feed poll and one fetch per item in flight, never two
+            same = [t for t in invoked if t.key == key]
+            assert all(view.rows("ATTEMPT_OUTCOME", key=str(a.seq))[0].seq < b.seq for a, b in zip(same, same[1:]))
         episodes = view.rows("EPISODE_OPEN")
         assert len({e.key for e in episodes}) == len(episodes)
         per_key = {}
@@ -233,6 +264,12 @@ def verify(r: _Run) -> dict:
         lpf = [o for o in view.rows("ATTEMPT_OUTCOME") if o.body["outcome"] == "LOCAL_PERSISTENCE_FAILED"]
         assert lpf and all(not view.rows("RESPONSE", key=str(o.body["attempt"])) for o in lpf)  # no late record
         dead = view.rows("RUN_DEAD")
+        incidents = view.rows("STORAGE_INCIDENT")
+        if r.stall:  # the storage incident: one durable record, both alerts, no grant while it lasted
+            assert len(incidents) == 1 and incidents[0].body["stalled_s"] >= 200
+            assert [a["alert"] for a in r.alerts] == ["STORAGE_INCIDENT_STARTED", "STORAGE_INCIDENT_ENDED"]
+            threshold = spec.STORAGE_STALL_THRESHOLD_S + 2 * r.service.tick_s
+            assert not [g for g in grants if r.stall["start"] + threshold < g < r.stall["end"]]
         epochs = view.rows("EPOCH")
         assert len(epochs) == r.boots
         sid_a, sid_c = (identity_of(p) for p in (A, C))
@@ -248,6 +285,7 @@ def verify(r: _Run) -> dict:
             "provider_requests": len(r.provider.requests), "live_item_requests": live_requests,
             "rechecks_due_and_served": len(due), "cycles": len(view.rows("CYCLE_CONCLUSION")), "zero_cycles": zero, "revisions": len(view.rows("REVISION")),
             "interrupted_by_restart": len(interrupted), "local_persistence_failed": len(lpf), "dead_runs": len(dead),
+            "storage_incidents": [i.body["stalled_s"] for i in incidents], "alerts": [a["alert"] for a in r.alerts],
             "snapshots": len(r.snapshots), "replayed": len(replayed), "health_rows": len(view.rows("SOURCE_HEALTH")),
             "final_discovery": final["discovery"]["state"],
             "final_health": {k: v["result_state"] for k, v in final["health"].items()}, "log": r.log,

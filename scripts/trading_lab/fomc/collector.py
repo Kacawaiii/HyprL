@@ -8,6 +8,7 @@ from __future__ import annotations
 import fcntl
 import json
 import sqlite3
+import threading
 import uuid
 from datetime import timedelta
 
@@ -20,6 +21,7 @@ from scripts.trading_lab.fomc.transport import FetchResult, Transport
 
 CLASS_ORDER = ("FEED_DISCOVERY", "REOBSERVATION", "HISTORICAL_BACKFILL")
 SAVE_RETRY_S = 5.0  # implementation choice: local save retry spacing inside the 120 s save deadline
+FEED_WORK = {"kind": "FEED_POLL", "class": "FEED_DISCOVERY", "sid": None, "mode": "LIVE"}
 CLASS_OF = {"FEED_POLL": "FEED_DISCOVERY", "LIVE_ACQUISITION": "FEED_DISCOVERY", "REOBSERVATION": "REOBSERVATION",
             "HISTORICAL_BACKFILL": "HISTORICAL_BACKFILL"}
 
@@ -29,7 +31,7 @@ class OwnershipUnavailable(RuntimeError):
 
 
 class Collector:
-    def __init__(self, store: FomcStore, connector, clock, *, boot_id: str = "boot-1"):
+    def __init__(self, store: FomcStore, connector, clock, *, boot_id: str = "boot-1", inline: bool = True):
         self.store, self.clock = store, clock
         self._owner = open(store.root / "owner.lock", "a+")
         try:
@@ -47,33 +49,84 @@ class Collector:
         self._active_attempts: dict[int, float] = {}  # own attempts whose task is alive -> TRANSPORT_INVOKED mono
         self._active_runs: dict[int, str] = {}  # record seq -> run_id of a run whose task is alive
         self._save_deadlines: dict[int, float] = {}  # attempt -> network end + 120 s, kept from the network end
-        # step-driven use processes inline; the autonomous service (service.py) sets inline = False and
-        # dispatch_run, so that only its owner thread reconciles and processing runs in worker threads
-        self.inline = True
+        # step-driven use processes inline; the autonomous service (service.py) sets inline = False,
+        # dispatch_run and continuation, so that only its owner thread reconciles and dispatches grants
+        # while network I/O, saves and processing runs happen in worker threads
+        self.inline = inline
         self.dispatch_run = None
-        self.reconcile()
+        self.continuation = None  # continuation(attempt) -> (grant, deadline) | None, set by the service
+        # the task registries are shared with worker threads: every removal is compare-and-delete under
+        # this lock, so a worker only ever removes its own task, never a newer one's
+        self._registry = threading.Lock()
+        if inline:
+            self.reconcile()
+        else:
+            self.close_attempts()  # earlier-epoch attempts are interrupted at once; processing is dispatched
 
     def close(self) -> None:
         """Release ownership (also what a crash does to an flock)."""
         self._owner.close()
 
     # ------------------------------------------------------------------ one logical fetch ---------
-    def fetch(self, work: dict, url: str, surface: str) -> FetchResult | dict:
-        """Grant, TRANSPORT_INVOKED, transport. The attempt stays active (its task alive) until commit()."""
-        def invoke(grant: float) -> int:
-            with self.store._lock:  # durable record and task registration are seen together by reconcile()
-                seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant)
-                self._active_attempts[seq] = self.clock.mono()
-            if work["kind"] == "FEED_POLL":
-                self.last_feed_grant = grant
-            return seq
+    def _invoke(self, work: dict, grant: float) -> int:
+        """Commit TRANSPORT_INVOKED and register its task in one locked step, so reconcile() never
+        sees the durable attempt without its live task."""
+        with self.store.locked("transaction TRANSPORT_INVOKED"):
+            seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant)
+            self._active_attempts[seq] = self.clock.mono()
+        if work["kind"] == "FEED_POLL":
+            self.last_feed_grant = grant
+        return seq
+
+    def _open(self, attempt: int) -> bool:
+        return ledger.outcome_of(self.store, attempt) is None
+
+    def fetch(self, work: dict, url: str, surface: str, *, started: tuple | None = None) -> FetchResult | dict:
+        """Grant, TRANSPORT_INVOKED, transport. The attempt stays active (its task alive) until commit().
+        `started` = (attempt, grant, deadline) when the dispatcher already granted and invoked it."""
         try:
-            result = self.transport.fetch(url, surface, invoke=invoke,
-                                          may_continue=lambda a: ledger.outcome_of(self.store, a) is None)
+            if started is None:
+                result = self.transport.fetch(url, surface, invoke=lambda grant: self._invoke(work, grant),
+                                              may_continue=self._open)
+            else:
+                attempt, grant, deadline = started
+                result = self.transport.fetch(url, surface, invoke=lambda _grant: attempt, may_continue=self._open,
+                                              started=(grant, deadline), continuation=self.continuation)
         except Rejected as exc:
             return {"status": "REJECTED", "reason": str(exc)}
         self.network_ended(result)
         return result
+
+    # ---- the dispatcher's two halves (service.py) ------------------------------------------------
+    def begin(self, chosen: dict) -> dict | None:
+        """Attribute the start FIX15 admits at this instant to `chosen` (selection.grant_dispatch):
+        commit its TRANSPORT_INVOKED stamped with this instant, then consume the start. None when no
+        start is admissible now or the record does not commit - then no grant is consumed and nothing
+        is sent. Called by the single dispatcher thread only."""
+        if chosen.get("poll"):
+            work, url, surface = dict(FEED_WORK), spec.FEED_URL, "feed"
+        else:
+            work, url = self.work_of(chosen["episode"])
+            surface = "primary"
+        identity.admit_url(url)  # validation precedes the grant
+        now = self.clock.mono()
+        if self.limiter.suspended or not self.limiter.admissible(now):
+            return None
+        deadline = self.transport.deadline()  # the physical deadline starts at the grant
+        try:
+            attempt = self._invoke(work, now)
+        except Rejected:
+            return None
+        self.limiter.register(now)
+        return {"work": work, "url": url, "surface": surface, "attempt": attempt, "grant": now, "deadline": deadline}
+
+    def complete(self, started: dict) -> dict:
+        """A worker's part of a fetch begun by the dispatcher: network phase, then the local save."""
+        result = self.fetch(started["work"], started["url"], started["surface"],
+                            started=(started["attempt"], started["grant"], started["deadline"]))
+        if isinstance(result, dict):
+            return result
+        return self.commit(result, started["work"], started["url"], started["surface"])
 
     def network_ended(self, result: FetchResult) -> None:
         """The network phase of `result` ends now: its 120 s local save deadline starts here and is
@@ -163,12 +216,19 @@ class Collector:
         return self.commit(result, work, url, surface)
 
     def poll_feed(self) -> dict:
-        return self.run({"kind": "FEED_POLL", "class": "FEED_DISCOVERY", "sid": None, "mode": "LIVE"}, spec.FEED_URL, "feed")
+        return self.run(dict(FEED_WORK), spec.FEED_URL, "feed")
 
     # ------------------------------------------------------------------ reconciliation ------------
     def reconcile(self) -> None:
-        """INTERRUPTED for attempts of other epochs, of ended tasks, or 600 s after TRANSPORT_INVOKED; a
-        task that is still active is never declared dead before its deadline."""
+        """Close attempts at their bounds, then process pending records and derive episode terminals."""
+        self.close_attempts()
+        self.process_pending()
+        self.derive_terminals()
+
+    def close_attempts(self) -> None:
+        """INTERRUPTED for attempts of other epochs, of ended tasks, or 600 s after TRANSPORT_INVOKED;
+        LOCAL_PERSISTENCE_FAILED at or after the 120 s admission bound; a task that is still active is
+        never declared dead before its deadline. Every closure is first-outcome-wins in the store."""
         now = self.clock.mono()
         for attempt in ledger.attempts_without_outcome(self.store):
             save_deadline = self._save_deadlines.get(attempt.seq) if attempt.body["epoch"] == self.epoch else None
@@ -183,8 +243,6 @@ class Collector:
             reason = ("non-current epoch" if attempt.body["epoch"] != self.epoch
                       else "task ended without outcome" if started is None else "no outcome 600 s after TRANSPORT_INVOKED")
             ledger.commit_attempt_outcome(self.store, attempt.seq, "INTERRUPTED", {"reason": reason})
-        self.process_pending()
-        self.derive_terminals()
 
     def _dead_runs(self, seq: int) -> int:
         dead_ids = {d.body["run_id"] for d in self.store.rows("RUN_DEAD", key=str(seq))}
@@ -198,14 +256,26 @@ class Collector:
         return runs[-1] if runs else None
 
     def _mark_dead(self, seq: int, run_id: str, reason: str) -> None:
-        self.store.append("RUN_DEAD", [("RUN_DEAD", str(seq), {"run_id": run_id, "reason": reason})])
-        if self._active_runs.get(seq) == run_id:
-            self._active_runs.pop(seq)
+        """Mark exactly this run DEAD, once, and forget its task - never another run's."""
+        def once(s: FomcStore) -> None:
+            if any(d.body["run_id"] == run_id for d in s.rows("RUN_DEAD", key=str(seq))):
+                raise Rejected("run already DEAD")
+        try:
+            self.store.append("RUN_DEAD", [("RUN_DEAD", str(seq), {"run_id": run_id, "reason": reason})], once)
+        except Rejected:
+            pass
+        self._forget_run(seq, run_id)
+
+    def _forget_run(self, seq: int, run_id: str) -> None:
+        with self._registry:  # compare-and-delete: an old run's worker never erases a newer run's task
+            if self._active_runs.get(seq) == run_id:
+                del self._active_runs[seq]
 
     def start_processing(self, seq: int) -> str | None:
         run_id = processing.start_run(self.store, seq, epoch=self.epoch, start_mono=self.clock.mono())
         if run_id is not None:
-            self._active_runs[seq] = run_id
+            with self._registry:
+                self._active_runs[seq] = run_id
         return run_id
 
     def finish_processing(self, seq: int, run_id: str) -> str | None:
@@ -217,13 +287,13 @@ class Collector:
             return None
         if outcome is None and state.processing_outcome(self.store, seq) is None and self._running(seq) is not None:
             self._mark_dead(seq, run_id, "late result after the 600 s run deadline")
-        self._active_runs.pop(seq, None)
+        self._forget_run(seq, run_id)
         return outcome
 
     def process_pending(self) -> None:
         view = self.store.view()
         head = state.open_work(view)  # a fresh view is at the head
-        pending = sorted(head.pending) if head is not None else \
+        pending = list(head.pending) if head is not None else \
             [r.seq for r in view.rows("RESPONSE") if state.processing_outcome(view, r.seq) is None]
         for seq in pending:  # commit order; only this loop commits outcomes for these records
             if state.processing_outcome(self.store, seq) is not None:

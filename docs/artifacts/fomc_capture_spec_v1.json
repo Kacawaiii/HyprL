@@ -1681,9 +1681,46 @@
       ],
       "verdict": "An acquisition that can no longer open never blocks RESOLVE; one that can still open always does."
     },
+    "FOMC248": {
+      "case": "ADMITTED COMMIT STALLS IN FSYNC - the network phase ends at t0; the admission check passes at t0+40 s; the COMMIT returns at t0+170 s",
+      "expected": {
+        "LOCAL_PERSISTENCE_FAILED": "not committed: the store could commit nothing before the record did",
+        "avail": "from the first verified response whose TRANSPORT_INVOKED commits after the record; never before t0+170 s",
+        "observed_at": "the receipt reading at t0, unchanged",
+        "record": "a RESPONSE, its attempt's outcome (first committed); PROCESSABLE",
+        "requests": "no repair request; the attempt counts once",
+        "storage_incident": "active from t0+50 s (10 s into the stalled COMMIT) until t0+170 s; alert; no grant attributed meanwhile; one STORAGE_INCIDENT record afterwards",
+        "timestamps_rewritten": false
+      },
+      "verdict": "The bound governs admission, not durability: a record made durable late is valid and only later available."
+    },
+    "FOMC249": {
+      "case": "ADMISSION CHECK AT OR AFTER THE BOUND - a local write hangs; the check runs at t0+120.0 s (and at t0+120.1 s)",
+      "expected": {
+        "control_119_9": "a check at t0+119.9 s admits the record",
+        "next_attempt": "the episode's next attempt per retry_policy.schedule; the failed attempt counts",
+        "outcome": "LOCAL_PERSISTENCE_FAILED, committed by the owner at the first commit possible at or after t0+120 s, even while the saving task is still blocked",
+        "record": "none: no RESPONSE and no LATE_EVIDENCE for those bytes",
+        "zero": "blocked for the item"
+      },
+      "verdict": "At 120 s, expired: nothing checked at or after the bound is ever admitted."
+    },
     "FOMC25": {
       "case": "POSITIVE FEED CANDIDATE, PRIMARY FETCH FAILS",
       "verdict": "no normalized event; the acquisition stays under retry_policy (possibly SUSPENDED); SOURCE_UNAVAILABLE on primary_statement; the item is outstanding, so every cycle is NOT_ZERO until it concludes or an operator resolves it."
+    },
+    "FOMC250": {
+      "case": "STORE STALLED WHILE OTHER WORK IS DUE - a COMMIT stalls for 300 s while a feed poll becomes due, a recheck is PENDING_DUE and another item's in-flight save passes its admission bound",
+      "expected": {
+        "after": "the stalled transaction's record stands if it was admitted; the other attempt gets LOCAL_PERSISTENCE_FAILED at the first commit (its bound passed without an admitted record); then grants resume in the normative order",
+        "budget": "every attempt counted once; no key created; no repair request",
+        "decisions": "none while the store cannot write",
+        "detection": "after 10 s, without the store; alert",
+        "grants": "none during the incident: the feed poll and the recheck wait; no TRANSPORT_INVOKED; no cycle",
+        "in_flight": "requests already granted run to their own 60 s deadline; their results wait for the store",
+        "zero": "no zero from the incident"
+      },
+      "verdict": "A stalled store stops traffic and decisions; recovery is first-outcome reconciliation from durable state."
     },
     "FOMC26": {
       "case": "OFFICIAL DATE CORRECTION ON SAME URL - R3/X6",
@@ -2499,7 +2536,8 @@
       "snapshot selection fixtures on commit_seq prefixes (FOMC170-FOMC172, FOMC183, FOMC194)",
       "durable episode fixtures including clock steps and restarts (FOMC173-FOMC176)",
       "manifest byte fixtures (FOMC184-FOMC185), reconciliation fixtures (FOMC186-FOMC187, FOMC196)",
-      "clock-check and header-parser fixtures (FOMC188-FOMC193) and a proxy-environment fixture (FOMC195)"
+      "clock-check and header-parser fixtures (FOMC188-FOMC193) and a proxy-environment fixture (FOMC195)",
+      "a local synthetic store whose COMMIT or raw write stalls, proving LOCAL_SAVE_ADMISSION_BOUND_V1 and STORAGE_INCIDENT_V1 (FOMC248-FOMC250)"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -3087,7 +3125,9 @@
     "F76": "HTTP CLOCK HEADERS ARE PARSED STRICTLY. Only the final 200 response's single Date (strict IMF-fixdate, no leap second) and at most one Age (0..2147483647; <= 86400 for the clock check) are clock evidence; duplicates or invalid values make the reference unusable.",
     "F77": "RSS GUID IS PROVENANCE, URL IS IDENTITY. Same URL with a new GUID is one item plus GUID_CONFLICT; one GUID on a new URL never merges, plus GUID_COLLISION; a missing GUID is a diagnostic only; GUID values are never markers.",
     "F78": "AN ATTEMPT HAS ONE OUTCOME; LATE RESPONSES ARE FAIL-SAFE EVIDENCE. Every logical fetch has at most one outcome, the first committed; a per-response record is its attempt's outcome only while the attempt has none. A later response is kept and processed as unverified LATE_EVIDENCE: it can add candidates, markers and diagnostics or reopen an item, never conclude, anchor, satisfy, start a cycle or become current content.",
-    "F79": "ZERO IS EXPOSED ONLY FOR THE NEWEST FEED RECORD. A snapshot shows EVENTS_OBSERVED_ZERO only when it is the conclusion of the latest processable LIVE feed record in P(T); otherwise NO_CURRENT_CYCLE or DISCOVERY_PENDING. An older zero is never presented as current."
+    "F79": "ZERO IS EXPOSED ONLY FOR THE NEWEST FEED RECORD. A snapshot shows EVENTS_OBSERVED_ZERO only when it is the conclusion of the latest processable LIVE feed record in P(T); otherwise NO_CURRENT_CYCLE or DISCOVERY_PENDING. An older zero is never presented as current.",
+    "F80": "THE 120-SECOND LOCAL BOUND IS AN ADMISSION BOUND. A per-response record is admitted only by a check inside its committing transaction, before its insertions, strictly before 120 s after the network end; at or after it nothing is admitted and the attempt gets LOCAL_PERSISTENCE_FAILED. The instant at which an admitted COMMIT becomes durable is not bounded; observed_at, commit_seq and avail are never adjusted for it.",
+    "F81": "A STALLED STORE IS A STORAGE INCIDENT, NEVER A DECISION. It is detected without the store, raises an alert, stops every new FIX15 grant while it lasts and promises no durable decision; when the store commits again the first committed outcome of each attempt stands, with no repair request, no new key and no refunded attempt."
   },
   "item_predicate": {
     "backfill_discovery_side": "a HISTORICAL_BACKFILL_MANIFEST_V1 entry replaces the feed-title conjunct for backfill observations (primary_classification_v2.inputs)",
@@ -4125,7 +4165,7 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 22 (FIX21) closes the three blockers of the REV21 global review: the collector clock verdict is no longer a stage of the stopping failure chain and the health precedence is aligned (D1); RESOLVE is blocked only by a LIVE_ACQUISITION that is still OPENABLE (D2, FOMC247); FOMC05, FOMC107, FOMC118, FOMC176 and FOMC206 now match the active retry, time-basis and PENDING_DUE rules (D3); the 1 s grant-to-transport bound is tied to FIX15 immediate initiation. The revision 21 model is otherwise unchanged: zero from ITEM_SEMANTICALLY_CONCLUDED item state with RESOLVE cutoffs; PROCESSABLE for local processing and LIVE_ELIGIBLE for causal effects; one server-attested time scale (92 s); atomic TRANSPORT_INVOKED accounting with one outcome per attempt (120 autonomous bound); snapshot reads within P(T) of a persisted horizon. No runtime or implementation approval.",
+  "revision_note": "Spec revision 23 (FIX22) records one spec decision and makes the grant dispatch of concurrent logical fetches explicit. (1) LOCAL_SAVE_ADMISSION_BOUND_V1 (retry_policy.local_failure.admission_bound): the 120 s local bound is an ADMISSION bound, checked atomically inside the committing transaction before its insertions. A COMMIT begun after that check may become durable later: the physical duration of durability is not guaranteed. A stalled COMMIT or fsync is a storage incident (storage_incident, STORAGE_INCIDENT_V1): detected without the store, alerted, no new FIX15 grant while it lasts, no durable decision promised while the store cannot write, first-outcome reconciliation when it writes again, no repair request and no budget recreated. observed_at stays the receipt reading and causal_predicates.avail is unchanged; no timestamp is rewritten to hide the delay. The reading of revision 22 under which no record could become durable at or after +120 s is ABANDONED as unenforceable (admission_bound.guarantee_abandoned); the bound on the admission instant replaces it (admission_bound.guarantee_obtained). (2) selection.grant_dispatch states how grants are attributed when logical fetches run concurrently; ELIGIBLE_CLASS_ALTERNATION_V1, FIX15 and the one-in-flight rules are unchanged. Invariants F80-F81 and cases FOMC248-FOMC250 are added. The revision 22 model is otherwise unchanged. This document authorizes no capture.",
   "revision_policy": {
     "newer_content_barrier": {
       "clears": "when snapshot_binding.algorithm reaches step 4 or 5",
@@ -4521,11 +4561,20 @@
         "first_attempt_eligibility": "a new episode's first attempt is eligible when its opening condition holds and NOW_LB >= avail(latest NON_SATISFYING outcome of any episode of the same item) + 60",
         "hidden_or_library_retry": "FORBIDDEN (request_accounting.hidden_library_attempt)",
         "id": "BOUNDED_RETRY_EPISODE_V2",
-        "interrupted": "the current exclusive limiter-epoch owner is the only authority: at every reconciliation trigger it commits INTERRUPTED for every TRANSPORT_INVOKED of a non-current epoch without a durable outcome, and for its own attempts whose task ended without an outcome or that have no outcome 600 s (monotonic) after TRANSPORT_INVOKED; an attempt whose 120 s post-network save deadline passed gets LOCAL_PERSISTENCE_FAILED instead (local_failure). INTERRUPTED attempts count. Either outcome commits only if the attempt still has none; a response arriving afterwards is LATE_EVIDENCE (attempt_outcome_fence).",
+        "interrupted": "the current exclusive limiter-epoch owner is the only authority: at every reconciliation trigger it commits INTERRUPTED for every TRANSPORT_INVOKED of a non-current epoch without a durable outcome, and for its own attempts whose task ended without an outcome or that have no outcome 600 s (monotonic) after TRANSPORT_INVOKED; an attempt whose 120 s admission bound passed without an outcome gets LOCAL_PERSISTENCE_FAILED instead (local_failure.admission_bound). These commits happen at the first trigger at which the store can commit (storage_incident.decisions). INTERRUPTED attempts count. Either outcome commits only if the attempt still has none; a response arriving afterwards is LATE_EVIDENCE if it is admitted (attempt_outcome_fence).",
         "local_failure": {
-          "bytes_in_memory": "local persistence is retried in process until the attempt's local deadline (120 s monotonic after its network phase ends); then the owner commits LOCAL_PERSISTENCE_FAILED; no network",
+          "admission_bound": {
+            "durability": "The COMMIT of an admitted transaction begins after the check. Its physical duration, including fsync, is NOT bounded by this spec: an admitted record may become durable at or after +120 s. It is then a valid record: PROCESSABLE by its own transaction, and its attempt's outcome if it commits first (attempt_outcome_fence).",
+            "guarantee_abandoned": "revision 22 was read as promising that a local save finishing at or after +120 s never creates a RESPONSE. That is not enforceable: a COMMIT can be neither bounded nor cancelled once begun, and every durable decision is itself a COMMIT. The bound on the instant of durability is abandoned; the bound on the instant of admission replaces it.",
+            "guarantee_obtained": "no record exists whose admission check ran at or after +120 s; every admitted record passed the check strictly before +120 s; an attempt has exactly one outcome; late durability never makes anything available early and never changes observed_at",
+            "id": "LOCAL_SAVE_ADMISSION_BOUND_V1",
+            "owner": "At or after the bound the owner commits LOCAL_PERSISTENCE_FAILED for an attempt that still has no outcome, even while its saving task is blocked, as soon as the store can commit. While an admitted COMMIT is stalled the store can commit nothing else (storage_incident); whichever transaction commits first is the outcome.",
+            "rule": "A per-response record (as its attempt's outcome or as LATE_EVIDENCE) is admitted only by a check evaluated inside its committing transaction, under the store's write lock and before any of its rows is inserted: monotonic now < network_end + 120 s ('at 120 s, expired'). A failed check admits nothing: no RESPONSE and no LATE_EVIDENCE for those bytes.",
+            "timestamps": "observed_at is the receipt reading at the end of the network phase and is never moved. commit_seq is the position of the transaction that actually committed. avail follows causal_predicates.avail from that commit_seq (the first verified response whose TRANSPORT_INVOKED commits after it), so a record that became durable late is only available later, never earlier. No timestamp is rewritten, backdated or delayed to hide the delay; a transaction's wall_at_commit stays local provenance of the instant its rows were written."
+          },
+          "bytes_in_memory": "local persistence is retried in process until the attempt's admission bound (120 s monotonic after its network phase ends, local_failure.admission_bound); at or after the bound no record is admitted and the owner commits LOCAL_PERSISTENCE_FAILED as soon as the store can commit; no network",
           "bytes_lost": "LOCAL_PERSISTENCE_FAILED: one non-qualifying attempt of the episode (design crash_state_matrix A 'refetch', bounded)",
-          "store_unavailable": "TRANSPORT_INVOKED must commit before any network I/O, so no request can start while the store cannot commit; capture of already-running attempts is unaffected"
+          "store_unavailable": "TRANSPORT_INVOKED must commit before any network I/O, so no request can start while the store cannot commit; capture of already-running attempts is unaffected; a store operation that stalls is a storage incident (storage_incident)"
         },
         "local_fault_budget": "CLOCK_UNVERIFIED, CLOCK_INELIGIBLE, LOCAL_PERSISTENCE_FAILED, INTERRUPTED and CANCELLED_AFTER_INVOKE outcomes count; a persistent local fault can exhaust an episode, which then needs an operator MANUAL_RETRY (fail-safe); a provider-side stale Date without Age on one item's pages has the same effect (stated residual)",
         "manual_retry": {
@@ -4651,6 +4700,7 @@
         "continuations_first": "a validated redirect-follow request of an in-flight logical attempt takes the next grant before any new attempt (smallest TRANSPORT_INVOKED commit_seq first) and does not affect rotation",
         "decision_point": "A selection decision happens only when a new logical fetch's initial physical attempt is about to obtain a FIX15 grant; exactly one eligible work item is selected per decision.",
         "fix15_authority": "Selection chooses WHICH work takes a grant; FIX15 alone decides WHEN a grant exists.",
+        "grant_dispatch": "Grants are attributed by one dispatcher at the instant FIX15 would admit a start: first the validated redirect-follow request of the in-flight attempt with the smallest TRANSPORT_INVOKED commit_seq (continuations_first); otherwise one selection decision (class_rule) whose TRANSPORT_INVOKED commits before the next decision. Work is selected only when a grant can be attributed to it at once: no worker waits holding a selection, no work is selected twice, and no grant is consumed for a TRANSPORT_INVOKED that does not commit. Logical fetches of different items and the feed poll run concurrently within the one-in-flight rules; there is no other concurrency cap. No grant is attributed during a storage incident (storage_incident.grants).",
         "id": "ELIGIBLE_CLASS_ALTERNATION_V1",
         "implementation_freedom": "threads, queues and locks are free; the observable sequence of selected work must equal this rule",
         "rotation_state": "derived from durable TRANSPORT_INVOKED records only; identical after restart",
@@ -4861,6 +4911,7 @@
       "identical verified primary body yields a conflicting derived date (determinism failure)": "PARSER_FAILED with determinism-failure diagnostic; no new content revision",
       "internal processing error": "NO_PROVIDER_HEALTH_STATE: INTERNAL_PROCESSING_ERROR outcome, outstanding",
       "invalid UTF-8 under strict decoding": "PARSER_FAILED",
+      "local storage incident (a store operation stalled, storage_incident)": "no source-health result about the provider; an operational alert; no FIX15 grant while it is active; never a zero",
       "new item in a cycle (NEW_FEED_CANDIDATE, first-sighted UNSUPPORTED_DISCOVERY_SHAPE, UNIDENTIFIABLE_ITEM)": "no failure state: a NOT_ZERO cycle-conclusion reason; the feed check itself is successful",
       "normalization persistence failure": "no ingested_at, no EventRevision visibility",
       "official statement date absent, unparseable or ambiguous": "PARSER_FAILED",
@@ -4900,8 +4951,21 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 22,
+  "spec_revision": 23,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
+  "storage_incident": {
+    "alert": "one operational alert when an incident starts and one when it ends, emitted outside the store, carrying the stalled operation, its duration and the number of logical fetches in flight; an alert is not a source-health result",
+    "causal": "an incident changes no observed_at, no commit_seq and no availability rule; records committed after it are available per causal_predicates.avail; it never creates a cycle, a zero or an item conclusion",
+    "decisions": "no durable decision is promised while the store cannot write: the 120 s admission bound's LOCAL_PERSISTENCE_FAILED, the 600 s INTERRUPTED and the 600 s run deadline are committed at the first moment the store commits again. Nothing is decided from memory and nothing is assumed about the stalled transaction.",
+    "definition": "A storage incident is active while any store operation of the owner process - a transaction (including its COMMIT and fsync) or a raw-body write (including its fsync) - has been in progress for threshold_seconds or more on the monotonic clock.",
+    "detection": "from in-process operation markers only; it needs neither the store lock nor any store read or write, so it works while the store is stalled",
+    "grants": "while an incident is active no FIX15 grant is attributed, initial or continuation; waiting work waits and nothing is refunded; physical attempts already granted run to their own 60 s deadline",
+    "health": "no source-health result about the provider: a storage incident is a local fault",
+    "id": "STORAGE_INCIDENT_V1",
+    "recovery": "when the stalled operation returns the incident ends. The owner commits one STORAGE_INCIDENT record (stalled operation, monotonic duration, wall readings as provenance) and reconciles from durable state only: for every attempt the first committed outcome stands - a record admitted before its bound is valid whatever its durability instant; otherwise LOCAL_PERSISTENCE_FAILED or INTERRUPTED per retry_policy.interrupted. No repair or re-fetch request is made because of the incident, no key is created and no attempt is refunded or counted twice.",
+    "restart": "a process killed during an incident restarts as a new epoch: what the store recovered as committed stands, attempts without an outcome are INTERRUPTED, budgets are the durable counts",
+    "threshold_seconds": 10
+  },
   "structured_economic_extraction": "DEFERRED - not required to identify the statement family; belongs to a later enrichment phase",
   "supersedes_capture_spec_hash": [
     "74571bb01188fbf38f1a9e5f4d20d95b21885c62a23981c706f83ea7070bd3cd",
@@ -4924,7 +4988,8 @@
     "dd0cff22d0f434f0e3c01d9d0aa496d8fc616a4a8d45c1b99aa17db3a24c255d",
     "83df6d2dcee58073bc4775b296b58f8b4384de4311328892a8f2cd7f445eb5fe",
     "83caecb05154829d59d9c9430d27ed27178706488764b0c875b2826822d46910",
-    "12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4"
+    "12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4",
+    "ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",

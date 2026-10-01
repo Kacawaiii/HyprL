@@ -45,11 +45,13 @@ class _Direct:
     def at_head(self):
         return False
 
-    def aggregate(self, name, factory):
+    def read_aggregate(self, name, factory, read, *, head_only=False):
+        if head_only:
+            return None
         agg = factory()
         for row in self.rows():
             agg.add(row)
-        return agg
+        return read(agg)
 
     def memo(self, key, compute):
         return compute()

@@ -31,7 +31,7 @@ def attempts_without_outcome(store: FomcStore, *, sid: str | None = None, feed: 
     store = store.view()  # inside a write transaction the view is the committed state under the lock
     head = state.open_work(store)
     if head is not None:
-        candidates = list(head.attempts.values())
+        candidates = list(head.attempts)
     else:
         done = {row.key for row in store.rows("ATTEMPT_OUTCOME")}
         candidates = [row for row in store.rows("TRANSPORT_INVOKED") if str(row.seq) not in done]
