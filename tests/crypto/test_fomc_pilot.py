@@ -40,7 +40,7 @@ def test_fixtures_snapshots_and_a_verified_closure(tmp_path):
         assert meta["mode"] == "HISTORICAL_BACKFILL" and meta["date_lines"] and meta["content_type_lines"]
         assert (tmp_path / "fixtures" / "summer_edt" / "body.html").read_bytes() == syn.statement_html(**PAGES["summer_edt"][1])
         assert service.stop(wait_s=10) == []
-        report = pilot.close(env.root, tmp_path / "copy", tmp_path / "report.json", snapshots_log=log)
+        report = pilot.close(env.root, tmp_path / "copy", tmp_path / "report.json", snapshots_log=log, notify=False)
         assert report["ok"], json.dumps(report, indent=1)[:3000]
         verification = report["verification"]
         assert verification["resolved_reads"] == verification["reread_identical"] == verification["replay_identical"] == 4

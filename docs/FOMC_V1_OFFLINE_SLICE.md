@@ -7,7 +7,8 @@ Implements `docs/artifacts/fomc_capture_spec_v1.json` **revision 23**
 authoritative. This is an **offline slice**: every source is synthetic and served by a local
 Unix-socket provider; no Federal Reserve request, fixture capture or live run is part of it.
 
-**Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
+**Status (2026-10-01): runtime finished; 24 h real pilot capture IN PROGRESS, not yet validated** (see
+"Pilot capture"). **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
 revision 23 (the 120 s bound governs admission, a stalled store is a storage incident) and its
 implementation. Serialized fetches are replaced by central grant dispatch with concurrent logical
 fetches (`work_conserving`). `service.CAPTURE_BLOCKERS` is empty. Nothing has been captured: the first
@@ -152,6 +153,95 @@ Stop: `kill -TERM $(cat "$STORE.pid")` (clean stop: no new grant, fetches in fli
 bounds and are committed, ownership released; a kill -9 or a crash is also safe, the next start
 interrupts the old epoch's attempts). Afterwards, offline and on a copy of the store, verify a recorded
 `(T, H)` with `snapshot.replay(store, T, H)` and `snapshot.verify_health(store, H)`.
+
+## Pilot capture (real, 24 h, in progress)
+
+The first real run of the service against `www.federalreserve.gov`, authorized for 24 h. Store, raws,
+logs and fixtures stay outside Git (`redistribution.raw_storage = LOCAL_RESTRICTED`); only URLs,
+digests and provenance are recorded here.
+
+**Preconditions checked:** code `36b2e307d6b73fce5f2c430051f176347f60044f` (tests at that SHA: 150
+passed), spec revision 23 `3fc2f9a7…` (`verify_spec_binding`), NTP synchronized, 868 GB free, no other
+FOMC emitter (no FOMC process or unit; `services/crypto_news` declares a Fed source but nothing runs
+it; the cron entry `run_sense_daily.sh` points to a missing file), working tree and stash preserved,
+a new `fomc-store-v3` store outside the repository, preflight `--check` ok (nothing created).
+
+**Launch.** `2026-10-01T18:21:14Z`, systemd user unit `fomc-pilot` (PID 56842), tick 1 s, run directory
+`/home/kyo/fomc-pilot/run-20261001T182106Z/` (`store/`, `service.log`, `snapshots.jsonl`,
+`alerts.log`, `pid`, `started_utc`, `code_sha`, `spec_binding`, `ntp`, `preflight`):
+
+```
+RUN=/home/kyo/fomc-pilot/run-20261001T182106Z
+systemd-run --user --unit=fomc-pilot --working-directory=/home/kyo/HyprL-phase5 \
+  --property=TimeoutStopSec=180 --property=KillMode=mixed \
+  --property=StandardOutput=append:$RUN/service.log --property=StandardError=append:$RUN/service.log \
+  -- /usr/bin/python3 -m scripts.trading_lab.fomc.service --store $RUN/store --tick 1 \
+  --manifest $RUN/fixtures-manifest.json
+systemd-run --user --unit=fomc-pilot-supervisor --working-directory=/home/kyo/HyprL-phase5 \
+  -- /usr/bin/python3 -m scripts.trading_lab.fomc.pilot supervise --store $RUN/store --unit fomc-pilot \
+  --service-log $RUN/service.log --alerts $RUN/alerts.log --snapshots $RUN/snapshots.jsonl \
+  --copy $RUN/closure-copy --report $RUN/closure-report.json --close-at 2026-10-02T18:31:14+00:00
+```
+
+**Official fixtures** (acquired by the service itself as a `HISTORICAL_BACKFILL` manifest, through the
+transport and the FIX15 limiter, single owner; exported to `/home/kyo/fomc-pilot/fixtures-v1/` with
+bytes, headers, URLs, digests, provenance and processed fields; all checks green):
+
+| fixture | URL | raw SHA-256 | bytes | Date | processed |
+|---|---|---|---|---|---|
+| summer EDT | `…/newsevents/pressreleases/monetary20260617a.htm` | `91a8ba0316f43d41cc7278fea0ce449a411b7536149c18ddd21147189586e948` | 81083 | Thu, 01 Oct 2026 18:22:25 GMT | CLOCK_VERIFIED; 2026-06-17; "For release at 2:00 p.m. EDT" → `2026-06-17T18:00:00+00:00` (EXACT) |
+| winter EST | `…/newsevents/pressreleases/monetary20260128a.htm` | `49fa733577b8415b77d953b347b04e489ba389c2db54e39ccca544d6a201dbf0` | 82109 | Thu, 01 Oct 2026 18:23:05 GMT | CLOCK_VERIFIED; 2026-01-28; "For release at 2:00 p.m. EST" → `2026-01-28T19:00:00+00:00` (EXACT) |
+| immediate release | `…/newsevents/pressreleases/monetary20150318a.htm` | `90e3bbea33bf00946aa4393e13e8a25de32f37cf4bb0205054b0699048c556d5` | 83666 | Thu, 01 Oct 2026 18:23:00 GMT | CLOCK_VERIFIED; 2015-03-18; "For immediate release" → declared null (IMMEDIATE) |
+
+**First real results (first 11 minutes).** DNS, TCP, TLS (production `HttpsConnector`, system trust
+store) and HTTP 200 on the feed and statement pages; 28 of 28 responses CLOCK_VERIFIED (the feed carries
+`Age`, statement pages do not); 15 FAMILY candidates from the feed; LIVE primary acquisitions of the four
+admissible 2026 statements (04-29, 06-17, 07-29, 09-16: NORMALIZED_REVISION_COMMITTED, anchored, LIVE
+available); 10 family-path items DEFINITELY_OUT_OF_SCOPE (minutes and other releases); the first O300
+recheck started; first cycles NOT_ZERO (new candidates, then an outstanding item), then
+EVENTS_OBSERVED_ZERO. Resolved snapshot at `T = 2026-10-01T18:32:15.552066+00:00`, `H = 158` (`P = 144`),
+identity `8adbc765c6c805d8cdc4a7709f2005a0b994f7c2b64e46e19505bacce2e71638`: discovery NOT_ZERO
+(cycle 137), 4 CURRENT_REVISION LIVE-available, 2 CURRENT_REVISION backfill-only, 11 NOT_IN_V1_SCOPE,
+health without failure on both surfaces. A read at T = now right after launch was resolved but its
+P(T) held only the pre-capture transactions: availability needs the next verified response + 92 s, and
+no rule was changed.
+
+**Findings from real traffic.**
+- *Revision churn (spec decision needed, not a code defect).* Statement pages carry bytes that change on
+  every response (Cloudflare e-mail obfuscation links and the `__CF$cv$params` challenge script). The
+  spec keys revisions by the raw body hash (`satisfaction.same_content` / `changed_content`), so every
+  observation of an unchanged statement is a new EventRevision (the 06-17 statement fetched minutes
+  apart by backfill and LIVE gave two). The implementation conforms to revision 23; no guarantee is
+  weakened, but "content revision" no longer means a change of the statement. Resolving it needs a spec
+  revision (a revision identity over the normalized statement content or a frozen canonicalization of
+  the volatile spans); it was not changed during the pilot.
+- *Transient DNS timeouts.* Three attempts (18:22–18:24 UTC) ended `SOURCE_UNAVAILABLE` "DNS resolution
+  failed: gaierror" after about 20 s each (resolver timeouts; 1.1.1.1/1.0.0.1; 0 failures in 40 lookups
+  of a neutral host afterwards; none since). Classified, counted and retried per spec; not a code defect.
+
+**Monitoring.** The supervisor unit `fomc-pilot-supervisor` (PID 57012) routes every `FOMC-ALERT`
+line and any service stop before the closure (`FOMC-SERVICE-DOWN`) to the system journal (identifier
+`fomc-pilot`, priority crit; `journalctl -t fomc-pilot -p crit -f`) and to `alerts.log`, and records a
+snapshot read every hour in `snapshots.jsonl`. Route checked with a test notice at launch.
+
+**Closure, programmed for 2026-10-02T18:31:14Z** (24 h 10 min, so that the O86400 recheck of the first
+anchors is due before it): `systemctl --user stop fomc-pilot` (clean stop), owner-lock check, a copy
+through the SQLite backup API from a read-only connection (WAL frames included, never the database
+file alone) plus the immutable raws, then offline on the copy: every recorded resolved snapshot
+re-read and replayed at its (T, H), `verify_health`, and the audit (no attempt without outcome, <= 6
+attempts per key, one fetch per item and one poll in flight, FIX15 per epoch, <= 120 requests per LIVE
+item, one processing outcome per record, unique keys, no false zero). Report:
+`$RUN/closure-report.json`; result notice in the journal. To run it by hand:
+`python -m scripts.trading_lab.fomc.pilot close --store $RUN/store --unit fomc-pilot --copy $RUN/closure-copy-manual --snapshots $RUN/snapshots.jsonl --report $RUN/closure-report-manual.json`.
+
+**Status, kept distinct.**
+- Runtime: finished (offline proofs above).
+- Capture: in progress since 2026-10-01T18:21:14Z.
+- Capture validated: not yet; only after the closure report is green.
+- Not exercised by this pilot: the O604800 (7-day) recheck; a real storage incident, restart or crash;
+  MANUAL_RETRY, RESOLVE and suspension against the real provider; a real redirect, PARSER_FAILED or
+  clock-unverified response (none seen so far); a new FOMC statement released during capture (the next
+  meeting is after the window).
 
 ## Remaining limits
 

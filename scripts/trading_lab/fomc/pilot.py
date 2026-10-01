@@ -318,7 +318,7 @@ def verify_copy(copy_dir: Path, snapshots_log: Path | None) -> dict:
 
 
 def close(store_dir: Path, copy_dir: Path, report: Path, *, unit: str | None = None, pid: int | None = None,
-          snapshots_log: Path | None = None) -> dict:
+          snapshots_log: Path | None = None, notify: bool = True) -> dict:
     result = {"started": iso(_now()), "store": str(store_dir), "copy": str(copy_dir)}
     result["stop"] = stop_service(unit, pid)
     result["owner_free"] = owner_free(store_dir)
@@ -331,8 +331,9 @@ def close(store_dir: Path, copy_dir: Path, report: Path, *, unit: str | None = N
         result["ok"] = result["copy_check"]["equal"] and result["verification"]["ok"]
     result["finished"] = iso(_now())
     report.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-    _alert(f"FOMC pilot closure {'VERIFIED' if result['ok'] else 'FAILED'}: report {report}",
-           syslog.LOG_NOTICE if result["ok"] else syslog.LOG_CRIT)
+    if notify:  # the monitored journal only hears about real closures
+        _alert(f"FOMC pilot closure {'VERIFIED' if result['ok'] else 'FAILED'}: report {report}",
+               syslog.LOG_NOTICE if result["ok"] else syslog.LOG_CRIT)
     return result
 
 
