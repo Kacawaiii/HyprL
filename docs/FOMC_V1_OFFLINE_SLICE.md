@@ -215,9 +215,15 @@ no rule was changed.
   weakened, but "content revision" no longer means a change of the statement. Resolving it needs a spec
   revision (a revision identity over the normalized statement content or a frozen canonicalization of
   the volatile spans); it was not changed during the pilot.
-- *Transient DNS timeouts.* Three attempts (18:22–18:24 UTC) ended `SOURCE_UNAVAILABLE` "DNS resolution
-  failed: gaierror" after about 20 s each (resolver timeouts; 1.1.1.1/1.0.0.1; 0 failures in 40 lookups
-  of a neutral host afterwards; none since). Classified, counted and retried per spec; not a code defect.
+- *Transient DNS timeouts.* Six of the first 44 attempts ended `SOURCE_UNAVAILABLE` "DNS resolution
+  failed: gaierror", in two bursts (18:22–18:24 and 18:33:25–18:33:45 UTC), each after about 20 s
+  (resolver timeouts; `/etc/resolv.conf` points straight at 1.1.1.1/1.0.0.1 without a local cache; 0
+  failures in 40 lookups of a neutral host). Classified, counted against the episode budget and
+  retried per spec; not a code defect. A local caching resolver on the capture host would cut this
+  budget consumption; it is an operational choice, not made during the pilot.
+- *Rechecks of every anchored item.* By the spec, the anchor is the first LIVE_ELIGIBLE primary record
+  whatever its classification, so the 13 LIVE-acquired family items (the 4 statements and 9 other
+  releases) each carry O300/O3600/O86400/O604800 obligations; 11 O300 rechecks ran within 13 minutes.
 
 **Monitoring.** The supervisor unit `fomc-pilot-supervisor` (PID 57012) routes every `FOMC-ALERT`
 line and any service stop before the closure (`FOMC-SERVICE-DOWN`) to the system journal (identifier
