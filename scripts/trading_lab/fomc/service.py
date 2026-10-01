@@ -316,6 +316,20 @@ class FomcService:
         return left
 
 
+def submit_manifest_once(collector, raw: bytes, provenance: str) -> dict:
+    """Submit a backfill manifest through the owner unless a manifest with the same digest exists, so a
+    restart never opens a second run of the same entries."""
+    digest = spec.sha256_bytes(raw)
+    existing = collector.store.rows("MANIFEST", key=digest)
+    if existing:
+        result = dict(existing[0].body, seq=existing[0].seq, submitted=False)
+    else:
+        result = dict(collector.submit_manifest(raw, provenance), submitted=True)
+    print(f"FOMC manifest {digest[:12]} valid={result['valid']} submitted={result['submitted']} seq={result['seq']}",
+          file=sys.stderr, flush=True)
+    return result
+
+
 def preflight(store_path: Path) -> list[str]:
     """Everything that can be checked without the network, without creating the store and without
     taking ownership. Returns the problems found (empty: ready)."""
@@ -336,6 +350,8 @@ def main(argv=None) -> int:
     parser.add_argument("--store", type=Path, required=True, help="store directory (created if absent)")
     parser.add_argument("--tick", type=float, default=1.0, help="owner tick in seconds (default 1)")
     parser.add_argument("--check", action="store_true", help="preflight only: no store created, no request")
+    parser.add_argument("--manifest", type=Path, help="a HISTORICAL_BACKFILL manifest submitted by this owner at start, "
+                                                      "once per manifest digest")
     args = parser.parse_args(argv)
     problems = preflight(args.store)
     if problems:
@@ -353,6 +369,8 @@ def main(argv=None) -> int:
     clock = SystemClock()
     store = FomcStore(args.store, wall_clock=clock.wall, mono=clock.mono)
     collector = Collector(store, HttpsConnector(), clock, boot_id=f"boot-{int(time.time())}", inline=False)
+    if args.manifest is not None:
+        submit_manifest_once(collector, args.manifest.read_bytes(), f"operator manifest {args.manifest.name}")
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
