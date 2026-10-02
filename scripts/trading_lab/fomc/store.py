@@ -37,6 +37,7 @@ UNIQUE_KINDS = (
     "CYCLE_CONCLUSION",
     "DIAGNOSTIC_ONCE",  # GUID / title diagnostics raised once per value
     "INTEGRITY_DIAGNOSTIC",  # one per record, committed with its source-health result
+    "GRANT",  # the FIX15 grant journal: one row per consumed grant, keyed (epoch, order)
 )
 
 
@@ -51,7 +52,7 @@ class StoreBusy(RuntimeError):
 # migration: rows are append-only and never rewritten, so an older layout (LINK `mode`, REVISION
 # without the normalized fields, no source-health rows, no schema version) cannot be upgraded in
 # place without inventing history. Open such a store with the code that wrote it, or start a new one.
-SCHEMA_VERSION = "fomc-store-v4"  # spec revision 24: content identity on revisions and links
+SCHEMA_VERSION = "fomc-store-v5"  # spec revision 25: content identity V2, FIX15 grant journal
 
 
 class StoreRejected(RuntimeError):

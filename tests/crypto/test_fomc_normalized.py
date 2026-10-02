@@ -67,7 +67,7 @@ def test_the_27_fields_split_between_the_revision_and_each_observation(env):
     assert link["observation_mode"] == "LIVE" and link["observed_at"] == record["observed_at"]  # the receipt instant
     assert t(link["ingested_at"]) >= t(link["observed_at"]) and link["rss_guid_if_available"] == "g1"
     assert link["source_observation_id"] == spec.sha256_canonical(["SourceObservation", spec.PROVIDER_ID, SID1, revision["content_hash"]])
-    assert link["raw_artifact_identities_and_hashes"] == [{"record": link["record"], "raw_sha256": revision["content_hash"],
+    assert link["raw_artifact_identities_and_hashes"] == [{"record": link["record"], "raw_sha256": revision["first_raw_sha256"],
                                                            "byte_length": record["byte_length"], "request_url": syn.url(P1),
                                                            "final_url": syn.url(P1), "redirect_chain": [syn.url(P1)]}]
     assert revision["ingested_at"] == link["ingested_at"]  # the revision was created by this observation's transaction

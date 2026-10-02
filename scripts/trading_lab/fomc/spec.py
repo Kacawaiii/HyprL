@@ -1,4 +1,4 @@
-"""Constants of FOMC capture spec V1, revision 24, and the binding to its canonical hash.
+"""Constants of FOMC capture spec V1, revision 25, and the binding to its canonical hash.
 
 Every number here is copied from the authoritative JSON; `verify_spec_binding` fails if the
 JSON on disk is not the revision this code was written against.
@@ -12,10 +12,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC_PATH = ROOT / "docs" / "artifacts" / "fomc_capture_spec_v1.json"
-SPEC_HASH = "235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36"
-SPEC_REVISION = 24
-SUPERSEDED_SPEC_HASH = "3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9"  # revision 23
-CONTENT_IDENTITY_ID = "FOMC_CONTENT_IDENTITY_V1"  # revision_policy.content_identity (canonicalizer: canon.py)
+SPEC_HASH = "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece"
+SPEC_REVISION = 25
+SUPERSEDED_SPEC_HASH = "235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36"  # revision 24
+CONTENT_IDENTITY_ID = "FOMC_CONTENT_IDENTITY_V2"  # revision_policy.content_identity (canonicalizer: canon.py)
 
 PROVIDER_ID = "federal_reserve_fomc_statements_v1"
 EVENT_FAMILY = "FOMC_MONETARY_POLICY_STATEMENT"
@@ -108,7 +108,7 @@ def sha256_bytes(raw: bytes) -> str:
 
 
 def verify_spec_binding(path: Path = SPEC_PATH) -> str:
-    """Return the canonical hash of the spec on disk; raise if it is not revision 24."""
+    """Return the canonical hash of the spec on disk; raise if it is not revision 25."""
     spec = json.loads(path.read_text(encoding="utf-8"))
     digest = sha256_canonical(spec)
     if digest != SPEC_HASH or spec.get("spec_revision") != SPEC_REVISION:

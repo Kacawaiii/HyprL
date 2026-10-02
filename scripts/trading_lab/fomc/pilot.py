@@ -258,31 +258,78 @@ def _in_flight_overlaps(view, invoked) -> list[dict]:
     return overlaps
 
 
-def fix15_coverage(view, invoked) -> dict:
-    """FIX15 over the starts the store actually records. Initial grants are durable (TRANSPORT_INVOKED
-    grant_mono, per epoch). Continuation grants of redirect hops are not recorded by this store: they
-    are covered only when every attempt is known to have had a single physical request; otherwise the
-    check over all physical starts is NOT_PROVEN, never PASS."""
+def fix15_journal(view, invoked) -> dict:
+    """FIX15 proved over the grant journal (request_accounting.grant_journal): completeness first (orders
+    contiguous per epoch, one initial grant per TRANSPORT_INVOKED in its transaction, per-attempt hops
+    contiguous and equal to the recorded counts, redirect chains equal to the granted URLs), then the
+    rules over every journaled grant (spacing, window, embargo, no reuse). A missing or inconsistent
+    trace is NOT_PROVEN; a rule broken by the journal is FAIL; nothing is reconstructed."""
+    grants = view.rows("GRANT")
+    epochs = {e.key: e.body for e in view.rows("EPOCH")}
+    missing, violations = [], []
+    by_epoch: dict[str, list] = {}
+    for g in grants:
+        by_epoch.setdefault(g.body["epoch"], []).append(g)
     per_epoch = {}
-    for epoch in sorted({t.body["epoch"] for t in invoked}):
-        grants = sorted(t.body["grant_mono"] for t in invoked if t.body["epoch"] == epoch)
-        per_epoch[epoch] = {
-            "initial_grants": len(grants),
-            "spacing_ok": all(b - a >= spec.SPACING_S for a, b in zip(grants, grants[1:])),
-            "window_ok": all(sum(1 for g in grants if 0 <= x - g < spec.WINDOW_S) <= spec.WINDOW_MAX_STARTS for x in grants)}
-    multi_hop = unknown = 0
+    for epoch, rows in by_epoch.items():
+        orders = [g.body["order"] for g in rows]
+        if orders != list(range(1, len(rows) + 1)):
+            missing.append(f"epoch {epoch[:8]}: grant orders are not contiguous from 1")
+        monos = sorted(g.body["mono"] for g in rows)
+        spacing = all(b - a >= spec.SPACING_S for a, b in zip(monos, monos[1:]))
+        window = all(sum(1 for m in monos if 0 <= x - m < spec.WINDOW_S) <= spec.WINDOW_MAX_STARTS for x in monos)
+        begin = epochs.get(epoch, {}).get("limiter_epoch_begin_mono")
+        embargo = begin is not None and monos[0] >= begin + spec.EMBARGO_S
+        if begin is None:
+            missing.append(f"epoch {epoch[:8]}: limiter epoch start not recorded")
+        if not spacing:
+            violations.append(f"epoch {epoch[:8]}: two grants less than {spec.SPACING_S} s apart")
+        if not window:
+            violations.append(f"epoch {epoch[:8]}: more than {spec.WINDOW_MAX_STARTS} grants in a {spec.WINDOW_S} s window")
+        if begin is not None and not embargo:
+            violations.append(f"epoch {epoch[:8]}: a grant inside the {spec.EMBARGO_S} s embargo")
+        per_epoch[epoch] = {"grants": len(rows), "spacing_ok": spacing, "window_ok": window, "embargo_ok": embargo}
+    hops: dict[int, list] = {}
+    abandoned = 0
+    for g in grants:
+        attempt = g.seq if g.body["attempt"] == "SELF" else g.body["attempt"]
+        if attempt is None:
+            abandoned += 1
+            continue
+        hops.setdefault(attempt, []).append((g.body["hop"], g.body["url"], g))
     for t in invoked:
-        record = view.rows("RESPONSE", key=str(t.seq))
-        if not record:
-            unknown += 1  # failed, interrupted or lost: how many physical requests it made is not recorded
-        elif len(record[0].body["redirect_chain"]) > 1:
-            multi_hop += 1  # its continuation grants are not recorded
-    initial_ok = all(e["spacing_ok"] and e["window_ok"] for e in per_epoch.values())
-    covered = multi_hop == 0 and unknown == 0
-    return {"initial_grants": {"status": "PASS" if initial_ok else "FAIL", "per_epoch": per_epoch},
-            "continuation_grants": {"status": "NONE_BY_RECORD" if covered else "NOT_PROVEN",
-                                    "multi_hop_responses": multi_hop, "attempts_without_hop_record": unknown},
-            "all_physical_starts": "FAIL" if not initial_ok else ("PASS" if covered else "NOT_PROVEN")}
+        initial = [h for h in hops.get(t.seq, []) if h[2].body["attempt"] == "SELF"]
+        if len(initial) != 1 or initial[0][0] != 0 or initial[0][2].body["mono"] != t.body["grant_mono"]:
+            missing.append(f"attempt {t.seq}: no single initial grant in its TRANSPORT_INVOKED transaction")
+    for attempt, rows in hops.items():
+        numbers = sorted(h for h, _u, _g in rows)
+        if len(numbers) != len(set(numbers)):
+            violations.append(f"attempt {attempt}: a hop granted twice")
+        if numbers != list(range(len(numbers))):
+            missing.append(f"attempt {attempt}: hops not contiguous from 0")
+    counted = set()
+    for record in view.rows("RESPONSE"):
+        attempt, count = record.body["attempt"], record.body.get("grants")
+        counted.add(attempt)
+        rows = sorted(hops.get(attempt, []), key=lambda h: h[0])
+        if count is None or len(rows) != count:
+            missing.append(f"attempt {attempt}: {len(rows)} journaled grants, the response records {count}")
+        elif [u for _h, u, _g in rows] != record.body["redirect_chain"]:
+            missing.append(f"attempt {attempt}: journaled URLs differ from the redirect chain")
+    for outcome in view.rows("ATTEMPT_OUTCOME"):
+        if "grants" in outcome.body:
+            attempt = outcome.body["attempt"]
+            counted.add(attempt)
+            if len(hops.get(attempt, [])) != outcome.body["grants"]:
+                missing.append(f"attempt {attempt}: {len(hops.get(attempt, []))} journaled grants, its outcome records "
+                               f"{outcome.body['grants']}")
+    uncounted = sorted(t.seq for t in invoked if t.seq not in counted)
+    status = "FAIL" if violations else ("NOT_PROVEN" if missing else "PROVEN")
+    return {"status": status, "grants": len(grants), "abandoned_before_invoke": abandoned,
+            "continuations": sum(1 for g in grants if g.body["kind"] == "CONTINUATION"), "per_epoch": per_epoch,
+            "missing": missing, "violations": violations,
+            "attempts_without_count": uncounted,  # INTERRUPTED: complete by construction (journal before grant)
+            "all_physical_starts": status}
 
 
 def recheck_status(view) -> dict:
@@ -323,7 +370,7 @@ def audit(store) -> dict:
     without_outcome = [t.seq for t in invoked if not view.rows("ATTEMPT_OUTCOME", key=str(t.seq))]
     per_key = Counter(t.key for t in invoked if t.key != ledger.FEED_KEY)
     overlaps = _in_flight_overlaps(view, invoked)
-    fix15 = fix15_coverage(view, invoked)
+    fix15 = fix15_journal(view, invoked)
     requests_per_item: Counter = Counter()  # upper bound: hops of each response, 4 for an attempt without one
     for t in invoked:
         if t.body.get("sid") is None or t.body.get("mode") != "LIVE":
@@ -342,22 +389,63 @@ def audit(store) -> dict:
         "no_attempt_without_outcome": without_outcome == [],
         "at_most_six_attempts_per_key": max(per_key.values(), default=0) <= spec.ATTEMPTS_PER_EPISODE,
         "one_fetch_per_item_across_classes_and_one_feed_poll_in_flight": overlaps == [],
-        "fix15_initial_grants_per_epoch": fix15["initial_grants"]["status"] == "PASS",
+        "fix15_journal_not_failed": fix15["status"] != "FAIL",
         "at_most_120_requests_per_live_item_upper_bound": max(requests_per_item.values(), default=0) <= 120,
         "one_processing_outcome_per_record": all(len(view.rows("PROCESSING_OUTCOME", key=str(r.seq))) == 1 for r in responses),
         "unique_episode_keys": len({e.key for e in view.rows("EPISODE_OPEN")}) == len(view.rows("EPISODE_OPEN")),
         "no_false_zero": false_zero == [],
     }
     not_proven = []
-    if fix15["all_physical_starts"] == "NOT_PROVEN":
-        not_proven.append("FIX15 over all physical starts: continuation grants of redirect hops are not recorded "
-                          f"({fix15['continuation_grants']['multi_hop_responses']} multi-hop responses, "
-                          f"{fix15['continuation_grants']['attempts_without_hop_record']} attempts without a hop record)")
+    if fix15["status"] == "NOT_PROVEN":
+        not_proven.append("FIX15 over all physical starts: the grant journal is incomplete: " + "; ".join(fix15["missing"][:5]))
     return {"checks": checks, "ok": all(checks.values()), "not_proven": not_proven, "fix15": fix15,
             "attempts_without_outcome": without_outcome, "in_flight_overlaps": overlaps,
             "max_attempts_per_key": max(per_key.values(), default=0),
             "max_requests_per_live_item_upper_bound": max(requests_per_item.values(), default=0),
             "false_zero_cycles": false_zero}
+
+
+def pilot_criteria(view, audit_: dict, rechecks: dict, *, reread_ok: bool) -> dict:
+    """The short real pilot's criteria, from durable records only: a content identity that stays the same over
+    re-reads whose raw bytes really differ, every observation kept distinct (its own record, raw and link),
+    identical snapshots and replays, a complete and compliant FIX15 journal, and the durable state of the +300 s
+    and +1 h rechecks."""
+    links = view.rows("LINK")
+    by_item: dict[str, dict] = {}
+    for link in links:
+        record = view.row_at("RESPONSE", link.body["record"])
+        item = by_item.setdefault(record.body["sid"], {"raws": set(), "identities": set(), "domains": Counter(), "links": 0})
+        item["raws"].add(link.body["raw_artifact_identities_and_hashes"][0]["raw_sha256"])
+        item["identities"].add(link.body["content_sha256"])
+        item["domains"][link.body["canonicalization"]["domain"]] += 1
+        item["links"] += 1
+    re_read = {sid: v for sid, v in by_item.items() if len(v["raws"]) >= 2}
+    stable = [sid for sid, v in re_read.items() if len(v["identities"]) == 1]
+    distinct = len({l.body["record"] for l in links}) == len(links) and all(
+        l.body["raw_artifact_identities_and_hashes"][0]["raw_sha256"] == view.row_at("RESPONSE", l.body["record"]).body["raw_sha"]
+        for l in links)
+    lb = parse_iso(rechecks["now_lb"]) if rechecks.get("now_lb") else None
+
+    def served(offset):
+        rows = [o for item in rechecks["items"].values() for o in item["obligations"] if o["offset"] == offset]
+        due = [o for o in rows if lb is not None and parse_iso(o["due_at"]) + timedelta(seconds=2 * spec.CLOCK_ERROR_BOUND_S + 120) <= lb]
+        return {"obligations": len(rows), "due_long_enough": len(due),
+                "statuses": dict(Counter(o["status"] for o in rows)),
+                "served_when_due": all(o["status"] == "SATISFIED" for o in due) and bool(due)}
+    criteria = {
+        "identity_stable_over_different_rereads": {"items_reread_with_different_raws": len(re_read),
+                                                   "items_with_one_identity": len(stable), "ok": bool(re_read) and len(stable) == len(re_read),
+                                                   "per_item": {sid[:12]: {"raws": len(v["raws"]), "identities": len(v["identities"]),
+                                                                           "domains": dict(v["domains"])} for sid, v in by_item.items()}},
+        "observations_distinct": {"links": len(links), "ok": distinct},
+        "snapshots_and_replay_identical": {"ok": reread_ok},
+        "fix15_journal_complete_and_compliant": {"status": audit_["fix15"]["status"], "ok": audit_["fix15"]["status"] == "PROVEN"},
+        "rechecks_300s": served(300), "rechecks_1h": served(3600),
+    }
+    criteria["rechecks_300s"]["ok"] = criteria["rechecks_300s"]["served_when_due"]
+    criteria["rechecks_1h"]["ok"] = criteria["rechecks_1h"]["served_when_due"]
+    criteria["verdict"] = "MET" if all(v["ok"] for k, v in criteria.items() if isinstance(v, dict)) else "NOT_MET"
+    return criteria
 
 
 def verify_copy(copy_dir: Path, snapshots_log: Path | None) -> dict:
@@ -394,6 +482,9 @@ def verify_copy(copy_dir: Path, snapshots_log: Path | None) -> dict:
                   "replay_failures": [x for x in replayed if x is not True], "health_replay": health_ok,
                   "health_error": health_error, "audit": audit(store), "rechecks": recheck_status(store.view()),
                   "progress": progress(store)}
+        result["criteria"] = pilot_criteria(store.view(), result["audit"], result["rechecks"],
+                                            reread_ok=bool(recorded) and all(x is True for x in reread)
+                                            and all(x is True for x in replayed))
         result["ok"] = (bool(resolved) and all(x is True for x in reread) and all(x is True for x in replayed)
                         and health_ok and result["audit"]["ok"])
         return result
@@ -453,15 +544,18 @@ def close(store_dir: Path, copy_dir: Path, report: Path, *, unit: str | None = N
                                "not_proven": verification["audit"]["not_proven"]}
         result["pilot_duration"] = pilot_duration(result["stop"], verification["progress"],
                                                   planned_start=planned_start, planned_end=planned_end, closed_at=closed_at)
+        result["criteria"] = verification["criteria"]
     result["integrity_ok"] = result["integrity"]["verdict"] == "VALID"
     result["duration_ok"] = result["pilot_duration"]["verdict"] == "ACCOMPLISHED"
+    result["criteria_ok"] = result.get("criteria", {}).get("verdict") == "MET"
     result["ok"] = result["integrity_ok"] and result["duration_ok"]
     result["finished"] = iso(_now())
     report.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     if notify:  # the monitored journal only hears about real closures
         _alert(f"FOMC pilot closure: integrity {result['integrity']['verdict']}, duration "
-               f"{result['pilot_duration']['verdict']}, not proven {len(result['integrity'].get('not_proven', []))}: "
-               f"report {report}", syslog.LOG_NOTICE if result["ok"] else syslog.LOG_CRIT)
+               f"{result['pilot_duration']['verdict']}, criteria {result.get('criteria', {}).get('verdict')}, not proven "
+               f"{len(result['integrity'].get('not_proven', []))}: report {report}",
+               syslog.LOG_NOTICE if result["ok"] and result["criteria_ok"] else syslog.LOG_CRIT)
     return result
 
 
@@ -506,6 +600,89 @@ def supervise(store_dir: Path, service_log: Path, alerts: Path, snapshots_log: P
                  planned_start=planned_start, planned_end=close_at)
 
 
+# ------------------------------------------------------------------ the successor pilot -----------
+def _systemctl(*args: str) -> str:
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True).stdout.strip()
+
+
+def successor(previous_run: Path, previous_unit: str, code: Path, base: Path, *, wait_until: datetime,
+              minutes: float = 90.0, unit: str = "fomc-pilot-rev25", manifest: Path | None = None) -> dict:
+    """Start the successor pilot only once the previous one allows it: its closure report shows integrity
+    VALID and duration ACCOMPLISHED, its service is stopped and its store's ownership is free, and no other
+    FOMC service runs - never a second emitter. Then: a new store, the service from the frozen `code`, and a
+    supervisor that closes it after `minutes` with a consistent copy and offline verification."""
+    decision = {"checked_at": None, "previous_run": str(previous_run), "launched": False, "reasons": []}
+    report_path = previous_run / "closure-report.json"
+    while not report_path.exists() and _now() < wait_until:
+        time.sleep(30)
+    decision["checked_at"] = iso(_now())
+    reasons = decision["reasons"]
+    if not report_path.exists():
+        reasons.append(f"no closure report of the previous pilot by {iso(wait_until)}")
+    else:
+        previous = json.loads(report_path.read_text(encoding="utf-8"))
+        decision["previous"] = {"integrity": previous.get("integrity", {}).get("verdict"),
+                                "duration": previous.get("pilot_duration", {}).get("verdict"),
+                                "not_proven": previous.get("integrity", {}).get("not_proven")}
+        if decision["previous"]["integrity"] != "VALID":
+            reasons.append(f"previous integrity {decision['previous']['integrity']}")
+        if decision["previous"]["duration"] != "ACCOMPLISHED":
+            reasons.append(f"previous duration {decision['previous']['duration']}")
+    state_ = _systemctl("is-active", previous_unit)
+    if state_ in ("active", "activating", "deactivating", "reloading"):
+        reasons.append(f"previous service {previous_unit} is {state_}")
+    if (previous_run / "store").exists() and not owner_free(previous_run / "store"):
+        reasons.append("the previous store still has an owner")
+    others = [line.split()[0] for line in _systemctl("list-units", "fomc-pilot*", "--state=active", "--no-legend",
+                                                      "--plain").splitlines() if line.strip()]
+    emitters = [u for u in others if "supervisor" not in u and u.endswith(".service")]
+    if emitters:
+        reasons.append(f"another FOMC service is active: {emitters}")
+    if subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True,
+                      text=True).stdout.strip() != "yes":
+        reasons.append("NTP not synchronized")
+    try:
+        decision["spec"] = [spec.SPEC_REVISION, spec.verify_spec_binding()]
+    except RuntimeError as exc:
+        reasons.append(str(exc))
+    run = None
+    if not reasons:
+        run = base / f"run-rev{spec.SPEC_REVISION}-{_now().strftime('%Y%m%dT%H%M%SZ')}"
+        run.mkdir(parents=True)
+        args = ["/usr/bin/python3", "-m", "scripts.trading_lab.fomc.service", "--store", str(run / "store"), "--tick", "1"]
+        if manifest is not None:
+            shutil.copy(manifest, run / manifest.name)
+            args += ["--manifest", str(run / manifest.name)]
+        check = subprocess.run(["/usr/bin/python3", "-m", "scripts.trading_lab.fomc.service", "--store",
+                                str(run / "store"), "--check"], capture_output=True, text=True, cwd=code)
+        if check.returncode != 0:
+            reasons.append(f"preflight refused: {check.stderr.strip()}")
+    if reasons:
+        decision["decision"] = "NOT_LAUNCHED"
+        (base / "successor-decision.json").write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
+        _alert(f"FOMC successor NOT launched: {'; '.join(reasons)}")
+        return decision
+    subprocess.run(["systemd-run", "--user", f"--unit={unit}", f"--working-directory={code}",
+                    "--property=TimeoutStopSec=180", "--property=KillMode=mixed",
+                    f"--property=StandardOutput=append:{run / 'service.log'}",
+                    f"--property=StandardError=append:{run / 'service.log'}", "--", *args], check=True)
+    started = _now()
+    time.sleep(5)
+    close_at = started + timedelta(minutes=minutes)
+    subprocess.run(["systemd-run", "--user", f"--unit={unit}-supervisor", f"--working-directory={code}", "--",
+                    "/usr/bin/python3", "-m", "scripts.trading_lab.fomc.pilot", "supervise", "--store", str(run / "store"),
+                    "--unit", unit, "--service-log", str(run / "service.log"), "--alerts", str(run / "alerts.log"),
+                    "--snapshots", str(run / "snapshots.jsonl"), "--copy", str(run / "closure-copy"),
+                    "--report", str(run / "closure-report.json"), "--close-at", iso(close_at),
+                    "--planned-start", iso(started)], check=True)
+    decision.update(decision="LAUNCHED", launched=True, run=str(run), unit=unit, pid=_systemctl("show", unit, "-p", "MainPID", "--value"),
+                    started=iso(started), close_at=iso(close_at), code=str(code))
+    for path in (base / "successor-decision.json", run / "decision.json"):
+        path.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
+    _alert(f"FOMC successor launched: unit {unit}, run {run}, closure {iso(close_at)}", syslog.LOG_NOTICE)
+    return decision
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -531,7 +708,21 @@ def main(argv=None) -> int:
     p.add_argument("--pid", type=int)
     p.add_argument("--planned-start")
     p.add_argument("--planned-end")
+    p = sub.add_parser("successor")
+    for name in ("--previous-run", "--code", "--base"):
+        p.add_argument(name, type=Path, required=True)
+    p.add_argument("--previous-unit", required=True)
+    p.add_argument("--wait-until", required=True)
+    p.add_argument("--minutes", type=float, default=90.0)
+    p.add_argument("--unit", default="fomc-pilot-rev25")
+    p.add_argument("--manifest", type=Path)
     args = parser.parse_args(argv)
+    if args.cmd == "successor":
+        decision = successor(args.previous_run, args.previous_unit, args.code, args.base,
+                             wait_until=parse_iso(args.wait_until), minutes=args.minutes, unit=args.unit,
+                             manifest=args.manifest)
+        print(json.dumps(decision, sort_keys=True))
+        return 0 if decision["launched"] else 1
     if args.cmd == "snapshot":
         record = take_snapshot(args.store, args.log)
         print(json.dumps({k: record[k] for k in ("T", "H", "read_state", "identity", "discovery", "health")}, sort_keys=True))

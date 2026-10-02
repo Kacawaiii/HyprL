@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from scripts.trading_lab.fomc import identity, ledger, snapshot, spec, state
+from scripts.trading_lab.fomc import canon, identity, ledger, snapshot, spec, state
 from scripts.trading_lab.fomc import synthetic as syn
 from scripts.trading_lab.fomc.store import FomcStore
 
@@ -45,13 +45,13 @@ def test_1_first_item_then_corrected_content(env):
     assert s1["read_state"] == "FOMC_RESOLVED"
     first = item_state(s1)
     assert first["state"] == "CURRENT_REVISION"
-    assert env.store.read_raw(first["content_hash"]) == served(BODY_A)
+    assert env.store.read_raw(first["normalized"]["first_raw_sha256"]) == served(BODY_A)
     env.provider.routes[P1] = syn.page_response(body=BODY_B)  # upstream correction
     env.drive(900, idle=60)  # the O300 recheck observes it
     s2 = snapshot.events_as_of(env.store, env.clock.true)
     second = item_state(s2)
     assert second["state"] == "CURRENT_REVISION" and second["content_hash"] != first["content_hash"]
-    assert env.store.read_raw(second["content_hash"]) == served(BODY_B)
+    assert env.store.read_raw(second["normalized"]["first_raw_sha256"]) == served(BODY_B)
     old = snapshot.events_as_of(env.store, datetime.fromisoformat(s1["T"]), s1["H"])
     assert old["identity"] == s1["identity"] and item_state(old)["content_hash"] == first["content_hash"]
 
@@ -142,12 +142,12 @@ def test_7_aba_unnormalized_source_and_corrupt_raw(env):
     env.drive(240)
     env.provider.routes[P1] = syn.page_response(body=BODY_B)
     env.drive(900, idle=60)  # O300
-    assert item_state(snapshot.events_as_of(env.store, env.clock.true))["content_hash"] == spec.sha256_bytes(served(BODY_B))
+    assert item_state(snapshot.events_as_of(env.store, env.clock.true))["content_hash"] == canon.identity("CANONICAL", spec.sha256_bytes(served(BODY_B)))
     env.provider.routes[P1] = syn.page_response(body=BODY_A)
     env.drive(3600, idle=300)  # O3600: A again
     settle(env)
     aba = item_state(snapshot.events_as_of(env.store, env.clock.true))
-    assert aba["step"] == 4 and aba["content_hash"] == spec.sha256_bytes(served(BODY_A))
+    assert aba["step"] == 4 and aba["content_hash"] == canon.identity("CANONICAL", spec.sha256_bytes(served(BODY_A)))
     assert len(env.store.rows("REVISION")) == 2  # A-B-A reuses V_A
     env.provider.routes[P1] = syn.SyntheticResponse(body=b"<html><body>template changed</body></html>", headers=syn.HTML_HEADERS)
     env.drive(86400, idle=3600)  # O86400: newer bytes that do not normalize

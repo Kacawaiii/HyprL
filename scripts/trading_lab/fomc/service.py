@@ -65,7 +65,8 @@ class SystemClock:
 class _Slot:
     """A worker waiting for the dispatcher to grant its validated redirect continuation."""
 
-    def __init__(self):
+    def __init__(self, hop: int = 1, url: str = ""):
+        self.hop, self.url = hop, url
         self.event = threading.Event()
         self.granted: tuple | None = None
 
@@ -173,9 +174,9 @@ class FomcService:
     def _dispatch_run(self, seq: int, run_id: str) -> None:
         self._spawn(f"fomc-run-{seq}", self.collector.finish_processing, seq, run_id)
 
-    def _continuation(self, attempt: int) -> tuple | None:
+    def _continuation(self, attempt: int, hop: int, url: str) -> tuple | None:
         """Called by a fetch worker whose redirect target is validated: wait for the dispatcher."""
-        slot = _Slot()
+        slot = _Slot(hop, url)
         with self._lock:
             if self.stopping:
                 return None
@@ -232,13 +233,23 @@ class FomcService:
         while not limiter.suspended and limiter.admissible(self.clock.mono()):
             waiting = self._next_continuation()
             if waiting is not None:  # continuations first, before any new attempt
-                grant = limiter.try_grant()
-                if grant is None:
-                    return
                 attempt, slot = waiting
+                now = self.clock.mono()
+                deadline = self.collector.transport.deadline()
+                invoked = self.store.row_at("TRANSPORT_INVOKED", attempt)
+                group = "FEED" if invoked.body["kind"] == "FEED_POLL" else invoked.body["sid"]
+                try:  # journal first: a grant that is not durable in the journal is never consumed
+                    self.collector.journal_grant(mono=now, attempt=attempt, group=group, hop=slot.hop, url=slot.url,
+                                                 kind="CONTINUATION")
+                except StoreBusy:
+                    raise
+                except Exception as exc:
+                    self.errors.append(exc)
+                    return
+                limiter.register(now)
                 with self._lock:
                     self._slots.pop(attempt, None)
-                slot.release((grant, self.collector.transport.deadline()))
+                slot.release((now, deadline))
                 continue
             chosen = self.collector.select()  # selected only now that a grant can be attributed
             if chosen is None:

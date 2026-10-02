@@ -1,4 +1,4 @@
-"""FOMC_CONTENT_IDENTITY_V1 / FOMC_CANON_V1 (spec revision 24, F82, FOMC251-FOMC256): raw integrity
+"""FOMC_CONTENT_IDENTITY_V2 / FOMC_CANON_V2 (spec revision 25, F82-F83, FOMC251-FOMC258): raw integrity
 and content identity are distinct. Synthetic pages carry representative Cloudflare spans; the real
 Cloudflare bytes stay local (redistribution.raw_storage) and are checked by the private proof at the end,
 which runs only where the local fixtures exist."""
@@ -70,11 +70,11 @@ def test_any_real_change_next_to_cloudflare_bytes_is_detected(change):
 
 @pytest.mark.parametrize("mutate, reason", [
     (lambda d: d.replace(b"The Committee decided", b"See /cdn-cgi/l/email-protection#0a0b0c. The Committee decided"),
-     "unrecognized occurrence of email-protection"),  # a false marker in the text
+     "email-protection outside an allowed HTML context"),  # a false marker in the text
     (lambda d: d.replace(b"The Committee decided", b"window.__CF$cv$params={r:'x'} The Committee decided"),
-     "unrecognized occurrence of __CF$cv$params"),
+     "__CF$cv$params outside an allowed HTML context"),
     (lambda d: d.replace(b'<a class="shareDL__link" href', b'<link class="shareDL__link" href'),
-     "email-protection link outside an <a> start tag"),  # an ambiguous structure
+     "email-protection outside an allowed HTML context"),  # not an <a> start tag
     (lambda d: d.replace(b'data-cfemail="', b'data-cfemail="0', 1), "obfuscated value of odd length"),
     (lambda d: d.replace(b"document.cf=p;", b"document.cf=p;fetch(p);"), "challenge parameters outside the known Cloudflare script"),
     (lambda d: d.replace(b"</script></body>", b"</script>\n<p>after</p></body>"), "challenge parameters outside the known Cloudflare script"),
@@ -83,8 +83,9 @@ def test_any_real_change_next_to_cloudflare_bytes_is_detected(change):
 def test_unknown_or_ambiguous_structure_is_refused_and_never_merges(mutate, reason):
     one, other = mutate(page(key=7)), mutate(page(key=8, ray="1111111111111111"))
     first, second = canon.canonicalize(one), canon.canonicalize(other)
-    assert first.status == "REFUSED" and first.reason == reason
-    assert first.content_sha256 == spec.sha256_bytes(one) and first.canonical == one  # raw identity
+    assert first.domain == "RAW_FALLBACK" and first.reason == reason
+    assert first.bytes_sha256 == spec.sha256_bytes(one) and first.canonical == one  # raw bytes, fallback domain
+    assert first.content_sha256 == canon.identity("RAW_FALLBACK", spec.sha256_bytes(one))
     assert first.content_sha256 != second.content_sha256  # the same content with other keys does not merge
 
 
@@ -100,7 +101,9 @@ def test_odd_values_non_printable_addresses_and_bounds_are_refused():
     assert canon.canonicalize(odd).reason == "obfuscated value of odd length"
     no_spans = syn.statement_html()
     plain = canon.canonicalize(no_spans)
-    assert plain.status == "CANONICAL" and plain.canonical == no_spans and plain.content_sha256 == spec.sha256_bytes(no_spans)
+    assert plain.domain == "CANONICAL" and plain.canonical == no_spans and plain.bytes_sha256 == spec.sha256_bytes(no_spans)
+    assert plain.content_sha256 == canon.identity("CANONICAL", spec.sha256_bytes(no_spans)) != canon.identity(
+        "RAW_FALLBACK", spec.sha256_bytes(no_spans))  # the domain is part of the identity
 
 
 # ------------------------------------------------------------------ revisions end to end ------------
@@ -122,7 +125,7 @@ def test_new_cloudflare_bytes_make_one_revision_with_one_observation_each_fomc25
     links = _links(env)
     assert len(links) == len(records) and len({l.body["content_sha256"] for l in links}) == 1
     assert [l.body["raw_artifact_identities_and_hashes"][0]["raw_sha256"] for l in links] == [r.body["raw_sha"] for r in records]
-    assert all(l.body["canonicalization"]["status"] == "CANONICAL" for l in links)
+    assert all(l.body["canonicalization"]["domain"] == "CANONICAL" for l in links)
     primary = [state.processing_outcome(env.store, r.seq).body["outcome"] for r in records]
     assert primary[0] == "NORMALIZED_REVISION_COMMITTED" and set(primary[1:]) == {"NORMALIZED_SAME_CONTENT_NO_NEW_REVISION"}
     revision = _revisions(env)[0].body
@@ -179,9 +182,10 @@ def test_a_false_marker_page_keeps_raw_identity_end_to_end(env):
     env.provider.routes[P1] = route
     env.drive(900, idle=60)
     links = _links(env)
-    assert len(links) >= 2 and all(l.body["canonicalization"]["status"] == "REFUSED" for l in links)
+    assert len(links) >= 2 and all(l.body["canonicalization"]["domain"] == "RAW_FALLBACK" for l in links)
     assert len(_revisions(env)) == len(links)  # never merged silently
-    assert all(l.body["content_sha256"] == l.body["raw_artifact_identities_and_hashes"][0]["raw_sha256"] for l in links)
+    assert all(l.body["canonicalization"]["bytes_sha256"] == l.body["raw_artifact_identities_and_hashes"][0]["raw_sha256"]
+               for l in links)
 
 
 def test_a_corrupt_raw_fails_closed_despite_an_equal_content_identity_fomc256(env):
@@ -251,9 +255,64 @@ def test_private_official_fixtures_canonicalize_with_the_frozen_digest(monkeypat
                         ("immediate_release", {"CF_EMAIL_LINK": 1, "CF_EMAIL_SPAN": 0, "CF_CHALLENGE_PARAMS": 1})]:
         body = (FIXTURES / name / "body.html").read_bytes()
         result = canon.canonicalize(body)
-        assert result.status == "CANONICAL" and result.neutralized == spans, (name, result.reason)
+        assert result.domain == "CANONICAL" and result.neutralized == spans, (name, result.reason)
         from scripts.trading_lab.fomc import parsing
         original, canonical = parsing.parse_primary(body), parsing.parse_primary(result.canonical)
         assert (original.titles, original.dates, original.release_segments) == \
             (canonical.titles, canonical.dates, canonical.release_segments)
         tmp = shutil.copy  # noqa: F841 - nothing is written back; the fixtures stay as acquired
+
+
+# ------------------------------------------------------------------ the two counterexamples (rev 25) ---
+def _title_attr(key):  # a marker inside another attribute's value: not an href
+    value = syn.obfuscate("media@frb.gov", key)
+    return page(key=key).replace(b'<div id="lastUpdate">',
+                                 b"<a title='href=\"/cdn-cgi/l/email-protection#" + value.encode() + b"\"'>texte</a>"
+                                 + b'<div id="lastUpdate">')
+
+
+def _textarea(key):  # a span inside a raw-text element: not markup
+    value = syn.obfuscate("media@frb.gov", key)
+    return page(key=key).replace(b'<div id="lastUpdate">',
+                                 b'<textarea><span class="__cf_email__" data-cfemail="' + value.encode()
+                                 + b'">[email&#160;protected]</span></textarea><div id="lastUpdate">')
+
+
+def _comment(key):  # a link inside a comment
+    value = syn.obfuscate("media@frb.gov", key)
+    return page(key=key).replace(b'<div id="lastUpdate">',
+                                 b'<!-- <a href="/cdn-cgi/l/email-protection#' + value.encode() + b'">x</a> --><div id="lastUpdate">')
+
+
+@pytest.mark.parametrize("build, reason", [
+    (_title_attr, "email-protection outside an allowed HTML context"),
+    (_textarea, "__cf_email__ outside an allowed HTML context"),
+    (_comment, "email-protection outside an allowed HTML context"),
+])
+def test_cloudflare_markers_in_false_html_contexts_never_merge(build, reason):
+    one, other = build(7), build(201)  # two XOR keys encoding the same address in a false context
+    first, second = canon.canonicalize(one), canon.canonicalize(other)
+    assert first.domain == second.domain == "RAW_FALLBACK" and first.reason == reason
+    assert first.content_sha256 != second.content_sha256
+    assert canon.canonicalize(build(7)).content_sha256 == first.content_sha256  # identical raws meet again
+
+
+def test_recanonicalizing_canonical_bytes_never_shares_the_identity():
+    result = canon.canonicalize(page(key=7))
+    again = canon.canonicalize(result.canonical)  # r and t empty: no longer the known challenge parameters
+    assert result.domain == "CANONICAL" and again.domain == "RAW_FALLBACK"
+    assert again.bytes_sha256 == result.bytes_sha256 and again.content_sha256 != result.content_sha256
+
+
+@pytest.mark.parametrize("build", [_title_attr, _textarea])
+def test_false_contexts_end_to_end_keep_separate_revisions_and_the_read_follows(env, build):
+    env.feed([statement_item()])
+    env.provider.routes[P1] = lambda count: syn.SyntheticResponse(body=build(count + 3), headers=list(syn.HTML_HEADERS))
+    env.drive(900, idle=60)
+    env.drive(130)
+    links = _links(env)
+    assert len(links) >= 2 and len(_revisions(env)) == len(links)  # classified, never merged
+    assert all(l.body["canonicalization"]["domain"] == "RAW_FALLBACK" for l in links)
+    item = next(i for i in snapshot.events_as_of(env.store, env.clock.true)["items"] if i["sid"] == SID1)
+    newest = _revisions(env)[-1]
+    assert item["state"] == "CURRENT_REVISION" and item["revision"] == newest.key  # the newest observation's own revision

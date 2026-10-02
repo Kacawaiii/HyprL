@@ -80,6 +80,7 @@ class FetchResult:
     date_lines: list[str] = field(default_factory=list)
     age_lines: list[str] = field(default_factory=list)
     body: bytes | None = None
+    grants: int = 0  # FIX15 grants this fetch consumed: the initial one and each continuation
     wall_at_receipt: datetime | None = None
     network_end_mono: float | None = None  # set by the collector: start of the 120 s save deadline
 
@@ -130,13 +131,15 @@ class Transport:
 
     def fetch(self, url: str, surface: str, *, invoke: Callable[[float], int],
               may_continue: Callable[[int], bool], started: tuple | None = None,
-              continuation: Callable[[int], tuple | None] | None = None) -> FetchResult:
+              continuation: Callable[[int, int, str], tuple | None] | None = None,
+              journal: Callable[[int, int, str, float], None] | None = None) -> FetchResult:
         """`invoke(grant)` commits TRANSPORT_INVOKED (may raise store.Rejected: nothing is sent);
         `may_continue(attempt)` is false once the attempt already has an outcome.
 
         Step-driven use waits for its own grants. A dispatcher passes `started` = (grant, deadline) for
         a start it already granted and `continuation(attempt)`, which blocks until the dispatcher grants
-        the validated redirect hop and returns (grant, deadline), or None when no grant will come."""
+        the validated redirect hop and returns (grant, deadline), or None when no grant will come.
+        Step-driven continuation grants are journaled through `journal(attempt, hop, url, grant)`."""
         admit_url(url)  # validation precedes the grant
         if started is None:
             grant = self.limiter.grant()
@@ -144,7 +147,7 @@ class Transport:
         else:
             grant, deadline = started
         attempt = invoke(grant)
-        result = FetchResult(kind="NOT_STARTED", attempt_seq=attempt)
+        result = FetchResult(kind="NOT_STARTED", attempt_seq=attempt, grants=1)
         if self._mono() - grant > spec.GRANT_TO_TRANSPORT_S:
             result.kind, result.reason = "ABANDONED", "TRANSPORT_INVOKED later than 1 s after the grant"
             return result
@@ -162,14 +165,21 @@ class Transport:
                     return result
                 if not may_continue(attempt):
                     raise _Fail("SOURCE_UNAVAILABLE", "attempt already has an outcome; no continuation grant")
+                hop_index = len(result.hops)
                 if continuation is None:
                     grant = self.limiter.grant()
                     deadline = Deadline(self._io, self._deadline_s)  # the next hop's own deadline
+                    if journal is not None:
+                        try:  # an unjournaled grant is abandoned before any I/O
+                            journal(attempt, hop_index, target, grant)
+                        except Exception as exc:
+                            raise _Fail("SOURCE_UNAVAILABLE", f"continuation grant not journaled: {exc}") from exc
                 else:
-                    granted = continuation(attempt)  # the validated hop waits for the dispatcher's grant
+                    granted = continuation(attempt, hop_index, target)  # the validated hop waits for its grant
                     if granted is None:
                         raise _Fail("SOURCE_UNAVAILABLE", "attempt already has an outcome; no continuation grant")
                     grant, deadline = granted
+                result.grants += 1
                 current = target
         except _Fail as fail:
             result.kind, result.reason = fail.kind, fail.reason

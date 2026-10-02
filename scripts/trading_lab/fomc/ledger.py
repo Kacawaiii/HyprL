@@ -11,9 +11,24 @@ from scripts.trading_lab.fomc.store import FomcStore, Rejected, Row
 FEED_KEY = "FEED"
 
 
-def begin_epoch(store: FomcStore, token: str, boot_id: str) -> int:
-    """A new exclusive limiter epoch; its token fences every later TRANSPORT_INVOKED."""
-    return store.append("EPOCH", [("EPOCH", token, {"token": token, "boot_id": boot_id})])
+def begin_epoch(store: FomcStore, token: str, boot_id: str, begin_mono: float | None = None) -> int:
+    """A new exclusive limiter epoch; its token fences every later TRANSPORT_INVOKED. `begin_mono` is the
+    limiter epoch's start on the monotonic clock (its 60 s embargo), recorded for the grant journal."""
+    return store.append("EPOCH", [("EPOCH", token, {"token": token, "boot_id": boot_id,
+                                                    "limiter_epoch_begin_mono": begin_mono})])
+
+
+def grant_row(*, epoch: str, order: int, mono: float, attempt, group: str, hop: int, url: str, kind: str,
+              note: str | None = None) -> tuple[str, str, dict]:
+    """One consumed FIX15 grant (request_accounting): `attempt` is "SELF" for the initial grant committed
+    in its TRANSPORT_INVOKED transaction, the attempt seq for a continuation, None for a grant abandoned
+    before any TRANSPORT_INVOKED."""
+    return ("GRANT", f"{epoch}:{order}", {"epoch": epoch, "order": order, "mono": mono, "attempt": attempt,
+                                           "group": group, "hop": hop, "url": url, "kind": kind, "note": note})
+
+
+def journal_grant(store: FomcStore, **fields) -> int:
+    return store.append("GRANT", [grant_row(**fields)])
 
 
 def current_epoch(store: FomcStore) -> str | None:
@@ -57,8 +72,9 @@ def episode_status(store: FomcStore, key: str, *, upto: int | None = None) -> st
     return terminal[0].body["status"] if terminal else "OPEN"
 
 
-def transport_invoked(store: FomcStore, *, epoch: str, work: dict, grant_mono: float) -> int:
-    """Commit the durable attempt record as the last step before transport. Once durable it counts."""
+def transport_invoked(store: FomcStore, *, epoch: str, work: dict, grant_mono: float, grant: dict | None = None) -> int:
+    """Commit the durable attempt record as the last step before transport. Once durable it counts.
+    `grant` (order, url, group) journals the initial grant in the same transaction."""
 
     def check(s: FomcStore) -> None:
         if current_epoch(s) != epoch:
@@ -77,7 +93,11 @@ def transport_invoked(store: FomcStore, *, epoch: str, work: dict, grant_mono: f
 
     body = dict(work, epoch=epoch, grant_mono=grant_mono)
     key = FEED_KEY if work["kind"] == "FEED_POLL" else work["episode_key"]
-    return store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", key, body)], check)
+    rows = [("TRANSPORT_INVOKED", key, body)]
+    if grant is not None:
+        rows.append(grant_row(epoch=epoch, order=grant["order"], mono=grant_mono, attempt="SELF", group=grant["group"],
+                              hop=0, url=grant["url"], kind="INITIAL"))
+    return store.append("TRANSPORT_INVOKED", rows, check)
 
 
 def commit_attempt_outcome(store: FomcStore, attempt_seq: int, outcome: str, detail: dict | None = None) -> int | None:

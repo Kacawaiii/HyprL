@@ -42,7 +42,7 @@ def test_corrupt_revision_raw_fails_the_read_without_verify_integrity(env):
     env.provider.routes[P1] = syn.page_response()
     env.drive(240)
     old = snapshot.events_as_of(env.store, env.clock.true)
-    digest = _item(old)["content_hash"]
+    digest = _item(old)["normalized"]["first_raw_sha256"]  # the raw that created the current revision
     _raw_path(env, digest).write_bytes(b"tampered")
     before = _write_count(env)
     with pytest.raises(snapshot.SnapshotFailed):
@@ -59,7 +59,7 @@ def test_missing_raw_fails_the_read(env):
     env.provider.routes[P1] = syn.page_response()
     env.drive(240)
     snap = snapshot.events_as_of(env.store, env.clock.true)
-    _raw_path(env, _item(snap)["content_hash"]).unlink()
+    _raw_path(env, _item(snap)["normalized"]["first_raw_sha256"]).unlink()
     with pytest.raises(snapshot.SnapshotFailed):
         snapshot.events_as_of(env.store, env.clock.true, snap["H"])
 

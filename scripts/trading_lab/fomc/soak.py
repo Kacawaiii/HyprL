@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 
-from scripts.trading_lab.fomc import canon, ledger, processing, snapshot, spec, state
+from scripts.trading_lab.fomc import canon, ledger, pilot, processing, snapshot, spec, state
 from scripts.trading_lab.fomc import synthetic as syn
 from scripts.trading_lab.fomc.collector import Collector
 from scripts.trading_lab.fomc.service import FomcService
@@ -275,6 +275,9 @@ def verify(r: _Run) -> dict:
             assert not [g for g in grants if r.stall["start"] + threshold < g < r.stall["end"]]
         epochs = view.rows("EPOCH")
         assert len(epochs) == r.boots
+        journal = pilot.fix15_journal(view, invoked)  # every grant of every boot journaled and compliant
+        assert journal["status"] == "PROVEN" and len(journal["per_epoch"]) == r.boots, journal["missing"][:5]
+        assert journal["grants"] >= len(invoked)
         sid_a, sid_c = (identity_of(p) for p in (A, C))
         assert state.anchor(view, sid_a) is not None and state.anchor(view, sid_c) is not None
         lb = state.now_lb(view)
@@ -290,6 +293,8 @@ def verify(r: _Run) -> dict:
             "interrupted_by_restart": len(interrupted), "local_persistence_failed": len(lpf), "dead_runs": len(dead),
             "storage_incidents": [i.body["stalled_s"] for i in incidents], "alerts": [a["alert"] for a in r.alerts],
             "snapshots": len(r.snapshots), "replayed": len(replayed), "health_rows": len(view.rows("SOURCE_HEALTH")),
+            "grant_journal": {"status": journal["status"], "grants": journal["grants"],
+                              "continuations": journal["continuations"], "epochs": len(journal["per_epoch"])},
             "final_discovery": final["discovery"]["state"],
             "final_health": {k: v["result_state"] for k, v in final["health"].items()}, "log": r.log,
         }
@@ -319,7 +324,7 @@ def main(argv=None) -> int:
     print("\n".join(log))
     for key, value in summary.items():
         print(f"{key}: {value}")
-    print("soak verified: snapshots re-read, replay, health replay and invariants hold")
+    print("soak verified: snapshots re-read, replay, health replay, FIX15 grant journal and invariants hold")
     return 0
 
 

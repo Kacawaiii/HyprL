@@ -40,8 +40,11 @@ class Collector:
             self._owner.close()
             raise OwnershipUnavailable("another collector owns this store") from exc
         self.epoch = uuid.uuid4().hex
-        ledger.begin_epoch(store, self.epoch, boot_id)
+        begin_mono = clock.mono()
+        ledger.begin_epoch(store, self.epoch, boot_id, begin_mono)
         self.limiter = Limiter(clock.mono, clock.sleep)
+        self.limiter.epoch_begin = begin_mono  # the recorded embargo start is the limiter's
+        self._grant_order = 0  # the FIX15 grant journal's order within this epoch
         self.transport = Transport(connector, self.limiter, wall=clock.wall, mono=clock.mono)
         self.last_feed_grant: float | None = None
         self.processing_fault = None  # test hook
@@ -68,11 +71,14 @@ class Collector:
         self._owner.close()
 
     # ------------------------------------------------------------------ one logical fetch ---------
-    def _invoke(self, work: dict, grant: float) -> int:
-        """Commit TRANSPORT_INVOKED and register its task in one locked step, so reconcile() never
-        sees the durable attempt without its live task."""
+    def _invoke(self, work: dict, grant: float, url: str) -> int:
+        """Commit TRANSPORT_INVOKED with its initial grant's journal row and register its task in one
+        locked step, so reconcile() never sees the durable attempt without its live task."""
+        group = "FEED" if work["kind"] == "FEED_POLL" else work["sid"]
         with self.store.locked("transaction TRANSPORT_INVOKED"):
-            seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant)
+            seq = ledger.transport_invoked(self.store, epoch=self.epoch, work=work, grant_mono=grant,
+                                           grant={"order": self._grant_order + 1, "url": url, "group": group})
+            self._grant_order += 1
             self._active_attempts[seq] = self.clock.mono()
         if work["kind"] == "FEED_POLL":
             self.last_feed_grant = grant
@@ -81,13 +87,39 @@ class Collector:
     def _open(self, attempt: int) -> bool:
         return ledger.outcome_of(self.store, attempt) is None
 
+    def journal_grant(self, *, mono: float, attempt, group: str, hop: int, url: str, kind: str,
+                      note: str | None = None) -> None:
+        """Journal one consumed grant outside a TRANSPORT_INVOKED (a continuation, or a grant abandoned
+        before one). The order is taken only once the row is durable."""
+        with self.store.locked("transaction GRANT"):
+            ledger.journal_grant(self.store, epoch=self.epoch, order=self._grant_order + 1, mono=mono, attempt=attempt,
+                                 group=group, hop=hop, url=url, kind=kind, note=note)
+            self._grant_order += 1
+
+    def _invoke_or_journal(self, work: dict, url: str):
+        """The step-driven path's invoke: the grant was consumed by the transport, so a TRANSPORT_INVOKED
+        that does not commit still leaves its grant in the journal."""
+        def invoke(grant: float) -> int:
+            try:
+                return self._invoke(work, grant, url)
+            except Rejected as exc:
+                self.journal_grant(mono=grant, attempt=None, group="FEED" if work["kind"] == "FEED_POLL" else work["sid"],
+                                   hop=0, url=url, kind="INITIAL", note=f"abandoned before TRANSPORT_INVOKED: {exc}")
+                raise
+        return invoke
+
+    def _journal_continuation(self, attempt: int, hop: int, url: str, grant: float) -> None:
+        invoked = self.store.row_at("TRANSPORT_INVOKED", attempt)
+        group = "FEED" if invoked.body["kind"] == "FEED_POLL" else invoked.body["sid"]
+        self.journal_grant(mono=grant, attempt=attempt, group=group, hop=hop, url=url, kind="CONTINUATION")
+
     def fetch(self, work: dict, url: str, surface: str, *, started: tuple | None = None) -> FetchResult | dict:
         """Grant, TRANSPORT_INVOKED, transport. The attempt stays active (its task alive) until commit().
         `started` = (attempt, grant, deadline) when the dispatcher already granted and invoked it."""
         try:
             if started is None:
-                result = self.transport.fetch(url, surface, invoke=lambda grant: self._invoke(work, grant),
-                                              may_continue=self._open)
+                result = self.transport.fetch(url, surface, invoke=self._invoke_or_journal(work, url),
+                                              may_continue=self._open, journal=self._journal_continuation)
             else:
                 attempt, grant, deadline = started
                 result = self.transport.fetch(url, surface, invoke=lambda _grant: attempt, may_continue=self._open,
@@ -114,7 +146,7 @@ class Collector:
             return None
         deadline = self.transport.deadline()  # the physical deadline starts at the grant
         try:
-            attempt = self._invoke(work, now)
+            attempt = self._invoke(work, now, url)  # journals the initial grant in the same transaction
         except Rejected:
             return None
         self.limiter.register(now)
@@ -151,7 +183,7 @@ class Collector:
             ledger.commit_attempt_outcome(self.store, attempt, "INTERRUPTED", {"reason": "no outcome 600 s after TRANSPORT_INVOKED"})
         if result.kind != "RESPONSE_200":
             outcome = "CANCELLED_AFTER_INVOKE" if result.kind == "ABANDONED" else result.kind
-            ledger.commit_attempt_outcome(self.store, attempt, outcome, {"reason": result.reason})
+            ledger.commit_attempt_outcome(self.store, attempt, outcome, {"reason": result.reason, "grants": result.grants})
             if self.inline:
                 self.derive_terminals()
             return {"status": outcome, "reason": result.reason}
@@ -163,7 +195,7 @@ class Collector:
 
         while True:
             if self.clock.mono() >= save_deadline:
-                return self._persistence_failed(attempt, "local save not durable within 120 s of the network end")
+                return self._persistence_failed(attempt, "local save not durable within 120 s of the network end", result.grants)
             try:
                 if self.persist_fault is not None:
                     self.persist_fault()
@@ -172,13 +204,13 @@ class Collector:
                 break
             except ledger.SaveExpired:
                 # the local operation finished at or after +120 s: never a RESPONSE nor LATE_EVIDENCE
-                return self._persistence_failed(attempt, "local save not durable within 120 s of the network end")
+                return self._persistence_failed(attempt, "local save not durable within 120 s of the network end", result.grants)
             except RawCorrupt:
                 # The immutable slot for these bytes holds other bytes: never overwrite it. The exact
                 # bytes of this attempt are therefore not durable -> LOCAL_PERSISTENCE_FAILED, no RESPONSE.
                 # Older records sharing the digest get integrity diagnostics; their outcomes stay.
                 self._diagnose(spec.sha256_bytes(result.body))
-                return self._persistence_failed(attempt, "raw slot holds other bytes; never overwritten")
+                return self._persistence_failed(attempt, "raw slot holds other bytes; never overwritten", result.grants)
             except (OSError, sqlite3.OperationalError):
                 self.clock.sleep(min(SAVE_RETRY_S, max(save_deadline - self.clock.mono(), 0.0)))  # retry locally, no network
         if self.inline:
@@ -201,10 +233,12 @@ class Collector:
             "age_lines": result.age_lines, "wall_at_receipt": iso(result.wall_at_receipt),
             "verdict": "CLOCK_VERIFIED" if verified else "CLOCK_UNVERIFIED",
             "observed_at": iso(result.wall_at_receipt) if verified else None,
+            "grants": result.grants,
         }
 
-    def _persistence_failed(self, attempt: int, reason: str) -> dict:
-        ledger.commit_attempt_outcome(self.store, attempt, "LOCAL_PERSISTENCE_FAILED", {"reason": reason})
+    def _persistence_failed(self, attempt: int, reason: str, grants: int | None = None) -> dict:
+        detail = {"reason": reason} if grants is None else {"reason": reason, "grants": grants}
+        ledger.commit_attempt_outcome(self.store, attempt, "LOCAL_PERSISTENCE_FAILED", detail)
         if self.inline:
             self.derive_terminals()
         return {"status": "LOCAL_PERSISTENCE_FAILED", "reason": reason}

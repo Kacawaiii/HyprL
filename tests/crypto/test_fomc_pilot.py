@@ -57,7 +57,7 @@ def test_fixtures_snapshots_and_a_verified_closure(tmp_path):
         assert verification["resolved_reads"] == 4 and verification["unresolved_reads"] == 4
         assert verification["reread_identical"] == verification["replay_identical"] == 8  # unresolved ones too
         assert report["copy_check"]["equal"] and report["copy_check"]["raw_files"] >= 3
-        assert verification["audit"]["fix15"]["all_physical_starts"] == "PASS"  # every attempt single-hop by record
+        assert verification["audit"]["fix15"]["status"] == "PROVEN"  # every grant journaled and compliant
         assert verification["audit"]["not_proven"] == [] and verification["progress"]["manifests"] == 1
     finally:
         env.provider.close()
@@ -106,13 +106,12 @@ def test_overlaps_are_checked_per_source_item_across_classes_with_the_feed_apart
         audit = pilot.audit(store)
         assert audit["in_flight_overlaps"] == [{"group": f"item:{SID1}", "earlier": a, "later": b, "earlier_outcome_seq": a + 3}]
         assert not audit["checks"]["one_fetch_per_item_across_classes_and_one_feed_poll_in_flight"]
-        assert audit["fix15"]["continuation_grants"]["status"] == "NOT_PROVEN"  # no hop record for these attempts
-        assert audit["fix15"]["all_physical_starts"] == "NOT_PROVEN" and audit["not_proven"]
+        assert audit["fix15"]["status"] == "NOT_PROVEN" and audit["not_proven"]  # these attempts have no journaled grant
     finally:
         env.provider.close()
 
 
-def test_fix15_over_redirect_hops_is_not_proven_never_passed(tmp_path):
+def test_fix15_over_redirect_hops_is_proven_from_the_journal(tmp_path):
     env = Env(tmp_path / "run")
     try:
         env.feed([statement_item()])
@@ -122,9 +121,7 @@ def test_fix15_over_redirect_hops_is_not_proven_never_passed(tmp_path):
         service.run_for(300)
         service.stop(wait_s=10)
         fix15 = pilot.audit(env.store)["fix15"]
-        assert fix15["initial_grants"]["status"] == "PASS"
-        assert fix15["continuation_grants"] == {"status": "NOT_PROVEN", "multi_hop_responses": 1, "attempts_without_hop_record": 0}
-        assert fix15["all_physical_starts"] == "NOT_PROVEN"
+        assert fix15["status"] == "PROVEN" and fix15["continuations"] >= 1 and fix15["missing"] == []
     finally:
         env.provider.close()
 
@@ -148,5 +145,89 @@ def test_recheck_status_comes_from_durable_records(tmp_path):
         key = identity.reobservation_episode_key(SID1, status["items"][SID1]["anchor"], 3600)
         assert ledger.episode_status(env.store, key) == "OPEN"
         assert spec.ATTEMPTS_PER_EPISODE > rows[3600]["attempts"]
+    finally:
+        env.provider.close()
+
+
+class _Proc:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, "", returncode
+
+
+def _fake_system(calls, *, previous="inactive"):
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:3] == ["systemctl", "--user", "is-active"]:
+            return _Proc(previous)
+        if cmd[:3] == ["systemctl", "--user", "list-units"]:
+            return _Proc("fomc-pilot.service loaded active running x\n" if previous == "active" else "")
+        if cmd[:3] == ["systemctl", "--user", "show"]:
+            return _Proc("4242")
+        if cmd[0] == "timedatectl":
+            return _Proc("yes")
+        return _Proc()
+    return run
+
+
+def _previous(tmp_path, duration):
+    run = tmp_path / "rev23"
+    (run / "store").mkdir(parents=True)
+    (run / "closure-report.json").write_text(json.dumps({"integrity": {"verdict": "VALID", "not_proven": ["FIX15"]},
+                                                         "pilot_duration": {"verdict": duration}}))
+    return run
+
+
+def test_the_successor_is_launched_only_behind_its_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(pilot, "owner_free", lambda store: True)
+    monkeypatch.setattr(pilot.time, "sleep", lambda s: None)
+    monkeypatch.setattr(pilot, "_alert", lambda *a, **k: None)
+    soon = pilot._now() + timedelta(minutes=1)
+    for duration, previous, launched in (("NOT_ACCOMPLISHED", "inactive", False), ("ACCOMPLISHED", "active", False),
+                                         ("ACCOMPLISHED", "inactive", True)):
+        calls = []
+        monkeypatch.setattr(pilot.subprocess, "run", _fake_system(calls, previous=previous))
+        base = tmp_path / f"base-{duration}-{previous}"
+        base.mkdir()
+        decision = pilot.successor(_previous(base, duration), "fomc-pilot", tmp_path, base, wait_until=soon, minutes=90)
+        runs = [c for c in calls if c[0] == "systemd-run"]
+        assert decision["launched"] is launched, decision
+        written = json.loads((base / "successor-decision.json").read_text())
+        assert written["decision"] == ("LAUNCHED" if launched else "NOT_LAUNCHED")
+        if not launched:
+            assert runs == [] and decision["reasons"]  # nothing started, the reasons are recorded
+            continue
+        assert len(runs) == 2 and "--unit=fomc-pilot-rev25" in runs[0] and "--unit=fomc-pilot-rev25-supervisor" in runs[1]
+        store = runs[0][runs[0].index("--store") + 1]
+        assert store.startswith(str(base / "run-rev25-")) and store != str(base / "rev23" / "store")  # a new store
+        close_at = pilot.parse_iso(runs[1][runs[1].index("--close-at") + 1])
+        assert close_at - pilot.parse_iso(decision["started"]) == timedelta(minutes=90)
+
+
+def test_a_short_pilot_rehearsal_meets_the_successor_criteria(tmp_path, monkeypatch):
+    """The 90-minute pilot's criteria, offline, on statement pages with per-response Cloudflare bytes."""
+    from scripts.trading_lab.fomc import canon
+    monkeypatch.setattr(canon, "CHALLENGE_SCRIPT_SHA256", syn.CF_SCRIPT_SHA256)
+    env = Env(tmp_path / "run")
+    try:
+        env.feed([statement_item()])
+        env.provider.routes[P1] = syn.cloudflare_route(page_url=syn.url(P1))
+        service = _service(env)
+        start = env.clock.wall()
+        log = tmp_path / "snapshots.jsonl"
+        for _ in range(6):
+            service.run_for(900)
+            pilot.take_snapshot(env.root, log, now=env.clock.wall())
+        end = env.clock.wall()
+        report = pilot.close(env.root, tmp_path / "copy", tmp_path / "report.json", snapshots_log=log, notify=False,
+                             planned_start=start, planned_end=end,
+                             stopper=lambda: {"was": "active", "left": service.stop(wait_s=10)})
+        criteria = report["criteria"]
+        assert report["integrity_ok"] and report["duration_ok"] and report["criteria_ok"], json.dumps(criteria, indent=1)
+        stable = criteria["identity_stable_over_different_rereads"]
+        assert stable["items_reread_with_different_raws"] >= 1 and stable["ok"]
+        item = next(iter(stable["per_item"].values()))
+        assert item["raws"] >= 3 and item["identities"] == 1 and item["domains"] == {"CANONICAL": item["raws"]}
+        assert criteria["fix15_journal_complete_and_compliant"]["status"] == "PROVEN"
+        assert criteria["rechecks_300s"]["ok"] and criteria["rechecks_1h"]["ok"]
     finally:
         env.provider.close()

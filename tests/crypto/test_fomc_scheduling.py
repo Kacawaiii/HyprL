@@ -246,7 +246,8 @@ def test_manual_retry_of_a_backfill_entry_never_in_the_feed_keeps_mode_rank_and_
     record = next(r for r in env.store.rows("RESPONSE") if r.body["attempt"] == hb[keys.index(manual, 1)].seq)
     assert (record.body["mode"], record.body["work"], record.body["request_url"]) == ("HISTORICAL_BACKFILL", "MANUAL_RETRY", syn.url(x))
     assert state.anchor(env.store, sid_x) is None  # a backfill observation never anchors
-    assert env.store.rows("REVISION", key=f"{sid_x}:{record.body['raw_sha']}")[0].body["observation_mode"] == "HISTORICAL_BACKFILL"
+    revision_key = env.store.rows("LINK", key=str(record.seq))[0].body["revision"]
+    assert env.store.rows("REVISION", key=revision_key)[0].body["observation_mode"] == "HISTORICAL_BACKFILL"
     _limiter_respected(env)
     m3 = _manifest(env, [x])  # now in two manifests: the operator must name one
     with pytest.raises(ValueError, match="several manifests"):

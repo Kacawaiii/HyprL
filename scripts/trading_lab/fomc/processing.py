@@ -192,7 +192,8 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
     # the declared release is provider metadata for the logical event, trusted as a claim only.
     normalized = {
         "revision_id": revision_key, "source_item_id": sid, "content_hash": content.content_sha256,
-        "content_identity": {"canonicalizer": canon.CANONICALIZER_ID, "status": content.status, "reason": content.reason},
+        "content_identity": {"identity": canon.IDENTITY_ID, "canonicalizer": canon.CANONICALIZER_ID,
+                             "domain": content.domain, "bytes_sha256": content.bytes_sha256, "reason": content.reason},
         "first_raw_sha256": fields["raw_sha"],  # the raw of the observation that created the revision
         "canonical_source_url": canonical, "provider_id": spec.PROVIDER_ID, "provider_class": spec.PROVIDER_CLASS,
         "source_tier": spec.SOURCE_TIER, "event_family": spec.EVENT_FAMILY, "taxonomy_type": spec.TAXONOMY_TYPE,
@@ -221,7 +222,7 @@ def classify_primary(store: FomcStore, resp: Row, body: bytes) -> tuple[str, dic
     }))
     outcome = "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION" if existing else "NORMALIZED_REVISION_COMMITTED"
     return outcome, {"revision": revision_key, "release": semantics, "content_sha256": content.content_sha256,
-                     "canonicalization": content.status}, rows
+                     "canonicalization": content.domain}, rows
 
 
 def record_health(resp: Row, outcome: str, cycle, reason: str | None) -> tuple[str, str, dict]:

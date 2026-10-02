@@ -1773,6 +1773,31 @@
       },
       "verdict": "Content identity never replaces raw integrity."
     },
+    "FOMC257": {
+      "case": "CLOUDFLARE MARKERS IN FALSE HTML CONTEXTS - an <a title='href=\"/cdn-cgi/l/email-protection#H\"'> or a <textarea> holding a cf_email span, or a commented-out link, with two different XOR keys for the same address",
+      "expected": {
+        "canonicalization": "RAW_FALLBACK with its reason",
+        "identity": "two different identities (no merge)",
+        "same_raw_twice": "the same identity"
+      },
+      "verdict": "Only real tokens in their real contexts are neutralized."
+    },
+    "FOMC258": {
+      "case": "CANONICAL BYTES FED BACK - a document equal to another record's canonical bytes (empty challenge parameters)",
+      "expected": {
+        "canonicalization": "RAW_FALLBACK (the parameters are no longer the known structure)",
+        "identity": "differs from the CANONICAL identity although bytes_sha256 is equal"
+      },
+      "verdict": "Domains never collide."
+    },
+    "FOMC259": {
+      "case": "GRANT JOURNAL OVER REDIRECTS, FAILURES AND RESTART - a three-hop redirect chain, a failure after a redirect, a fetch abandoned after its grant, then a restart",
+      "expected": {
+        "fix15": "PROVEN when complete and compliant",
+        "journal": "one record per grant (hops 0..n, the failing hop included, the abandoned grant included), orders contiguous per epoch, initial grants in their TRANSPORT_INVOKED transactions"
+      },
+      "verdict": "FIX15 is proved over every physical start."
+    },
     "FOMC26": {
       "case": "OFFICIAL DATE CORRECTION ON SAME URL - R3/X6",
       "initial_observation": {
@@ -1798,6 +1823,14 @@
       "verdict": "SAME source_item_id S; append R2 with D2; retain R1 with D1 unchanged. Date correction alone is NOT an identity conflict. No duplicate logical event, no overwrite, no retroactive visibility mutation. Both revisions retain source_available_at = null and source_updated_at = null, with their own observed_at and ingested_at.",
       "with_guid": "same GUID on both observations: SAME S, R2 appended; existing GUID conflicts still fail closed if independently triggered",
       "without_guid": "historical archive/backfill, no RSS GUID on either observation: SAME S, R2 appended; GUID absence does not alter identity"
+    },
+    "FOMC260": {
+      "case": "MISSING OR DEFECTIVE TRACE - a GRANT record is lost, a count disagrees, or a continuation's record cannot be committed",
+      "expected": {
+        "closure": "NOT_PROVEN with the missing trace named",
+        "runtime": "a continuation whose record does not commit is not granted and sends nothing"
+      },
+      "verdict": "Absent evidence is never a pass."
     },
     "FOMC27": {
       "case": "DISCOVERY URL REDIRECT",
@@ -2589,7 +2622,8 @@
       "manifest byte fixtures (FOMC184-FOMC185), reconciliation fixtures (FOMC186-FOMC187, FOMC196)",
       "clock-check and header-parser fixtures (FOMC188-FOMC193) and a proxy-environment fixture (FOMC195)",
       "a local synthetic store whose COMMIT or raw write stalls, proving LOCAL_SAVE_ADMISSION_BOUND_V1 and STORAGE_INCIDENT_V1 (FOMC248-FOMC250)",
-      "official statement responses with differing Cloudflare bytes proving FOMC_CANON_V1 (FOMC251-FOMC256): kept local (redistribution.raw_storage), cited by URL and digest"
+      "official statement responses with differing Cloudflare bytes proving FOMC_CANON_V1 (FOMC251-FOMC256): kept local (redistribution.raw_storage), cited by URL and digest",
+      "a real short pilot under FOMC_CANON_V2 and FIX15_GRANT_JOURNAL_V1 (FOMC257-FOMC260): stable content identity over different re-reads, complete journal"
     ],
     "status": "REQUIREMENTS ONLY - no fixture captured, no network in this phase"
   },
@@ -3180,7 +3214,8 @@
     "F79": "ZERO IS EXPOSED ONLY FOR THE NEWEST FEED RECORD. A snapshot shows EVENTS_OBSERVED_ZERO only when it is the conclusion of the latest processable LIVE feed record in P(T); otherwise NO_CURRENT_CYCLE or DISCOVERY_PENDING. An older zero is never presented as current.",
     "F80": "THE 120-SECOND LOCAL BOUND IS AN ADMISSION BOUND. A per-response record is admitted only by a check inside its committing transaction, before its insertions, strictly before 120 s after the network end; at or after it nothing is admitted and the attempt gets LOCAL_PERSISTENCE_FAILED. The instant at which an admitted COMMIT becomes durable is not bounded; observed_at, commit_seq and avail are never adjusted for it.",
     "F81": "A STALLED STORE IS A STORAGE INCIDENT, NEVER A DECISION. It is detected without the store, raises an alert, stops every new FIX15 grant while it lasts and promises no durable decision; when the store commits again the first committed outcome of each attempt stands, with no repair request, no new key and no refunded attempt.",
-    "F82": "RAW INTEGRITY AND CONTENT IDENTITY ARE DISTINCT. raw_sha256 is the integrity of the received bytes; a revision is keyed by the FOMC_CANON_V1 content identity, which neutralizes only the three proved-volatile Cloudflare spans (keeping effective e-mail addresses) and refuses, without merging, anything unrecognized. Admission parses the original document; a read that depends on a content identity verifies the raws it is derived from."
+    "F82": "RAW INTEGRITY AND CONTENT IDENTITY ARE DISTINCT. raw_sha256 is the integrity of the received bytes; a revision is keyed by the domain-separated FOMC_CONTENT_IDENTITY_V2, whose FOMC_CANON_V2 neutralizes only the three Cloudflare spans recognized as real HTML tokens (keeping effective e-mail addresses) and falls back to the raw bytes in the RAW_FALLBACK domain for anything else. Admission parses the original document; a read that depends on a content identity verifies the raws it is derived from.",
+    "F83": "EVERY CONSUMED GRANT IS JOURNALED BEFORE IT IS USED. Initial and continuation grants, and grants abandoned before any TRANSPORT_INVOKED, each have a durable record with epoch, order, instant, attempt, item, hop and URL; FIX15 is proved over the journal, and a missing trace is NOT_PROVEN."
   },
   "item_predicate": {
     "backfill_discovery_side": "a HISTORICAL_BACKFILL_MANIFEST_V1 entry replaces the feed-title conjunct for backfill observations (primary_classification_v2.inputs)",
@@ -4100,6 +4135,13 @@
       "monotonic_clock_policy": "rate_limiter.clock",
       "restart_limiter_durability": "rate_limiter.limiter_epoch: exclusive ownership plus full 60-second cold-start embargo, with no required durable prior-epoch request history"
     },
+    "grant_journal": {
+      "completeness": "at closure: orders contiguous from 1 in every epoch; exactly one initial grant in each TRANSPORT_INVOKED transaction at its grant instant; per attempt, hops contiguous from 0 and equal in number to its recorded count; each response's redirect chain equal to its grants' URLs by hop. Any missing or inconsistent trace makes FIX15 NOT_PROVEN, never passed; absent data is never reconstructed",
+      "counts": "every per-response record and every non-response outcome of a fetch's own task records how many grants that fetch consumed; an INTERRUPTED attempt records none",
+      "id": "FIX15_GRANT_JOURNAL_V1",
+      "rule": "Every consumed FIX15 grant has one durable GRANT record: limiter epoch, order (1, 2, 3, ... within the epoch, in commit order), monotonic instant, attempt (the TRANSPORT_INVOKED of the same transaction for an initial grant, the attempt for a continuation, null for a grant abandoned before any TRANSPORT_INVOKED), item (source_item_id, or FEED), hop number (0 initial) and the admitted URL. An initial grant commits in its TRANSPORT_INVOKED transaction; a continuation grant commits before it is consumed and handed to its fetch; a grant whose record does not commit is not consumed. The EPOCH record carries the limiter epoch's start (limiter_epoch_begin_mono).",
+      "verification": "FIX15 is verified over every journaled grant of each epoch: start-to-start spacing >= 10 s, at most 6 in any 60 s window, none before the epoch's 60 s embargo; a grant is never reused ((epoch, order) and (attempt, hop) unique). Deadlines, no-refund and continuations-first are unchanged by the journal"
+    },
     "hidden_library_attempt": {
       "forbidden": true,
       "rule": "A library MUST NOT silently perform an extra physical network attempt. Any additional attempt must be explicitly allowed by the existing policy, exposed as a distinct attempt, admitted through the same provider limiter and charged one unit. Transparent GET retries outside this policy are non-conforming; exposing/accounting for a retry alone does not authorize it."
@@ -4220,25 +4262,27 @@
     "validated_scope_note": "explicit EST/EDT release lines were verified on SAMPLES across 2016-2026, and a \"For immediate release\" counterexample at 2015-03-18. V1 claims NO universal coverage. The parser is RECORD-SPECIFIC.",
     "why": "the historical vintage of the exact page body is not established by the verified provider contract"
   },
-  "revision_note": "Spec revision 24 (FIX23) separates raw integrity from content identity. The 2026-10-01 pilot showed that statement pages carry bytes that change on every response (Cloudflare e-mail obfuscation and challenge parameters), so a revision keyed by the raw body hash turned every observation of an unchanged statement into a new EventRevision. FOMC_CONTENT_IDENTITY_V1 (revision_policy.content_identity) keys revisions by the SHA-256 of canonical bytes produced by FOMC_CANON_V1, which neutralizes only three proved-volatile Cloudflare spans (e-mail obfuscation re-keyed so that the effective address stays in the identity; the challenge parameters emptied inside the exact challenge script) and keeps every other byte; anything unrecognized is REFUSED and keeps raw identity, so nothing merges silently. raw_sha256 stays the integrity of the received bytes; admission parsing runs on the original document; availability, observed_at, modes, anchors, rechecks and budgets are unchanged. Invariant F82 and cases FOMC251-FOMC256 are added. The revision 23 model is otherwise unchanged. This document authorizes no capture.",
+  "revision_note": "Spec revision 25 (FIX24) closes two counterexamples to revision 24 and completes the FIX15 evidence. (1) FOMC_CANON_V2 recognizes the Cloudflare spans only as real HTML tokens at their positions in the original bytes (an <a> start tag's href value, a <span> start tag with its exact content, the content of an attribute-less <script> right before </body>); a marker in a comment, in another attribute's value or inside a raw-text element such as <textarea> is refused, as is any document the strict tokenizer cannot read unambiguously; nothing is reserialized. (2) FOMC_CONTENT_IDENTITY_V2 is domain-separated: the identity hashes {identity, canonicalizer, domain CANONICAL or RAW_FALLBACK, bytes SHA-256}, so a refused raw never shares a revision with a canonicalized document even when their bytes hash alike, while identical refused raws still meet. (3) FIX15_GRANT_JOURNAL_V1 records every consumed grant, initial or continuation, including grants abandoned before any TRANSPORT_INVOKED, durably before it is consumed; the closure proves FIX15 over the journal and reports NOT_PROVEN when a trace is missing. Invariant F83, cases FOMC257-FOMC260. The revision 24 model is otherwise unchanged. This document authorizes no capture.",
   "revision_policy": {
     "content_identity": {
       "bounds": "at most 16 CF_EMAIL_LINK, 16 CF_EMAIL_SPAN and 1 CF_CHALLENGE_PARAMS spans per record",
-      "canonicalizer_id": "FOMC_CANON_V1",
-      "evidence": "2026-10-01 pilot (spec revision 23): 33 responses of 17 statement URLs; every byte difference between responses of the same URL lay in these three spans; all 33 are CANONICAL under FOMC_CANON_V1 (65 e-mail links, 32 e-mail spans, 33 challenge parameter pairs), giving one content identity per URL, and the admission parse of each canonical document equals that of its original",
-      "id": "FOMC_CONTENT_IDENTITY_V1",
+      "canonicalizer_id": "FOMC_CANON_V2",
+      "domains": "CANONICAL: the bytes are the canonical bytes (also when no marker exists, then equal to the raw). RAW_FALLBACK: the bytes are the raw bytes of a refused record",
+      "evidence": "2026-10-01 pilot (spec revision 23): 33 responses of 17 statement URLs; every byte difference between responses of the same URL lay in the three spans; under FOMC_CANON_V2 all 33 tokenize unambiguously and are CANONICAL (65 e-mail links, 32 e-mail spans, 33 challenge parameter pairs) with one identity per URL, the admission parse of each canonical document equals that of its original, and re-canonicalizing a canonical document falls back to RAW_FALLBACK with a different identity",
+      "html_context": "The raw is read by a strict tokenizer that keeps byte positions in the original raw and never reserializes: '<!--' to the next '-->' is a comment; '<!' or '<?' to the next '>' is a declaration; '</' + name to the next '>' is an end tag; '<' + ASCII letter starts a start tag whose name is [A-Za-z][A-Za-z0-9:-]* and whose attributes are a name ([^ whitespace\"'>/=]+, compared lowercase) optionally followed by '=' and a double-quoted, single-quoted or unquoted value, until '>' or '/>'; any other '<' is text. The content of script, style, textarea, title, xmp, iframe, noembed, noframes and noscript runs to the first case-insensitive '</name' followed by whitespace, '/' or '>' (plaintext to the end) and contains no tokens. Unterminated comments, declarations, tags, attribute values or raw-text elements, and a script content containing '<!--', make the document unreadable: RAW_FALLBACK when it holds any marker",
+      "id": "FOMC_CONTENT_IDENTITY_V2",
       "input": "the complete admitted final-200 body bytes of the record (its raw), after raw digest verification. Canonicalization runs only after the record's admission parsing and classification, which always operate on the original document (parser_policy.admission_on_original_document)",
       "obfuscated_value": "H matches [0-9a-f]{4,2048} with an even length. Decoding: k = the first byte of H (two hex digits); each following byte of H XOR k gives the decoded bytes, which must be 1..1023 bytes of printable ASCII 0x20-0x7E. Re-keying: H is replaced by '00' followed by the lowercase hex of the decoded bytes, so the effective address (for example media@frb.gov, or a share-link body) stays in the content identity and only the per-response key is removed",
       "precondition": "the raw decodes as strict UTF-8 (parser_policy.text_decoding_v1); otherwise REFUSED",
       "raw_integrity": "raw_sha256 remains the SHA-256 of the received bytes: storage, immutability, integrity verification, corruption handling and replay use it. Every response keeps its own record, metadata, raw and observation-to-revision link; the link carries both raw_sha256 and content_identity_sha256. A read that depends on a content identity re-reads and verifies the raws it is derived from (the latest record, the latest verified record, the creating raw of the current revision and each exposed link), so a corrupt raw fails it closed even when its content identity equals another record's",
-      "refusal": "REFUSED when: the precondition fails; the number of occurrences of any of the byte strings 'email-protection', '__cf_email__', 'data-cfemail', '__CF$cv$params' differs from the number covered by matched spans (a marker in text, an unknown structure or an ambiguous one); a matched span fails its decoding or context rule; a bound is exceeded; spans overlap. A REFUSED record's canonical bytes are its raw bytes and its refusal reason is recorded: it never merges with any other content (fail closed)",
+      "refusal": "RAW_FALLBACK when: the precondition fails; the document holds a marker ('email-protection', '__cf_email__', 'data-cfemail', '__CF$cv$params') and cannot be tokenized unambiguously; any marker occurrence lies outside the region of an allowed span of its kind (the href value, the span start tag, the challenge script content) - in particular in a comment, in another attribute's value or inside a raw-text element; a span fails its decoding or context rule; a bound is exceeded; spans overlap. The fallback's bytes are the raw bytes and its reason is recorded",
       "replay": "replay recomputes every link's content identity from its verified raw and fails closed on a mismatch",
       "scope": "primary statement records; feed records, raw storage, raw integrity and request accounting are unaffected",
-      "serialization": "canonical bytes = the raw bytes with the replacements applied left to right; content_identity_sha256 = lowercase hex SHA-256 of the canonical bytes; an EventRevision is keyed by (source_item_id, content_identity_sha256); the canonicalizer is identified by canonicalizer_id and bound by this CaptureSpec hash",
+      "serialization": "canonical bytes = the raw bytes with the replacements applied at their original positions; bytes_sha256 = lowercase hex SHA-256 of the domain's bytes; content_identity_sha256 = SHA-256 of the canonical serialization (canonical_serialization) of {\"identity\": \"FOMC_CONTENT_IDENTITY_V2\", \"canonicalizer\": \"FOMC_CANON_V2\", \"domain\": <domain>, \"bytes_sha256\": <bytes_sha256>}; an EventRevision is keyed by (source_item_id, content_identity_sha256). Two identical refused raws share an identity; a refused raw never shares one with a CANONICAL document, even when its bytes equal that document's canonical bytes",
       "spans": {
-        "CF_CHALLENGE_PARAMS": "the bytes window.__CF$cv$params={r:'R',t:'T'} with R = exactly 16 lowercase hex digits and T = 4..64 characters of [A-Za-z0-9+/] followed by at most two '=', whose strict base64 decoding is 1..20 ASCII digits; the enclosing element from the nearest preceding '<script>' to the following '</script>', with R and T removed, must have SHA-256 f69b046ab2c86664e4f0d0ab8179163a3d0333c65183fc32b5976fbf9159a7b2 and be immediately followed by '</body>'; R and T are replaced by the empty string",
-        "CF_EMAIL_LINK": "the bytes href=\"/cdn-cgi/l/email-protection#H\" where the nearest '<' before them begins '<a ' and is followed by no '>' before them (inside an <a> start tag); H is re-keyed (obfuscated_value)",
-        "CF_EMAIL_SPAN": "the bytes <span class=\"__cf_email__\" data-cfemail=\"H\">[email&#160;protected]</span>; H is re-keyed (obfuscated_value)"
+        "CF_CHALLENGE_PARAMS": "inside the content of an attribute-less <script> element, exactly one window.__CF$cv$params={r:'R',t:'T'} with R = 16 lowercase hex digits and T = 4..64 characters of [A-Za-z0-9+/] then at most two '=', strict base64 of 1..20 ASCII digits; the element from its start tag to the end of its </script>, with R and T removed, must have SHA-256 f69b046ab2c86664e4f0d0ab8179163a3d0333c65183fc32b5976fbf9159a7b2 and its end tag must be immediately followed by the end tag </body>; R and T are replaced by the empty string",
+        "CF_EMAIL_LINK": "the value of the only href attribute of an <a> start tag, double-quoted and exactly /cdn-cgi/l/email-protection#H; H is re-keyed (obfuscated_value). An <a> start tag with two href attributes is refused",
+        "CF_EMAIL_SPAN": "a <span> start tag whose attributes are exactly class=\"__cf_email__\" then data-cfemail=\"H\" (double-quoted), immediately followed by the text [email&#160;protected] and the end tag </span>; H is re-keyed (obfuscated_value); any other span carrying data-cfemail or class __cf_email__ is refused"
       },
       "unchanged_bytes": "every byte outside the three spans' replaced values is kept: no removal or normalization of scripts, attributes, numbers, dates, URLs or whitespace"
     },
@@ -5026,7 +5070,7 @@
     ],
     "vocabulary": "design rev4 missingness_policy states only; no new global state invented"
   },
-  "spec_revision": 24,
+  "spec_revision": 25,
   "status_meaning": "Semantics are frozen. NOT implemented, NOT captured, NOT live. Any runtime implementation must conform exactly or require a spec revision.",
   "storage_incident": {
     "alert": "one operational alert when an incident starts and one when it ends, emitted outside the store, carrying the stalled operation, its duration and the number of logical fetches in flight; an alert is not a source-health result",
@@ -5065,7 +5109,8 @@
     "83caecb05154829d59d9c9430d27ed27178706488764b0c875b2826822d46910",
     "12f929f46551e32b8d6c4d6f55d17f882104bd60e01c8b2fd1f7b2229b00d9e4",
     "ba6a01e5f12e810ecde89711304c278862d147de298c63e7602a8359fa18e678",
-    "3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9"
+    "3fc2f9a705d99e964208c10425c6016db4ddb375c630cbba10cbe34c4abe9ee9",
+    "235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36"
   ],
   "surfaces": {
     "allowlist_note": "exact host only. The apex federalreserve.gov is NOT allowlisted: no canonical redirect requirement was verified for it. No wildcard. HTTPS only, port 443 only, no userinfo.",

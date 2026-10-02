@@ -7,14 +7,14 @@ STATUS                FROZEN_PRE_IMPLEMENTATION
 
 NOT implemented · NOT captured · NOT live · zero requests made in this phase
 
-CAPTURE SPEC HASH  (revision 24 — authoritative)
-235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36
+CAPTURE SPEC HASH  (revision 25 — authoritative)
+b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece
 
 supersedes 74571bb0 (rev 1) → b852b560 → d4242ea5 → f0b68307 → 8a39a39a → 6693a665
         → 3db09125 → c1d56f46 → 0757b1f5 → 3dcf0a60 → b9ad3c44 → b6772a2f
         → 67e2d7d5 → bbc29abb → 49f8050f → 69156776 → 5cec4f30
         → dd0cff22 → 83df6d2d → 83caecb0 (rev 20) → 12f929f4 (rev 21)
-        → ba6a01e5 (rev 22) → 3fc2f9a7 (rev 23)
+        → ba6a01e5 (rev 22) → 3fc2f9a7 (rev 23) → 235e474c (rev 24)
 
 BINDS
   event intelligence design rev4
@@ -32,7 +32,7 @@ explains why, and adds nothing the JSON does not already bind.
 
 This spec was built from provider evidence already audited and frozen, plus the
 committed DOM anchor evidence bound above. **No network request was made while
-writing revision 24.** Its evidence is the local raw of the revision-23 pilot
+writing revision 25.** Its evidence is the local raw of the revision-23 pilot
 (no new download).
 
 ---
@@ -771,9 +771,14 @@ The two e-mail obfuscation forms are *re-keyed*, not removed: the hidden address
 (`media@frb.gov`, or the share link's body) stays in the identity, only the
 per-response key goes. The challenge parameters `r` and `t` are emptied, but
 only inside the exact challenge script, recognized by its digest and its place
-just before `</body>`. Every other byte is kept. A marker anywhere else, an
-ambiguous structure or invalid UTF-8 is **refused**: the record keeps its raw
-identity and never merges with anything. Admission still parses the original
+just before `</body>`. Every other byte is kept. Since revision 25 the spans count
+only as real HTML tokens at their place in the original bytes — an `<a>`
+start tag's `href` value, a `<span>` start tag with its exact content, the
+content of the challenge `<script>` — so a marker in a comment, in another
+attribute or inside a `<textarea>` is **refused**, as are an ambiguous
+structure and invalid UTF-8. A refused record falls back to its raw bytes in a
+separate RAW_FALLBACK identity domain: identical refused raws still meet, but a
+refused raw never shares a revision with a canonicalized document. Admission still parses the original
 document, and a read that relies on a content identity re-verifies the raws it
 comes from.
 
@@ -1961,9 +1966,9 @@ statement family, and infrastructure is what 6G-A has to prove.
 an FOMC statement, nor its date, release time, identity, revision or source
 authority. Those are deterministic parses or they are nothing.
 
-## 11. Two hundred and fifty-six cases, decided in advance
+## 11. Two hundred and sixty cases, decided in advance
 
-`FOMC01`–`FOMC256` in the JSON settle summer/winter releases, immediate release,
+`FOMC01`–`FOMC260` in the JSON settle summer/winter releases, immediate release,
 bare `ET`, a feed item whose page will not load, late observation, unchanged
 and changed bytes under one GUID, GUID conflicts, `Last Update` drift, a 2027
 backfill of a 2026 statement, local raw corruption, malformed XML, feed
@@ -2352,6 +2357,10 @@ FOMC136–138, FOMC142, FOMC149 and FOMC156–167.
 | `FOMC254` — A, B, then A with other Cloudflare bytes | A's revision reused |
 | `FOMC255` — backfill then LIVE with different Cloudflare bytes | one revision; LIVE availability only from the LIVE link |
 | `FOMC256` — the newest same-content record's raw is corrupt | the read and replay fail closed |
+| `FOMC257` — a Cloudflare marker in a `title` attribute, a `<textarea>` or a comment | refused (RAW_FALLBACK); no merge across keys |
+| `FOMC258` — a document equal to another record's canonical bytes | RAW_FALLBACK; a different identity |
+| `FOMC259` — redirects, a failure after a redirect, an abandoned grant, a restart | every grant journaled; FIX15 proved |
+| `FOMC260` — a lost or inconsistent grant record | FIX15 NOT_PROVEN; an unjournaled grant is never used |
 
 These are specification cases only; no fixture, capture or runtime is created
 or exercised here. Revision 22 (FIX21) closes the three blockers of the REV21
@@ -2362,7 +2371,10 @@ rules (D3). Revision 23 (FIX22) records one decision — the 120 s local bound
 governs admission, not durability, and a stalled store is a storage incident
 (`FOMC248`–`FOMC250`, invariants F80–F81) — and states how grants are dispatched
 to concurrent fetches. Revision 24 (FIX23) separates raw integrity from content
-identity (`FOMC251`–`FOMC256`, invariant F82). This document authorizes no capture.
+identity (`FOMC251`–`FOMC256`, invariant F82). Revision 25 (FIX24) reads the
+Cloudflare spans only as real HTML tokens, separates the CANONICAL and
+RAW_FALLBACK identity domains, and journals every FIX15 grant (`FOMC257`–
+`FOMC260`, invariant F83). This document authorizes no capture.
 
 ## 12. What this does not establish
 
