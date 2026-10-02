@@ -78,6 +78,7 @@ def test_a_premature_stop_keeps_integrity_valid_but_not_the_planned_duration(tmp
                              planned_start=start, planned_end=start + timedelta(hours=24),
                              stopper=lambda: {"was": "inactive"})
         assert report["integrity_ok"] and not report["duration_ok"] and not report["ok"]
+        assert report["validation"]["verdict"] == "NOT_VALIDATED" and "duration ACCOMPLISHED" in report["validation"]["missing"]
         reasons = report["pilot_duration"]["reasons"]
         assert any("not running" in r for r in reasons) and any("planned end" in r for r in reasons)
     finally:
@@ -171,7 +172,7 @@ def _fake_system(calls, *, previous="inactive"):
 
 def _previous(tmp_path, duration):
     run = tmp_path / "rev23"
-    (run / "store").mkdir(parents=True)
+    (run / "store").mkdir(parents=True, exist_ok=True)
     (run / "closure-report.json").write_text(json.dumps({"integrity": {"verdict": "VALID", "not_proven": ["FIX15"]},
                                                          "pilot_duration": {"verdict": duration}}))
     return run
@@ -188,7 +189,8 @@ def test_the_successor_is_launched_only_behind_its_gate(tmp_path, monkeypatch):
         monkeypatch.setattr(pilot.subprocess, "run", _fake_system(calls, previous=previous))
         base = tmp_path / f"base-{duration}-{previous}"
         base.mkdir()
-        decision = pilot.successor(_previous(base, duration), "fomc-pilot", tmp_path, base, wait_until=soon, minutes=90)
+        decision = pilot.successor(_previous(base, duration), "fomc-pilot", tmp_path, base, wait_until=soon, minutes=90,
+                                   unit_dir=base)
         runs = [c for c in calls if c[0] == "systemd-run"]
         assert decision["launched"] is launched, decision
         written = json.loads((base / "successor-decision.json").read_text())
@@ -201,6 +203,64 @@ def test_the_successor_is_launched_only_behind_its_gate(tmp_path, monkeypatch):
         assert store.startswith(str(base / "run-rev25-")) and store != str(base / "rev23" / "store")  # a new store
         close_at = pilot.parse_iso(runs[1][runs[1].index("--close-at") + 1])
         assert close_at - pilot.parse_iso(decision["started"]) == timedelta(minutes=90)
+        assert "--no-close" in runs[1]  # the persistent timer owns the closure
+        timer = (base / "fomc-pilot-rev25-closure.timer").read_text()
+        service = (base / "fomc-pilot-rev25-closure.service").read_text()
+        assert "Persistent=true" in timer and f"OnCalendar={close_at.strftime('%Y-%m-%d %H:%M:%S')} UTC" in timer
+        assert f"WorkingDirectory={tmp_path}" in service and f"--launch-boot-id {decision['launch_boot_id']}" in service
+        assert f"--planned-end {pilot.iso(close_at)}" in service and "--unit fomc-pilot-rev25 " in service
+        assert ["systemctl", "--user", "enable", "--now", "fomc-pilot-rev25-closure.timer"] in calls
+
+
+AUTHORIZATION = {"granted_at": "2026-10-02", "unit": "fomc-pilot-rev25", "waives": ["previous_duration"],
+                 "scope": "this trial only", "text": "le pilote rev25 peut demarrer independamment de la duree accomplie par rev23"}
+
+
+def test_an_explicit_authorization_waives_only_the_previous_duration_and_only_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(pilot, "owner_free", lambda store: True)
+    monkeypatch.setattr(pilot.time, "sleep", lambda s: None)
+    monkeypatch.setattr(pilot, "_alert", lambda *a, **k: None)
+    soon = pilot._now() + timedelta(minutes=1)
+
+    def attempt(name, auth, *, integrity="VALID", previous="inactive"):
+        calls = []
+        monkeypatch.setattr(pilot.subprocess, "run", _fake_system(calls, previous=previous))
+        base = tmp_path / name
+        base.mkdir(exist_ok=True)
+        run = _previous(base, "NOT_ACCOMPLISHED")
+        report = json.loads((run / "closure-report.json").read_text())
+        report["integrity"]["verdict"] = integrity
+        (run / "closure-report.json").write_text(json.dumps(report))
+        return pilot.successor(run, "fomc-pilot", tmp_path, base, wait_until=soon, authorization=auth, unit_dir=base), base
+
+    decision, base = attempt("granted", AUTHORIZATION)
+    assert decision["launched"] and decision["authorization"] == AUTHORIZATION
+    assert decision["waived"] and "NOT_ACCOMPLISHED" in decision["waived"][0]
+    assert json.loads((base / "successor-decision.json").read_text())["authorization"] == AUTHORIZATION
+    again, _ = attempt("granted", AUTHORIZATION)  # the same authorization, a second trial
+    assert not again["launched"] and any("one trial" in r for r in again["reasons"])
+    for name, auth, kw in (("integrity", AUTHORIZATION, {"integrity": "INVALID"}),
+                           ("running", AUTHORIZATION, {"previous": "active"}),
+                           ("wider", dict(AUTHORIZATION, waives=["previous_duration", "previous_integrity"]), {}),
+                           ("other-unit", dict(AUTHORIZATION, unit="fomc-pilot-rev26"), {})):
+        refused, _ = attempt(name, auth, **kw)
+        assert not refused["launched"] and refused["reasons"], name
+
+
+def test_a_reboot_or_a_capture_gap_keeps_the_duration_not_accomplished():
+    start = pilot.parse_iso("2026-10-02T13:30:00+00:00")
+    end = start + timedelta(minutes=90)
+    progress = {"first_wall": pilot.iso(start), "last_wall": pilot.iso(end), "epochs": 1, "max_gap_s": 75.0}
+    ok = pilot.pilot_duration({"was": "active"}, progress, planned_start=start, planned_end=end, closed_at=end,
+                              launch_boot_id="a" * 32, closure_boot_id="a" * 32)
+    assert ok["verdict"] == "ACCOMPLISHED"
+    rebooted = pilot.pilot_duration({"was": "active"}, progress, planned_start=start, planned_end=end, closed_at=end,
+                                    launch_boot_id="a" * 32, closure_boot_id="b" * 32)
+    assert rebooted["verdict"] == "NOT_ACCOMPLISHED" and any("rebooted" in r for r in rebooted["reasons"])
+    gap = pilot.pilot_duration({"was": "active"}, dict(progress, max_gap_s=pilot.CAPTURE_GAP_BOUND_S + 1),
+                               planned_start=start, planned_end=end, closed_at=end, launch_boot_id="a" * 32,
+                               closure_boot_id="a" * 32)
+    assert gap["verdict"] == "NOT_ACCOMPLISHED" and any("suspended" in r for r in gap["reasons"])
 
 
 def test_a_short_pilot_rehearsal_meets_the_successor_criteria(tmp_path, monkeypatch):
@@ -223,6 +283,7 @@ def test_a_short_pilot_rehearsal_meets_the_successor_criteria(tmp_path, monkeypa
                              stopper=lambda: {"was": "active", "left": service.stop(wait_s=10)})
         criteria = report["criteria"]
         assert report["integrity_ok"] and report["duration_ok"] and report["criteria_ok"], json.dumps(criteria, indent=1)
+        assert report["validation"] == {"verdict": "VALIDATED", "missing": []}
         stable = criteria["identity_stable_over_different_rereads"]
         assert stable["items_reread_with_different_raws"] >= 1 and stable["ok"]
         item = next(iter(stable["per_item"].values()))

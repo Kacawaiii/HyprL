@@ -9,10 +9,10 @@ Unix-socket provider; no Federal Reserve request, fixture capture or live run is
 
 **Status (2026-10-02):** runtime revision 25 finished and verified offline (HTML-context content identity
 with separate CANONICAL/RAW_FALLBACK domains, FIX15 grant journal; below). The revision-23 real pilot was
-**interrupted after 1 h 23 min** by an abrupt termination of the WSL VM (2026-10-01 ~19:44 UTC, see "Pilot
-capture"); its store is kept unchanged and its closure stays at 2026-10-02T18:31:14Z (re-armed, frozen
-closure code). Its duration will therefore be NOT_ACCOMPLISHED, and the gated revision-25 successor
-(90 min) is programmed but will refuse to start under the authorized conditions. **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
+**interrupted after 1 h 23 min** by a user-requested Windows restart (2026-10-01T19:44:36Z) and is
+**archived**: integrity VALID, duration NOT_ACCOMPLISHED, FIX15 NOT_PROVEN, no corruption. Under a new
+explicit operator authorization the 90-minute revision-25 pilot starts independently of that duration
+(see "Revision-25 pilot"). **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
 revision 23 (the 120 s bound governs admission, a stalled store is a storage incident) and its
 implementation. Serialized fetches are replaced by central grant dispatch with concurrent logical
 fetches (`work_conserving`). `service.CAPTURE_BLOCKERS` is empty. Nothing has been captured: the first
@@ -20,7 +20,7 @@ real run is the capture protocol below; what remains unproven offline is listed 
 
 ```
 python -m scripts.trading_lab.fomc.demo                         # the executable path, end to end
-python -m pytest tests/crypto/test_fomc_*.py                    # 196 tests (one private proof skips without the local fixtures)
+python -m pytest tests/crypto/test_fomc_*.py                    # 199 tests (one private proof skips without the local fixtures)
 python -m scripts.trading_lab.fomc.soak --hours 26              # prolonged run, verified (~70 s)
 python -m scripts.trading_lab.fomc.service --store DIR --check  # capture preflight, no network
 ```
@@ -344,16 +344,37 @@ applied. Failures keep their budgets and delays.
 
 **Status, kept distinct.**
 - Runtime: finished, revision 25 (offline proofs above).
-- Capture: the revision-23 pilot ran 2026-10-01T18:21:14Z to ~19:44Z, then was killed with its VM; closure
-  re-armed for 2026-10-02T18:31:14Z.
-- Capture validated: no. At best integrity VALID with duration NOT_ACCOMPLISHED; FIX15 over redirect hops
-  NOT_PROVEN for this store, never reconstructed.
+- Capture: the revision-23 pilot ran 2026-10-01T18:21:14Z to 19:44:09Z (last durable write), then was
+  killed with its VM by a user-requested Windows restart (System event 1074 from Explorer.EXE at 19:44:36Z,
+  Kernel-Power 109 reboot, OS down 19:44:46Z, up 19:44:58Z).
+- Capture validated: no (archived below).
+
+**Archive (2026-10-02T13:11:50Z, ahead of the planned instant by the operator's decision).** Both earlier
+triggers were disarmed first (`fomc-rev23-closure.timer` stopped and disabled, `fomc-successor.timer`
+stopped), so nothing runs late or twice. The closure ran with the frozen rev23-compatible code `909399fa`
+and the dates originally planned (start 2026-10-01T18:21:14Z, end 2026-10-02T18:31:14Z):
+- integrity **VALID**: the backup-API copy equals the source (624 transactions, 1049 rows, 49 raws,
+  `integrity_check` ok), the 3 recorded reads re-read and replay identically, health replay passes, every
+  audit check passes;
+- duration **NOT_ACCOMPLISHED**: closed before the planned end, no durable activity after 19:44:09Z, the
+  service not running at the closure;
+- FIX15 over all physical starts **NOT_PROVEN** (no grant journal in rev23; 23 attempts without a hop
+  record); initial grants per epoch PASS (143); nothing reconstructed;
+- progress: 143 attempts (82 feed polls, 3 backfills, 17 LIVE acquisitions, 41 re-observations), 120
+  responses all CLOCK_VERIFIED, 23 SOURCE_UNAVAILABLE, 72 cycles (43 zero), 15 revisions (raw-hash keyed, by
+  rev23 design), 0 incidents; rechecks O300 15/15 and O3600 15/15 SATISFIED.
+Corruption and interruption are reported apart (`interruption-analysis.json`, offline, on a scratch copy of
+the closure copy): **corruption none detected** (integrity check, raw digests, re-read, replay, health);
+**interruption consequences**: 0 attempts without outcome (the last write preceded the restart by 26.5 s),
+0 responses without processing outcome, 0 episodes left open, one epoch and no reconciliation ever ran;
+the 15 O86400 rechecks fell due after the interruption and before the planned end and were never served,
+the 15 O604800 fall after it. The store is archived as is: no repair, no network.
 - Not exercised by this pilot: the O604800 (7-day) recheck; a real storage incident, restart or crash;
   MANUAL_RETRY, RESOLVE and suspension against the real provider; a real redirect, PARSER_FAILED or
   clock-unverified response (none seen so far); a new FOMC statement released during capture (the next
   meeting is after the window).
 
-## Revision-25 successor (programmed, gated: 90-minute real pilot)
+## Revision-25 pilot (90 minutes, real)
 
 Authorized only after the revision-23 closure and only if its report shows integrity VALID **and**
 duration ACCOMPLISHED, the old service stopped and its store's ownership free. `pilot successor` checks,
@@ -371,11 +392,41 @@ the +300 s and +1 h rechecks (served when due long enough). Programmed with a tr
 (`fomc-successor`, 2026-10-02 18:33 UTC, waiting for the report until 19:30 UTC); a reboot before then
 cancels it rather than starting a pilot at an unplanned time.
 
-**Expected outcome, stated in advance:** the revision-23 duration will be NOT_ACCOMPLISHED (interrupted
-pilot), so the successor will record NOT_LAUNCHED. Running the 90-minute pilot anyway needs a new explicit
-authorization; the rule is not relaxed to make it start. Offline rehearsal of the criteria:
-`test_a_short_pilot_rehearsal_meets_the_successor_criteria` (MET); gate:
-`test_the_successor_is_launched_only_behind_its_gate`.
+**Authorization (2026-10-02).** The operator authorized this trial to start independently of the
+revision-23 duration. `pilot successor --authorization` records it verbatim in `successor-decision.json`;
+it can waive only `previous_duration`, only for the named unit and only once (a second launch under it is
+refused); integrity VALID, the old service stopped, its ownership free, no other emitter, NTP and the spec
+binding are still required. No capture rule, budget, deadline or closure verdict changes.
+
+**Closure that survives a stop of WSL.** The closure is a persistent user timer
+(`fomc-pilot-rev25-closure.timer`, `Persistent=true`, frozen code): after a clean stop, a consistent copy,
+re-read and replay of every recorded snapshot read, health replay, budgets and the FIX15 journal. The
+supervisor only monitors (alerts, a snapshot read every 15 min) and exits 120 s before the closure. The
+pilot is **VALIDATED** only with integrity VALID, duration ACCOMPLISHED, criteria MET and nothing
+NOT_PROVEN. Duration also records the boot id at launch and at closure and the longest silence between
+durable transactions: a reboot, or a silence above `CAPTURE_GAP_BOUND_S` = 600 + 60 + 60 = 720 s (a feed poll
+every 60 s once the previous one ends, at most 600 s), makes it NOT_ACCOMPLISHED. If the host is down at the
+planned end, the closure runs at the next boot and reports the interruption.
+
+**Environment check before the launch (2026-10-02, neutral hosts only).** NTP synchronized (offset
++1.69 s, jitter 0.78 s; the guest clock is stepped by ~1 s every 35–70 s, `systemd-resolved: Clock change
+detected`, far inside the 90 s clock check); no pending Windows reboot (Windows Update and CBS), a desktop
+PC with standby disabled (AC and DC 0), power plan High performance; WSL 2.6.1, mirrored networking, no
+idle setting, and an instance that stops without a `wsl.exe` client (the 35–43 s boots of 2026-10-01). Five
+minutes of application-level observations (13:12–13:17Z): `getaddrinfo` through the service's resolver
+path 52/53 (median 5.0 s, p90 5.3 s, max 15.1 s: the first server's 5 s timeout), TCP connect 53/53 (median
+82 ms, 5 above 1 s: SYN retransmissions), kernel TCP retransmissions 0.29 % of segments, UDP errors 0; raw
+DNS UDP 1.1.1.1 36/90, UDP 1.0.0.1 75/90, TCP 1.0.0.1 85/90, TCP 1.1.1.1 87/90. Application loss is
+concentrated on UDP to 1.1.1.1; ICMP results (92–96 % loss) are not taken as application loss. **No network
+modification**: resolution succeeds within the budgets; reordering the resolvers would only shorten
+delays and would change the conditions under test. Host measure, recorded in the decision: a hidden
+`wsl.exe -e sleep` client keeps the WSL instance alive for the window (it does not protect against a
+Windows restart; the persistent closure covers that).
+
+Offline rehearsal of the criteria: `test_a_short_pilot_rehearsal_meets_the_successor_criteria` (MET and
+VALIDATED); gate and authorization: `test_the_successor_is_launched_only_behind_its_gate`,
+`test_an_explicit_authorization_waives_only_the_previous_duration_and_only_once`; interruption:
+`test_a_reboot_or_a_capture_gap_keeps_the_duration_not_accomplished`.
 
 Manual equivalent of the launch, from a detached worktree at the pushed SHA:
 

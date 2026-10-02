@@ -64,7 +64,22 @@ def progress(store) -> dict:
         "revisions": len(view.rows("REVISION")), "manifests": len(view.rows("MANIFEST")),
         "storage_incidents": len(view.rows("STORAGE_INCIDENT")),
         "first_wall": view.txns()[0][2] if view.txns() else None, "last_wall": view.txns()[-1][2] if view.txns() else None,
+        "max_gap_s": _max_gap(view.txns()),
     }
+
+
+def _max_gap(txns) -> float | None:
+    walls = [parse_iso(t[2]) for t in txns]
+    return round(max((b - a).total_seconds() for a, b in zip(walls, walls[1:])), 1) if len(walls) > 1 else None
+
+
+# A running owner commits at least one feed poll per FEED_CADENCE_S once the previous poll has ended (at most
+# ATTEMPT_ABSOLUTE_DEADLINE_S): a longer silence means the capture itself was suspended (host sleep, VM pause).
+CAPTURE_GAP_BOUND_S = spec.ATTEMPT_ABSOLUTE_DEADLINE_S + spec.FEED_CADENCE_S + 60
+
+
+def boot_id() -> str:
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
 def take_snapshot(store_dir: Path, log: Path, *, now: datetime | None = None) -> dict:
@@ -493,17 +508,20 @@ def verify_copy(copy_dir: Path, snapshots_log: Path | None) -> dict:
 
 
 def pilot_duration(stop: dict, progress_: dict, *, planned_start: datetime | None, planned_end: datetime | None,
-                   closed_at: datetime) -> dict:
+                   closed_at: datetime, launch_boot_id: str | None = None, closure_boot_id: str | None = None) -> dict:
     """Whether the pilot ran for its planned duration - a separate verdict from integrity: the service
     must have been running when the closure stopped it, at or after the planned end, as one owner
-    epoch, with durable activity up to the end."""
+    epoch, with durable activity up to the end, on the boot it was launched on and without a silence
+    longer than CAPTURE_GAP_BOUND_S."""
     was_running = stop.get("was") in ("active", "running")
     last = parse_iso(progress_["last_wall"]) if progress_.get("last_wall") else None
     first = parse_iso(progress_["first_wall"]) if progress_.get("first_wall") else None
     detail = {"service_running_at_closure": was_running, "epochs": progress_.get("epochs"),
               "planned_start": iso(planned_start) if planned_start else None,
               "planned_end": iso(planned_end) if planned_end else None, "closed_at": iso(closed_at),
-              "first_durable_activity": progress_.get("first_wall"), "last_durable_activity": progress_.get("last_wall")}
+              "first_durable_activity": progress_.get("first_wall"), "last_durable_activity": progress_.get("last_wall"),
+              "max_gap_between_transactions_s": progress_.get("max_gap_s"), "capture_gap_bound_s": CAPTURE_GAP_BOUND_S,
+              "launch_boot_id": launch_boot_id, "closure_boot_id": closure_boot_id}
     reasons = []
     if planned_end is None or planned_start is None:
         reasons.append("no planned window given")
@@ -518,6 +536,10 @@ def pilot_duration(stop: dict, progress_: dict, *, planned_start: datetime | Non
         reasons.append("the service was not running when the closure came (premature stop or crash)")
     if progress_.get("epochs") != 1:
         reasons.append(f"{progress_.get('epochs')} owner epochs (restarts)")
+    if launch_boot_id is not None and launch_boot_id != closure_boot_id:
+        reasons.append(f"the host rebooted after the launch (boot {launch_boot_id[:8]} then {str(closure_boot_id)[:8]})")
+    if progress_.get("max_gap_s") is not None and progress_["max_gap_s"] > CAPTURE_GAP_BOUND_S:
+        reasons.append(f"no durable transaction for {progress_['max_gap_s']} s (> {CAPTURE_GAP_BOUND_S} s): the capture was suspended")
     detail["verdict"] = "ACCOMPLISHED" if not reasons else "NOT_ACCOMPLISHED"
     detail["reasons"] = reasons
     return detail
@@ -525,9 +547,11 @@ def pilot_duration(stop: dict, progress_: dict, *, planned_start: datetime | Non
 
 def close(store_dir: Path, copy_dir: Path, report: Path, *, unit: str | None = None, pid: int | None = None,
           snapshots_log: Path | None = None, notify: bool = True, planned_start: datetime | None = None,
-          planned_end: datetime | None = None, stopper=None) -> dict:
-    """Clean stop, owner check, consistent copy and offline verification. Two separate verdicts:
-    integrity (copy, re-read, replay, health replay, invariants) and pilot duration."""
+          planned_end: datetime | None = None, stopper=None, launch_boot_id: str | None = None,
+          closure_boot_id: str | None = None) -> dict:
+    """Clean stop, owner check, consistent copy and offline verification. Separate verdicts: integrity
+    (copy, re-read, replay, health replay, invariants), pilot duration and the pilot criteria; the pilot
+    is VALIDATED only when all three hold and nothing is NOT_PROVEN."""
     result = {"started": iso(_now()), "store": str(store_dir), "copy": str(copy_dir)}
     result["stop"] = stopper() if stopper is not None else stop_service(unit, pid)
     closed_at = _now()
@@ -542,32 +566,43 @@ def close(store_dir: Path, copy_dir: Path, report: Path, *, unit: str | None = N
         valid = result["copy_check"]["equal"] and verification["ok"]
         result["integrity"] = {"verdict": "VALID" if valid else "INVALID",
                                "not_proven": verification["audit"]["not_proven"]}
-        result["pilot_duration"] = pilot_duration(result["stop"], verification["progress"],
-                                                  planned_start=planned_start, planned_end=planned_end, closed_at=closed_at)
+        result["pilot_duration"] = pilot_duration(
+            result["stop"], verification["progress"], planned_start=planned_start, planned_end=planned_end,
+            closed_at=closed_at, launch_boot_id=launch_boot_id,
+            closure_boot_id=closure_boot_id if closure_boot_id is not None else boot_id())
         result["criteria"] = verification["criteria"]
     result["integrity_ok"] = result["integrity"]["verdict"] == "VALID"
     result["duration_ok"] = result["pilot_duration"]["verdict"] == "ACCOMPLISHED"
     result["criteria_ok"] = result.get("criteria", {}).get("verdict") == "MET"
     result["ok"] = result["integrity_ok"] and result["duration_ok"]
+    missing = [name for name, ok in (("integrity VALID", result["integrity_ok"]),
+                                     ("duration ACCOMPLISHED", result["duration_ok"]),
+                                     ("criteria MET", result["criteria_ok"])) if not ok]
+    missing += [f"NOT_PROVEN: {x}" for x in result["integrity"].get("not_proven", [])]
+    result["validation"] = {"verdict": "VALIDATED" if not missing else "NOT_VALIDATED", "missing": missing}
     result["finished"] = iso(_now())
     report.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     if notify:  # the monitored journal only hears about real closures
-        _alert(f"FOMC pilot closure: integrity {result['integrity']['verdict']}, duration "
-               f"{result['pilot_duration']['verdict']}, criteria {result.get('criteria', {}).get('verdict')}, not proven "
-               f"{len(result['integrity'].get('not_proven', []))}: report {report}",
-               syslog.LOG_NOTICE if result["ok"] and result["criteria_ok"] else syslog.LOG_CRIT)
+        _alert(f"FOMC pilot closure: {result['validation']['verdict']}; integrity {result['integrity']['verdict']}, "
+               f"duration {result['pilot_duration']['verdict']}, criteria {result.get('criteria', {}).get('verdict')}, "
+               f"not proven {len(result['integrity'].get('not_proven', []))}: report {report}",
+               syslog.LOG_NOTICE if result["validation"]["verdict"] == "VALIDATED" else syslog.LOG_CRIT)
     return result
 
 
 # ------------------------------------------------------------------ supervision -------------------
 def supervise(store_dir: Path, service_log: Path, alerts: Path, snapshots_log: Path, *, unit: str,
               close_at: datetime, copy_dir: Path, report: Path, snapshot_every_s: float = 3600.0,
-              poll_s: float = 15.0, log_offset: int = 0, planned_start: datetime | None = None) -> dict:
+              poll_s: float = 15.0, log_offset: int = 0, planned_start: datetime | None = None,
+              closes: bool = True, launch_boot_id: str | None = None) -> dict:
     """Route FOMC-ALERT lines to syslog (journald, priority crit) and an alert file, raise an alert if
-    the service stops before its closure, take a snapshot read every hour, then close at `close_at`.
-    `log_offset` lets a replacement supervisor resume reading the service log where it is now."""
+    the service stops before its closure, take a snapshot read every `snapshot_every_s`, then close at
+    `close_at`. With `closes=False` a persistent timer owns the closure (it survives a stop of the host):
+    the supervisor takes its last read 120 s before it and exits. `log_offset` lets a replacement
+    supervisor resume reading the service log where it is now."""
     offset, down_reported, next_snapshot = log_offset, False, time.monotonic()
-    while _now() < close_at:
+    until = close_at if closes else close_at - timedelta(seconds=120)
+    while _now() < until:
         if service_log.exists():
             with open(service_log, "rb") as handle:
                 handle.seek(offset)
@@ -596,8 +631,10 @@ def supervise(store_dir: Path, service_log: Path, alerts: Path, snapshots_log: P
         take_snapshot(store_dir, snapshots_log)  # a last read before the stop
     except Exception as exc:
         _alert(f"FOMC-SNAPSHOT-FAILED {type(exc).__name__}: {exc}")
+    if not closes:
+        return {"ok": True, "closed": False}
     return close(store_dir, copy_dir, report, unit=unit, snapshots_log=snapshots_log,
-                 planned_start=planned_start, planned_end=close_at)
+                 planned_start=planned_start, planned_end=close_at, launch_boot_id=launch_boot_id)
 
 
 # ------------------------------------------------------------------ the successor pilot -----------
@@ -605,13 +642,35 @@ def _systemctl(*args: str) -> str:
     return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True).stdout.strip()
 
 
+def closure_units(unit: str, code: Path, run: Path, *, started: datetime, close_at: datetime, launch_boot: str) -> dict:
+    """The closure as a persistent user timer and its one-shot service: it fires at `close_at`, or at the
+    next boot when the host was down then (Persistent=true), from the frozen `code`."""
+    service = "\n".join([
+        "[Unit]", f"Description=FOMC {unit} closure (frozen code {code.name}; stop, consistent copy, offline verification)", "",
+        "[Service]", "Type=oneshot", f"WorkingDirectory={code}",
+        f"ExecStart=/usr/bin/python3 -m scripts.trading_lab.fomc.pilot close --store {run / 'store'} --copy {run / 'closure-copy'} "
+        f"--report {run / 'closure-report.json'} --snapshots {run / 'snapshots.jsonl'} --unit {unit} "
+        f"--planned-start {iso(started)} --planned-end {iso(close_at)} --launch-boot-id {launch_boot}",
+        f"StandardOutput=append:{run / 'closure.log'}", f"StandardError=append:{run / 'closure.log'}", ""])
+    timer = "\n".join([
+        "[Unit]", f"Description=FOMC {unit} closure at its planned end (runs at the next boot if missed)", "",
+        "[Timer]", f"OnCalendar={close_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC", "Persistent=true",
+        "AccuracySec=1s", f"Unit={unit}-closure.service", "", "[Install]", "WantedBy=timers.target", ""])
+    return {f"{unit}-closure.service": service, f"{unit}-closure.timer": timer}
+
+
 def successor(previous_run: Path, previous_unit: str, code: Path, base: Path, *, wait_until: datetime,
-              minutes: float = 90.0, unit: str = "fomc-pilot-rev25", manifest: Path | None = None) -> dict:
+              minutes: float = 90.0, unit: str = "fomc-pilot-rev25", manifest: Path | None = None,
+              authorization: dict | None = None, environment: dict | None = None, unit_dir: Path | None = None,
+              snapshot_every_s: float = 900.0) -> dict:
     """Start the successor pilot only once the previous one allows it: its closure report shows integrity
     VALID and duration ACCOMPLISHED, its service is stopped and its store's ownership is free, and no other
-    FOMC service runs - never a second emitter. Then: a new store, the service from the frozen `code`, and a
-    supervisor that closes it after `minutes` with a consistent copy and offline verification."""
-    decision = {"checked_at": None, "previous_run": str(previous_run), "launched": False, "reasons": []}
+    FOMC service runs - never a second emitter. An explicit operator `authorization` may waive the previous
+    pilot's duration (`waives: ["previous_duration"]`) for one launch only; nothing else can be waived. Then:
+    a new store, the service from the frozen `code`, a monitoring supervisor, and the closure after `minutes`
+    as a persistent timer (consistent copy and offline verification, also after a stop of the host)."""
+    decision = {"checked_at": None, "previous_run": str(previous_run), "launched": False, "reasons": [],
+                "authorization": authorization, "waived": [], "environment": environment}
     report_path = previous_run / "closure-report.json"
     while not report_path.exists() and _now() < wait_until:
         time.sleep(30)
@@ -627,7 +686,20 @@ def successor(previous_run: Path, previous_unit: str, code: Path, base: Path, *,
         if decision["previous"]["integrity"] != "VALID":
             reasons.append(f"previous integrity {decision['previous']['integrity']}")
         if decision["previous"]["duration"] != "ACCOMPLISHED":
-            reasons.append(f"previous duration {decision['previous']['duration']}")
+            if authorization and "previous_duration" in authorization.get("waives", []):
+                decision["waived"].append(f"previous duration {decision['previous']['duration']} (operator authorization "
+                                          f"of {authorization.get('granted_at')}, scope: {authorization.get('scope')})")
+            else:
+                reasons.append(f"previous duration {decision['previous']['duration']}")
+    if authorization:
+        unknown = set(authorization.get("waives", [])) - {"previous_duration"}
+        if unknown:
+            reasons.append(f"the authorization waives what cannot be waived: {sorted(unknown)}")
+        if authorization.get("unit") != unit:
+            reasons.append(f"the authorization is for {authorization.get('unit')}, not {unit}")
+        earlier = base / "successor-decision.json"
+        if earlier.exists() and json.loads(earlier.read_text(encoding="utf-8")).get("decision") == "LAUNCHED":
+            reasons.append("an earlier launch already used a successor decision; this authorization covers one trial")
     state_ = _systemctl("is-active", previous_unit)
     if state_ in ("active", "activating", "deactivating", "reloading"):
         reasons.append(f"previous service {previous_unit} is {state_}")
@@ -667,16 +739,24 @@ def successor(previous_run: Path, previous_unit: str, code: Path, base: Path, *,
                     f"--property=StandardOutput=append:{run / 'service.log'}",
                     f"--property=StandardError=append:{run / 'service.log'}", "--", *args], check=True)
     started = _now()
-    time.sleep(5)
+    launch_boot = boot_id()
     close_at = started + timedelta(minutes=minutes)
+    unit_dir = unit_dir or Path.home() / ".config" / "systemd" / "user"
+    for name, text in closure_units(unit, code, run, started=started, close_at=close_at, launch_boot=launch_boot).items():
+        (unit_dir / name).write_text(text, encoding="utf-8")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", f"{unit}-closure.timer"], check=True)
+    time.sleep(5)
     subprocess.run(["systemd-run", "--user", f"--unit={unit}-supervisor", f"--working-directory={code}", "--",
                     "/usr/bin/python3", "-m", "scripts.trading_lab.fomc.pilot", "supervise", "--store", str(run / "store"),
                     "--unit", unit, "--service-log", str(run / "service.log"), "--alerts", str(run / "alerts.log"),
                     "--snapshots", str(run / "snapshots.jsonl"), "--copy", str(run / "closure-copy"),
                     "--report", str(run / "closure-report.json"), "--close-at", iso(close_at),
-                    "--planned-start", iso(started)], check=True)
+                    "--planned-start", iso(started), "--no-close", "--snapshot-every", str(snapshot_every_s),
+                    "--launch-boot-id", launch_boot], check=True)
     decision.update(decision="LAUNCHED", launched=True, run=str(run), unit=unit, pid=_systemctl("show", unit, "-p", "MainPID", "--value"),
-                    started=iso(started), close_at=iso(close_at), code=str(code))
+                    started=iso(started), close_at=iso(close_at), code=str(code), launch_boot_id=launch_boot,
+                    closure_timer=f"{unit}-closure.timer (persistent, {unit_dir})")
     for path in (base / "successor-decision.json", run / "decision.json"):
         path.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
     _alert(f"FOMC successor launched: unit {unit}, run {run}, closure {iso(close_at)}", syslog.LOG_NOTICE)
@@ -700,6 +780,9 @@ def main(argv=None) -> int:
     p.add_argument("--close-at", required=True, help="UTC ISO instant of the closure")
     p.add_argument("--planned-start", help="UTC ISO instant the pilot started (duration verdict)")
     p.add_argument("--log-offset", default="0", help="byte offset in the service log to resume from, or 'end'")
+    p.add_argument("--no-close", action="store_true", help="monitor only: a persistent timer owns the closure")
+    p.add_argument("--snapshot-every", type=float, default=3600.0)
+    p.add_argument("--launch-boot-id")
     p = sub.add_parser("close")
     for name in ("--store", "--copy", "--report"):
         p.add_argument(name, type=Path, required=True)
@@ -708,6 +791,7 @@ def main(argv=None) -> int:
     p.add_argument("--pid", type=int)
     p.add_argument("--planned-start")
     p.add_argument("--planned-end")
+    p.add_argument("--launch-boot-id")
     p = sub.add_parser("successor")
     for name in ("--previous-run", "--code", "--base"):
         p.add_argument(name, type=Path, required=True)
@@ -716,11 +800,16 @@ def main(argv=None) -> int:
     p.add_argument("--minutes", type=float, default=90.0)
     p.add_argument("--unit", default="fomc-pilot-rev25")
     p.add_argument("--manifest", type=Path)
+    p.add_argument("--authorization", type=Path, help="JSON operator authorization (one trial)")
+    p.add_argument("--environment", type=Path, help="JSON environment check recorded in the decision")
+    p.add_argument("--snapshot-every", type=float, default=900.0)
     args = parser.parse_args(argv)
     if args.cmd == "successor":
         decision = successor(args.previous_run, args.previous_unit, args.code, args.base,
                              wait_until=parse_iso(args.wait_until), minutes=args.minutes, unit=args.unit,
-                             manifest=args.manifest)
+                             manifest=args.manifest, snapshot_every_s=args.snapshot_every,
+                             authorization=json.loads(args.authorization.read_text()) if args.authorization else None,
+                             environment=json.loads(args.environment.read_text()) if args.environment else None)
         print(json.dumps(decision, sort_keys=True))
         return 0 if decision["launched"] else 1
     if args.cmd == "snapshot":
@@ -736,12 +825,15 @@ def main(argv=None) -> int:
             args.log_offset if args.log_offset != "end" else 0)
         result = supervise(args.store, args.service_log, args.alerts, args.snapshots, unit=args.unit,
                            close_at=parse_iso(args.close_at), copy_dir=args.copy, report=args.report, log_offset=offset,
-                           planned_start=parse_iso(args.planned_start) if args.planned_start else None)
+                           planned_start=parse_iso(args.planned_start) if args.planned_start else None,
+                           closes=not args.no_close, snapshot_every_s=args.snapshot_every,
+                           launch_boot_id=args.launch_boot_id)
         return 0 if result["ok"] else 1
     result = close(args.store, args.copy, args.report, unit=args.unit, pid=args.pid, snapshots_log=args.snapshots,
                    planned_start=parse_iso(args.planned_start) if args.planned_start else None,
-                   planned_end=parse_iso(args.planned_end) if args.planned_end else None)
-    print(json.dumps({k: result[k] for k in ("integrity_ok", "duration_ok", "stop", "owner_free")}, sort_keys=True))
+                   planned_end=parse_iso(args.planned_end) if args.planned_end else None, launch_boot_id=args.launch_boot_id)
+    print(json.dumps({k: result[k] for k in ("integrity_ok", "duration_ok", "criteria_ok", "validation", "stop", "owner_free")},
+                     sort_keys=True))
     return 0 if result["integrity_ok"] else 1
 
 
