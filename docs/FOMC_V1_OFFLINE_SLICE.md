@@ -20,7 +20,7 @@ real run is the capture protocol below; what remains unproven offline is listed 
 
 ```
 python -m scripts.trading_lab.fomc.demo                         # the executable path, end to end
-python -m pytest tests/crypto/test_fomc_*.py                    # 199 tests (one private proof skips without the local fixtures)
+python -m pytest tests/crypto/test_fomc_*.py                    # 198 tests (one private proof skips without the local fixtures)
 python -m scripts.trading_lab.fomc.soak --hours 26              # prolonged run, verified (~70 s)
 python -m scripts.trading_lab.fomc.service --store DIR --check  # capture preflight, no network
 ```
@@ -422,6 +422,20 @@ modification**: resolution succeeds within the budgets; reordering the resolvers
 delays and would change the conditions under test. Host measure, recorded in the decision: a hidden
 `wsl.exe -e sleep` client keeps the WSL instance alive for the window (it does not protect against a
 Windows restart; the persistent closure covers that).
+
+**Launch (2026-10-02).** Executed code `7740a5545ec086384e357e5cecb3b2189f29add8` (frozen worktree
+`/home/kyo/fomc-pilot/code-rev25-7740a5545`; its runtime is byte-identical to `25b5737`, only `pilot.py`
+differs, so the runtime proofs at `25b5737` stand: 196 tests, soak, demo; the tool's own regressions pass).
+Decision `LAUNCHED` in `/home/kyo/fomc-pilot/successor-decision.json` (copy in the run directory) with the
+authorization verbatim, `waived: previous duration NOT_ACCOMPLISHED`, previous integrity VALID, spec 25
+`b9d2a599…`, no reason against. Start **2026-10-02T13:20:05.893Z**, unit `fomc-pilot-rev25` (PID 48689),
+boot `d13bf5dc…`, new `fomc-store-v5` store in `/home/kyo/fomc-pilot/run-rev25-20261002T132005Z/` with the
+fixtures manifest submitted once (seq 2); supervisor `fomc-pilot-rev25-supervisor` (monitoring only);
+closure `fomc-pilot-rev25-closure.timer` at 14:50:06Z for the planned end 14:50:05.893Z. One operational
+correction, logged in the run's `operations.log`: the tool had written `OnCalendar=… 14:50:05 UTC` (the
+planned end truncated to the second, which would close 0.9 s early and read "closed before the planned
+end"); the installed timer was set to 14:50:06 before anything fired, the closure command untouched, and
+the tool now rounds up (after `7740a55`).
 
 Offline rehearsal of the criteria: `test_a_short_pilot_rehearsal_meets_the_successor_criteria` (MET and
 VALIDATED); gate and authorization: `test_the_successor_is_launched_only_behind_its_gate`,

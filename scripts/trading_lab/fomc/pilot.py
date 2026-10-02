@@ -652,9 +652,12 @@ def closure_units(unit: str, code: Path, run: Path, *, started: datetime, close_
         f"--report {run / 'closure-report.json'} --snapshots {run / 'snapshots.jsonl'} --unit {unit} "
         f"--planned-start {iso(started)} --planned-end {iso(close_at)} --launch-boot-id {launch_boot}",
         f"StandardOutput=append:{run / 'closure.log'}", f"StandardError=append:{run / 'closure.log'}", ""])
+    fire = close_at.astimezone(timezone.utc)
+    if fire.microsecond:  # whole seconds only, never before the planned end (else: "closed before the planned end")
+        fire = fire.replace(microsecond=0) + timedelta(seconds=1)
     timer = "\n".join([
         "[Unit]", f"Description=FOMC {unit} closure at its planned end (runs at the next boot if missed)", "",
-        "[Timer]", f"OnCalendar={close_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC", "Persistent=true",
+        "[Timer]", f"OnCalendar={fire.strftime('%Y-%m-%d %H:%M:%S')} UTC", "Persistent=true",
         "AccuracySec=1s", f"Unit={unit}-closure.service", "", "[Install]", "WantedBy=timers.target", ""])
     return {f"{unit}-closure.service": service, f"{unit}-closure.timer": timer}
 

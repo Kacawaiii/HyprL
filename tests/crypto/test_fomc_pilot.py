@@ -206,7 +206,9 @@ def test_the_successor_is_launched_only_behind_its_gate(tmp_path, monkeypatch):
         assert "--no-close" in runs[1]  # the persistent timer owns the closure
         timer = (base / "fomc-pilot-rev25-closure.timer").read_text()
         service = (base / "fomc-pilot-rev25-closure.service").read_text()
-        assert "Persistent=true" in timer and f"OnCalendar={close_at.strftime('%Y-%m-%d %H:%M:%S')} UTC" in timer
+        fires = next(line for line in timer.splitlines() if line.startswith("OnCalendar="))
+        fires = pilot.parse_iso(fires[len("OnCalendar="):-len(" UTC")].replace(" ", "T") + "+00:00")
+        assert "Persistent=true" in timer and close_at <= fires < close_at + timedelta(seconds=1)  # never before the end
         assert f"WorkingDirectory={tmp_path}" in service and f"--launch-boot-id {decision['launch_boot_id']}" in service
         assert f"--planned-end {pilot.iso(close_at)}" in service and "--unit fomc-pilot-rev25 " in service
         assert ["systemctl", "--user", "enable", "--now", "fomc-pilot-rev25-closure.timer"] in calls
