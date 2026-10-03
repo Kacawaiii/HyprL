@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from scripts.trading_lab.fomc import ledger, spec
 from scripts.trading_lab.fomc.clock import parse_iso
 from scripts.trading_lab.fomc.store import FomcStore, Row
+from scripts.trading_lab.sources import causal
+from scripts.trading_lab.sources.causal import Avail  # noqa: F401 - FOMC name
 
 BOUND = timedelta(seconds=spec.CLOCK_ERROR_BOUND_S)
 NORMALIZED = frozenset({"NORMALIZED_REVISION_COMMITTED", "NORMALIZED_SAME_CONTENT_NO_NEW_REVISION"})
@@ -28,7 +30,7 @@ def outcome_class(outcome: str | None) -> str | None:
 # ------------------------------------------------------------------ causal predicates ------------
 def verified(resp: Row) -> bool:
     """CLOCK_VERIFIED for every rule: LATE_EVIDENCE is treated as CLOCK_UNVERIFIED."""
-    return resp.body["verdict"] == "CLOCK_VERIFIED" and not resp.body["late_evidence"]
+    return causal.verified(resp)
 
 
 def live_eligible(resp: Row) -> bool:
@@ -41,42 +43,11 @@ def observed_at(resp: Row) -> datetime | None:
     return parse_iso(value) if value else None
 
 
-@dataclass(frozen=True)
-class Avail:
-    seq: int
-    resolved: bool
-    avail: datetime | None
-
-
 def availability(store: FomcStore, horizon: int) -> list[Avail]:
     """CAUSAL_AVAILABILITY_V3 over txns <= horizon: avail(X) = max(V.observed_at + 92, observed_at
     concerned by X, avail of earlier txns), V = first verified non-late response whose
-    TRANSPORT_INVOKED is after X; unresolved until V exists."""
-    store = store.view(horizon)
-    responses = store.rows("RESPONSE")
-    refs = [r for r in responses if verified(r)]  # already in commit order
-    concerned: dict[int, datetime] = {}
-    for r in responses:
-        if verified(r):
-            concerned[r.seq] = max(concerned.get(r.seq, observed_at(r)), observed_at(r))
-    for link in store.rows("LINK"):
-        if link.body.get("observed_at"):
-            t = parse_iso(link.body["observed_at"])
-            concerned[link.seq] = max(concerned.get(link.seq, t), t)
-    out, pointer, previous = [], 0, None
-    for seq, _kind, _wall in store.txns():
-        while pointer < len(refs) and refs[pointer].body["attempt"] <= seq:
-            pointer += 1
-        if pointer == len(refs) or (out and not out[-1].resolved):
-            out.append(Avail(seq, False, None))
-            continue
-        value = observed_at(refs[pointer]) + BOUND
-        for other in (concerned.get(seq), previous):
-            if other is not None and other > value:
-                value = other
-        previous = value
-        out.append(Avail(seq, True, value))
-    return out
+    TRANSPORT_INVOKED is after X; unresolved until V exists (sources.causal, LINK rows concerned)."""
+    return causal.availability(store, horizon, bound=BOUND, concerned_kinds=("LINK",))
 
 
 class NowLb:

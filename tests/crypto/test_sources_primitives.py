@@ -1,0 +1,86 @@
+"""Primitives shared by the event sources: the record store's read-only opening (no byte written, every
+write refused, incompatible stores rejected), the parametrized rolling limiter and the causal prefix."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import sqlite3
+
+import pytest
+
+from scripts.trading_lab.fomc.store import FomcStore
+from scripts.trading_lab.sources import causal
+from scripts.trading_lab.sources.limiter import RollingLimiter
+from scripts.trading_lab.sources.store import StoreRejected
+
+WALL = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+
+
+def _fingerprint(root):
+    return sorted((p.relative_to(root).as_posix(), p.stat().st_size, p.stat().st_mtime_ns)
+                  for p in root.rglob("*"))
+
+
+def _closed_store(root):
+    store = FomcStore(root, wall_clock=lambda: WALL)
+    digest = store.put_raw(b"bytes")
+    store.append("T", [("EPOCH", "e1", {"token": "e1", "raw": digest})])
+    store.close()
+    with sqlite3.connect(root / "fomc.sqlite3") as conn:  # fold the WAL in, as a closure copy is
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("PRAGMA journal_mode=DELETE")
+    return digest
+
+
+def test_a_read_only_store_writes_nothing_and_refuses_every_write(tmp_path):
+    digest = _closed_store(tmp_path / "s")
+    before = _fingerprint(tmp_path / "s")
+    store = FomcStore(tmp_path / "s", wall_clock=None, read_only=True)
+    assert [r.key for r in store.rows("EPOCH")] == ["e1"] and store.read_raw(digest) == b"bytes"
+    assert store.view().horizon() == 1
+    with pytest.raises(PermissionError):
+        store.append("T", [("EPOCH", "e2", {})])
+    with pytest.raises(PermissionError):
+        store.put_raw(b"other")
+    store.close()
+    assert _fingerprint(tmp_path / "s") == before  # no -wal, no -shm, no meta row, no raw
+
+
+def test_read_only_rejects_a_missing_or_incompatible_store(tmp_path):
+    with pytest.raises(StoreRejected):
+        FomcStore(tmp_path / "none", wall_clock=None, read_only=True)
+    assert not (tmp_path / "none").exists()
+    _closed_store(tmp_path / "s")
+    with sqlite3.connect(tmp_path / "s" / "fomc.sqlite3") as conn:
+        conn.execute("UPDATE meta SET value = 'fomc-store-v4' WHERE name = 'schema_version'")
+    before = _fingerprint(tmp_path / "s")
+    with pytest.raises(StoreRejected):
+        FomcStore(tmp_path / "s", wall_clock=None, read_only=True)
+    assert _fingerprint(tmp_path / "s") == before
+
+
+def test_a_read_only_reader_of_a_live_store_sees_new_commits(tmp_path):
+    writer = FomcStore(tmp_path / "s", wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    reader = FomcStore(tmp_path / "s", wall_clock=None, read_only=True)  # WAL present: not immutable
+    assert reader.view().horizon() == 1
+    writer.append("T", [("EPOCH", "e2", {})])
+    assert reader.view().horizon() == 2 and [r.key for r in reader.rows("EPOCH")] == ["e1", "e2"]
+    reader.close()
+    writer.close()
+
+
+def test_the_rolling_limiter_takes_its_parameters():
+    now = [0.0]
+    limiter = RollingLimiter(lambda: now[0], lambda s: now.__setitem__(0, now[0] + s),
+                             spacing_s=2, window_s=10, window_max=3, embargo_s=5)
+    starts = [limiter.grant() for _ in range(5)]
+    assert starts == [5.0, 7.0, 9.0, 15.0, 17.0]  # embargo, spacing, then the 3-per-10 s window
+
+
+def test_the_causal_prefix_resolves_only_with_a_later_resolved_transaction():
+    t0 = WALL
+    table = [causal.Avail(1, True, t0), causal.Avail(2, True, t0 + timedelta(seconds=60)), causal.Avail(3, False, None)]
+    assert causal.prefix(table, t0 + timedelta(seconds=30)) == (True, 1)
+    assert causal.prefix(table, t0 + timedelta(seconds=90)) == (False, 2)  # the next one is unresolved
+    assert causal.prefix(table[:2], t0 + timedelta(seconds=90)) == (False, 2)  # nothing beyond: unresolved

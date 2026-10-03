@@ -6,9 +6,10 @@ JSON on disk is not the revision this code was written against.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
+
+from scripts.trading_lab.sources.canonical import canonical_bytes, sha256_bytes, sha256_canonical  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC_PATH = ROOT / "docs" / "artifacts" / "fomc_capture_spec_v1.json"
@@ -94,17 +95,6 @@ PRIMARY_MEDIA = frozenset({"text/html"})
 ADMITTED_CONTENT_CODINGS = frozenset({"identity", "gzip"})
 
 
-def canonical_bytes(payload: object) -> bytes:
-    """canonical_serialization.rule: the repo's sha256_canonical byte form."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-
-
-def sha256_canonical(payload: object) -> str:
-    return hashlib.sha256(canonical_bytes(payload)).hexdigest()
-
-
-def sha256_bytes(raw: bytes) -> str:
-    return hashlib.sha256(raw).hexdigest()
 
 
 def verify_spec_binding(path: Path = SPEC_PATH) -> str:

@@ -10,6 +10,7 @@ from datetime import datetime
 
 from scripts.trading_lab.fomc import clock as clockmod
 from scripts.trading_lab.fomc import canon, health, parsing, processing, spec, state
+from scripts.trading_lab.sources import causal
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import FomcStore, RawCorrupt
 
@@ -29,16 +30,8 @@ def prefix(store: FomcStore, T: datetime, H: int, table=None) -> tuple[str, int]
     """Return (read_state, P): P is the longest prefix with resolved avail <= T; the FOMC part is
     admissible only if the next transaction is resolved (its avail > T)."""
     table = state.availability(store, H) if table is None else table
-    end, beyond = 0, None
-    for entry in table:
-        if entry.resolved and entry.avail <= T:
-            end = entry.seq
-        else:
-            beyond = entry
-            break
-    if beyond is None or not beyond.resolved:
-        return "FOMC_CAUSAL_VISIBILITY_UNRESOLVED", end
-    return "FOMC_RESOLVED", end
+    resolved, end = causal.prefix(table, T)
+    return ("FOMC_RESOLVED" if resolved else "FOMC_CAUSAL_VISIBILITY_UNRESOLVED"), end
 
 
 def content_identity(store: FomcStore, digest: str, cache: dict) -> str:
