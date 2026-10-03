@@ -22,6 +22,8 @@ const SystemPage = lazy(() =>
   import('./pages/SystemPage').then((module) => ({ default: module.SystemPage })));
 const PortfolioPage = lazy(() =>
   import('./pages/PortfolioPage').then((module) => ({ default: module.PortfolioPage })));
+const EventsPage = lazy(() =>
+  import('./pages/EventsPage').then((module) => ({ default: module.EventsPage })));
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 
@@ -53,6 +55,10 @@ export function App() {
         <Route
           path="research"
           element={<Suspense fallback={<LoadingState />}><ResearchPage /></Suspense>}
+        />
+        <Route
+          path="events"
+          element={<Suspense fallback={<LoadingState />}><EventsPage /></Suspense>}
         />
         <Route
           path="system"

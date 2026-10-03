@@ -40,6 +40,7 @@ from scripts.trading_lab.app_api.contracts import (
     AppApiError,
     NotFoundError,
 )
+from scripts.trading_lab.app_api.sources import FomcViews
 from scripts.trading_lab.app_api.pagination import (
     decode_cursor,
     encode_cursor,
@@ -94,8 +95,11 @@ class AppService:
     """
 
     def __init__(self, data_root, *, research_corpus_root=None,
-                 research_fingerprint_path=None):
+                 research_fingerprint_path=None, fomc_store=None):
         self._root = pathlib.Path(data_root).resolve()
+        # An official event-source store, opened read-only per request. Fixed here like every
+        # other path: no request can point the API at another directory.
+        self.fomc = FomcViews(fomc_store)
         self._rows: dict[str, tuple[dict[str, str], ...]] = {}
         self._manifests: dict[str, dict] = {}
         # The research corpus lives outside the data root: it is gitignored

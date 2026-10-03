@@ -61,6 +61,10 @@ MAX_RESEARCH_BAR_PAGE = 1_000
 # roughly six months of trading, and the calendar decides which days those are.
 DEFAULT_RESEARCH_CHART_SESSIONS = 120
 
+# Official event-source views (FOMC V1). A snapshot lists every source item it selects; the FOMC scope
+# is a handful of statements and family releases, so the bound is a guard, not a page size.
+MAX_SOURCE_ITEMS = 1_000
+
 # Every capability the UI may branch on, stated once. False here means the
 # feature genuinely does not exist -- the UI must show that, not simulate it.
 CAPABILITIES = {
@@ -82,3 +86,10 @@ class AppApiError(RuntimeError):
 
 class NotFoundError(AppApiError):
     status = 404
+
+
+class ConflictError(AppApiError):
+    """The request is well formed but the state it reads refuses it (an incompatible store, a read
+    that fails closed on corrupt raw bytes)."""
+
+    status = 409

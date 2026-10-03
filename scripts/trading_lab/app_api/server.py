@@ -180,6 +180,13 @@ def build_routes(service: AppService):
         "/api/v1/instruments": lambda query: service.instruments(),
         "/api/v1/providers": lambda query: service.providers(),
         "/api/v1/calendars": lambda query: service.calendars(),
+        # Official event sources, read-only: status, a point-in-time snapshot (T, H) and its verified
+        # offline replay. /api/v1/sources/fomc/items/{sid} is matched below.
+        "/api/v1/sources/fomc": lambda query: service.fomc.status(),
+        "/api/v1/sources/fomc/snapshot": lambda query: service.fomc.snapshot(
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
+        "/api/v1/sources/fomc/replay": lambda query: service.fomc.replay(
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
     }, markets_detail, chart, backtest_sub, paper_sub
 
 
@@ -289,6 +296,10 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/paper/{product}/{events|equity|fills|predictions}
         if len(parts) == 5 and parts[:3] == ["api", "v1", "paper"]:
             return paper_sub(parts[3], parts[4], query)
+        # /api/v1/sources/fomc/items/{sid}
+        if len(parts) == 6 and parts[:5] == ["api", "v1", "sources", "fomc", "items"]:
+            return self.service.fomc.item(parts[5], as_of=_query_first(query, "as_of"),
+                                          horizon=_query_first(query, "horizon"))
         raise AppApiError("no such endpoint")
 
     # --- verbs -----------------------------------------------------------
@@ -448,13 +459,13 @@ class AppApiHandler(BaseHTTPRequestHandler):
 
 
 def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                dist_root=None):
+                dist_root=None, fomc_store=None):
     """Build a loopback-bound read-only server over a fixed data root.
 
     ``dist_root`` turns on single-origin production mode. It is resolved once,
     here, so no request can influence which directory is served.
     """
-    service = AppService(pathlib.Path(data_root))
+    service = AppService(pathlib.Path(data_root), fomc_store=fomc_store)
     site = None
     if dist_root is not None:
         from scripts.trading_lab.ops.static_assets import StaticSite
@@ -474,6 +485,8 @@ def main(argv=None):  # pragma: no cover - entry point
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--dist-root", default=None,
                         help="serve a frontend build from the same origin")
+    parser.add_argument("--fomc-store", default=None,
+                        help="an FOMC store directory to read (read-only: an archive or a copy)")
     # Present so the supervisor can prove a pid belongs to this application
     # before signalling it. Parsed and ignored.
     parser.add_argument("--marker", default=None, help=argparse.SUPPRESS)
@@ -484,7 +497,8 @@ def main(argv=None):  # pragma: no cover - entry point
         print(f"[hyprl] WARNING: binding {arguments.host} exposes this runtime "
               "beyond the local machine")
     server = make_server(arguments.data_root, host=arguments.host,
-                         port=arguments.port, dist_root=arguments.dist_root)
+                         port=arguments.port, dist_root=arguments.dist_root,
+                         fomc_store=arguments.fomc_store)
     if arguments.dist_root:
         print(f"HyprL on http://{arguments.host}:{arguments.port}/")
     else:

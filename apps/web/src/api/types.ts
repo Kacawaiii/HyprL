@@ -1041,3 +1041,113 @@ export interface PaperLegacy {
   sessions: number;
   events: number;
 }
+
+// ---- official event sources (FOMC V1, read-only store) ----------------------------------------
+
+export interface FomcSourceBase {
+  api_version: string;
+  source: 'fomc';
+  provider_id: string;
+  spec_revision: number;
+  spec_hash: string;
+  schema_version: string;
+  read_only: true;
+}
+
+export interface FomcSourceStatus extends FomcSourceBase {
+  status: 'AVAILABLE' | 'NOT_CONFIGURED' | 'REJECTED';
+  store: string | null;
+  reason?: string;
+  horizon?: number;
+  first_durable_activity?: string | null;
+  last_durable_activity?: string | null;
+  /** SERVER_NOW_LB: the latest instant the store attests; a later read is unresolved. */
+  suggested_as_of?: string | null;
+  counts?: { epochs: number; responses: number; revisions: number; observations: number; cycles: number };
+}
+
+export interface FomcSnapshotHeader {
+  policy: string;
+  spec_hash: string;
+  mode: string;
+  T: string;
+  H: number;
+  P?: number | null;
+  read_state: string;
+  identity: string;
+}
+
+export interface FomcHealthSurface {
+  result_state: string | null;
+  reason: string;
+  check: number | null;
+  check_at: string | null;
+  outcome?: string | null;
+  record?: number | null;
+  attempt?: number | null;
+}
+
+export interface FomcItemSummary {
+  sid: string;
+  state: string;
+  step: number;
+  revision: string | null;
+  content_hash: string | null;
+  live_available: boolean | null;
+  title: string | null;
+  official_statement_date: string | null;
+  declared_release_at: string | null;
+  declared_release_text: string | null;
+  declared_release_trust_verdict: string | null;
+  observation_mode: string | null;
+  canonical_source_url: string | null;
+  content_domain: string | null;
+  observations: number;
+}
+
+export interface FomcSnapshotView extends FomcSourceBase {
+  snapshot: FomcSnapshotHeader;
+  discovery: { state: string; cycle_id?: number | null; B?: number | null } | null;
+  health: Record<string, FomcHealthSurface> | null;
+  items: FomcItemSummary[];
+}
+
+export interface FomcRevision {
+  revision_id: string;
+  committed_seq: number;
+  content_hash: string | null;
+  first_raw_sha256: string | null;
+  observation_mode: string | null;
+  content_identity: { identity: string; canonicalizer: string; domain: string; bytes_sha256: string } | null;
+}
+
+export interface FomcObservation {
+  record: number;
+  attempt: number;
+  mode: string;
+  verdict: string;
+  status: number | null;
+  observed_at: string | null;
+  wall_at_receipt: string | null;
+  request_url: string | null;
+  final_url: string | null;
+  redirect_chain: string[] | null;
+  raw_sha256: string | null;
+  byte_length: number | null;
+  processing_outcome: string | null;
+  revision: string | null;
+}
+
+export interface FomcItemDetail extends FomcSourceBase {
+  snapshot: FomcSnapshotHeader;
+  item: (Record<string, unknown> & { sid: string; state: string }) | null;
+  revisions: FomcRevision[];
+  observations: FomcObservation[];
+}
+
+export interface FomcReplay extends FomcSourceBase {
+  snapshot: FomcSnapshotHeader;
+  replay_identity: string | null;
+  identical: boolean;
+  error: string | null;
+}

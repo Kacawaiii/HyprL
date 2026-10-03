@@ -18,6 +18,7 @@ import type {
   PaperLegacy, PaperPortfolioEquity, PaperPortfolioPending,
   PaperPortfolioStatus, PortfolioEquity, PortfolioFillPage, PortfolioStatus,
   ProvidersIndex, ResearchBarPage, ResearchCorpusStatus, RiskView, SignalsView,
+  FomcItemDetail, FomcReplay, FomcSnapshotView, FomcSourceStatus,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -272,6 +273,18 @@ export const apiClient = {
   getPortfolioAttribution: (version: string, signal?: AbortSignal) =>
     request<PortfolioAttribution>(
       `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/attribution`, signal),
+  /** The FOMC event store, read-only: status, a read at (as_of, horizon), an item, a verified replay. */
+  getFomcStatus: (signal?: AbortSignal) =>
+    request<FomcSourceStatus>('/api/v1/sources/fomc', signal),
+  getFomcSnapshot: (asOf: string, horizon?: number, signal?: AbortSignal) =>
+    request<FomcSnapshotView>(
+      `/api/v1/sources/fomc/snapshot${query({ as_of: asOf, horizon })}`, signal),
+  getFomcItem: (sid: string, asOf: string, horizon?: number, signal?: AbortSignal) =>
+    request<FomcItemDetail>(
+      `/api/v1/sources/fomc/items/${encodeURIComponent(sid)}${query({ as_of: asOf, horizon })}`, signal),
+  getFomcReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
+    request<FomcReplay>(
+      `/api/v1/sources/fomc/replay${query({ as_of: asOf, horizon })}`, signal),
 };
 
 export type ApiClient = typeof apiClient;
