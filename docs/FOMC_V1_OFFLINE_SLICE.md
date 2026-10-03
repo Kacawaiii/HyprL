@@ -7,12 +7,12 @@ Implements `docs/artifacts/fomc_capture_spec_v1.json` **revision 25**
 authoritative. This is an **offline slice**: every source is synthetic and served by a local
 Unix-socket provider; no Federal Reserve request, fixture capture or live run is part of it.
 
-**Status (2026-10-02):** runtime revision 25 finished and verified offline (HTML-context content identity
-with separate CANONICAL/RAW_FALLBACK domains, FIX15 grant journal; below). The revision-23 real pilot was
-**interrupted after 1 h 23 min** by a user-requested Windows restart (2026-10-01T19:44:36Z) and is
-**archived**: integrity VALID, duration NOT_ACCOMPLISHED, FIX15 NOT_PROVEN, no corruption. Under a new
-explicit operator authorization the 90-minute revision-25 pilot starts independently of that duration
-(see "Revision-25 pilot"). **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
+**Status (2026-10-03): FOMC V1 slice CLOSED for the scope its real pilot exercised.** The 90-minute
+revision-25 real pilot (2026-10-02T13:20:05Z–14:50:06Z) is **VALIDATED**: integrity VALID, duration
+ACCOMPLISHED, criteria MET, nothing NOT_PROVEN (see "Revision-25 pilot: closure and verdict"). The
+revision-23 pilot stays archived as interrupted (integrity VALID, duration NOT_ACCOMPLISHED, FIX15
+NOT_PROVEN). Not validated by any real run: the 24 h and 7-day rechecks, a new real FOMC publication, a real
+redirect, a real storage incident, restart or crash. **Runtime verdict: READY.** The two runtime blockers are closed. `COMMIT_FSYNC_120S` is closed by spec
 revision 23 (the 120 s bound governs admission, a stalled store is a storage incident) and its
 implementation. Serialized fetches are replaced by central grant dispatch with concurrent logical
 fetches (`work_conserving`). `service.CAPTURE_BLOCKERS` is empty. Nothing has been captured: the first
@@ -465,6 +465,36 @@ systemd-run --user --unit=fomc-pilot-rev25-supervisor --working-directory=$CODE 
   --copy $RUN/closure-copy --report $RUN/closure-report.json --close-at $CLOSE --planned-start $START
 ```
 
+### Revision-25 pilot: closure and verdict
+
+The persistent timer fired at **2026-10-02T14:50:06Z** (planned end 14:50:05.893Z) on the launch boot
+`d13bf5dc…`; `fomc-pilot-rev25` was active and stopped cleanly (`Result=success`, exit 0, 0.1 s); the
+owner lock was free; closure finished 14:50:10Z. Report `run-rev25-20261002T132005Z/closure-report.json`,
+copy `closure-copy/`, reads `snapshots.jsonl`, journal notice "FOMC pilot closure: VALIDATED". Re-verified
+independently on 2026-10-03 with the same frozen code on a scratch copy of `closure-copy`: identical
+reads, replays, audit and criteria; every link's content identity re-derived from its raw.
+
+| proof | measured |
+|---|---|
+| integrity | VALID: backup-API copy equal to the source (622 transactions, 1179 rows, 49 raws, `integrity_check` ok); every audit check true |
+| duration | ACCOMPLISHED: one epoch, first durable activity 13:20:05.978Z, last 14:49:40.004Z, longest silence 63.5 s (bound 720 s), same boot at launch and closure, service running at closure |
+| criteria | MET (below) |
+| FIX15 | PROVEN over the grant journal: 134 grants (134 initial, 0 continuations, 0 abandoned), orders 1–134 contiguous, spacing, 60 s window and embargo ok, every attempt's count matches |
+| budgets, overlaps | at most 1 attempt per episode key (<= 6), at most 3 requests per LIVE item (<= 120), no in-flight overlap per item or feed, no attempt without outcome, one processing outcome per record, unique episode keys, no false zero |
+| reads | 10 recorded (6 resolved, 4 UNRESOLVED): 10 re-read and 10 replayed identically after reopening the copy |
+| health | replay of every health row: conforming |
+| rechecks | O300: 15 obligations due long enough, 15 SATISFIED; O3600: 15/15 SATISFIED; O86400 and O604800 NOT_YET_DUE (not exercised) |
+| content identity | 15 statement observations (15 links, each with its own record and raw); 4 items re-read with different raws (4, 3, 3, 3 raws) keep one identity each, all CANONICAL; 6 identities, each from a single canonical byte string; spans neutralized 29 e-mail links, 14 e-mail spans, 15 challenge parameter pairs; 6 NORMALIZED_REVISION_COMMITTED and 9 NORMALIZED_SAME_CONTENT_NO_NEW_REVISION (no Cloudflare churn) |
+| traffic | 134 attempts (86 feed polls, 3 backfills, 15 LIVE acquisitions, 30 re-observations): 128 responses all CLOCK_VERIFIED, 6 SOURCE_UNAVAILABLE (DNS, budgeted and retried); 80 cycles (73 zero), 15 FAMILY candidates, 0 storage incidents |
+
+**Closure of the slice.** The FOMC V1 capture slice is closed for what this pilot exercised against the
+real source: discovery from the official feed, primary acquisition, content identity over real Cloudflare
+variations, observations and revisions, causal snapshots (resolved and UNRESOLVED) with offline replay,
+source health, FIX15 over every journaled grant, budgets, and the +300 s and +3600 s rechecks. It does not
+validate the 24 h and 7-day rechecks, a new real FOMC publication, a real redirect (continuation grants),
+or a real storage incident, restart, crash, MANUAL_RETRY, RESOLVE or suspension; those stay offline-proved
+only.
+
 ## Remaining limits
 
 Not proven by this slice, or outside it:
@@ -482,8 +512,8 @@ Not proven by this slice, or outside it:
 - FOMC_CANON_V2 knows only the Cloudflare spans observed in 2026-10 and a strict subset of HTML; if
   Cloudflare changes its markup or a page becomes ambiguous to the tokenizer, records fall back to
   RAW_FALLBACK (more revisions, never a wrong merge) until a new canonicalizer version is specified.
-  Under V2 the stable identity over real re-reads is proved on the 33 stored rev23 raws only; the
-  successor pilot that would show it live has not run.
+  Under V2 the stable identity over real re-reads is proved on the 33 stored rev23 raws and live in the
+  revision-25 pilot (4 items, 13 distinct raws, one identity each); a later Cloudflare change is not.
 - Bounds are closed at the first owner tick at or after them (1 s in production, never before). A hung
   task keeps its thread until the process exits; it is fenced, not killed. `settle_s` (waiting for
   workers between ticks) exists only for simulated clocks.
