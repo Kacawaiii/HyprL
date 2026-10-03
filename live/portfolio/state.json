@@ -33,18 +33,23 @@
   "trend": {
     "IEF": {
       "side": -1,
-      "extreme": 89.30999755859375,
+      "extreme": 89.30000305175781,
       "shares": 228.0
     },
     "LQD": {
       "side": -1,
-      "extreme": 102.18000030517578,
+      "extreme": 102.02999877929688,
       "shares": 176.0
     },
     "TLT": {
       "side": -1,
       "extreme": 77.77999877929688,
       "shares": 137.0
+    },
+    "UUP": {
+      "side": 1,
+      "extreme": 28.959999084472656,
+      "shares": 777.5606177519606
     }
   },
   "momentum_shares": {
