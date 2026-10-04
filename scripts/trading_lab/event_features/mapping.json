@@ -1,0 +1,12 @@
+{
+  "schema": "event-product-mapping-v1",
+  "products": [
+    {"product": "BTC-USD", "timeframe": "1h", "fomc": "MACRO", "edgar": "NO_SEC_ISSUER", "cik": null, "evidence": [{"file": "scripts/trading_lab/instrument_registry.py", "identity": "BTC_USD: cryptocurrency, CATALOGUE_V1"}]},
+    {"product": "ETH-USD", "timeframe": "1h", "fomc": "MACRO", "edgar": "NO_SEC_ISSUER", "cik": null, "evidence": [{"file": "scripts/trading_lab/instrument_registry.py", "identity": "ETH_USD: cryptocurrency, CATALOGUE_V1"}]},
+    {"product": "AAPL", "timeframe": "1d", "fomc": "MACRO", "edgar": "VERIFIED", "cik": "0000320193", "evidence": [{"file": "docs/artifacts/edgar_fixture_qualification_v1.json", "identity": "listings.0000320193: listed_cik 0000320193, Apple Inc."}]},
+    {"product": "MSFT", "timeframe": "1d", "fomc": "MACRO", "edgar": "VERIFIED", "cik": "0000789019", "evidence": [{"file": "docs/artifacts/edgar_fixture_qualification_v1.json", "identity": "listings.0000789019: listed_cik 0000789019, MICROSOFT CORP"}]},
+    {"product": "NVDA", "timeframe": "1d", "fomc": "MACRO", "edgar": "UNVERIFIED", "cik": null, "evidence": [{"file": "scripts/trading_lab/instrument_registry.py", "identity": "NVDA in CATALOGUE_V1; no verified CIK in repository evidence at base aed9741"}]},
+    {"product": "QQQ", "timeframe": "1d", "fomc": "MACRO", "edgar": "DOCUMENTED", "cik": "0001067839", "edgar_8k": "NOT_APPLICABLE", "evidence": [{"file": "docs/TRADING_LAB_EVENT_PROVIDER_VERIFICATION.md", "identity": "Entity semantics: QQQ CIK 1067839, investment trust, investment-company forms outside the 8-K population"}]}
+  ],
+  "macro_evidence": {"file": "docs/OFFICIAL_EVENT_SOURCES.md", "identity": "Federal Reserve FOMC statements; task event-features v1: macro applies to every studied product"}
+}
