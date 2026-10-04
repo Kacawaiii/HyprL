@@ -6,8 +6,10 @@ offline replay re-runs exactly the same function."""
 from __future__ import annotations
 
 import fcntl
+from bisect import bisect_right
 from pathlib import Path
 import uuid
+from typing import Callable
 
 from scripts.trading_lab.edgar import spec
 from scripts.trading_lab.edgar.listing import (
@@ -21,20 +23,48 @@ from scripts.trading_lab.sources.store import Rejected
 WATCHLIST_KEY = "watchlist"
 
 
+class RequestCancelled(RuntimeError):
+    """The runner's stop or authorization gate closed before transport could start."""
+
+
 def clock_verdict(wall_at_receipt, date_lines: list[str], age_lines: list[str]) -> str:
     verified = is_clock_verified(wall_at_receipt, date_lines, age_lines, tolerance_s=spec.CLOCK_CHECK_TOLERANCE_S,
                                  age_max=spec.AGE_MAX, age_cap_s=spec.AGE_CAP_S)
     return "CLOCK_VERIFIED" if verified else "CLOCK_UNVERIFIED"
 
 
+class _LatestEvents:
+    """Versioned per-accession index: historical replay costs one lookup per
+    filing, regardless of how many polls precede its processing transaction."""
+
+    def __init__(self):
+        self.ciks = {}
+
+    def add(self, row):
+        if row.kind not in {"FILING_OBSERVATION", "FILING_ABSENCE"}:
+            return
+        filings = self.ciks.setdefault(row.body["cik"], {})
+        seqs, rows = filings.setdefault(row.body["accession_number"], ([], []))
+        if seqs and seqs[-1] == row.seq:
+            if row.kind == "FILING_ABSENCE":
+                rows[-1] = row
+        else:
+            seqs.append(row.seq)
+            rows.append(row)
+
+    def at(self, cik, horizon):
+        out = {}
+        for accession, (seqs, rows) in self.ciks.get(cik, {}).items():
+            i = bisect_right(seqs, horizon) - 1
+            if i >= 0:
+                out[accession] = rows[i]
+        return out
+
+
 def latest_events(view, cik: str) -> dict[str, object]:
-    """The latest FILING_OBSERVATION or FILING_ABSENCE of every accession of this CIK in the view."""
-    latest: dict[str, object] = {}
-    for kind in ("FILING_OBSERVATION", "FILING_ABSENCE"):
-        for row in view.select(kind, "cik", cik):
-            current = latest.get(row.body["accession_number"])
-            if current is None or row.seq > current.seq or (row.seq == current.seq and kind == "FILING_ABSENCE"):
-                latest[row.body["accession_number"]] = row
+    """The latest observation/absence per accession at this view's horizon."""
+    latest = view.read_aggregate("edgar.latest_events", _LatestEvents, lambda index: index.at(cik, view.horizon()))
+    view.store.reads["view_rows"] += len(latest)
     return latest
 
 
@@ -151,16 +181,27 @@ class EdgarCollector:
         return rows[0].body["ciks"] if rows else []
 
     # ---- one attempt ------------------------------------------------------------------------------
-    def poll(self, cik: str) -> dict:
+    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None) -> dict:
         cik = cik10(cik)
         if cik not in self.watchlist():
             raise Rejected(f"CIK {cik} is not on the watchlist")
         if self.paused_until is not None and self.clock.mono() < self.paused_until:
             return {"status": "PAUSED", "until_mono": self.paused_until}
-        grant = self.limiter.grant()
+        grant = self.limiter.grant(check=before_request)
         url = submissions_url(cik)
         attempt = self.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {
             "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant})])
+        if before_request is not None:
+            try:
+                before_request()  # the durable attempt may have waited past expiry or a stop signal
+            except RequestCancelled as exc:
+                reason = str(exc)
+                self.store.append("ATTEMPT_OUTCOME", [
+                    ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "INTERRUPTED",
+                                                      "status": None, "reason": reason}),
+                    health_row(cik, attempt=attempt, record=None, result_state="INTERRUPTED",
+                               reason=reason, check_at=self.store.wall_iso())])
+                return {"status": "INTERRUPTED", "attempt": attempt, "reason": reason}
         result = self.fetcher.fetch(url, started=grant)
         fetch_seconds = round(self.clock.mono() - grant, 3)  # grant to the end of the fetch (deadline evidence)
         header_lines = [[name, value] for name, value in (result.headers or [])]

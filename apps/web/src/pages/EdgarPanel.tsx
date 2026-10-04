@@ -1,3 +1,6 @@
+import { SourceTimeline } from '../components/SourceTimeline';
+import { SourcePager } from '../components/SourcePager';
+import { useSourcePage } from '../state/useSourcePage';
 /** SEC EDGAR filings as the store knew them at an instant (offline slice: no capture is authorized).
  *  Every value is shipped by the Python reader; acceptanceDateTime is shown as provenance text only and a
  *  filing's availability is the server-attested one, never its acceptance time. */
@@ -9,8 +12,8 @@ import { ReadForm, readKey } from '../components/ReadForm';
 import type { Read } from '../components/ReadForm';
 
 function FilingDetail({ accession, read }: { accession: string; read: Read }) {
-  const detail = useQuery(`edgar-filing|${accession}|${readKey(read)}`, (signal) =>
-    apiClient.getEdgarFiling(accession, read.asOf, read.horizon, signal));
+  const detail = useSourcePage((signal, page, horizon) =>
+    apiClient.getEdgarFiling(accession, read.asOf, horizon, signal, page), read.horizon);
   if (detail.status === 'loading') return <LoadingState label="Loading filing" />;
   if (detail.status === 'error' && detail.error) return <ErrorState error={detail.error} onRetry={detail.refetch} />;
   const data = detail.data;
@@ -65,6 +68,7 @@ function FilingDetail({ accession, read }: { accession: string; read: Read }) {
           </table>
         </>
       )}
+      <SourcePager {...detail} />
     </section>
   );
 }
@@ -72,10 +76,11 @@ function FilingDetail({ accession, read }: { accession: string; read: Read }) {
 function EdgarSnapshot({ read }: { read: Read }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [verify, setVerify] = useState(false);
-  const snap = useQuery(`edgar-snapshot|${readKey(read)}`, (signal) =>
-    apiClient.getEdgarSnapshot(read.asOf, read.horizon, signal));
-  const replay = useQuery(verify ? `edgar-replay|${readKey(read)}` : null, (signal) =>
-    apiClient.getEdgarReplay(read.asOf, read.horizon, signal));
+  const snap = useSourcePage((signal, page, horizon) =>
+    apiClient.getEdgarSnapshot(read.asOf, horizon, signal, page), read.horizon);
+  const snapshotRead = { ...read, horizon: snap.horizon ?? read.horizon };
+  const replay = useQuery(verify ? `edgar-replay|${readKey(snapshotRead)}` : null, (signal) =>
+    apiClient.getEdgarReplay(snapshotRead.asOf, snapshotRead.horizon, signal));
   useEffect(() => {
     setSelected(null);
     setVerify(false);
@@ -130,7 +135,7 @@ function EdgarSnapshot({ read }: { read: Read }) {
       )}
 
       <section className="card" aria-label="Filings">
-        <h2 className="card-title">Filings as of T ({data.filings.length})</h2>
+        <h2 className="card-title">Filings as of T ({data.pagination?.totals.filings ?? data.filings.length})</h2>
         {data.filings.length === 0 ? (
           <div className="state">{resolved ? 'No filing was known at this instant.' : 'The read is unresolved: nothing is shown as of this instant.'}</div>
         ) : (
@@ -159,7 +164,10 @@ function EdgarSnapshot({ read }: { read: Read }) {
         )}
       </section>
 
-      {selected && <FilingDetail accession={selected} read={read} />}
+      <SourcePager {...snap} />
+      <SourceTimeline source="edgar" read={snapshotRead} />
+
+      {selected && <FilingDetail key={selected} accession={selected} read={snapshotRead} />}
     </>
   );
 }
@@ -210,7 +218,7 @@ export function EdgarPanel() {
         </dl>
       </section>
       <ReadForm initialAsOf={suggested ?? ''} onRead={setRead} />
-      {read && <EdgarSnapshot read={read} />}
+      {read && <EdgarSnapshot key={readKey(read)} read={read} />}
     </div>
   );
 }

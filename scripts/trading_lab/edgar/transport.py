@@ -12,6 +12,7 @@ import io
 import re
 import ssl
 import time
+import zlib
 from typing import Callable
 from urllib.parse import urlsplit
 
@@ -53,7 +54,7 @@ def decode_body(raw: bytes, coding_lines: list[str]) -> tuple[bytes | None, str 
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(raw)) as handle:
                 body = handle.read(spec.BODY_CAP + 1)
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, zlib.error) as exc:
             return None, f"gzip body does not decode: {exc}"
         raw = body
     if len(raw) > spec.BODY_CAP:
@@ -127,4 +128,5 @@ class HttpsFetcher:
             return FetchResult("SOURCE_UNAVAILABLE", 200, headers, None, wall,
                                f"TimeoutError: the {spec.DEADLINE_S} s deadline of the attempt passed while decoding")
         result.body = body
+        result.wall_at_receipt = self._wall()  # complete decoded bytes, the observation used by causal reads
         return result

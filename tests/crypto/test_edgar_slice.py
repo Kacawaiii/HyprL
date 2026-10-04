@@ -135,9 +135,9 @@ def test_edgar05_06_07_absence_inside_the_window_only_and_reappearance(env):
 
 @pytest.mark.parametrize("body, content_type, reason", [
     (b"{not json", "application/json", "not a UTF-8 JSON document"),
-    (json.dumps({"cik": "320193", "filings": {"recent": {"accessionNumber": [ACC1], "form": ["8-K"],
+    (json.dumps({"cik": 320193, "filings": {"recent": {"accessionNumber": [ACC1], "form": ["8-K"],
                  "filingDate": ["2026-06-16"], "acceptanceDateTime": ["x"]}}}).encode(), "application/json", "no primaryDocument column"),
-    (json.dumps({"cik": "320193", "filings": {"recent": {"accessionNumber": [ACC1, ACC2], "form": ["8-K"],
+    (json.dumps({"cik": 320193, "filings": {"recent": {"accessionNumber": [ACC1, ACC2], "form": ["8-K"],
                  "filingDate": ["2026-06-16"], "acceptanceDateTime": ["x"], "primaryDocument": ["d"]}}}).encode(),
      "application/json", "unequal lengths"),
     (syn.listing("789019", [syn.filing(ACC1)]), "application/json", "not 0000320193"),
@@ -158,6 +158,49 @@ def test_edgar08_a_listing_of_another_shape_derives_nothing(env, body, content_t
     assert _filing(snap, ACC1)["state"] == "PRESENT"  # no absence from a refused listing
     failed = [h for h in env.store.rows("SOURCE_HEALTH") if h.body["record"] == record]
     assert failed[0].body["result_state"] == "PARSER_FAILED"
+
+
+@pytest.mark.parametrize("field, value", [
+    ("cik", syn.CIK_A),
+    ("cik", True),
+    ("accessionNumber", ACC1 + "\n"),
+    ("filingDate", "2026-06-16\n"),
+    ("filingDate", "2026-02-30"),
+])
+def test_malformed_listing_identifiers_and_dates_cannot_derive_filings_or_absences(env, field, value):
+    env.serve(syn.filing(ACC1), OLD)
+    env.poll()
+    doc = json.loads(syn.listing(syn.CIK_A, [OLD]))
+    doc["cik"] = int(syn.CIK_A)
+    if field == "cik":
+        doc["cik"] = value
+    else:
+        doc["filings"]["recent"][field][0] = value
+    env.fetch.routes[A] = syn.Reply(json.dumps(doc).encode())
+    result = env.poll()
+    assert result["outcome"] == "PARSER_FAILED"
+    assert not [r for k in ("FILING_REVISION", "FILING_OBSERVATION", "FILING_ABSENCE")
+                for r in env.store.rows(k) if r.seq > result["record"]]
+    env.serve(syn.filing(ACC1), OLD)
+    assert _filing(env.settle(), ACC1)["state"] == "PRESENT"
+
+
+def test_a_watchlist_cik_must_match_the_whole_value():
+    from scripts.trading_lab.edgar.listing import cik10
+    with pytest.raises(ValueError):
+        cik10(syn.CIK_A + "\n")
+
+
+@pytest.mark.parametrize("body", [b"[" * 20000 + b"0" + b"]" * 20000, b'{"cik":' + b"9" * 5000 + b"}"],
+                         ids=["deep-json", "huge-integer"])
+def test_json_decoder_limits_become_terminal_parser_failures(env, body):
+    env.fetch.routes[A] = syn.Reply(body)
+    result = env.poll()
+    assert result["outcome"] == "PARSER_FAILED"
+    health = env.store.rows("SOURCE_HEALTH")[-1]
+    assert health.body["record"] == result["record"] and health.body["result_state"] == "PARSER_FAILED"
+    assert not env.store.rows("FILING_REVISION") and not env.store.rows("FILING_ABSENCE")
+    assert snapshot.replay(env.store, env.clock.true, env.store.horizon())["read_state"] == "EDGAR_CAUSAL_VISIBILITY_UNRESOLVED"
 
 
 @pytest.mark.parametrize("acceptance", ["1999-01-01T00:00:00.000Z", "2031-12-31T23:59:59.000Z", "16:31 ET", ""])
@@ -368,6 +411,25 @@ def test_one_deadline_bounds_the_whole_fetch():
     assert result.kind == "SOURCE_UNAVAILABLE" and "deadline" in result.reason and now[0] < spec.DEADLINE_S + 8
 
 
+def test_invalid_gzip_deflate_is_an_unavailable_outcome():
+    fetcher = HttpsFetcher("Example Lab ops@example.org", connection_factory=_Connection)
+    # Valid gzip header followed by the reserved DEFLATE block type.
+    _Connection.reply = _Response(200, [("Content-Encoding", "gzip")], b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x06")
+    result = fetcher.fetch("https://data.sec.gov/submissions/CIK0000320193.json")
+    assert result.kind == "SOURCE_UNAVAILABLE" and result.body is None and "gzip" in result.reason
+
+
+def test_receipt_time_names_the_completed_body_instead_of_the_headers():
+    now = [0.0]
+    fetcher = HttpsFetcher("Example Lab ops@example.org", connection_factory=_Connection,
+                           mono=lambda: now[0], wall=lambda: syn.START + timedelta(seconds=now[0]))
+    _Connection.reply = _Response(200, [("Content-Type", "application/json")], b"{}",
+                                  on_read=lambda: now.__setitem__(0, now[0] + 5))
+    result = fetcher.fetch("https://data.sec.gov/submissions/CIK0000320193.json")
+    assert result.kind == "RESPONSE" and now[0] > 0
+    assert result.wall_at_receipt == syn.START + timedelta(seconds=now[0])
+
+
 def test_a_restart_interrupts_open_attempts_and_processes_saved_records(tmp_path):
     env = Env(tmp_path)
     env.serve(syn.filing(ACC1))
@@ -428,6 +490,15 @@ def test_the_runner_refuses_without_a_valid_authorization_and_sends_nothing(tmp_
     assert fetcher.requests == [] and not (tmp_path / "store").exists()
 
 
+def test_the_runner_rejects_an_authorization_expiry_without_an_offset(tmp_path):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    with pytest.raises(service.CaptureRefused, match="offset"):
+        service.run(tmp_path / "store", _authorization(tmp_path, not_after="2026-06-18T00:00:00"),
+                    fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert fetcher.requests == [] and not (tmp_path / "store").exists()
+
+
 def test_check_writes_nothing_and_the_run_stops_at_its_budget(tmp_path):
     path = _authorization(tmp_path)
     store_dir = tmp_path / "store"
@@ -468,6 +539,56 @@ def test_a_throttled_answer_stops_the_trial(tmp_path):
     summary = service.run(tmp_path / "store", _authorization(tmp_path, max_requests=8), fetcher=fetcher, clock=clock,
                           log=lambda m: None)
     assert summary["reason"].startswith("throttled") and summary["requests"] == 1 == len(fetcher.requests)
+
+
+def test_expiry_during_the_initial_embargo_sends_nothing(tmp_path):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    path = _authorization(tmp_path, not_after=snapshot.iso(clock.wall() + timedelta(seconds=30)))
+    result = service.run(tmp_path / "store", path, fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert result["reason"] == "authorization expired" and result["requests"] == 0
+    assert fetcher.requests == []
+
+
+def test_stop_during_the_initial_embargo_sends_nothing(tmp_path):
+    import threading
+    stop = threading.Event()
+
+    class StoppingClock(syn.SimClock):
+        def sleep(self, seconds):
+            super().sleep(seconds)
+            stop.set()
+
+    clock = StoppingClock()
+    fetcher = syn.FakeFetcher(clock)
+    result = service.run(tmp_path / "store", _authorization(tmp_path), fetcher=fetcher, clock=clock,
+                         stop=stop, log=lambda m: None)
+    assert result["reason"] == "stopped" and result["requests"] == 0
+    assert fetcher.requests == []
+
+
+def test_expiry_while_the_attempt_commits_sends_nothing_and_records_an_outcome(tmp_path, monkeypatch):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    original = EdgarStore.append
+
+    def slow_attempt(store, kind, *args, **kwargs):
+        seq = original(store, kind, *args, **kwargs)
+        if kind == "TRANSPORT_INVOKED":
+            clock.sleep(31)
+        return seq
+
+    monkeypatch.setattr(EdgarStore, "append", slow_attempt)
+    path = _authorization(tmp_path, not_after=snapshot.iso(clock.wall() + timedelta(seconds=90)))
+    result = service.run(tmp_path / "store", path, fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert result["reason"] == "authorization expired" and fetcher.requests == []
+    store = EdgarStore(tmp_path / "store", wall_clock=None, read_only=True)
+    try:
+        assert len(store.rows("TRANSPORT_INVOKED")) == 1
+        assert store.rows("ATTEMPT_OUTCOME")[0].body["outcome"] == "INTERRUPTED"
+        assert snapshot.replay(store, clock.wall(), store.horizon())["read_state"] == "EDGAR_CAUSAL_VISIBILITY_UNRESOLVED"
+    finally:
+        store.close()
 
 
 def test_the_qualification_matrix_separates_observation_from_unknown(env):

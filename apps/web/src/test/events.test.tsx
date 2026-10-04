@@ -96,6 +96,49 @@ beforeEach(() => invalidate());
 afterEach(() => vi.unstubAllGlobals());
 
 describe('FOMC events journey', () => {
+  it('keeps verified replay pinned while the next snapshot page is loading', async () => {
+    const fetch = renderEvents({
+      '/api/v1/sources/fomc/snapshot': { ...snapshot,
+        pagination: { limit: 200, totals: { items: 201 }, next_cursor: 'held-page' } },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
+    await screen.findByText('Replay identical');
+    let finish: ((response: Response) => void) | undefined;
+    fetch.mockImplementation((input: string) => {
+      if (String(input).includes('/replay')) return jsonResponse(replay);
+      return new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Reading the store…')).toBeInTheDocument();
+    const reads = fetch.mock.calls.map(([path]) => String(path)).filter((path) => path.includes('/replay'));
+    expect(reads).toEqual([`/api/v1/sources/fomc/replay?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}`]);
+    finish?.(await jsonResponse({ ...snapshot,
+      pagination: { limit: 200, totals: { items: 201 }, next_cursor: null } }));
+    expect(await screen.findByText('Replay identical')).toBeInTheDocument();
+  });
+
+  it('requests bounded pages on demand and pins subsequent reads to the displayed horizon', async () => {
+    const fetch = renderEvents({
+      '/api/v1/sources/fomc/snapshot': { ...snapshot,
+        pagination: { limit: 200, totals: { items: 201 }, next_cursor: 'opaque-source-page' } },
+    });
+    await screen.findByTestId('snapshot-identity');
+    expect(fetch.mock.calls.filter(([path]) => String(path).includes('/snapshot'))).toHaveLength(1);
+    fetch.mockImplementation((input: string) => {
+      const url = new URL(String(input), 'http://localhost');
+      const second = url.searchParams.has('cursor');
+      return jsonResponse({ ...snapshot, items: second ? [{ ...snapshot.items[0], title: 'Later page statement' }] : snapshot.items,
+        pagination: { limit: 200, totals: { items: 201 }, next_cursor: second ? null : 'opaque-source-page' } });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Later page statement')).toBeInTheDocument();
+    expect(screen.queryByText('Federal Reserve issues FOMC statement')).not.toBeInTheDocument();
+    expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}&limit=200&cursor=opaque-source-page`);
+    await userEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    expect(await screen.findByText('Federal Reserve issues FOMC statement')).toBeInTheDocument();
+  });
+
   it('reads the store at the server-attested instant and shows the snapshot verbatim', async () => {
     const fetch = renderEvents();
     expect(await screen.findByTestId('snapshot-identity')).toHaveTextContent(IDENTITY);
@@ -108,7 +151,7 @@ describe('FOMC events journey', () => {
     expect(within(items).getByText('For release at 2:00 p.m. EDT')).toBeInTheDocument();
     expect(within(items).getByText('CANONICAL')).toBeInTheDocument();
     const read = fetch.mock.calls.map(([path]) => String(path)).find((path) => path.includes('/snapshot'));
-    expect(read).toBe(`/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}`);
+    expect(read).toBe(`/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&limit=200`);
   });
 
   it('opens an item with its revisions and observation provenance', async () => {
@@ -126,6 +169,8 @@ describe('FOMC events journey', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
     expect(await screen.findByText('Replay identical')).toBeInTheDocument();
     expect(fetch.mock.calls.some(([path]) => String(path).startsWith('/api/v1/sources/fomc/replay?as_of='))).toBe(true);
+    expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/fomc/replay?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}`);
   });
 
   it('sends a chosen read and refuses a malformed horizon without a request', async () => {
@@ -141,7 +186,7 @@ describe('FOMC events journey', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Read' }));
     await waitFor(() => expect(fetch.mock.calls.length).toBeGreaterThan(before));
     expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
-      `/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&horizon=300`);
+      `/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&horizon=300&limit=200`);
   });
 
   it('shows an unresolved read as nothing known, not a guess', async () => {
@@ -153,6 +198,34 @@ describe('FOMC events journey', () => {
     });
     expect(await screen.findByText('FOMC_CAUSAL_VISIBILITY_UNRESOLVED')).toBeInTheDocument();
     expect(screen.getByText(/nothing is shown as of this instant/)).toBeInTheDocument();
+  });
+
+  it('hides the previous snapshot while a different instant is loading', async () => {
+    const fetch = renderEvents();
+    await screen.findByTestId('snapshot-identity');
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    const asOf = screen.getByLabelText('As of');
+    await userEvent.clear(asOf);
+    await userEvent.type(asOf, '2026-01-01T00:00:00+00:00');
+    await userEvent.click(screen.getByRole('button', { name: 'Read' }));
+    expect(screen.getByText(/Reading the store/)).toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-identity')).not.toBeInTheDocument();
+    expect(screen.queryByText('Federal Reserve issues FOMC statement')).not.toBeInTheDocument();
+  });
+
+  it('hides the previous item while another item is loading', async () => {
+    const secondSid = 'a'.repeat(64);
+    const fetch = renderEvents({
+      '/api/v1/sources/fomc/snapshot': {
+        ...snapshot, items: [...snapshot.items, { ...snapshot.items[0], sid: secondSid }],
+      },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: `Open item ${SID.slice(0, 12)}` }));
+    await screen.findByRole('region', { name: 'Item detail' });
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    await userEvent.click(screen.getByRole('button', { name: `Open item ${secondSid.slice(0, 12)}` }));
+    expect(screen.getByText(/Loading item/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Item detail' })).not.toBeInTheDocument();
   });
 
   it('says plainly when no store is configured', async () => {

@@ -5,13 +5,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import sqlite3
+import hashlib
+import shutil
 
 import pytest
 
 from scripts.trading_lab.fomc.store import FomcStore
 from scripts.trading_lab.sources import causal
 from scripts.trading_lab.sources.limiter import RollingLimiter
-from scripts.trading_lab.sources.store import StoreRejected
+from scripts.trading_lab.sources.store import RawCorrupt, StoreRejected
 
 WALL = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
 
@@ -46,6 +48,36 @@ def test_a_read_only_store_writes_nothing_and_refuses_every_write(tmp_path):
     assert _fingerprint(tmp_path / "s") == before  # no -wal, no -shm, no meta row, no raw
 
 
+def test_store_paths_are_encoded_before_use_as_sqlite_uris(tmp_path):
+    root = tmp_path / "store?#% space"
+    digest = _closed_store(root)
+    before = _fingerprint(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert reader.horizon() == 1 and reader.read_raw(digest) == b"bytes"
+    finally:
+        reader.close()
+    assert _fingerprint(root) == before
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.close()
+
+
+@pytest.mark.parametrize("digest", ["../outside", "/absolute/path", "a" * 64 + "\n", "g" * 64])
+def test_raw_digest_validation_precedes_any_file_read(tmp_path, monkeypatch, digest):
+    from pathlib import Path
+    store = FomcStore(tmp_path / "s", wall_clock=lambda: WALL)
+
+    def unexpected_read(_path):
+        raise AssertionError("an invalid raw digest reached filesystem I/O")
+
+    monkeypatch.setattr(Path, "read_bytes", unexpected_read)
+    try:
+        with pytest.raises(RawCorrupt, match="invalid raw digest"):
+            store.read_raw(digest)
+    finally:
+        store.close()
+
+
 def test_read_only_rejects_a_missing_or_incompatible_store(tmp_path):
     with pytest.raises(StoreRejected):
         FomcStore(tmp_path / "none", wall_clock=None, read_only=True)
@@ -70,6 +102,82 @@ def test_a_read_only_reader_of_a_live_store_sees_new_commits(tmp_path):
     writer.close()
 
 
+def _bytes_of(root):
+    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in root.rglob("*") if p.is_file()}
+
+
+def test_read_only_opening_does_not_change_a_live_stores_shared_memory(tmp_path):
+    root = tmp_path / "live"
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    before = _bytes_of(root), _fingerprint(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert reader.view().horizon() == 1
+    finally:
+        reader.close()
+    assert (_bytes_of(root), _fingerprint(root)) == before
+    writer.close()
+
+
+def test_read_only_opening_a_wal_without_shared_memory_creates_no_source_file(tmp_path):
+    writer = FomcStore(tmp_path / "live", wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    root = tmp_path / "copy"
+    root.mkdir()
+    for name in ("fomc.sqlite3", "fomc.sqlite3-wal"):
+        shutil.copyfile(writer.root / name, root / name)
+    before = _bytes_of(root), _fingerprint(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert reader.view().horizon() == 1
+    finally:
+        reader.close()
+    assert (_bytes_of(root), _fingerprint(root)) == before
+    writer.close()
+
+
+def test_a_reader_opened_before_a_writer_restarts_sees_the_new_wal(tmp_path):
+    root = tmp_path / "closed"
+    _closed_store(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    assert reader.view().horizon() == 1
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e2", {})])
+    try:
+        assert reader.view().horizon() == 2
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_a_checkpoint_during_read_only_copy_retries_the_whole_snapshot(tmp_path, monkeypatch):
+    root = tmp_path / "live"
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    original = shutil.copyfile
+    injected = False
+
+    def copy_then_checkpoint(source, target):
+        nonlocal injected
+        result = original(source, target)
+        if source == root / "fomc.sqlite3" and not injected:
+            injected = True
+            writer.append("T", [("EPOCH", "e2", {})])
+            writer._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return result
+
+    monkeypatch.setattr(shutil, "copyfile", copy_then_checkpoint)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert injected and reader.view().horizon() == 2
+        assert [r.key for r in reader.rows("EPOCH")] == ["e1", "e2"]
+    finally:
+        reader.close()
+        writer.close()
+
+
 def test_the_rolling_limiter_takes_its_parameters():
     now = [0.0]
     limiter = RollingLimiter(lambda: now[0], lambda s: now.__setitem__(0, now[0] + s),
@@ -84,3 +192,25 @@ def test_the_causal_prefix_resolves_only_with_a_later_resolved_transaction():
     assert causal.prefix(table, t0 + timedelta(seconds=30)) == (True, 1)
     assert causal.prefix(table, t0 + timedelta(seconds=90)) == (False, 2)  # the next one is unresolved
     assert causal.prefix(table[:2], t0 + timedelta(seconds=90)) == (False, 2)  # nothing beyond: unresolved
+
+
+def test_timestamp_parsing_requires_an_instant_and_preserves_dst_offsets():
+    from scripts.trading_lab.sources.httpclock import parse_iso
+    with pytest.raises(ValueError, match="offset"):
+        parse_iso("2026-11-01T01:30:00")
+    # The repeated local hour names different instants on either side of the DST change.
+    first = parse_iso("2026-11-01T01:30:00-04:00")
+    second = parse_iso("2026-11-01T01:30:00-05:00")
+    assert second - first == timedelta(hours=1)
+    assert parse_iso("2026-11-01T05:30:00Z") == first
+
+
+@pytest.mark.parametrize("date_line, age_lines, expected", [
+    ("Fri, 02 Oct 2026 12:00:00 GMT\n", [], None),
+    ("Fri, 02 Oct 2026 12:00:00 GMT", ["9" * 5000], None),
+    ("Fri, 02 Oct 2026 12:00:00 GMT", ["0" * 5000], WALL),
+    ("Fri, 31 Dec 9999 23:59:59 GMT", ["1"], None),
+])
+def test_unusable_http_clock_headers_do_not_crash_or_attest(date_line, age_lines, expected):
+    from scripts.trading_lab.sources.httpclock import server_time
+    assert server_time([date_line], age_lines, age_max=2147483647, age_cap_s=86400) == expected

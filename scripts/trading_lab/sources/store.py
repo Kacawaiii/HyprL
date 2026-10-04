@@ -9,14 +9,17 @@ the FOMC store is now a subclass with its own file name, schema version, spec bi
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
+import shutil
+import tempfile
 import threading
 import time
 from typing import Callable, Iterable
@@ -34,22 +37,11 @@ class StoreRejected(RuntimeError):
     """An existing store this code must not open; nothing was written to it."""
 
 
-def admit_existing(db: Path, *, schema_version: str, spec_hash: str) -> None:
-    """STORE_OPENING_RULE: an existing store is inspected through a read-only connection before anything
-    else; unless its schema version and spec hash both match, it is rejected before any write."""
-    if not db.exists():
-        return
-    wal = db.with_name(db.name + "-wal")
-    # read-only; without WAL frames the file alone is the store, so `immutable` creates no side file
-    immutable = "" if wal.exists() and wal.stat().st_size else "&immutable=1"
-    conn = sqlite3.connect(f"file:{db}?mode=ro{immutable}", uri=True)
-    try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not tables:
-            return  # an empty file: a new store
-        meta = dict(conn.execute("SELECT name, value FROM meta")) if "meta" in tables else {}
-    finally:
-        conn.close()
+def _admit_connection(conn, db: Path, *, schema_version: str, spec_hash: str) -> None:
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if not tables:
+        return  # an empty file: a new store
+    meta = dict(conn.execute("SELECT name, value FROM meta")) if "meta" in tables else {}
     version = meta.get("schema_version")
     if version != schema_version:
         raise StoreRejected(f"store {db.parent} has schema {version or 'unversioned (written before ' + schema_version + ')'}; "
@@ -57,6 +49,79 @@ def admit_existing(db: Path, *, schema_version: str, spec_hash: str) -> None:
                             "or start a new store")
     if meta.get("spec_hash") != spec_hash:
         raise StoreRejected(f"store {db.parent} is bound to spec {meta.get('spec_hash')}, this code implements {spec_hash}")
+
+
+class _ReadOnlyDatabase:
+    """SQLite mode=ro still writes the source's WAL index. Read a private DB/WAL copy instead,
+    without opening the source through SQLite or copying its shared-memory index. Copy only while
+    both file identities, sizes and modification/change times stay fixed; retry a racing writer,
+    then fail closed. SQLite recovers only complete committed WAL frames in the private directory.
+    Refresh between operations so long-lived readers also see a newly created WAL after a restart."""
+
+    def __init__(self, db: Path, *, schema_version: str, spec_hash: str):
+        self.db, self.schema_version, self.spec_hash = db, schema_version, spec_hash
+        self.conn = self._temp = self._stamp = None
+        self.refresh()
+
+    def _state(self):
+        out = []
+        for path in (self.db, self.db.with_name(self.db.name + "-wal")):
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                out.append(None)
+            else:
+                out.append((stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        return tuple(out)
+
+    def refresh(self) -> None:
+        for _ in range(3):
+            before = self._state()
+            if before == self._stamp:
+                return
+            temp = tempfile.TemporaryDirectory(prefix="event-source-reader-")
+            conn = None
+            try:
+                private_db = Path(temp.name) / self.db.name
+                shutil.copyfile(self.db, private_db)
+                has_wal = before[1] is not None and before[1][2] > 0
+                if has_wal:
+                    shutil.copyfile(self.db.with_name(self.db.name + "-wal"),
+                                    private_db.with_name(private_db.name + "-wal"))
+                if self._state() != before:
+                    continue
+                immutable = "" if has_wal else "&immutable=1"
+                conn = sqlite3.connect(f"{private_db.as_uri()}?mode=ro{immutable}", uri=True, check_same_thread=False)
+                _admit_connection(conn, self.db, schema_version=self.schema_version, spec_hash=self.spec_hash)
+                self.close()
+                self.conn, self._temp, self._stamp = conn, temp, before
+                conn = temp = None  # ownership transferred
+                return
+            except FileNotFoundError:
+                if self._state() == before:
+                    raise
+            finally:
+                if conn is not None:
+                    conn.close()
+                if temp is not None:
+                    temp.cleanup()
+        raise StoreBusy("source database changed during three read-only snapshot attempts")
+
+    def close(self) -> None:
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
+        if self._temp is not None:
+            self._temp.cleanup()
+            self._temp = None
+
+
+def admit_existing(db: Path, *, schema_version: str, spec_hash: str) -> None:
+    """Inspect schema/spec before any source write, including SQLite's shared-memory writes."""
+    if not db.exists():
+        return
+    reader = _ReadOnlyDatabase(db, schema_version=schema_version, spec_hash=spec_hash)
+    reader.close()
 
 
 class Rejected(RuntimeError):
@@ -79,8 +144,7 @@ class RecordStore:
     """An append-only record store: one SQLite file (WAL, synchronous=FULL, serialized writers) plus
     content-addressed raw bodies. A subclass names its database file, schema version, spec hash and
     durable uniqueness. `read_only=True` opens an existing store without writing a byte (no DDL, no
-    pragma, no meta row; `immutable` when it has no WAL frames, so no side file either) and refuses
-    every write."""
+    pragma, no meta row, no WAL index write), using a private DB/WAL snapshot, and refuses every write."""
 
     DB_NAME = "store.sqlite3"
     LABEL = "record"
@@ -92,7 +156,8 @@ class RecordStore:
         db = self.root / self.DB_NAME
         if read_only and not db.exists():
             raise StoreRejected(f"no {self.LABEL} store at {self.root}")
-        admit_existing(db, schema_version=schema_version, spec_hash=spec_hash)  # before any write
+        if not read_only:
+            admit_existing(db, schema_version=schema_version, spec_hash=spec_hash)  # before any write
         self._spec_hash = spec_hash
         self._wall = wall_clock
         self._mono = mono or time.monotonic
@@ -109,12 +174,11 @@ class RecordStore:
         self.reads = {"queries": 0, "rows": 0, "view_rows": 0}
         self._mirror = _Mirror()
         if read_only:
-            wal = db.with_name(db.name + "-wal")
-            immutable = "" if wal.exists() else "&immutable=1"
-            self._conn = sqlite3.connect(f"file:{db}?mode=ro{immutable}", uri=True, check_same_thread=False)
+            self._reader = _ReadOnlyDatabase(db, schema_version=schema_version, spec_hash=spec_hash)
+            self._conn = self._reader.conn
             tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             if not {"txn", "rec", "meta"} <= tables:
-                self._conn.close()
+                self._reader.close()
                 raise StoreRejected(f"{self.root} is not a {self.LABEL} store")
             return
         self.root.mkdir(parents=True, exist_ok=True)
@@ -159,7 +223,10 @@ class RecordStore:
 
     def close(self) -> None:
         with self.locked("close"):
-            self._conn.close()
+            if self.read_only:
+                self._reader.close()
+            else:
+                self._conn.close()
 
     # ---- the lock, its operation marker and bounded waits -----------------------------------------
     @contextmanager
@@ -174,6 +241,9 @@ class RecordStore:
             self._depth += 1
             if self._depth == 1:
                 self._op = (operation, self._mono())
+                if self.read_only and operation == "read":
+                    self._reader.refresh()
+                    self._conn = self._reader.conn
             yield
         finally:
             self._depth -= 1
@@ -290,6 +360,8 @@ class RecordStore:
 
     # ---- raw content-addressed bodies ---------------------------------------------------------
     def _raw_path(self, digest: str) -> Path:
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise RawCorrupt("invalid raw digest: expected 64 lowercase hexadecimal characters")
         return self.root / "raw" / digest[:2] / digest
 
     def put_raw(self, data: bytes) -> str:
@@ -470,11 +542,31 @@ class StoreView:
     def txns(self, *, upto: int | None = None) -> list[tuple[int, str, str]]:
         return self._cut(self._mirror.txns, upto)
 
+    def count(self, kind: str) -> int:
+        """Count a kind at this horizon without handing out its full history."""
+        return bisect_right(self._mirror.by_kind.get(kind, self._EMPTY)[1], self.upto)
+
+    def activity(self) -> tuple[str | None, str | None]:
+        """First/last transaction wall readings at this horizon."""
+        rows, seqs = self._mirror.txns
+        end = bisect_right(seqs, self.upto)
+        self.store.reads["view_rows"] += min(2, end)
+        return (rows[0][2], rows[end - 1][2]) if end else (None, None)
+
     def row_at(self, kind: str, seq: int) -> Row | None:
         rows, seqs = self._mirror.by_kind.get(kind, self._EMPTY)
         i = bisect_right(seqs, min(seq, self.upto)) - 1
         self.store.reads["view_rows"] += 1
         return rows[i] if i >= 0 and seqs[i] == seq else None
+
+    def rows_at(self, kind: str, seq: int) -> list[Row]:
+        """All rows of a kind in one transaction, without scanning its history."""
+        if seq > self.upto:
+            return []
+        rows, seqs = self._mirror.by_kind.get(kind, self._EMPTY)
+        out = rows[bisect_left(seqs, seq):bisect_right(seqs, seq)]
+        self.store.reads["view_rows"] += len(out)
+        return out
 
     def read_raw(self, digest: str) -> bytes:
         return self.store.read_raw(digest)

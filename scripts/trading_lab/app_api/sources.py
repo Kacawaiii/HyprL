@@ -1,7 +1,8 @@
 """Read-only views over an official event-source store (FOMC V1, spec revision 25).
 
-The store is opened read-only for every request (sources.store: no byte written, every write refused),
-so the API can serve a closed archive or a copy of a running capture without touching it. Nothing here
+The store stays open read-only (sources.store: no byte written, every write refused), with one cached
+read per source and raw integrity verified on every request. The API can serve a closed archive or a
+copy of a running capture without touching it. Nothing here
 fetches, captures, repairs or decides: every value shipped is a durable record or a derivation the FOMC
 code already performs (events_as_of, verified replay, source health). The store path is fixed at
 construction; a client-supplied item id is matched against the snapshot, never used as a path.
@@ -12,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import re
+import sqlite3
 
 from scripts.trading_lab.app_api.contracts import (
     APP_API_VERSION,
@@ -20,10 +22,11 @@ from scripts.trading_lab.app_api.contracts import (
     ConflictError,
     NotFoundError,
 )
+from scripts.trading_lab.app_api.source_paging import PagedSource, serialized_read
 from scripts.trading_lab.fomc import snapshot, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import SCHEMA_VERSION, FomcStore
-from scripts.trading_lab.sources.store import StoreRejected
+from scripts.trading_lab.sources.store import RawCorrupt, StoreRejected
 
 _SID = re.compile(r"^[0-9a-f]{64}$")
 
@@ -57,6 +60,14 @@ def _header(snap: dict) -> dict:
     return {key: snap.get(key) for key in ("policy", "spec_hash", "mode", "T", "H", "P", "read_state", "identity")}
 
 
+def _verify_history_raws(store, digests) -> None:
+    for digest in sorted(set(digests)):
+        try:
+            store.read_raw(digest)
+        except RawCorrupt as exc:
+            raise ConflictError("source history fails its raw integrity check") from exc
+
+
 def _summary(item: dict) -> dict:
     normalized = item.get("normalized") or {}
     return {
@@ -73,9 +84,10 @@ def _summary(item: dict) -> dict:
     }
 
 
-class FomcViews:
+class FomcViews(PagedSource):
     def __init__(self, store_root=None):
         self._root = Path(store_root).resolve() if store_root else None
+        self._init_pages()
 
     def _base(self) -> dict:
         return {"api_version": APP_API_VERSION, "source": "fomc", "provider_id": spec.PROVIDER_ID,
@@ -86,66 +98,68 @@ class FomcViews:
         if self._root is None:
             raise NotFoundError("no FOMC store is configured for this API (start it with --fomc-store DIR)")
         try:
-            return FomcStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            raise ConflictError(f"the configured FOMC store is refused: {exc}") from exc
+            return self._open_cached(FomcStore)
+        except (StoreRejected, OSError, sqlite3.DatabaseError) as exc:
+            raise ConflictError("the configured FOMC store cannot be opened with this schema/spec") from exc
 
+    @serialized_read
     def status(self) -> dict:
         if self._root is None:
             return {**self._base(), "status": "NOT_CONFIGURED", "store": None}
         try:
-            store = FomcStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            return {**self._base(), "status": "REJECTED", "store": str(self._root), "reason": str(exc)}
-        try:
-            view = store.view()
-            txns = view.txns()
-            lower = state.now_lb(store)
-            return {
-                **self._base(), "status": "AVAILABLE", "store": str(self._root), "horizon": view.horizon(),
-                "first_durable_activity": txns[0][2] if txns else None,
-                "last_durable_activity": txns[-1][2] if txns else None,
-                # SERVER_NOW_LB: the latest instant the store attests from a verified response; a read
-                # later than it is UNRESOLVED by construction, so the cockpit opens here.
-                "suggested_as_of": iso(lower) if lower else None,
-                "counts": {"epochs": len(view.rows("EPOCH")), "responses": len(view.rows("RESPONSE")),
-                           "revisions": len(view.rows("REVISION")), "observations": len(view.rows("LINK")),
-                           "cycles": len(view.rows("CYCLE_CONCLUSION"))},
-            }
-        finally:
-            store.close()
+            store = self._open_cached(FomcStore)
+        except (StoreRejected, OSError, sqlite3.DatabaseError):
+            return {**self._base(), "status": "REJECTED", "store": "configured",
+                    "reason": "the configured FOMC store cannot be opened with this schema/spec"}
+        view = store.view()
+        first, last = view.activity()
+        lower = state.now_lb(view)
+        return {
+            **self._base(), "status": "AVAILABLE", "store": "configured", "horizon": view.horizon(),
+            "first_durable_activity": first,
+            "last_durable_activity": last,
+            # SERVER_NOW_LB: the latest instant the store attests from a verified response; a read
+            # later than it is UNRESOLVED by construction, so the cockpit opens here.
+            "suggested_as_of": iso(lower) if lower else None,
+            "counts": {"epochs": view.count("EPOCH"), "responses": view.count("RESPONSE"),
+                       "revisions": view.count("REVISION"), "observations": view.count("LINK"),
+                       "cycles": view.count("CYCLE_CONCLUSION")},
+        }
 
     def _read(self, store: FomcStore, as_of, horizon) -> dict:
         T, H = _as_of(as_of), _horizon(horizon, store)
         try:
-            return snapshot.events_as_of(store, T, H)
+            return self._cached_read(store, T, H, snapshot.events_as_of)
         except snapshot.SnapshotFailed as exc:
             raise ConflictError(f"the read fails closed: {exc}") from exc
 
-    def snapshot(self, *, as_of=None, horizon=None) -> dict:
+    @serialized_read
+    def snapshot(self, *, as_of=None, horizon=None, limit=None, cursor=None) -> dict:
         store = self._open()
-        try:
-            snap = self._read(store, as_of, horizon)
-            items = snap.get("items") or []
-            if len(items) > MAX_SOURCE_ITEMS:
-                raise AppApiError(f"{len(items)} items exceed the bound {MAX_SOURCE_ITEMS}")
-            return {**self._base(), "snapshot": _header(snap), "discovery": snap.get("discovery"),
-                    "health": snap.get("health"), "items": [_summary(item) for item in items]}
-        finally:
-            store.close()
+        snap = self._read(store, as_of, horizon)
+        items = snap.get("items") or []
+        pages, pagination = self._pages(snap, {"items": items}, endpoint="source.snapshot", product="fomc",
+                                        limit=limit, cursor=cursor, maximum=MAX_SOURCE_ITEMS)
+        return {**self._base(), "snapshot": _header(snap), "discovery": snap.get("discovery"),
+                "health": snap.get("health"), "items": [_summary(item) for item in pages["items"]],
+                "pagination": pagination}
 
-    def item(self, sid, *, as_of=None, horizon=None) -> dict:
+    @serialized_read
+    def item(self, sid, *, as_of=None, horizon=None, limit=None, cursor=None) -> dict:
         if not isinstance(sid, str) or not _SID.match(sid):
             raise AppApiError("an item id is the 64-hex source_item_id")
         store = self._open()
-        try:
-            snap = self._read(store, as_of, horizon)
-            out = {**self._base(), "snapshot": _header(snap), "item": None, "revisions": [], "observations": []}
-            if snap["read_state"] != "FOMC_RESOLVED":
-                return out  # an unresolved read shows nothing as of T, not a guess
-            item = next((i for i in snap["items"] if i["sid"] == sid), None)
-            if item is None:
-                raise NotFoundError("no such item in the snapshot as of this instant")
+        snap = self._read(store, as_of, horizon)
+        out = {**self._base(), "snapshot": _header(snap), "item": None, "revisions": [], "observations": []}
+        if snap["read_state"] != "FOMC_RESOLVED":
+            _, out["pagination"] = self._pages(snap, {"observations": [], "revisions": []},
+                                                endpoint="source.item", product=sid, limit=limit, cursor=cursor,
+                                                maximum=MAX_SOURCE_ITEMS)
+            return out  # an unresolved read shows nothing as of T, not a guess
+        item = self._cached[3].get(sid)
+        if item is None:
+            raise NotFoundError("no such item in the snapshot as of this instant")
+        if self._detail is None or self._detail[0] != sid:
             view, P = store.view(snap["P"]), snap["P"]
             out["item"] = item
             out["revisions"] = [
@@ -166,26 +180,34 @@ class FomcViews:
                     "processing_outcome": outcome.body["outcome"] if outcome else None,
                     "revision": next((link.body.get("revision") for link in view.rows("LINK", key=str(resp.seq))), None)})
             out["observations"] = observations
-            return out
-        finally:
-            store.close()
+            self._detail = (sid, out)
+        full = self._detail[1]
+        pages, pagination = self._pages(snap, {"revisions": full["revisions"], "observations": full["observations"],
+                                              "links": full["item"].get("links") or []},
+                                        endpoint="source.item", product=sid, limit=limit, cursor=cursor,
+                                        maximum=MAX_SOURCE_ITEMS)
+        out = {**full, "item": dict(full["item"]), "revisions": pages["revisions"],
+               "observations": pages["observations"], "pagination": pagination}
+        if "links" in out["item"]:
+            out["item"]["links"] = pages["links"]
+        _verify_history_raws(store, [o["raw_sha256"] for o in out["observations"]] +
+                             [r["first_raw_sha256"] for r in out["revisions"]])
+        return out
 
+    @serialized_read
     def replay(self, *, as_of=None, horizon=None) -> dict:
         """Verified offline replay at (T, H) against the plain read: same identity or a named failure."""
         store = self._open()
+        first = self._read(store, as_of, horizon)
+        out = {**self._base(), "snapshot": _header(first), "replay_identity": None, "identical": False, "error": None}
         try:
-            first = self._read(store, as_of, horizon)
-            out = {**self._base(), "snapshot": _header(first), "replay_identity": None, "identical": False, "error": None}
-            try:
-                again = snapshot.replay(store, _as_of(as_of), first["H"])
-            except snapshot.SnapshotFailed as exc:  # ReplayFailed included
-                out["error"] = str(exc)
-                return out
-            out["replay_identity"] = again["identity"]
-            out["identical"] = again == first
+            again = snapshot.replay(store, _as_of(as_of), first["H"])
+        except snapshot.SnapshotFailed as exc:  # ReplayFailed included
+            out["error"] = str(exc)
             return out
-        finally:
-            store.close()
+        out["replay_identity"] = again["identity"]
+        out["identical"] = again == first
+        return out
 
 
 # ------------------------------------------------------------------ SEC EDGAR (spec revision 1) ---------
@@ -208,11 +230,12 @@ def _edgar_summary(filing: dict) -> dict:
     }
 
 
-class EdgarViews:
+class EdgarViews(PagedSource):
     """Read-only views over an EDGAR store (offline slice; the spec authorizes no capture)."""
 
     def __init__(self, store_root=None):
         self._root = Path(store_root).resolve() if store_root else None
+        self._init_pages()
 
     def _base(self) -> dict:
         return {"api_version": APP_API_VERSION, "source": "edgar", "provider_id": edgar_spec.PROVIDER_ID,
@@ -223,40 +246,39 @@ class EdgarViews:
         if self._root is None:
             raise NotFoundError("no EDGAR store is configured for this API (start it with --edgar-store DIR)")
         try:
-            return EdgarStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            raise ConflictError(f"the configured EDGAR store is refused: {exc}") from exc
+            return self._open_cached(EdgarStore)
+        except (StoreRejected, OSError, sqlite3.DatabaseError) as exc:
+            raise ConflictError("the configured EDGAR store cannot be opened with this schema/spec") from exc
 
+    @serialized_read
     def status(self) -> dict:
         if self._root is None:
             return {**self._base(), "status": "NOT_CONFIGURED", "store": None}
         try:
-            store = EdgarStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            return {**self._base(), "status": "REJECTED", "store": str(self._root), "reason": str(exc)}
-        try:
-            view = store.view()
-            txns = view.txns()
-            lower = edgar_snapshot.now_lb(store)
-            manifest = view.rows("MANIFEST")
-            return {
-                **self._base(), "status": "AVAILABLE", "store": str(self._root), "horizon": view.horizon(),
-                "first_durable_activity": txns[0][2] if txns else None,
-                "last_durable_activity": txns[-1][2] if txns else None,
-                "suggested_as_of": iso(lower) if lower else None,
-                "watchlist": manifest[0].body["ciks"] if manifest else [],
-                "counts": {"epochs": len(view.rows("EPOCH")), "responses": len(view.rows("RESPONSE")),
-                           "revisions": len(view.rows("FILING_REVISION")),
-                           "observations": len(view.rows("FILING_OBSERVATION")),
-                           "absences": len(view.rows("FILING_ABSENCE"))},
-            }
-        finally:
-            store.close()
+            store = self._open_cached(EdgarStore)
+        except (StoreRejected, OSError, sqlite3.DatabaseError):
+            return {**self._base(), "status": "REJECTED", "store": "configured",
+                    "reason": "the configured EDGAR store cannot be opened with this schema/spec"}
+        view = store.view()
+        first, last = view.activity()
+        lower = edgar_snapshot.now_lb(view)
+        manifest = view.rows("MANIFEST")
+        return {
+            **self._base(), "status": "AVAILABLE", "store": "configured", "horizon": view.horizon(),
+            "first_durable_activity": first,
+            "last_durable_activity": last,
+            "suggested_as_of": iso(lower) if lower else None,
+            "watchlist": manifest[0].body["ciks"] if manifest else [],
+            "counts": {"epochs": view.count("EPOCH"), "responses": view.count("RESPONSE"),
+                       "revisions": view.count("FILING_REVISION"),
+                       "observations": view.count("FILING_OBSERVATION"),
+                       "absences": view.count("FILING_ABSENCE")},
+        }
 
     def _read(self, store: EdgarStore, as_of, horizon) -> dict:
         T, H = _as_of(as_of), _horizon(horizon, store)
         try:
-            return edgar_snapshot.filings_as_of(store, T, H)
+            return self._cached_read(store, T, H, edgar_snapshot.filings_as_of)
         except edgar_snapshot.SnapshotFailed as exc:
             raise ConflictError(f"the read fails closed: {exc}") from exc
 
@@ -264,31 +286,34 @@ class EdgarViews:
     def _header(snap: dict) -> dict:
         return {key: snap.get(key) for key in ("policy", "spec_hash", "mode", "T", "H", "P", "read_state", "identity")}
 
-    def snapshot(self, *, as_of=None, horizon=None) -> dict:
+    @serialized_read
+    def snapshot(self, *, as_of=None, horizon=None, limit=None, cursor=None) -> dict:
         store = self._open()
-        try:
-            snap = self._read(store, as_of, horizon)
-            filings = snap.get("filings") or []
-            if len(filings) > MAX_SOURCE_ITEMS:
-                raise AppApiError(f"{len(filings)} filings exceed the bound {MAX_SOURCE_ITEMS}")
-            return {**self._base(), "snapshot": self._header(snap), "watchlist": snap.get("watchlist"),
-                    "health": snap.get("health"), "filings": [_edgar_summary(f) for f in filings]}
-        finally:
-            store.close()
+        snap = self._read(store, as_of, horizon)
+        filings = snap.get("filings") or []
+        pages, pagination = self._pages(snap, {"filings": filings}, endpoint="source.snapshot", product="edgar",
+                                        limit=limit, cursor=cursor, maximum=MAX_SOURCE_ITEMS)
+        return {**self._base(), "snapshot": self._header(snap), "watchlist": snap.get("watchlist"),
+                "health": snap.get("health"), "filings": [_edgar_summary(f) for f in pages["filings"]],
+                "pagination": pagination}
 
-    def filing(self, accession, *, as_of=None, horizon=None) -> dict:
+    @serialized_read
+    def filing(self, accession, *, as_of=None, horizon=None, limit=None, cursor=None) -> dict:
         if not isinstance(accession, str) or not edgar_spec.ACCESSION.match(accession):
             raise AppApiError("a filing is named by its accession number (0000000000-00-000000)")
         store = self._open()
-        try:
-            snap = self._read(store, as_of, horizon)
-            out = {**self._base(), "snapshot": self._header(snap), "filing": None, "revisions": [],
-                   "observations": [], "absences": []}
-            if snap["read_state"] != "EDGAR_RESOLVED":
-                return out
-            filing = next((f for f in snap["filings"] if f["accession_number"] == accession), None)
-            if filing is None:
-                raise NotFoundError("no such filing in the snapshot as of this instant")
+        snap = self._read(store, as_of, horizon)
+        out = {**self._base(), "snapshot": self._header(snap), "filing": None, "revisions": [],
+               "observations": [], "absences": []}
+        if snap["read_state"] != "EDGAR_RESOLVED":
+            _, out["pagination"] = self._pages(snap, {"observations": [], "revisions": [], "absences": []},
+                                                endpoint="source.filing", product=accession, limit=limit, cursor=cursor,
+                                                maximum=MAX_SOURCE_ITEMS)
+            return out
+        filing = self._cached[3].get(accession)
+        if filing is None:
+            raise NotFoundError("no such filing in the snapshot as of this instant")
+        if self._detail is None or self._detail[0] != accession:
             view, sid = store.view(snap["P"]), filing["source_item_id"]
             out["filing"] = filing
             out["revisions"] = [{"revision": r.key, "committed_seq": r.seq, "content_sha256": r.body["content_sha256"],
@@ -300,22 +325,28 @@ class EdgarViews:
             out["absences"] = [{key: a.body[key] for key in ("record", "observed_at", "raw_sha256", "filing_date",
                                                             "listing_oldest_filing_date")}
                                for a in view.select("FILING_ABSENCE", "source_item_id", sid)]
-            return out
-        finally:
-            store.close()
+            self._detail = (accession, out)
+        full = self._detail[1]
+        pages, pagination = self._pages(snap, {key: full[key] for key in ("revisions", "observations", "absences")},
+                                        endpoint="source.filing", product=accession, limit=limit, cursor=cursor,
+                                        maximum=MAX_SOURCE_ITEMS)
+        out = {**full, **pages, "pagination": pagination}
+        # Each exposed revision also depends on the raw of its first record.
+        view = store.view(snap["P"])
+        _verify_history_raws(store, [o["raw_sha256"] for o in out["observations"] + out["absences"]] +
+                             [view.row_at("RESPONSE", r["first_record"]).body["raw_sha"] for r in out["revisions"]])
+        return out
 
+    @serialized_read
     def replay(self, *, as_of=None, horizon=None) -> dict:
         store = self._open()
+        first = self._read(store, as_of, horizon)
+        out = {**self._base(), "snapshot": self._header(first), "replay_identity": None, "identical": False, "error": None}
         try:
-            first = self._read(store, as_of, horizon)
-            out = {**self._base(), "snapshot": self._header(first), "replay_identity": None, "identical": False, "error": None}
-            try:
-                again = edgar_snapshot.replay(store, _as_of(as_of), first["H"])
-            except edgar_snapshot.SnapshotFailed as exc:
-                out["error"] = str(exc)
-                return out
-            out["replay_identity"] = again["identity"]
-            out["identical"] = again == first
+            again = edgar_snapshot.replay(store, _as_of(as_of), first["H"])
+        except edgar_snapshot.SnapshotFailed as exc:
+            out["error"] = str(exc)
             return out
-        finally:
-            store.close()
+        out["replay_identity"] = again["identity"]
+        out["identical"] = again == first
+        return out
