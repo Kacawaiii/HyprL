@@ -1,0 +1,569 @@
+{
+  "holdout": {
+    "end": "2026-12-01T00:00:00+00:00",
+    "end_exclusive": true,
+    "hash": "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85",
+    "start": "2026-09-01T00:00:00+00:00"
+  },
+  "identity": "a5382f910acd69cafb197d4db7aa08f69ba8debe3d0cccfa2cda83c278f917d4",
+  "mapping_hash": "1780588e6c36809145c69ea409d9bfbb38ccbe72f4a3bdf8145e446f95089c99",
+  "rows": [
+    {
+      "attested_coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "attested_events": 6,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_in_holdout": 6,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "e6886f7b4afdb41137de62e897bca402db6f61685aa5bdbe9b702b5036e79c33",
+        "corpus_spec_hash": "7a9de4d8331ece3856408636ad650a8dff44625a83c1a64fa9c134bc7627cdbd",
+        "end": "2026-07-31T23:00:00Z",
+        "evidence": "data/crypto/coinbase_history_v1/manifest.json",
+        "installed": true,
+        "rows": 8750,
+        "start": "2025-08-01T00:00:00Z",
+        "timeframe": "1h"
+      },
+      "product": "BTC-USD",
+      "source": "fomc",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "attested_events": null,
+      "events_by_availability": null,
+      "events_in_holdout": null,
+      "events_in_price_window": null,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "e6886f7b4afdb41137de62e897bca402db6f61685aa5bdbe9b702b5036e79c33",
+        "corpus_spec_hash": "7a9de4d8331ece3856408636ad650a8dff44625a83c1a64fa9c134bc7627cdbd",
+        "end": "2026-07-31T23:00:00Z",
+        "evidence": "data/crypto/coinbase_history_v1/manifest.json",
+        "installed": true,
+        "rows": 8750,
+        "start": "2025-08-01T00:00:00Z",
+        "timeframe": "1h"
+      },
+      "product": "BTC-USD",
+      "source": "edgar",
+      "state": "NOT_APPLICABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "attested_events": 6,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_in_holdout": 6,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "e328b232f043e9bd88b7a7669e7df54e96670746792f64a15eadcd56717bcbfa",
+        "corpus_spec_hash": "7a9de4d8331ece3856408636ad650a8dff44625a83c1a64fa9c134bc7627cdbd",
+        "end": "2026-07-31T23:00:00Z",
+        "evidence": "data/crypto/coinbase_history_v1/manifest.json",
+        "installed": true,
+        "rows": 8750,
+        "start": "2025-08-01T00:00:00Z",
+        "timeframe": "1h"
+      },
+      "product": "ETH-USD",
+      "source": "fomc",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "attested_events": null,
+      "events_by_availability": null,
+      "events_in_holdout": null,
+      "events_in_price_window": null,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "e328b232f043e9bd88b7a7669e7df54e96670746792f64a15eadcd56717bcbfa",
+        "corpus_spec_hash": "7a9de4d8331ece3856408636ad650a8dff44625a83c1a64fa9c134bc7627cdbd",
+        "end": "2026-07-31T23:00:00Z",
+        "evidence": "data/crypto/coinbase_history_v1/manifest.json",
+        "installed": true,
+        "rows": 8750,
+        "start": "2025-08-01T00:00:00Z",
+        "timeframe": "1h"
+      },
+      "product": "ETH-USD",
+      "source": "edgar",
+      "state": "NOT_APPLICABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "attested_events": 6,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_in_holdout": 6,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "37ecfe78825ca78f53f9f3c0008c0b2452263ab4f12a1ceff14acf0ad2f5cb7b",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "AAPL",
+      "source": "fomc",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "attested_events": 104,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-04T01:37:28.178495+00:00",
+          "count": 104
+        }
+      ],
+      "events_in_holdout": 104,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "37ecfe78825ca78f53f9f3c0008c0b2452263ab4f12a1ceff14acf0ad2f5cb7b",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "AAPL",
+      "source": "edgar",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "attested_events": 6,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_in_holdout": 6,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "9a3b6d6fae0aef114bd103b5ba63e2eace15296d1dcfbef1c9d310a168520364",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "MSFT",
+      "source": "fomc",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "attested_events": 57,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-04T01:47:28.498148+00:00",
+          "count": 57
+        }
+      ],
+      "events_in_holdout": 57,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "9a3b6d6fae0aef114bd103b5ba63e2eace15296d1dcfbef1c9d310a168520364",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "MSFT",
+      "source": "edgar",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "attested_events": 6,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_in_holdout": 6,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "8a96035fba9e85110e6649c7d4c463ab5d001c056bb6ebc7d452132bf9a79221",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "NVDA",
+      "source": "fomc",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "attested_events": null,
+      "events_by_availability": null,
+      "events_in_holdout": null,
+      "events_in_price_window": null,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "8a96035fba9e85110e6649c7d4c463ab5d001c056bb6ebc7d452132bf9a79221",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "NVDA",
+      "source": "edgar",
+      "state": "UNKNOWN_MAPPING"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "attested_events": 6,
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_in_holdout": 6,
+      "events_in_price_window": 0,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "79d5032705b7c91c476630cdf2ca8c801e2f6a350487b5837edd5902e1f677ba",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "QQQ",
+      "source": "fomc",
+      "state": "AVAILABLE"
+    },
+    {
+      "attested_coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "attested_events": null,
+      "events_by_availability": null,
+      "events_in_holdout": null,
+      "events_in_price_window": null,
+      "holdout_coverage_overlap": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "price_coverage_overlap": null,
+      "price_window": {
+        "content_hash": "79d5032705b7c91c476630cdf2ca8c801e2f6a350487b5837edd5902e1f677ba",
+        "corpus_spec_hash": "b7ad1e33b9896418e81f5e386ddc5384e0e2caca4854d467ac894eec25987dae",
+        "end": "2026-07-31T23:59:59.999999+00:00",
+        "evidence": "docs/artifacts/us_equity_corpus_v2_fingerprint.json",
+        "installed": false,
+        "rows": 501,
+        "start": "2024-08-01T00:00:00+00:00",
+        "timeframe": "1d"
+      },
+      "product": "QQQ",
+      "source": "edgar",
+      "state": "NOT_APPLICABLE"
+    }
+  ],
+  "schema": "event-coverage-matrix-v1",
+  "sources": {
+    "edgar": {
+      "H": 26,
+      "attested_events": 161,
+      "attested_revisions": 161,
+      "availability_table_hash": "4e311f389723147a2e270644cafbe49d29a5f159c83e97064d07b980d2c75b87",
+      "coverage": {
+        "end": "2026-10-04T02:07:59.301923+00:00",
+        "start": "2026-10-04T01:37:18.126128+00:00"
+      },
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-04T01:37:28.178495+00:00",
+          "count": 104
+        },
+        {
+          "available_at": "2026-10-04T01:47:28.498148+00:00",
+          "count": 57
+        }
+      ],
+      "events_by_issuer_form": {
+        "0000320193 8-K": 102,
+        "0000320193 8-K/A": 2,
+        "0000789019 8-K": 56,
+        "0000789019 8-K/A": 1
+      },
+      "events_hash": "a664f9665b7098bc6050e14998812fa034944bdcf7a57f2c2409b7c77dd53ebf",
+      "resolved_transactions": 23,
+      "snapshot_proof_hash": "ed6a0a0d92ecd8d257334f72d0db8253b7c839049c1a017afaa91d28c2dde7d4",
+      "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+      "state": "AVAILABLE",
+      "store_digest": {
+        "files": 3,
+        "sha256": "ea6a4a8761bc89f67b071d94ca6dcf9cdb8c27a58aca7630cd3f6606d1139957"
+      },
+      "unresolved_transactions": 3
+    },
+    "fomc": {
+      "H": 622,
+      "attested_events": 6,
+      "attested_revisions": 6,
+      "availability_table_hash": "99a2c4fb69277f0ad6c9e17a41fb8f032d862022a6484152f3f2bf6481d15fbe",
+      "coverage": {
+        "end": "2026-10-02T14:51:11.319660+00:00",
+        "start": "2026-10-02T13:23:07.651429+00:00"
+      },
+      "events_by_availability": [
+        {
+          "available_at": "2026-10-02T13:23:19.405474+00:00",
+          "count": 2
+        },
+        {
+          "available_at": "2026-10-02T13:23:50.715277+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:24:36.550850+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:25:50.327503+00:00",
+          "count": 1
+        },
+        {
+          "available_at": "2026-10-02T13:26:47.176596+00:00",
+          "count": 1
+        }
+      ],
+      "events_by_issuer_form": {
+        "MACRO statement": 6
+      },
+      "events_hash": "4a2ae1e6bd5019f21a25cca937b1c0dc82e6d3bee5068abe51034225cc2dfa37",
+      "resolved_transactions": 618,
+      "snapshot_proof_hash": "128b80ed09f38d1d1190ef669d279b986020d62d26e048158eefdaaf3eba2c6d",
+      "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+      "state": "AVAILABLE",
+      "store_digest": {
+        "files": 50,
+        "sha256": "3ab72acd71c1f514b3cafaa2be7b16ba146b156f2aa14b2d6c9c27acbe0458cc"
+      },
+      "unresolved_transactions": 4
+    }
+  },
+  "window_counts_are_inventory_not_feature_values": true
+}
