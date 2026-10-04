@@ -68,7 +68,9 @@ def parse_listing(body: bytes, requested_cik: str) -> Listing:
     the ones the spec freezes (UV1): any other shape is refused, never guessed."""
     try:
         doc = json.loads(body.decode("utf-8"), parse_constant=_no_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except ListingRejected:
+        raise
+    except (ValueError, RecursionError) as exc:
         raise ListingRejected(f"not a UTF-8 JSON document: {exc}") from exc
     if not isinstance(doc, dict):
         raise ListingRejected("the listing is not a JSON object")

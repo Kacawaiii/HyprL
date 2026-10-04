@@ -191,6 +191,18 @@ def test_a_watchlist_cik_must_match_the_whole_value():
         cik10(syn.CIK_A + "\n")
 
 
+@pytest.mark.parametrize("body", [b"[" * 20000 + b"0" + b"]" * 20000, b'{"cik":' + b"9" * 5000 + b"}"],
+                         ids=["deep-json", "huge-integer"])
+def test_json_decoder_limits_become_terminal_parser_failures(env, body):
+    env.fetch.routes[A] = syn.Reply(body)
+    result = env.poll()
+    assert result["outcome"] == "PARSER_FAILED"
+    health = env.store.rows("SOURCE_HEALTH")[-1]
+    assert health.body["record"] == result["record"] and health.body["result_state"] == "PARSER_FAILED"
+    assert not env.store.rows("FILING_REVISION") and not env.store.rows("FILING_ABSENCE")
+    assert snapshot.replay(env.store, env.clock.true, env.store.horizon())["read_state"] == "EDGAR_CAUSAL_VISIBILITY_UNRESOLVED"
+
+
 @pytest.mark.parametrize("acceptance", ["1999-01-01T00:00:00.000Z", "2031-12-31T23:59:59.000Z", "16:31 ET", ""])
 def test_edgar09_acceptance_time_is_provenance_text_only(tmp_path, acceptance):
     plain, odd = Env(tmp_path / "plain"), Env(tmp_path / "odd")
