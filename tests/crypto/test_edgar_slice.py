@@ -411,6 +411,14 @@ def test_one_deadline_bounds_the_whole_fetch():
     assert result.kind == "SOURCE_UNAVAILABLE" and "deadline" in result.reason and now[0] < spec.DEADLINE_S + 8
 
 
+def test_invalid_gzip_deflate_is_an_unavailable_outcome():
+    fetcher = HttpsFetcher("Example Lab ops@example.org", connection_factory=_Connection)
+    # Valid gzip header followed by the reserved DEFLATE block type.
+    _Connection.reply = _Response(200, [("Content-Encoding", "gzip")], b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x06")
+    result = fetcher.fetch("https://data.sec.gov/submissions/CIK0000320193.json")
+    assert result.kind == "SOURCE_UNAVAILABLE" and result.body is None and "gzip" in result.reason
+
+
 def test_a_restart_interrupts_open_attempts_and_processes_saved_records(tmp_path):
     env = Env(tmp_path)
     env.serve(syn.filing(ACC1))
