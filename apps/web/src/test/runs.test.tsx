@@ -70,13 +70,14 @@ beforeEach(() => invalidate());
 afterEach(() => vi.unstubAllGlobals());
 
 describe('signals with a persisted run', () => {
-  it('shows the decisions verbatim with the out-of-sample label and pages back', async () => {
+  it('shows the decisions rounded, exact in the tooltip, with the out-of-sample label and pages back', async () => {
     const fetch = install({
       '/api/v1/signals': (url) => (url.searchParams.get('cursor') ? signalsPage2 : signalsPage1),
     });
     render(<MemoryRouter initialEntries={['/signals']}><App /></MemoryRouter>);
     expect(await screen.findByText(/Out-of-sample: walk_forward/)).toBeInTheDocument();
-    expect(screen.getByText('0.2400')).toBeInTheDocument();
+    expect(screen.getByText('0.24')).toHaveAttribute('title', '0.2400');
+    expect(screen.getAllByText('0.0031')[0]).toHaveAttribute('title', '0.0031');
     expect(screen.getByText('FLAT')).toBeInTheDocument();
     expect(screen.getByText('economic_backtest_v1')).toBeInTheDocument();
     expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
@@ -104,11 +105,11 @@ describe('signals with a persisted run', () => {
 });
 
 describe('risk with a persisted run', () => {
-  it('shows the targets verbatim with the out-of-sample label', async () => {
+  it('shows the targets rounded, exact in the tooltip, with the out-of-sample label', async () => {
     install({ '/api/v1/risk/targets': () => riskPage });
     render(<MemoryRouter initialEntries={['/risk']}><App /></MemoryRouter>);
     expect(await screen.findByText(/Out-of-sample: walk_forward/)).toBeInTheDocument();
-    expect(screen.getByText('0.0600')).toBeInTheDocument();
+    expect(screen.getByText('6.00 %')).toHaveAttribute('title', '0.0600');
     expect(screen.getAllByText('Target exposure').length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/No persisted position target run available/i)).toBeNull();
   });

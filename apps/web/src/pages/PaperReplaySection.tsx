@@ -4,6 +4,8 @@ import type { PaperReplayProduct } from '../api/types';
 import { useQuery } from '../state/useQuery';
 import { EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
 import { LineChart } from '../components/LineChart';
+import { Num } from '../components/Num';
+import type { NumKind } from '../lib/format';
 
 function ReplayProduct({ data }: { data: PaperReplayProduct }) {
   const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
@@ -14,21 +16,21 @@ function ReplayProduct({ data }: { data: PaperReplayProduct }) {
     apiClient.getPaperReplayFills(data.product, cursor, signal));
   const quality = data.prediction_quality;
   const metrics = data.metrics;
-  const values: Array<[string, string | number | null]> = [
-    ['Rank IC', quality.rank_ic], ['MAE', quality.mae], ['RMSE', quality.rmse],
-    ['Labels scored', quality.observations], ['Predictions', quality.predictions],
-    ['Unscored predictions', quality.unscored_predictions], ['Fills', data.counts.fills],
-    ['Initial equity (USD)', metrics.initial_equity], ['Final equity (USD)', metrics.final_equity],
-    ['Net return (fraction)', metrics.net_return], ['Max drawdown (fraction)', metrics.max_drawdown],
-    ['Sharpe annualisé', metrics.annualized_sharpe], ['Fees (USD)', metrics.total_fees],
-    ['Slippage (USD)', metrics.total_slippage_cost], ['Total costs (USD)', metrics.total_execution_cost],
+  const values: Array<[string, string | number | null, NumKind | 'count']> = [
+    ['Rank IC', quality.rank_ic, 'ratio'], ['MAE', quality.mae, 'ratio'], ['RMSE', quality.rmse, 'ratio'],
+    ['Labels scored', quality.observations, 'count'], ['Predictions', quality.predictions, 'count'],
+    ['Unscored predictions', quality.unscored_predictions, 'count'], ['Fills', data.counts.fills, 'count'],
+    ['Initial equity (USD)', metrics.initial_equity, 'money'], ['Final equity (USD)', metrics.final_equity, 'money'],
+    ['Net return', metrics.net_return, 'percent'], ['Max drawdown', metrics.max_drawdown, 'percent'],
+    ['Sharpe annualisé', metrics.annualized_sharpe, 'ratio'], ['Fees (USD)', metrics.total_fees, 'money'],
+    ['Slippage (USD)', metrics.total_slippage_cost, 'money'], ['Total costs (USD)', metrics.total_execution_cost, 'money'],
   ];
   return (
     <article className="card" aria-label={`Replay ${data.product}`}>
       <h3 className="card-title">{data.product}</h3>
       <dl style={{ margin: 0 }}>
-        {values.map(([label, value]) => (
-          <div className="kv" key={label}><dt>{label}</dt><dd style={{ overflowWrap: 'anywhere' }}>{value ?? 'undefined'}</dd></div>
+        {values.map(([label, value, kind]) => (
+          <div className="kv" key={label}><dt>{label}</dt><dd style={{ overflowWrap: 'anywhere' }}>{kind === 'count' ? (value ?? 'undefined') : <Num value={value} kind={kind} />}</dd></div>
         ))}
       </dl>
       <p className="muted">Signaux / cibles (LONG, FLAT, SHORT)</p>
@@ -96,7 +98,7 @@ export function PaperReplaySection() {
         {data?.available && <>
           <p>{data.window?.start} → {data.window?.end}. Entraînement jusqu’au 2026-04-30T23:00:00Z.</p>
           <p>Déterminisme vérifié : {String(data.determinism?.verified)} · {data.determinism?.replay_count} replays identiques.</p>
-          <p className="muted">Les valeurs ci-dessous sont celles du résultat figé. Rendement et drawdown sont des fractions ; Sharpe descriptif, annualisé sur 8760 heures.</p>
+          <p className="muted">Les valeurs ci-dessous sont celles du résultat figé. Rendement et drawdown sont affichés en pourcentage (valeur exacte au survol) ; Sharpe descriptif, annualisé sur 8760 heures.</p>
           <ul>{data.limitations?.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
         </>}
       </div>

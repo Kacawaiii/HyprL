@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { DataTable, type Column } from '../components/DataTable';
+import { Num } from '../components/Num';
 import { EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
 import { ProductSelect, RunProvenanceCard, unavailableDetail, useOlderRows } from '../components/RunProvenance';
 
@@ -32,7 +33,7 @@ export function SignalsPage() {
 
   const columns: Column<Decision>[] = [
     { key: 't', header: 'Timestamp', render: (row) => row.timestamp.replace('T', ' ').slice(0, 16) },
-    { key: 'p', header: 'Prediction', render: (row) => row.prediction },
+    { key: 'p', header: 'Prediction', render: (row) => <Num value={row.prediction} /> },
     // The direction is displayed exactly as the backend decided it. It is
     // never re-derived from the prediction here.
     { key: 'd', header: 'Direction', render: (row) => (
@@ -40,7 +41,7 @@ export function SignalsPage() {
         {row.direction}
       </span>
     ) },
-    { key: 's', header: 'Strength', render: (row) => row.strength },
+    { key: 's', header: 'Strength', render: (row) => <Num value={row.strength} /> },
     { key: 'f', header: 'Fold', render: (row) => row.fold_index ?? '' },
     { key: 'h', header: 'Decision', render: (row) => <Hash value={row.decision_hash} chars={10} /> },
   ];
