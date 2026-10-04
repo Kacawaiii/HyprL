@@ -95,3 +95,14 @@ def test_timestamp_parsing_requires_an_instant_and_preserves_dst_offsets():
     second = parse_iso("2026-11-01T01:30:00-05:00")
     assert second - first == timedelta(hours=1)
     assert parse_iso("2026-11-01T05:30:00Z") == first
+
+
+@pytest.mark.parametrize("date_line, age_lines, expected", [
+    ("Fri, 02 Oct 2026 12:00:00 GMT\n", [], None),
+    ("Fri, 02 Oct 2026 12:00:00 GMT", ["9" * 5000], None),
+    ("Fri, 02 Oct 2026 12:00:00 GMT", ["0" * 5000], WALL),
+    ("Fri, 31 Dec 9999 23:59:59 GMT", ["1"], None),
+])
+def test_unusable_http_clock_headers_do_not_crash_or_attest(date_line, age_lines, expected):
+    from scripts.trading_lab.sources.httpclock import server_time
+    assert server_time([date_line], age_lines, age_max=2147483647, age_cap_s=86400) == expected

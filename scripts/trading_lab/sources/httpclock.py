@@ -36,7 +36,7 @@ def parse_http_date(value: str) -> datetime | None:
     value = _ows(value)
     if not value.isascii():
         return None
-    match = _IMF.match(value)
+    match = _IMF.fullmatch(value)
     if not match:
         return None
     day_name, dd, mon, yyyy, hh, mm, ss = match.groups()
@@ -61,10 +61,16 @@ def server_time(date_lines: list[str], age_lines: list[str], *, age_max: int, ag
         raw = _ows(age_lines[0])
         if not raw or not raw.isascii() or not raw.isdigit():
             return None
-        age = int(raw)
+        digits = raw.lstrip("0") or "0"
+        if len(digits) > len(str(min(age_max, age_cap_s))):
+            return None
+        age = int(digits)
         if age > age_max or age > age_cap_s:
             return None
-    return date + timedelta(seconds=age)
+    try:
+        return date + timedelta(seconds=age)
+    except OverflowError:
+        return None
 
 
 def is_clock_verified(wall_at_receipt: datetime, date_lines: list[str], age_lines: list[str], *, tolerance_s: float,
