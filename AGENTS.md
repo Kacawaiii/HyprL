@@ -20,10 +20,17 @@ the shared server. When a rule and a task disagree, the rule wins: stop and repo
 
 ## Git
 
-- Start from the current `origin/feat/phase5`; work on your own branch `agents/<agent>/<topic>`.
+- Start from the base your task names (by default the current `origin/feat/phase5`); work on your own branch
+  `agents/<agent>/<topic>`. Never reset a branch you were given to another base.
 - Small coherent commits, message body explaining the why, trailer `Co-Authored-By: <agent> <...>`.
 - Push your branch only, fast-forward. Integration into `feat/phase5` is fast-forward only, after the full
   checks below pass on the integrated result.
+
+## Synthetic data keeps the real shape
+
+Synthetic fixtures must reproduce the shapes the real sources serve, as recorded in `docs/artifacts/*` and the
+registries (example: the SEC submissions `cik` is a zero-padded digit string). Never change a synthetic shape to make
+a stricter parser pass: check the real evidence first.
 
 ## Checks before any push
 
