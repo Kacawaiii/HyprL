@@ -116,8 +116,10 @@ def test_the_router_serves_the_edgar_journey(closed_store, tmp_path):
     assert get("/api/v1/sources/edgar/replay", as_of=reads["new"])["identical"] is True
 
 
-def test_filing_detail_refuses_a_history_above_the_source_bound(views, closed_store, monkeypatch):
+def test_filing_detail_pages_a_history_above_the_source_bound(views, closed_store, monkeypatch):
     from scripts.trading_lab.app_api import sources
     monkeypatch.setattr(sources, "MAX_SOURCE_ITEMS", 1)
-    with pytest.raises(AppApiError, match="bound"):
-        views.filing(K8, as_of=closed_store[1]["gone"])
+    page = views.filing(K8, as_of=closed_store[1]["gone"])
+    assert len(page["observations"]) == 1
+    assert page["pagination"]["next_cursor"]
+    assert page["pagination"]["totals"]["observations"] > 1

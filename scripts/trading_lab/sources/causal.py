@@ -14,6 +14,7 @@ an EDGAR acceptanceDateTime) never enter it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from bisect import bisect_right
 from datetime import datetime, timedelta
 
 from scripts.trading_lab.sources.httpclock import parse_iso
@@ -34,6 +35,29 @@ def verified(resp) -> bool:
 def observed_at(resp) -> datetime | None:
     value = resp.body.get("observed_at")
     return parse_iso(value) if value else None
+
+
+class _NowLb:
+    def __init__(self, bound):
+        self.bound, self.seqs, self.values = bound, [], []
+
+    def add(self, row):
+        if row.kind == "RESPONSE" and verified(row):
+            lower = observed_at(row) - self.bound
+            if not self.values or lower > self.values[-1]:
+                self.seqs.append(row.seq)
+                self.values.append(lower)
+
+    def at(self, horizon):
+        i = bisect_right(self.seqs, horizon) - 1
+        return self.values[i] if i >= 0 else None
+
+
+def now_lb(store, horizon, *, bound):
+    """Versioned SERVER_NOW_LB, without rescanning every earlier response."""
+    view = store.view(horizon)
+    return view.read_aggregate(f"causal.now_lb:{bound.total_seconds()}", lambda: _NowLb(bound),
+                               lambda index: index.at(view.horizon()))
 
 
 def availability(store, horizon: int, *, bound: timedelta, concerned_kinds: tuple[str, ...] = ()) -> list[Avail]:

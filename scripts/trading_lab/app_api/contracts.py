@@ -61,8 +61,7 @@ MAX_RESEARCH_BAR_PAGE = 1_000
 # roughly six months of trading, and the calendar decides which days those are.
 DEFAULT_RESEARCH_CHART_SESSIONS = 120
 
-# Official event-source views (FOMC V1). A snapshot lists every source item it selects; the FOMC scope
-# is a handful of statements and family releases, so the bound is a guard, not a page size.
+# Official event-source views: maximum rows per list on a snapshot/history/timeline page.
 MAX_SOURCE_ITEMS = 1_000
 
 # Every capability the UI may branch on, stated once. False here means the

@@ -9,7 +9,7 @@ the FOMC store is now a subclass with its own file name, schema version, spec bi
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -542,11 +542,31 @@ class StoreView:
     def txns(self, *, upto: int | None = None) -> list[tuple[int, str, str]]:
         return self._cut(self._mirror.txns, upto)
 
+    def count(self, kind: str) -> int:
+        """Count a kind at this horizon without handing out its full history."""
+        return bisect_right(self._mirror.by_kind.get(kind, self._EMPTY)[1], self.upto)
+
+    def activity(self) -> tuple[str | None, str | None]:
+        """First/last transaction wall readings at this horizon."""
+        rows, seqs = self._mirror.txns
+        end = bisect_right(seqs, self.upto)
+        self.store.reads["view_rows"] += min(2, end)
+        return (rows[0][2], rows[end - 1][2]) if end else (None, None)
+
     def row_at(self, kind: str, seq: int) -> Row | None:
         rows, seqs = self._mirror.by_kind.get(kind, self._EMPTY)
         i = bisect_right(seqs, min(seq, self.upto)) - 1
         self.store.reads["view_rows"] += 1
         return rows[i] if i >= 0 and seqs[i] == seq else None
+
+    def rows_at(self, kind: str, seq: int) -> list[Row]:
+        """All rows of a kind in one transaction, without scanning its history."""
+        if seq > self.upto:
+            return []
+        rows, seqs = self._mirror.by_kind.get(kind, self._EMPTY)
+        out = rows[bisect_left(seqs, seq):bisect_right(seqs, seq)]
+        self.store.reads["view_rows"] += len(out)
+        return out
 
     def read_raw(self, digest: str) -> bytes:
         return self.store.read_raw(digest)

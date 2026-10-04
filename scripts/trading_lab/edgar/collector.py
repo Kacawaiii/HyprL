@@ -6,6 +6,7 @@ offline replay re-runs exactly the same function."""
 from __future__ import annotations
 
 import fcntl
+from bisect import bisect_right
 from pathlib import Path
 import uuid
 from typing import Callable
@@ -32,14 +33,38 @@ def clock_verdict(wall_at_receipt, date_lines: list[str], age_lines: list[str]) 
     return "CLOCK_VERIFIED" if verified else "CLOCK_UNVERIFIED"
 
 
+class _LatestEvents:
+    """Versioned per-accession index: historical replay costs one lookup per
+    filing, regardless of how many polls precede its processing transaction."""
+
+    def __init__(self):
+        self.ciks = {}
+
+    def add(self, row):
+        if row.kind not in {"FILING_OBSERVATION", "FILING_ABSENCE"}:
+            return
+        filings = self.ciks.setdefault(row.body["cik"], {})
+        seqs, rows = filings.setdefault(row.body["accession_number"], ([], []))
+        if seqs and seqs[-1] == row.seq:
+            if row.kind == "FILING_ABSENCE":
+                rows[-1] = row
+        else:
+            seqs.append(row.seq)
+            rows.append(row)
+
+    def at(self, cik, horizon):
+        out = {}
+        for accession, (seqs, rows) in self.ciks.get(cik, {}).items():
+            i = bisect_right(seqs, horizon) - 1
+            if i >= 0:
+                out[accession] = rows[i]
+        return out
+
+
 def latest_events(view, cik: str) -> dict[str, object]:
-    """The latest FILING_OBSERVATION or FILING_ABSENCE of every accession of this CIK in the view."""
-    latest: dict[str, object] = {}
-    for kind in ("FILING_OBSERVATION", "FILING_ABSENCE"):
-        for row in view.select(kind, "cik", cik):
-            current = latest.get(row.body["accession_number"])
-            if current is None or row.seq > current.seq or (row.seq == current.seq and kind == "FILING_ABSENCE"):
-                latest[row.body["accession_number"]] = row
+    """The latest observation/absence per accession at this view's horizon."""
+    latest = view.read_aggregate("edgar.latest_events", _LatestEvents, lambda index: index.at(cik, view.horizon()))
+    view.store.reads["view_rows"] += len(latest)
     return latest
 
 

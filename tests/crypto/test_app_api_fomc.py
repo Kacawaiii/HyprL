@@ -151,8 +151,10 @@ def test_the_router_serves_the_journey(closed_store, tmp_path):
         get("/api/v1/sources/fomc/items")
 
 
-def test_item_detail_refuses_a_history_above_the_source_bound(views, monkeypatch):
+def test_item_detail_pages_a_history_above_the_source_bound(views, monkeypatch):
     from scripts.trading_lab.app_api import sources
     monkeypatch.setattr(sources, "MAX_SOURCE_ITEMS", 1)
-    with pytest.raises(AppApiError, match="bound"):
-        views.item(SID1, as_of=views.status()["suggested_as_of"])
+    page = views.item(SID1, as_of=views.status()["suggested_as_of"])
+    assert len(page["observations"]) == 1
+    assert page["pagination"]["next_cursor"]
+    assert page["pagination"]["totals"]["observations"] > 1

@@ -39,8 +39,7 @@ def availability(store, horizon: int) -> list[causal.Avail]:
 def now_lb(store, horizon: int | None = None) -> datetime | None:
     """SERVER_NOW_LB: the latest verified observed_at minus the clock error bound; a read later than it is
     unresolved by construction."""
-    seen = [causal.observed_at(r) for r in store.view(horizon).rows("RESPONSE") if causal.verified(r)]
-    return max(seen) - spec.CLOCK_ERROR_BOUND if seen else None
+    return causal.now_lb(store, horizon, bound=spec.CLOCK_ERROR_BOUND)
 
 
 def _avail_of(table: list[causal.Avail], seq: int) -> str | None:
@@ -131,7 +130,7 @@ def replay(store, T: datetime, H: int) -> dict:
         outcome, detail, rows = derive(store.view(txn - 1), resp, body)
         if (outcome, detail) != (recorded[0].body["outcome"], recorded[0].body["detail"]):
             raise ReplayFailed(f"record {resp.seq} re-derives {outcome}")
-        stored = [(r.kind, r.key, r.body) for kind in DERIVED_KINDS for r in view.rows(kind) if r.seq == txn]
+        stored = [(r.kind, r.key, r.body) for kind in DERIVED_KINDS for r in view.rows_at(kind, txn)]
         if sorted(stored, key=repr) != sorted(rows, key=repr):
             raise ReplayFailed(f"the filings derived from record {resp.seq} do not re-derive")
     _verify_health(view)

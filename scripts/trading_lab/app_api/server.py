@@ -185,13 +185,21 @@ def build_routes(service: AppService):
         # offline replay. /api/v1/sources/fomc/items/{sid} is matched below.
         "/api/v1/sources/fomc": lambda query: service.fomc.status(),
         "/api/v1/sources/fomc/snapshot": lambda query: service.fomc.snapshot(
-            as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon"),
+            limit=_first(query, "limit"), cursor=_first(query, "cursor")),
+        "/api/v1/sources/fomc/timeline": lambda query: service.fomc.timeline(
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon"),
+            limit=_first(query, "limit"), cursor=_first(query, "cursor")),
         "/api/v1/sources/fomc/replay": lambda query: service.fomc.replay(
             as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
         # SEC EDGAR (offline slice): /api/v1/sources/edgar/filings/{accession} is matched below.
         "/api/v1/sources/edgar": lambda query: service.edgar.status(),
         "/api/v1/sources/edgar/snapshot": lambda query: service.edgar.snapshot(
-            as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon"),
+            limit=_first(query, "limit"), cursor=_first(query, "cursor")),
+        "/api/v1/sources/edgar/timeline": lambda query: service.edgar.timeline(
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon"),
+            limit=_first(query, "limit"), cursor=_first(query, "cursor")),
         "/api/v1/sources/edgar/replay": lambda query: service.edgar.replay(
             as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
     }, markets_detail, chart, backtest_sub, paper_sub
@@ -306,11 +314,13 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/sources/fomc/items/{sid}
         if len(parts) == 6 and parts[:5] == ["api", "v1", "sources", "fomc", "items"]:
             return self.service.fomc.item(parts[5], as_of=_query_first(query, "as_of"),
-                                          horizon=_query_first(query, "horizon"))
+                                          horizon=_query_first(query, "horizon"),
+                                          limit=_query_first(query, "limit"), cursor=_query_first(query, "cursor"))
         # /api/v1/sources/edgar/filings/{accession}
         if len(parts) == 6 and parts[:5] == ["api", "v1", "sources", "edgar", "filings"]:
             return self.service.edgar.filing(parts[5], as_of=_query_first(query, "as_of"),
-                                             horizon=_query_first(query, "horizon"))
+                                             horizon=_query_first(query, "horizon"),
+                                             limit=_query_first(query, "limit"), cursor=_query_first(query, "cursor"))
         raise AppApiError("no such endpoint")
 
     # --- verbs -----------------------------------------------------------
@@ -478,8 +488,15 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
     """
     service = AppService(pathlib.Path(data_root), fomc_store=fomc_store, edgar_store=edgar_store)
     # An IPv6 loopback (::1) needs an AF_INET6 socket; the stdlib server is AF_INET only.
-    server_class = ThreadingHTTPServer if ":" not in host else type(
-        "ThreadingHTTPServerV6", (ThreadingHTTPServer,), {"address_family": socket.AF_INET6})
+    class SourceServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+
+        def server_close(self):
+            super().server_close()
+            service.fomc.close()
+            service.edgar.close()
+
+    server_class = SourceServer
     site = None
     if dist_root is not None:
         from scripts.trading_lab.ops.static_assets import StaticSite
