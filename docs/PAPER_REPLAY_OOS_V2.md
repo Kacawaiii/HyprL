@@ -105,26 +105,37 @@ changing the model or spending the protected holdout.
 
 ## Verification status
 
-The 36 new Python v2/replay/API cases passed, including reconstruction of every
-scored prediction from the frozen models without refitting. The existing paper,
-portfolio, dataset, walk-forward, signal, risk and execution tests also passed;
-an eight-point downsampling edge case was corrected and verified in the final run.
-Independent recalculation from all 2203 marks in each private replay store agrees
-with the recorded return, drawdown, Sharpe and costs for both products and both runs.
+Integration evidence (the results, hashes and limitations above are unchanged):
 
-Web installation from the offline npm cache, typecheck, lint, 132 Vitest cases
-(including the four replay-section cases) and the production build passed.
+| Step | Commit |
+| --- | --- |
+| Task (paper v2 replayed out of sample) | 374bad7 |
+| Merge into the integration line | b561337 |
+| Integrated feat/phase5 | aed9741 |
 
-**Full repository validation is not done.** The required Python command initially
-reported 495 passed, 7 failed and 2 skipped. Five TLS failures were caused by the
-long temporary socket path; a short worktree-local path fixed them. Rechecking TLS
-and the grant journal gave 12 passed and one remaining failure:
-test_a_stop_while_a_continuation_waits_consumes_no_grant_and_stays_proven returns no
-durable outcome. FOMC/source code and its tests are unchanged from the named base;
-no rule, spec or frozen source code was modified to pass this check. The other
-grant-order failure passed on retry and remains a timing concern.
+- **Independent reproduction on a second machine.** The three result files
+  (BTC-USD, ETH-USD and the manifest) are identical byte for byte to the committed
+  ones. BTC result_hash db669a55…, ETH result_hash 0e6f62d7…, event chain
+  b6c1d770… (the full head is given above), 26244 events.
+- **Local gate on the integrated result.** 527 passed, 1 skipped (the legacy FastAPI
+  summary test, because the hyprl_api package is absent from this branch).
+- **GitHub CI.** Run 37229015307 on aed9741: success, both the python and the web
+  job (typecheck, lint, Vitest, production build).
+- **The load-sensitive FOMC test.** The task report's remaining failure,
+  test_a_stop_while_a_continuation_waits_consumes_no_grant_and_stays_proven, was a test
+  race, not a FOMC defect: stop() may return while the worker it released is still
+  committing the attempt's outcome (its contract leaves such attempts to the next
+  owner), so on a loaded host the outcome was None right after stop(). The test now
+  waits, bounded in real time, for that commit before its unchanged assertions; no
+  assertion was removed or loosened and no FOMC source changed. It passed 30 of 30
+  runs with six busy-loop processes saturating two cores.
+- **CI coverage.** sources-ci now also runs the paper v2, replay, shadow, portfolio,
+  dataset, walk-forward, signal, risk and economic-backtest suites.
 
-BLOCKED: the official FOMC fixture proof lacks its private local fixtures, and the
-legacy FastAPI summary test lacks the hyprl_api package on this branch. Neither is
-reported as passed. Resolve the FOMC validation failure and review these unavailable
-checks before integration; no integration or service deployment was performed.
+Presentation only: the cockpit now rounds long decimals for reading (ratios to four
+significant digits, money to two decimals, fractions as percentages) and keeps the exact
+string in each value's tooltip and in the fills and provenance views. The artefacts
+and API payloads, and therefore every number in this document, are untouched.
+
+Still true: this is one out-of-sample window, not confirmatory, not optimized, and the
+protected holdout remains unobserved.
