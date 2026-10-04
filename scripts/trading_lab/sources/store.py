@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import shutil
@@ -359,6 +360,8 @@ class RecordStore:
 
     # ---- raw content-addressed bodies ---------------------------------------------------------
     def _raw_path(self, digest: str) -> Path:
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise RawCorrupt("invalid raw digest: expected 64 lowercase hexadecimal characters")
         return self.root / "raw" / digest[:2] / digest
 
     def put_raw(self, data: bytes) -> str:

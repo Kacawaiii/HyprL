@@ -13,7 +13,7 @@ import pytest
 from scripts.trading_lab.fomc.store import FomcStore
 from scripts.trading_lab.sources import causal
 from scripts.trading_lab.sources.limiter import RollingLimiter
-from scripts.trading_lab.sources.store import StoreRejected
+from scripts.trading_lab.sources.store import RawCorrupt, StoreRejected
 
 WALL = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
 
@@ -60,6 +60,22 @@ def test_store_paths_are_encoded_before_use_as_sqlite_uris(tmp_path):
     assert _fingerprint(root) == before
     writer = FomcStore(root, wall_clock=lambda: WALL)
     writer.close()
+
+
+@pytest.mark.parametrize("digest", ["../outside", "/absolute/path", "a" * 64 + "\n", "g" * 64])
+def test_raw_digest_validation_precedes_any_file_read(tmp_path, monkeypatch, digest):
+    from pathlib import Path
+    store = FomcStore(tmp_path / "s", wall_clock=lambda: WALL)
+
+    def unexpected_read(_path):
+        raise AssertionError("an invalid raw digest reached filesystem I/O")
+
+    monkeypatch.setattr(Path, "read_bytes", unexpected_read)
+    try:
+        with pytest.raises(RawCorrupt, match="invalid raw digest"):
+            store.read_raw(digest)
+    finally:
+        store.close()
 
 
 def test_read_only_rejects_a_missing_or_incompatible_store(tmp_path):
