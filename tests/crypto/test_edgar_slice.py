@@ -161,7 +161,7 @@ def test_edgar08_a_listing_of_another_shape_derives_nothing(env, body, content_t
 
 
 @pytest.mark.parametrize("field, value", [
-    ("cik", syn.CIK_A),
+    ("cik", syn.CIK_A + "\n"),
     ("cik", True),
     ("accessionNumber", ACC1 + "\n"),
     ("filingDate", "2026-06-16\n"),
@@ -183,6 +183,14 @@ def test_malformed_listing_identifiers_and_dates_cannot_derive_filings_or_absenc
                 for r in env.store.rows(k) if r.seq > result["record"]]
     env.serve(syn.filing(ACC1), OLD)
     assert _filing(env.settle(), ACC1)["state"] == "PRESENT"
+
+
+@pytest.mark.parametrize("cik", [syn.CIK_A, syn.CIK_A.zfill(10), int(syn.CIK_A)])
+def test_a_listing_cik_may_be_an_integer_or_the_digit_string_the_real_api_serves(cik):
+    from scripts.trading_lab.edgar.listing import parse_listing
+    doc = json.loads(syn.listing(syn.CIK_A, [OLD]))
+    doc["cik"] = cik
+    assert parse_listing(json.dumps(doc).encode(), syn.CIK_A).rows == 1
 
 
 def test_a_watchlist_cik_must_match_the_whole_value():

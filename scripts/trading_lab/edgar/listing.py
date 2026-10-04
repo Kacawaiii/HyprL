@@ -75,6 +75,9 @@ def parse_listing(body: bytes, requested_cik: str) -> Listing:
     if not isinstance(doc, dict):
         raise ListingRejected("the listing is not a JSON object")
     listed = doc.get("cik")
+    # the real submissions API serves the cik as a zero-padded digit string; both forms name an integer
+    if isinstance(listed, str) and spec.CIK.fullmatch(listed):
+        listed = int(listed)
     if isinstance(listed, bool) or not isinstance(listed, int):
         raise ListingRejected(f"the listing has no integer cik: {listed!r}")
     requested = cik10(requested_cik)
