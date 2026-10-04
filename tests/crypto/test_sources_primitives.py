@@ -84,3 +84,14 @@ def test_the_causal_prefix_resolves_only_with_a_later_resolved_transaction():
     assert causal.prefix(table, t0 + timedelta(seconds=30)) == (True, 1)
     assert causal.prefix(table, t0 + timedelta(seconds=90)) == (False, 2)  # the next one is unresolved
     assert causal.prefix(table[:2], t0 + timedelta(seconds=90)) == (False, 2)  # nothing beyond: unresolved
+
+
+def test_timestamp_parsing_requires_an_instant_and_preserves_dst_offsets():
+    from scripts.trading_lab.sources.httpclock import parse_iso
+    with pytest.raises(ValueError, match="offset"):
+        parse_iso("2026-11-01T01:30:00")
+    # The repeated local hour names different instants on either side of the DST change.
+    first = parse_iso("2026-11-01T01:30:00-04:00")
+    second = parse_iso("2026-11-01T01:30:00-05:00")
+    assert second - first == timedelta(hours=1)
+    assert parse_iso("2026-11-01T05:30:00Z") == first

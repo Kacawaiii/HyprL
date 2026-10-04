@@ -428,6 +428,15 @@ def test_the_runner_refuses_without_a_valid_authorization_and_sends_nothing(tmp_
     assert fetcher.requests == [] and not (tmp_path / "store").exists()
 
 
+def test_the_runner_rejects_an_authorization_expiry_without_an_offset(tmp_path):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    with pytest.raises(service.CaptureRefused, match="offset"):
+        service.run(tmp_path / "store", _authorization(tmp_path, not_after="2026-06-18T00:00:00"),
+                    fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert fetcher.requests == [] and not (tmp_path / "store").exists()
+
+
 def test_check_writes_nothing_and_the_run_stops_at_its_budget(tmp_path):
     path = _authorization(tmp_path)
     store_dir = tmp_path / "store"

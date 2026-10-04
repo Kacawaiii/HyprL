@@ -22,7 +22,10 @@ def iso(value: datetime, *, field: str = "timestamp") -> str:
 
 
 def parse_iso(value: str) -> datetime:
-    return datetime.fromisoformat(value).astimezone(timezone.utc)
+    instant = datetime.fromisoformat(value)
+    if instant.tzinfo is None:
+        raise ValueError("timestamp needs an explicit UTC offset")
+    return instant.astimezone(timezone.utc)
 
 
 def _ows(value: str) -> str:
