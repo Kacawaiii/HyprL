@@ -47,3 +47,5 @@ body.scene-unavailable .platform{background:radial-gradient(circle at 72% 28%,#9
 body.scene-unavailable .interlude{background:radial-gradient(ellipse 30% 8% at 50% 58%,#d8d2c655,transparent),radial-gradient(circle at 50% 58%,#000 0 7%,#ffffff88 7.5%,transparent 12%)}
 @media(max-width:600px){.approach-text{padding:24px 22px;margin-top:10px}.interlude h2{text-shadow:0 2px 18px #000,0 0 40px #000}}
 body.scene-unavailable .chapter-rail,body.scene-unavailable .fixed-controls{display:none}
+/* Reveals (app.js): blocks rise out of a soft blur as they enter. Cards and glass panels skip the blur so their backdrop-filter never pops. */
+@keyframes hy-reveal{from{opacity:0;translate:0 34px;filter:blur(10px)}}@keyframes hy-reveal-panel{from{opacity:0;translate:0 46px;scale:.965}}.reveal-ready [data-reveal]:not(.is-in){opacity:0}.reveal-ready [data-reveal].is-in{animation:hy-reveal 1.15s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--reveal-i,0) * 85ms)}.reveal-ready .feature[data-reveal].is-in,.reveal-ready .approach-text[data-reveal].is-in{animation-name:hy-reveal-panel;animation-duration:1.3s}

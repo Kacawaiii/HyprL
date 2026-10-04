@@ -1,6 +1,17 @@
 import { createEclipseScene } from './scene.js';
+import { createSmoothScroll } from './lib/smooth-scroll.js';
 const studio=document.body.classList.contains('studio-page');
-const scene=createEclipseScene(document.querySelector('#scene'),document.querySelector('#scene-labels'),{studio,hero:document.querySelector('.hero'),stops:[...document.querySelectorAll('[data-chapter]')]});
+// Inertial scroll (wheel/keys, desktop): the scene drives it so the page and the WebGL frame move together.
+const scroller=studio?null:createSmoothScroll();
+const scene=createEclipseScene(document.querySelector('#scene'),document.querySelector('#scene-labels'),{studio,hero:document.querySelector('.hero'),stops:[...document.querySelectorAll('[data-chapter]')],onFrame:scroller?.update});
+if(scene&&scroller)scroller.drive();
+// Section reveals: each block rises out of a soft blur as it enters, staggered within its section.
+const revealGroups=[['.hero','.eyebrow,h1,.hero-copy>p,.hero-actions,.orbit-label,.scene-caption,.scroll-note'],['.vision','.section-overline,h2,.vision-inner>p,.market-list'],['.platform','.section-overline,h2,.section-heading>p,.feature'],['.interlude','.section-overline,h2,p'],['.approach','.section-overline,h2,.approach-text']];
+if(!studio&&'IntersectionObserver'in window&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+  document.documentElement.classList.add('reveal-ready');
+  const revealer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('is-in');revealer.unobserve(entry.target);}},{rootMargin:'0px 0px -8% 0px',threshold:.12});
+  for(const[section,selector]of revealGroups)document.querySelectorAll(section).forEach(root=>root.querySelectorAll(selector).forEach((el,i)=>{el.dataset.reveal='';el.style.setProperty('--reveal-i',i);revealer.observe(el);}));
+}
 // Chapter rail: highlights the chapter on screen (index) or switches chapter (studio).
 const rail=[...document.querySelectorAll('[data-rail]')];
 function updateRail(){if(!scene)return;const current=scene.chapter;rail.forEach(link=>link.dataset.rail===current?link.setAttribute('aria-current','true'):link.removeAttribute('aria-current'));}

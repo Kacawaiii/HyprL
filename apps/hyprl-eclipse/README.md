@@ -13,7 +13,7 @@ Prototype visuel autonome : présentation, univers WebGL 3D en quatre chapitres 
 
 **Une seule DA pour tout le site : celle du Monolithe.** Monochrome, brume, lumière rasante, une seule lumière chaude ou froide selon l'ambiance. Chaque chapitre est désaturé (de 20 à 35 % de couleur gardée) et l'aberration chromatique reste discrète.
 
-Un seul canvas fixe rend les chapitres. Au scroll, il fond un chapitre dans le suivant. Le post-traitement est écrit à la main : aberration chromatique, bloom, vignette, grain et tonemapping ACES. Les ambiances **Or** et **Glace** recolorent les quatre chapitres.
+Un seul canvas fixe rend les chapitres. Au scroll, la caméra plonge dans le chapitre courant (zoom et flou radial) pendant que le suivant s'ouvre depuis le centre derrière un fin liseré de lumière, comme un limbe d'éclipse. Le défilement est amorti à la molette et au clavier (`lib/smooth-scroll.js`, piloté par la boucle de rendu pour que la page et la 3D bougent dans la même image) ; le tactile garde son inertie native. Chaque bloc de texte apparaît en montant depuis un léger flou, en cascade dans sa section. Le post-traitement est écrit à la main : aberration chromatique, bloom, vignette, grain et tonemapping ACES. Les ambiances **Or** et **Glace** recolorent les quatre chapitres.
 
 ## Ouvrir
 
@@ -31,6 +31,7 @@ Sous Windows, extraire l'archive puis double-cliquer sur `START-WINDOWS.cmd` (Py
 
 - `scene.js` : le moteur. Il gère le canvas fixe, le fondu entre chapitres selon le scroll, le post-traitement, la résolution adaptative, la pause et le mouvement réduit, et les exports.
 - `chapters/eclipse.js`, `monolith.js`, `prism.js`, `singularity.js` : un fichier par chapitre. Chaque objet est nommé et éditable.
+- `lib/smooth-scroll.js` : le défilement amorti (molette, clavier, ancres), désactivé en mouvement réduit et sur écran tactile.
 - `lib/kit.js` : le bruit GLSL, les astéroïdes procéduraux, le champ d'étoiles et les copies portables pour le glTF.
 - `index.html`, `styles.css`, `app.js` : la présentation en français. Le texte du héro est dans le disque noir, le texte de la Vision reste fixé dans le ciel, un rail de chapitres est à gauche et les contrôles d'ambiance sont fixes.
 - `studio.html` : un chapitre par bouton, l'export `.glb` des quatre chapitres et l'export `.png` du chapitre affiché.
