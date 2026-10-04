@@ -135,9 +135,9 @@ def test_edgar05_06_07_absence_inside_the_window_only_and_reappearance(env):
 
 @pytest.mark.parametrize("body, content_type, reason", [
     (b"{not json", "application/json", "not a UTF-8 JSON document"),
-    (json.dumps({"cik": "320193", "filings": {"recent": {"accessionNumber": [ACC1], "form": ["8-K"],
+    (json.dumps({"cik": 320193, "filings": {"recent": {"accessionNumber": [ACC1], "form": ["8-K"],
                  "filingDate": ["2026-06-16"], "acceptanceDateTime": ["x"]}}}).encode(), "application/json", "no primaryDocument column"),
-    (json.dumps({"cik": "320193", "filings": {"recent": {"accessionNumber": [ACC1, ACC2], "form": ["8-K"],
+    (json.dumps({"cik": 320193, "filings": {"recent": {"accessionNumber": [ACC1, ACC2], "form": ["8-K"],
                  "filingDate": ["2026-06-16"], "acceptanceDateTime": ["x"], "primaryDocument": ["d"]}}}).encode(),
      "application/json", "unequal lengths"),
     (syn.listing("789019", [syn.filing(ACC1)]), "application/json", "not 0000320193"),
@@ -158,6 +158,37 @@ def test_edgar08_a_listing_of_another_shape_derives_nothing(env, body, content_t
     assert _filing(snap, ACC1)["state"] == "PRESENT"  # no absence from a refused listing
     failed = [h for h in env.store.rows("SOURCE_HEALTH") if h.body["record"] == record]
     assert failed[0].body["result_state"] == "PARSER_FAILED"
+
+
+@pytest.mark.parametrize("field, value", [
+    ("cik", syn.CIK_A),
+    ("cik", True),
+    ("accessionNumber", ACC1 + "\n"),
+    ("filingDate", "2026-06-16\n"),
+    ("filingDate", "2026-02-30"),
+])
+def test_malformed_listing_identifiers_and_dates_cannot_derive_filings_or_absences(env, field, value):
+    env.serve(syn.filing(ACC1), OLD)
+    env.poll()
+    doc = json.loads(syn.listing(syn.CIK_A, [OLD]))
+    doc["cik"] = int(syn.CIK_A)
+    if field == "cik":
+        doc["cik"] = value
+    else:
+        doc["filings"]["recent"][field][0] = value
+    env.fetch.routes[A] = syn.Reply(json.dumps(doc).encode())
+    result = env.poll()
+    assert result["outcome"] == "PARSER_FAILED"
+    assert not [r for k in ("FILING_REVISION", "FILING_OBSERVATION", "FILING_ABSENCE")
+                for r in env.store.rows(k) if r.seq > result["record"]]
+    env.serve(syn.filing(ACC1), OLD)
+    assert _filing(env.settle(), ACC1)["state"] == "PRESENT"
+
+
+def test_a_watchlist_cik_must_match_the_whole_value():
+    from scripts.trading_lab.edgar.listing import cik10
+    with pytest.raises(ValueError):
+        cik10(syn.CIK_A + "\n")
 
 
 @pytest.mark.parametrize("acceptance", ["1999-01-01T00:00:00.000Z", "2031-12-31T23:59:59.000Z", "16:31 ET", ""])

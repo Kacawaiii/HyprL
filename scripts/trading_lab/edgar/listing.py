@@ -4,6 +4,7 @@ normalization, unverified UV1/UV2/UV6). Pure functions over bytes; nothing here 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 import json
 
 from scripts.trading_lab.edgar import spec
@@ -27,7 +28,7 @@ class Listing:
 
 
 def cik10(cik: str) -> str:
-    if not isinstance(cik, str) or not spec.CIK.match(cik):
+    if not isinstance(cik, str) or not spec.CIK.fullmatch(cik):
         raise ValueError(f"a CIK is 1 to 10 ASCII digits, got {cik!r}")
     return cik.zfill(10)
 
@@ -72,10 +73,10 @@ def parse_listing(body: bytes, requested_cik: str) -> Listing:
     if not isinstance(doc, dict):
         raise ListingRejected("the listing is not a JSON object")
     listed = doc.get("cik")
-    if isinstance(listed, bool) or not isinstance(listed, (str, int)) or not str(listed).isdigit():
-        raise ListingRejected(f"the listing has no numeric cik: {listed!r}")
+    if isinstance(listed, bool) or not isinstance(listed, int):
+        raise ListingRejected(f"the listing has no integer cik: {listed!r}")
     requested = cik10(requested_cik)
-    if int(str(listed)) != int(requested):
+    if listed != int(requested):
         raise ListingRejected(f"the listing is for cik {listed}, not {requested}")
     filings = doc.get("filings")
     recent = filings.get("recent") if isinstance(filings, dict) else None
@@ -101,10 +102,14 @@ def parse_listing(body: bytes, requested_cik: str) -> Listing:
     accessions, in_scope, other = [], [], {}
     for i in range(count):
         accession, form, filed = recent["accessionNumber"][i], recent["form"][i], recent["filingDate"][i]
-        if not spec.ACCESSION.match(accession):
+        if not spec.ACCESSION.fullmatch(accession):
             raise ListingRejected(f"row {i} has an invalid accession number {accession!r}")
-        if not spec.FILING_DATE.match(filed):
+        if not spec.FILING_DATE.fullmatch(filed):
             raise ListingRejected(f"row {i} has an invalid filingDate {filed!r}")
+        try:
+            date.fromisoformat(filed)
+        except ValueError as exc:
+            raise ListingRejected(f"row {i} has an invalid filingDate {filed!r}") from exc
         accessions.append(accession)
         if form not in spec.FORMS_IN_SCOPE:
             other[form] = other.get(form, 0) + 1

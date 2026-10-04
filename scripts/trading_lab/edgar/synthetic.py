@@ -43,7 +43,7 @@ def filing(accession: str, *, form: str = "8-K", filed: str = "2026-06-16", item
 
 def listing(cik: str, filings: list[dict], *, name: str = "Example Corp", files: bool = False) -> bytes:
     recent = {column: [f[column] for f in filings] for column in COLUMNS}
-    doc = {"cik": cik10(cik).lstrip("0") or "0", "entityType": "operating", "name": name, "tickers": ["EXM"],
+    doc = {"cik": int(cik10(cik)), "entityType": "operating", "name": name, "tickers": ["EXM"],
            "filings": {"recent": recent, "files": [{"name": f"CIK{cik10(cik)}-submissions-001.json"}] if files else []}}
     return json.dumps(doc).encode("utf-8")
 
