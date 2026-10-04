@@ -102,7 +102,7 @@ class FomcViews:
         try:
             view = store.view()
             txns = view.txns()
-            lower = state.now_lb(store)
+            lower = state.now_lb(view)
             return {
                 **self._base(), "status": "AVAILABLE", "store": "configured", "horizon": view.horizon(),
                 "first_durable_activity": txns[0][2] if txns else None,
@@ -240,7 +240,7 @@ class EdgarViews:
         try:
             view = store.view()
             txns = view.txns()
-            lower = edgar_snapshot.now_lb(store)
+            lower = edgar_snapshot.now_lb(view)
             manifest = view.rows("MANIFEST")
             return {
                 **self._base(), "status": "AVAILABLE", "store": "configured", "horizon": view.horizon(),
