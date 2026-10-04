@@ -10,6 +10,7 @@ fabricated price is worse than a cockpit showing an empty panel.
 
 from __future__ import annotations
 
+import bisect
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
@@ -64,6 +65,7 @@ from scripts.trading_lab.signal_engine import (
 )
 
 HOUR = timedelta(hours=1)
+SIGNAL_RUNS_DIR = "signal_runs_v1"
 
 
 def _iso(moment: datetime) -> str:
@@ -105,6 +107,7 @@ class AppService:
         self.edgar = EdgarViews(edgar_store)
         self._rows: dict[str, tuple[dict[str, str], ...]] = {}
         self._manifests: dict[str, dict] = {}
+        self._signal_runs: dict[str, tuple] = {}
         # The research corpus lives outside the data root: it is gitignored
         # local state, not committed artefacts, and the two must not be
         # reachable through the same path resolution.
@@ -370,47 +373,154 @@ class AppService:
 
     # --- signals and risk ------------------------------------------------
 
-    def signals(self, *, limit=None) -> dict:
-        """No signal run has been persisted, and none is fabricated here."""
-        require_limit(limit)
+    def _signal_spec_view(self) -> dict:
         return {
-            "available": False,
-            "reason": "no persisted signal run available",
-            "signal_spec": {
-                "protocol": SIGNAL_SPEC_V1.version,
-                "rule": SIGNAL_SPEC_V1.name,
-                "spec_hash": SIGNAL_SPEC_V1.spec_hash,
-                "long_threshold": str(SIGNAL_SPEC_V1.long_threshold),
-                "short_threshold": str(SIGNAL_SPEC_V1.short_threshold),
-                "full_strength_excess": str(SIGNAL_SPEC_V1.full_strength_excess),
-                "boundary_semantics": SIGNAL_SPEC_V1.boundary_semantics,
-                "prediction_horizon": SIGNAL_SPEC_V1.prediction_horizon,
-                "optimized": not SIGNAL_THRESHOLD_V1_IS_NOT_OPTIMIZED,
-            },
+            "protocol": SIGNAL_SPEC_V1.version,
+            "rule": SIGNAL_SPEC_V1.name,
+            "spec_hash": SIGNAL_SPEC_V1.spec_hash,
+            "long_threshold": str(SIGNAL_SPEC_V1.long_threshold),
+            "short_threshold": str(SIGNAL_SPEC_V1.short_threshold),
+            "full_strength_excess": str(SIGNAL_SPEC_V1.full_strength_excess),
+            "boundary_semantics": SIGNAL_SPEC_V1.boundary_semantics,
+            "prediction_horizon": SIGNAL_SPEC_V1.prediction_horizon,
+            "optimized": not SIGNAL_THRESHOLD_V1_IS_NOT_OPTIMIZED,
+        }
+
+    def _risk_spec_view(self) -> dict:
+        return {
+            "protocol": RISK_SPEC_V1.protocol_version,
+            "spec_hash": RISK_SPEC_V1.risk_spec_hash,
+            "max_long_exposure": str(RISK_SPEC_V1.max_long_exposure),
+            "max_short_exposure": str(RISK_SPEC_V1.max_short_exposure),
+            "risk_scale": str(RISK_SCALE_V1),
+            "volatility_scaling_enabled": RISK_SPEC_V1.volatility_scaling_enabled,
+            "strength_mapping_version": RISK_SPEC_V1.strength_mapping_version,
+            "risk_scale_rule_version": RISK_SPEC_V1.risk_scale_rule_version,
+            "optimized": not RISK_LIMIT_V1_IS_NOT_OPTIMIZED,
+        }
+
+    def _signal_run(self, product: str):
+        """``(run, None)`` once verified against the economic backtest, else ``(None, reason)``.
+
+        Nothing is served from an artefact that does not replay to the committed series hashes: a
+        tampered, stale or mismatching run keeps the honest "unavailable" answer with its reason.
+        The (slow) replay happens once per product and the verdict is cached.
+        """
+        if product in self._signal_runs:
+            return self._signal_runs[product]
+        run = self._read_json(f"{SIGNAL_RUNS_DIR}/{product}.json")
+        economic = self._economic("v1", product)
+        if run is None:
+            verdict = (None, "no persisted signal run available")
+        elif economic is None:
+            verdict = (None, "persisted signal run refused: the economic backtest "
+                             "it must hash to is unavailable")
+        else:
+            from scripts.trading_lab.build_signal_runs import SignalRunError, verify_run
+            try:
+                verify_run(run, economic=economic)
+                verdict = (run, None)
+            except SignalRunError as error:
+                verdict = (None, f"persisted signal run refused: {error}")
+        self._signal_runs[product] = verdict
+        return verdict
+
+    def _run_page(self, *, run: dict, rows_key: str, endpoint: str, product: str,
+                  limit, cursor) -> tuple[list[dict], dict]:
+        """Newest first. The cursor resumes strictly before the last timestamp handed out."""
+        size = require_limit(limit)
+        rows = run[rows_key]
+        query = {"order": "newest_first"}
+        end = len(rows)
+        if cursor:
+            before = decode_cursor(cursor, endpoint=endpoint, product=product, query=query)
+            end = bisect.bisect_left(rows, before, key=lambda row: row["timestamp"])
+        start = max(0, end - size)
+        page = rows[start:end][::-1]
+        has_more = start > 0
+        return page, {
+            "returned": len(page), "has_more": has_more, "total": len(rows),
+            "next_cursor": encode_cursor(
+                endpoint=endpoint, product=product,
+                last_timestamp=page[-1]["timestamp"], query=query)
+            if has_more and page else None,
+        }
+
+    def _run_header(self, run: dict, product: str) -> dict:
+        return {
+            "product": product,
+            "out_of_sample": run["out_of_sample"],
+            "order": "newest_first",
+            "experiment_type": run["experiment_type"],
+            "confirmatory": run["confirmatory"],
+            "protocol": run["protocol"],
+            "corpus": run["corpus"],
+            "signal_series_hash": run["signal_series_hash"],
+            "position_target_series_hash": run["position_target_series_hash"],
+            "counts": run["counts"],
+            "window": run["window"],
+            "verified_against": "economic_backtest_v1",
+        }
+
+    def signals(self, *, limit=None, product=None, cursor=None) -> dict:
+        """Persisted out-of-sample walk-forward decisions, or why there are none."""
+        require_limit(limit)
+        product = self._require_product(SUPPORTED_PRODUCTS[0] if product is None else product)
+        payload = {
+            "available": False, "reason": None,
+            "product": product,
+            "signal_spec": self._signal_spec_view(),
             "decisions": [],
             "page": {"returned": 0, "has_more": False, "next_cursor": None},
         }
+        run, reason = self._signal_run(product)
+        if run is None:
+            payload["reason"] = reason
+            return payload
+        folds = {fold["fold_index"]: fold for fold in run["folds"]}
+        page, info = self._run_page(run=run, rows_key="decisions", endpoint="signals",
+                                    product=product, limit=limit, cursor=cursor)
+        payload.update(self._run_header(run, product))
+        payload["available"] = True
+        payload["decisions"] = [{
+            **row,
+            "signal_spec_hash": run["protocol"]["signal_spec_hash"],
+            "model_spec_hash": folds[row["fold_index"]]["model_spec_hash"],
+            "fitted_hash": folds[row["fold_index"]]["fitted_hash"],
+            "out_of_sample": run["out_of_sample"],
+        } for row in page]
+        payload["page"] = info
+        return payload
 
-    def risk_targets(self, *, limit=None) -> dict:
-        """No position-target run has been persisted, and none is fabricated."""
+    def risk_targets(self, *, limit=None, product=None, cursor=None) -> dict:
+        """Persisted position targets derived from those decisions, or why there are none."""
         require_limit(limit)
-        return {
-            "available": False,
-            "reason": "no persisted position target run available",
-            "risk_spec": {
-                "protocol": RISK_SPEC_V1.protocol_version,
-                "spec_hash": RISK_SPEC_V1.risk_spec_hash,
-                "max_long_exposure": str(RISK_SPEC_V1.max_long_exposure),
-                "max_short_exposure": str(RISK_SPEC_V1.max_short_exposure),
-                "risk_scale": str(RISK_SCALE_V1),
-                "volatility_scaling_enabled": RISK_SPEC_V1.volatility_scaling_enabled,
-                "strength_mapping_version": RISK_SPEC_V1.strength_mapping_version,
-                "risk_scale_rule_version": RISK_SPEC_V1.risk_scale_rule_version,
-                "optimized": not RISK_LIMIT_V1_IS_NOT_OPTIMIZED,
-            },
+        product = self._require_product(SUPPORTED_PRODUCTS[0] if product is None else product)
+        payload = {
+            "available": False, "reason": None,
+            "product": product,
+            "risk_spec": self._risk_spec_view(),
             "targets": [],
             "page": {"returned": 0, "has_more": False, "next_cursor": None},
         }
+        run, reason = self._signal_run(product)
+        if run is None:
+            payload["reason"] = (reason or "").replace(
+                "no persisted signal run available",
+                "no persisted position target run available")
+            return payload
+        page, info = self._run_page(run=run, rows_key="targets", endpoint="risk_targets",
+                                    product=product, limit=limit, cursor=cursor)
+        payload.update(self._run_header(run, product))
+        payload["available"] = True
+        payload["targets"] = [{
+            **row,
+            "risk_scale": run["protocol"]["risk_scale"],
+            "risk_spec_hash": run["protocol"]["risk_spec_hash"],
+            "out_of_sample": run["out_of_sample"],
+        } for row in page]
+        payload["page"] = info
+        return payload
 
     # --- economic backtests ----------------------------------------------
 

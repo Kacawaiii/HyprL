@@ -156,6 +156,7 @@ export interface Page {
   limit?: number;
   has_more: boolean;
   next_cursor: string | null;
+  total?: number;
 }
 
 export interface CandlePage {
@@ -181,7 +182,26 @@ export interface ChartSeries {
   metadata: ChartMetadata;
 }
 
-export interface SignalsView {
+/** What a persisted walk-forward run says about itself. Absent when no run is available. */
+export interface RunProvenance {
+  product?: string;
+  out_of_sample?: string;
+  order?: string;
+  signal_series_hash?: string;
+  position_target_series_hash?: string;
+  counts?: { decisions: number; targets: number; folds: number };
+  window?: { first: string | null; last: string | null };
+  verified_against?: string;
+  protocol?: {
+    benchmark_protocol: string;
+    benchmark_spec_hash: string;
+    economic_backtest_spec_hash: string;
+    economic_results_hash: string;
+  };
+  corpus?: { corpus_content_hash: string; corpus_spec_hash: string; dataset_hash: string };
+}
+
+export interface SignalsView extends RunProvenance {
   available: boolean;
   reason?: string;
   signal_spec: SignalEngineInfo & { optimized: boolean };
@@ -192,11 +212,15 @@ export interface SignalsView {
     strength: string;
     signal_spec_hash: string;
     decision_hash: string;
+    fold_index?: number;
+    model_spec_hash?: string;
+    fitted_hash?: string;
+    out_of_sample?: string;
   }>;
   page: Page;
 }
 
-export interface RiskView {
+export interface RiskView extends RunProvenance {
   available: boolean;
   reason?: string;
   risk_spec: RiskEngineInfo & { risk_scale_rule_version: string };
@@ -206,6 +230,9 @@ export interface RiskView {
     target_exposure: string;
     signal_strength: string;
     position_target_hash: string;
+    raw_target_exposure?: string;
+    risk_scale?: string;
+    out_of_sample?: string;
   }>;
   page: Page;
 }

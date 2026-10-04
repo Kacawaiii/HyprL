@@ -137,9 +137,11 @@ def build_routes(service: AppService):
         "/api/v1/overview": lambda query: service.overview(),
         "/api/v1/markets": lambda query: service.markets(),
         "/api/v1/signals": lambda query: service.signals(
-            limit=_first(query, "limit")),
+            limit=_first(query, "limit"), product=_first(query, "product"),
+            cursor=_first(query, "cursor")),
         "/api/v1/risk/targets": lambda query: service.risk_targets(
-            limit=_first(query, "limit")),
+            limit=_first(query, "limit"), product=_first(query, "product"),
+            cursor=_first(query, "cursor")),
         "/api/v1/research/benchmarks": lambda query: {
             "benchmarks": service.benchmark_summaries()},
         # The local equity research corpus. Status only -- there is no verb
