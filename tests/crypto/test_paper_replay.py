@@ -1,6 +1,6 @@
 """Causality and determinism using synthetic bars and already frozen models."""
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from pathlib import Path
 
 import pytest
@@ -138,3 +138,31 @@ def test_committed_results_bind_models_corpus_and_second_replay():
             assert fill["timestamp"] < replay.READ_CUTOFF
         for point in result["equity_curve"]:
             assert point["timestamp"] < replay.READ_CUTOFF
+
+
+def test_prediction_scores_are_recomputable_without_training_or_replaying():
+    from scripts.trading_lab.market_dataset import build_dataset
+    from scripts.trading_lab.real_benchmark_v2 import DATASET_CONFIG_V2
+    from scripts.trading_lab.paper_model import load_paper_model
+    _, corpus = replay.load_replay_corpus(ROOT / "data/crypto")
+    for product, rows in corpus.items():
+        seed = [row for row in rows if row["bar_open_at"] < replay.REPLAY_START][-replay.SEED_BARS:]
+        window = [row for row in rows if replay.REPLAY_START <= row["bar_open_at"] <= replay.REPLAY_END]
+        dataset = build_dataset(paper_engine.series_from_rows(seed + window, product=product), config=DATASET_CONFIG_V2)
+        scored = [row for row in dataset.rows if row.usable and row.bar_open_at >= replay.REPLAY_START]
+        model = load_paper_model(read_artifact(ROOT / f"data/models/paper_v2/{product}.json"),
+                                 replay.PAPER_MODEL_SPEC_V2, product=product)
+        predictions = model.predict(scored)
+        actuals = tuple(row.label for row in scored)
+        stored = read_artifact(ROOT / f"data/crypto/paper_replay_v2/{product}.json")
+        records = [{"bar_open_at": row.bar_open_at, "prediction": str(prediction), "label": str(row.label)}
+                   for row, prediction in zip(scored, predictions)]
+        assert replay.digest(records) == stored["hashes"]["scored_predictions_hash"]
+        assert str(replay.rank_ic(predictions, actuals)) == stored["prediction_quality"]["rank_ic"]
+        assert str(replay.mean_absolute_error(predictions, actuals)) == stored["prediction_quality"]["mae"]
+        assert str(replay.root_mean_squared_error(predictions, actuals)) == stored["prediction_quality"]["rmse"]
+        assert len(scored) == stored["prediction_quality"]["observations"]
+        with localcontext() as context:
+            context.prec = replay.ECONOMIC_PRECISION
+            assert sum(Decimal(fill["fee"]) for fill in stored["fills"]) == Decimal(stored["metrics"]["total_fees"])
+            assert sum(Decimal(fill["slippage_cost"]) for fill in stored["fills"]) == Decimal(stored["metrics"]["total_slippage_cost"])

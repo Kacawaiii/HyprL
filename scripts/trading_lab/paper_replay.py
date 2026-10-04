@@ -186,6 +186,8 @@ def downsample_equity(curve: list[dict], *, maximum: int = 500) -> list[dict]:
             min(range(len(curve)), key=lambda i: equities[i]),
             max(range(len(curve)), key=lambda i: equities[i])}
     buckets = (maximum - 6) // 4
+    if buckets == 0:
+        return [curve[index] for index in sorted(keep)]
     width = (len(curve) + buckets - 1) // buckets
     for start in range(0, len(curve), width):
         end = min(start + width, len(curve))
