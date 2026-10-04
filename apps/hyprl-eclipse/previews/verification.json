@@ -1,0 +1,29 @@
+{
+  "browser": "Chromium 1208 / Playwright 1.58.2",
+  "checks": {
+    "no_browser_errors": true,
+    "no_external_requests": true,
+    "desktop_1440": true,
+    "mobile_390": true,
+    "mobile_320": true,
+    "workspace_navigation": true,
+    "keyboard_tabs_and_escape": true,
+    "focus_restoration": true,
+    "journal_persistence_and_text_escaping": true,
+    "palettes": true,
+    "animation_and_pause": true,
+    "reduced_motion": true,
+    "webgl_unavailable_fallback": true,
+    "glb_download": true,
+    "png_download": true
+  },
+  "glb_validation": {
+    "errors": 0,
+    "warnings": 0,
+    "infos": 5
+  },
+  "render": {
+    "drawCalls": 15,
+    "triangles": 24590
+  }
+}
