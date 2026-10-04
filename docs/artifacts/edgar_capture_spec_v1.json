@@ -1,0 +1,232 @@
+{
+  "acceptance_datetime": "acceptanceDateTime is provenance only (UV2): it never enters availability, ordering, the causal prefix or any time the system knew something",
+  "adversarial_cases": {
+    "EDGAR01": "a new 8-K appears: one filing, one revision, one observation; available only after a later verified response",
+    "EDGAR02": "the same listing read again: the same revision, a new observation (no churn)",
+    "EDGAR03": "the same accession with corrected items: a new revision; a read before the correction shows the old one",
+    "EDGAR04": "an 8-K/A: a separate filing with no link to the original",
+    "EDGAR05": "an accession missing from a later valid listing inside the window: ABSENT_FROM_LISTING, earlier reads unchanged",
+    "EDGAR06": "an accession older than the window's oldest date missing: nothing inferred",
+    "EDGAR07": "an absent accession listed again: PRESENT",
+    "EDGAR08": "malformed listings (unequal columns, a missing column, another cik, an invalid accession, not JSON, another Content-Type): PARSER_FAILED, nothing derived, no absence",
+    "EDGAR09": "an acceptanceDateTime in the far past, the future or an odd format: kept verbatim, availability unchanged",
+    "EDGAR10": "other forms (10-K, 4) in the listing: counted, never normalized",
+    "EDGAR11": "a response without a valid Date or with a skewed clock: CLOCK_UNVERIFIED; earlier records wait for a later verified response",
+    "EDGAR12": "a corrupt raw: the read and the replay fail closed",
+    "EDGAR13": "a store of another schema or spec: rejected before any write; read-only opening writes nothing",
+    "EDGAR14": "403/429, 404, a redirect, a timeout: THROTTLED with a 600 s pause, NOT_FOUND, UNAVAILABLE",
+    "EDGAR15": "reopening and replaying at the same (T, H): the same snapshot identity",
+    "EDGAR16": "a User-Agent without a contact e-mail: the fetcher refuses to start"
+  },
+  "authorizes_capture": false,
+  "causal": {
+    "availability": "CAUSAL_AVAILABILITY_V3 (sources.causal): avail(X) = max(V.observed_at + 92 s, observed_at of the observations and absences X commits, avail of earlier transactions), V the first CLOCK_VERIFIED response whose attempt record commits after X",
+    "clock": "CLOCK_VERIFIED when |wall_at_receipt - (Date + Age)| <= 90 s with strict IMF-fixdate Date and Age <= 86400",
+    "dependencies": "a read re-verifies every raw its filings derive from (first and latest observation, absence)",
+    "read": "filings_as_of(T, H): the longest prefix of transactions <= H available at or before T; EDGAR_RESOLVED only when the next transaction is resolved with avail > T, else EDGAR_CAUSAL_VISIBILITY_UNRESOLVED with nothing shown",
+    "snapshot_identity": "sha256_canonical of the snapshot"
+  },
+  "discovery": {
+    "cadence": "at most one poll per CIK per 600 s (a future live run)",
+    "rule": "per watched CIK, one listing per poll; a listing is a 200 response with Content-Type application/json, a JSON object whose top-level `cik` equals the requested CIK as an integer and whose filings.recent columns are arrays of one length"
+  },
+  "identity": {
+    "accession": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$ exactly as listed; a row with another accession makes the listing PARSER_FAILED",
+    "derived_urls": "filing index https://www.sec.gov/Archives/edgar/data/{cik as integer}/{accession without dashes}/{accession}-index.htm and primary document .../{accession without dashes}/{primaryDocument}: provenance only, never fetched",
+    "one_item_per_accession": "an accession is one filing for ever; an amendment is another accession",
+    "source_item_id": "sha256_canonical([\"EdgarFiling\", provider_id, accession_number])"
+  },
+  "invariants": {
+    "E1": "ONE FILING PER ACCESSION, FOR EVER: amendments are other filings; nothing is merged across accessions.",
+    "E2": "RAW FIRST AND IMMUTABLE: a listing record commits only after its raw is durable; raws are never rewritten and are verified on every read.",
+    "E3": "NO CHURN: identical filing metadata never makes a new revision; changed metadata always does, and older revisions stay.",
+    "E4": "ABSENCE IS AN OBSERVATION: a disappearance inside the documented window is recorded, never inferred outside it, never a deletion.",
+    "E5": "ACCEPTANCE TIME IS PROVENANCE: acceptanceDateTime never enters availability or ordering.",
+    "E6": "CAUSAL READS: a read at T shows only what later server-attested evidence made available at T; otherwise it is unresolved and shows nothing.",
+    "E7": "FAIL CLOSED: an unknown listing shape, a corrupt raw or a replay mismatch derives nothing and fails the read.",
+    "E8": "BOUNDED ACCESS: only the watchlist, only the submissions surface, paced far below the fair-access rate, with a declared User-Agent."
+  },
+  "normalization": {
+    "columns": {
+      "optional": [
+        "reportDate",
+        "act",
+        "fileNumber",
+        "filmNumber",
+        "items",
+        "size",
+        "isXBRL",
+        "isInlineXBRL",
+        "primaryDocDescription"
+      ],
+      "required": [
+        "accessionNumber",
+        "form",
+        "filingDate",
+        "acceptanceDateTime",
+        "primaryDocument"
+      ]
+    },
+    "fields": "accession_number, cik (10 digits), form, filing_date, report_date, acceptance_datetime_text, act, file_number, film_number, items, size, is_xbrl, is_inline_xbrl, primary_document, primary_doc_description: values verbatim, null when the column is absent",
+    "not_in_identity": "the entity name and tickers (kept as observation provenance; a rename never makes new filing revisions)",
+    "types": "required columns and text optional columns hold strings; size, isXBRL, isInlineXBRL hold integers when present; filingDate is YYYY-MM-DD"
+  },
+  "provider": {
+    "event_family": "SEC_CURRENT_REPORT_FILING",
+    "provider_class": "REGULATOR_GOVERNMENT",
+    "provider_id": "sec_edgar_submissions_v1",
+    "source_tier": "TIER_1_OFFICIAL",
+    "taxonomy_type": "REGULATORY_FILING",
+    "taxonomy_version": "trading-lab.event-taxonomy.v1"
+  },
+  "raw_policy": "every listing response body is written content-addressed (SHA-256) and fsynced before the record that names it commits; raws are immutable, re-verified on every read; a corrupt raw fails the read and the replay closed and is never repaired",
+  "removal_policy": {
+    "absence": "a filing whose latest event is an observation is ABSENT_FROM_LISTING in a later valid listing of the same CIK that does not contain it, when its filing_date is strictly later than the oldest filingDate of that listing's recent window (so it would be inside the window, VF2)",
+    "never": "nothing is deleted or rewritten; ABSENT_FROM_LISTING is not a confirmed removal (UV3)",
+    "older": "outside that window nothing is inferred",
+    "reappearance": "a later observation makes it PRESENT again"
+  },
+  "replay": "offline, from the store alone: every listing raw re-verified, clock verdicts and processing re-derived in commit order (normalized rows, revision keys, observations, absences, health), then the read at (T, H); any mismatch fails closed",
+  "request_accounting": {
+    "body_cap_bytes": 16777216,
+    "content_codings": [
+      "identity",
+      "gzip"
+    ],
+    "deadline_seconds": 30,
+    "pacing": "the rolling limiter with 10 s spacing, at most 6 starts per 60 s and a 60 s epoch embargo: far below 10 requests/second (VF6)",
+    "redirects": "never followed: a 3xx is SOURCE_UNAVAILABLE",
+    "statuses": "200 listing; 404 SOURCE_NOT_FOUND; 403/429 SOURCE_THROTTLED (UV4); anything else, a timeout or a TLS failure SOURCE_UNAVAILABLE",
+    "user_agent": "an operator-declared User-Agent naming an organization and a contact e-mail (VF6); the fetcher refuses to start without one"
+  },
+  "revision_policy": {
+    "amendment": "8-K/A: a separate filing, never merged into the original (UV6)",
+    "changed": "the same accession with other fields (a post-acceptance correction, VF10): a new revision; earlier revisions and observations stay; a read at T shows the revision of the latest observation available at T",
+    "identity": "EDGAR_FILING_METADATA_V1: filing_content_sha256 = sha256_canonical({identity, fields})",
+    "same": "the same accession with the same fields: one revision, a new observation linked to it"
+  },
+  "scope": {
+    "forms_in_scope": [
+      "8-K",
+      "8-K/A"
+    ],
+    "out_of_scope": "every other form (counted per listing, never normalized), primary documents and exhibits (never fetched), XBRL APIs, full-text search, RSS feeds, daily/full/feed indexes, bulk submissions.zip",
+    "surface": "GET https://data.sec.gov/submissions/CIK{cik10}.json, cik10 = the CIK zero-padded to 10 digits",
+    "watchlist": "a closed list of 1 to 10 CIKs (1 to 10 ASCII digits each) given once by the operator manifest; nothing else is ever requested",
+    "window": "filings.recent only. filings.files (older pages) are recorded as seen but never fetched"
+  },
+  "spec_id": "sec_edgar_submissions_capture_v1",
+  "spec_revision": 1,
+  "status": "OFFLINE SLICE. This document authorizes no request to the SEC; a real run needs its own authorization and a first real fixture that settles every item of `unverified`.",
+  "store": {
+    "opening_rule": "an existing store with another schema version or spec hash is rejected before any write; read-only opening writes nothing; no migration",
+    "schema_version": "edgar-store-v1"
+  },
+  "unverified": [
+    {
+      "id": "UV1",
+      "rule": "the parser requires exactly the names listed in normalization.columns; a listing missing a required column, with columns of unequal length or of another type is PARSER_FAILED: no filing derived, no absence inferred",
+      "unknown": "the column names of filings.recent (accessionNumber, form, filingDate, acceptanceDateTime, primaryDocument, ...) are not documented on the official pages"
+    },
+    {
+      "id": "UV2",
+      "rule": "kept verbatim as text (acceptance_datetime_text), never parsed into an instant, never an availability, a release time or an ordering key",
+      "unknown": "the format and time zone of acceptanceDateTime are not documented"
+    },
+    {
+      "id": "UV3",
+      "rule": "a disappearance is recorded only as ABSENT_FROM_LISTING (an observation of absence), never as a removal or a deletion of earlier records",
+      "unknown": "whether a filing removed by SEC staff disappears from filings.recent, and when"
+    },
+    {
+      "id": "UV4",
+      "rule": "403 and 429 are SOURCE_THROTTLED; no request of any CIK for at least 600 s afterwards",
+      "unknown": "the response to a request above the fair-access rate (status code, block duration)"
+    },
+    {
+      "id": "UV5",
+      "rule": "a response without a valid Date is CLOCK_UNVERIFIED: kept, but never what makes earlier records available (CAUSAL_AVAILABILITY_V3)",
+      "unknown": "the presence and accuracy of the HTTP Date header on data.sec.gov"
+    },
+    {
+      "id": "UV6",
+      "rule": "no link is inferred: an 8-K/A is its own filing (amends: null, amendment_link NOT_PROVIDED_BY_SOURCE)",
+      "unknown": "whether an amendment (8-K/A) names the accession it amends in the submissions listing"
+    }
+  ],
+  "verified_facts": [
+    {
+      "fact": "the submissions API URL format",
+      "id": "VF1",
+      "quote": "https://data.sec.gov/submissions/CIK##########.json",
+      "source": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces"
+    },
+    {
+      "fact": "recent window",
+      "id": "VF2",
+      "quote": "The object's property path contains at least one year's of filing or to 1,000 (whichever is more) of the most recent filings in a compact columnar data array.",
+      "source": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces"
+    },
+    {
+      "fact": "older pages",
+      "id": "VF3",
+      "quote": "If the entity has additional filings, files will contain an array of additional JSON files and the date range for the filings each one contains.",
+      "source": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces"
+    },
+    {
+      "fact": "update on dissemination",
+      "id": "VF4",
+      "quote": "The APIs are updated in real-time as filings are disseminated. The submissions API is updated with a typical processing delay of less than a second; ... these processing delays may be longer during peak filing times.",
+      "source": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces"
+    },
+    {
+      "fact": "no authentication, no CORS",
+      "id": "VF5",
+      "quote": "These APIs do not require any authentication or API keys to access. ... data.sec.gov does not support Cross Origin Resource Scripting (CORS).",
+      "source": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces"
+    },
+    {
+      "fact": "fair access",
+      "id": "VF6",
+      "quote": "Current max request rate: 10 requests/second. ... declare your user agent in request headers ... SEC reserves the right to limit request rates to preserve fair access for all users.",
+      "source": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data"
+    },
+    {
+      "fact": "user agent and rate (developer FAQ)",
+      "id": "VF7",
+      "quote": "our current maximum access rate is 10 requests per second ... We allow scripted access to sec.gov content",
+      "source": "https://www.sec.gov/os/webmaster-faq"
+    },
+    {
+      "fact": "accession number",
+      "id": "VF8",
+      "quote": "0001193125-15-118890 is the accession number, a unique identifier assigned automatically to an accepted submission by EDGAR.",
+      "source": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data"
+    },
+    {
+      "fact": "archive paths",
+      "id": "VF9",
+      "quote": "/Archives/edgar/data/1122304/0001193125-15-118890.txt and /Archives/edgar/data/1122304/000119312515118890/0001193125-15-118890.txt; index files -index.html, index.json, index.xml",
+      "source": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data"
+    },
+    {
+      "fact": "post-acceptance corrections and removals",
+      "id": "VF10",
+      "quote": "Filings are sometimes authorized by SEC staff for removal or correction for a variety of reasons at the filer's request including, but not limited to, the document was submitted for the wrong filer, the document was a duplicate of a previously filed document, the document in its current form was unreadable, or the document contained sensitive information. ... removals processed on subsequent business days will not be reflected in any previous daily, feed, or oldload index.",
+      "source": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data"
+    },
+    {
+      "fact": "late dissemination",
+      "id": "VF11",
+      "quote": "Some filing submissions that begin after 5:30 p.m. ET\u2014or 10:00 p.m. for Ownership forms 3, 4, 5\u2014will be disseminated the next business day, showing up in the following business day's index.",
+      "source": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data"
+    },
+    {
+      "fact": "EDGAR hours",
+      "id": "VF12",
+      "quote": "EDGAR accepts new filer applications, new filings, and changes to filer data each business day, Monday through Friday, from 6:00 a.m. to 10:00 p.m., ET.",
+      "source": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data"
+    }
+  ],
+  "verified_retrieved": "2026-10-03"
+}

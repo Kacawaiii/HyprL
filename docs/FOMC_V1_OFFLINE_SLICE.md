@@ -49,6 +49,22 @@ cycle -> events_as_of(T, H) -> reopen -> offline replay`
 | `soak.py` | the prolonged synthetic run (statement pages with per-response Cloudflare bytes) with faults, a storage incident, crashes, restarts and a clean stop, and its verification |
 | `synthetic.py`, `demo.py` | simulated clock, local provider, fixtures, the demo |
 
+## After the slice (2026-10-03): shared primitives and the API journey
+
+- The record store, CAUSAL_AVAILABILITY_V3, the HTTP clock evidence, canonical hashing and the rolling
+  limiter now live in `scripts/trading_lab/sources/` (shared with the SEC EDGAR slice,
+  `docs/EDGAR_V1_OFFLINE_SLICE.md`); the FOMC modules bind them to spec revision 25 unchanged and the 198
+  FOMC tests pass. The store gained a read-only opening (no DDL, pragma, meta row or side file; every write
+  refused): the rev25 archive re-reads its 10 recorded snapshots identically through it, and its file
+  fingerprint is unchanged.
+- The read-only application API serves the FOMC journey from a store fixed at start
+  (`python -m scripts.trading_lab.app_api.server --fomc-store DIR`): `/api/v1/sources/fomc` (status,
+  server-attested NOW_LB), `/snapshot?as_of=&horizon=` (identity, read state, discovery, health, items),
+  `/items/{sid}` (revisions, observations with provenance), `/replay` (verified offline replay). The
+  cockpit's Events page reads it. On the rev25 archive: snapshot at NOW_LB resolved (H 622, P 606, 17
+  items) in 0.08 s, replay identical in 0.63 s. Tests: `tests/crypto/test_app_api_fomc.py`,
+  `apps/web/src/test/events.test.tsx`.
+
 ## Proven guarantees: invariant → code → test
 
 Each row is exercised by the named tests (offline, synthetic sources). Anything not proven by a test is listed under "Remaining limits".
