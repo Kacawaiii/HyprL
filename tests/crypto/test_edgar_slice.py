@@ -445,3 +445,26 @@ def test_check_writes_nothing_and_the_run_stops_at_its_budget(tmp_path):
     fetcher2.routes[A] = syn.Reply(syn.listing(syn.CIK_A, [syn.filing(ACC1)]))
     ended = service.run(tmp_path / "store2", expiring, fetcher=fetcher2, clock=clock2, log=lambda m: None)
     assert ended["reason"] == "authorization expired" and ended["requests"] == 3  # 13:01, 13:11, 13:21; not 13:31
+
+
+def test_the_deadline_counts_from_the_grant_and_headers_are_kept(tmp_path):
+    now = [100.0]
+    fetcher = HttpsFetcher("Example Lab ops@example.org", connection_factory=_Connection, mono=lambda: now[0])
+    _Connection.calls.clear()
+    late = fetcher.fetch("https://data.sec.gov/submissions/CIK0000320193.json", started=now[0] - spec.DEADLINE_S - 1)
+    assert late.kind == "SOURCE_UNAVAILABLE" and "deadline" in late.reason and _Connection.calls == []  # nothing sent
+    env = Env(tmp_path)
+    env.serve(syn.filing(ACC1), extra=[("Server", "synthetic"), ("Cache-Control", "no-cache")])
+    env.poll()
+    resp = env.store.rows("RESPONSE")[-1].body
+    assert ["Server", "synthetic"] in resp["header_lines"] and resp["fetch_seconds"] >= 0.4
+    env.collector.close()
+
+
+def test_a_throttled_answer_stops_the_trial(tmp_path):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    fetcher.routes[A] = syn.Reply(b"", status=429)
+    summary = service.run(tmp_path / "store", _authorization(tmp_path, max_requests=8), fetcher=fetcher, clock=clock,
+                          log=lambda m: None)
+    assert summary["reason"].startswith("throttled") and summary["requests"] == 1 == len(fetcher.requests)

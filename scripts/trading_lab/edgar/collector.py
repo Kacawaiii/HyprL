@@ -161,12 +161,15 @@ class EdgarCollector:
         url = submissions_url(cik)
         attempt = self.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {
             "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant})])
-        result = self.fetcher.fetch(url)
+        result = self.fetcher.fetch(url, started=grant)
+        fetch_seconds = round(self.clock.mono() - grant, 3)  # grant to the end of the fetch (deadline evidence)
+        header_lines = [[name, value] for name, value in (result.headers or [])]
         if result.kind != "RESPONSE":
             check_at = iso(result.wall_at_receipt) if result.wall_at_receipt else self.store.wall_iso()
             self.store.append("ATTEMPT_OUTCOME", [
                 ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": result.kind, "status": result.status,
-                                                    "reason": result.reason}),
+                                                    "reason": result.reason, "fetch_seconds": fetch_seconds,
+                                                    "header_lines": header_lines}),
                 health_row(cik, attempt=attempt, record=None, result_state=result.kind, reason=result.reason, check_at=check_at)])
             if result.kind == "SOURCE_THROTTLED":
                 self.paused_until = self.clock.mono() + spec.THROTTLE_PAUSE_S
@@ -182,6 +185,7 @@ class EdgarCollector:
             "date_lines": date_lines, "age_lines": age_lines, "wall_at_receipt": iso(wall), "verdict": verdict,
             "observed_at": iso(wall) if verdict == "CLOCK_VERIFIED" else None, "raw_sha": digest,
             "byte_length": len(result.body), "mode": "LIVE", "late_evidence": False,
+            "header_lines": header_lines, "fetch_seconds": fetch_seconds,
         }
         record = self.store.append("RESPONSE", [
             ("RESPONSE", str(attempt), fields),

@@ -60,7 +60,7 @@ class FakeFetcher:
     def __init__(self, clock: SimClock):
         self.clock, self.routes, self.requests = clock, {}, []
 
-    def fetch(self, url: str) -> FetchResult:
+    def fetch(self, url: str, *, started: float | None = None) -> FetchResult:
         self.requests.append(url)
         cik = url.rsplit("CIK", 1)[1].split(".", 1)[0]
         route = self.routes.get(cik)

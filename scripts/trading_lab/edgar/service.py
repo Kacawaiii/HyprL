@@ -125,6 +125,9 @@ def run(store_dir: Path, authorization: Path, *, fetcher=None, clock=None, stop:
                     break
                 result = collector.poll(cik)
                 log(f"{iso(clock.wall())} {cik} {result['status']} {result.get('outcome', '')}")
+                if result["status"] == "SOURCE_THROTTLED":
+                    reason = "throttled (403/429): the trial stops, no further request"
+                    break
             if reason is None:
                 clock.sleep(spec.POLL_INTERVAL_S)
         summary = {"reason": reason, "requests": sent(), "records": len(store.rows("RESPONSE")),

@@ -78,12 +78,14 @@ class HttpsFetcher:
         if sock is not None:
             sock.settimeout(seconds)
 
-    def fetch(self, url: str) -> FetchResult:
+    def fetch(self, url: str, *, started: float | None = None) -> FetchResult:
+        """One listing under one deadline of DEADLINE_S counted from `started` (the grant, on this fetcher's
+        monotonic clock) to the decoded body; without `started`, from now."""
         parts = urlsplit(url)
         if parts.scheme != "https" or parts.hostname != spec.SUBMISSIONS_HOST or parts.port not in (None, 443) \
                 or parts.query or parts.fragment or not _PATH.match(parts.path):
             return FetchResult("SOURCE_UNAVAILABLE", reason=f"refused URL outside the submissions surface: {url}")
-        deadline = self._mono() + spec.DEADLINE_S  # one deadline over connect, TLS, request, headers and body
+        deadline = (self._mono() if started is None else started) + spec.DEADLINE_S  # grant to decoded body
 
         def remaining() -> float:
             left = deadline - self._mono()
@@ -121,5 +123,8 @@ class HttpsFetcher:
         body, problem = decode_body(raw, result.header_lines("Content-Encoding"))
         if problem:
             return FetchResult("SOURCE_UNAVAILABLE", 200, headers, None, wall, problem)
+        if self._mono() > deadline:  # decoding is inside the deadline too
+            return FetchResult("SOURCE_UNAVAILABLE", 200, headers, None, wall,
+                               f"TimeoutError: the {spec.DEADLINE_S} s deadline of the attempt passed while decoding")
         result.body = body
         return result
