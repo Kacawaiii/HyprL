@@ -106,6 +106,29 @@ class EdgarCollector:
         self.limiter = RollingLimiter(clock.mono, clock.sleep, spacing_s=spec.SPACING_S, window_s=spec.WINDOW_S,
                                       window_max=spec.WINDOW_MAX_STARTS, embargo_s=spec.EMBARGO_S)
         self.paused_until: float | None = None
+        self.reconciled = self.reconcile()
+
+    def reconcile(self) -> dict:
+        """After a crash or a kill: an attempt of an earlier epoch without outcome is INTERRUPTED (its
+        request may or may not have been sent; nothing is assumed), and a listing record without its
+        processing outcome is processed now (its raw is durable: raw first)."""
+        view = self.store.view()
+        interrupted = 0
+        for invoked in view.rows("TRANSPORT_INVOKED"):
+            if invoked.body["epoch"] != self.epoch and not view.rows("ATTEMPT_OUTCOME", key=str(invoked.seq)):
+                reason = "the owner stopped before the attempt ended"
+                self.store.append("ATTEMPT_OUTCOME", [
+                    ("ATTEMPT_OUTCOME", str(invoked.seq), {"attempt": invoked.seq, "outcome": "INTERRUPTED",
+                                                            "status": None, "reason": reason}),
+                    health_row(invoked.body["cik"], attempt=invoked.seq, record=None, result_state="INTERRUPTED",
+                               reason=reason, check_at=self.store.wall_iso())])
+                interrupted += 1
+        processed = 0
+        for resp in view.rows("RESPONSE"):
+            if not view.rows("PROCESSING_OUTCOME", key=str(resp.seq)):
+                self.process(resp.seq)
+                processed += 1
+        return {"interrupted": interrupted, "processed": processed}
 
     def close(self) -> None:
         fcntl.flock(self._lock, fcntl.LOCK_UN)

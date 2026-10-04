@@ -11,6 +11,7 @@ import http.client
 import io
 import re
 import ssl
+import time
 from typing import Callable
 from urllib.parse import urlsplit
 
@@ -62,34 +63,59 @@ def decode_body(raw: bytes, coding_lines: list[str]) -> tuple[bytes | None, str 
 
 class HttpsFetcher:
     def __init__(self, user_agent: str, *, connection_factory: Callable = http.client.HTTPSConnection,
-                 wall: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
+                 wall: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                 mono: Callable[[], float] = time.monotonic):
         if not isinstance(user_agent, str) or not spec.USER_AGENT.match(user_agent.strip()):
             raise ValueError("the SEC asks automated clients to declare a User-Agent naming an organization and a "
                              "contact e-mail (e.g. 'Example Lab ops@example.org'); refusing to start without one")
         self.user_agent = user_agent.strip()
-        self._factory, self._wall = connection_factory, wall
+        self._factory, self._wall, self._mono = connection_factory, wall, mono
         self._context = ssl.create_default_context()  # system trust store, hostname checking, CERT_REQUIRED
+
+    @staticmethod
+    def _bound(conn, seconds: float) -> None:
+        sock = getattr(conn, "sock", None)
+        if sock is not None:
+            sock.settimeout(seconds)
 
     def fetch(self, url: str) -> FetchResult:
         parts = urlsplit(url)
         if parts.scheme != "https" or parts.hostname != spec.SUBMISSIONS_HOST or parts.port not in (None, 443) \
                 or parts.query or parts.fragment or not _PATH.match(parts.path):
             return FetchResult("SOURCE_UNAVAILABLE", reason=f"refused URL outside the submissions surface: {url}")
+        deadline = self._mono() + spec.DEADLINE_S  # one deadline over connect, TLS, request, headers and body
+
+        def remaining() -> float:
+            left = deadline - self._mono()
+            if left <= 0:
+                raise TimeoutError(f"the {spec.DEADLINE_S} s deadline of the attempt passed")
+            return left
+
         try:
-            conn = self._factory(spec.SUBMISSIONS_HOST, timeout=spec.DEADLINE_S, context=self._context)
+            conn = self._factory(spec.SUBMISSIONS_HOST, timeout=remaining(), context=self._context)
             try:
                 conn.request("GET", parts.path, headers={"User-Agent": self.user_agent, "Accept": spec.JSON_MEDIA,
                                                          "Accept-Encoding": "gzip"})
+                self._bound(conn, remaining())
                 response = conn.getresponse()
                 wall = self._wall()
                 headers = list(response.getheaders())
                 kind, reason = classify_status(response.status)
                 if kind != "RESPONSE":
                     return FetchResult(kind, response.status, headers, None, wall, reason)
-                raw = response.read(spec.BODY_CAP + 1)
+                chunks, size = [], 0
+                while size <= spec.BODY_CAP:
+                    self._bound(conn, remaining())
+                    chunk = response.read(min(65536, spec.BODY_CAP + 1 - size))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                remaining()
+                raw = b"".join(chunks)
             finally:
                 conn.close()
-        except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+        except (OSError, http.client.HTTPException, ssl.SSLError) as exc:  # TimeoutError is an OSError
             return FetchResult("SOURCE_UNAVAILABLE", reason=f"{type(exc).__name__}: {exc}")
         result = FetchResult("RESPONSE", 200, headers, None, wall)
         body, problem = decode_body(raw, result.header_lines("Content-Encoding"))

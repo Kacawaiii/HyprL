@@ -304,14 +304,17 @@ def test_watchlist_ownership_and_spec_binding(env):
 
 
 class _Response:
-    def __init__(self, status, headers, body):
-        self.status, self._headers, self._body = status, headers, body
+    def __init__(self, status, headers, body, on_read=None):
+        self.status, self._headers, self._body, self._on_read = status, headers, body, on_read
 
     def getheaders(self):
         return self._headers
 
     def read(self, limit):
-        return self._body[:limit]
+        if self._on_read:
+            self._on_read()
+        chunk, self._body = self._body[:limit], self._body[limit:]
+        return chunk
 
 
 class _Connection:
@@ -343,7 +346,7 @@ def test_edgar16_the_fetcher_declares_its_user_agent_and_never_follows_a_redirec
     result = fetcher.fetch(url)
     method, path, headers = _Connection.calls[-1].sent
     assert (method, path, headers["User-Agent"]) == ("GET", "/submissions/CIK0000320193.json", "Example Lab ops@example.org")
-    assert _Connection.calls[-1].host == "data.sec.gov" and _Connection.calls[-1].timeout == spec.DEADLINE_S
+    assert _Connection.calls[-1].host == "data.sec.gov" and 0 < _Connection.calls[-1].timeout <= spec.DEADLINE_S
     assert result.kind == "RESPONSE" and result.body == b'{"cik": "320193"}'
     _Connection.reply = _Response(301, [("Location", "https://evil.example/")], b"")
     redirected = fetcher.fetch(url)
@@ -354,3 +357,91 @@ def test_edgar16_the_fetcher_declares_its_user_agent_and_never_follows_a_redirec
     assert len(_Connection.calls) == 2  # refused before any connection
     _Connection.reply = _Response(200, [("Content-Type", "application/json")], b"x" * (spec.BODY_CAP + 1))
     assert "above" in fetcher.fetch(url).reason
+
+
+def test_one_deadline_bounds_the_whole_fetch():
+    now = [0.0]
+    fetcher = HttpsFetcher("Example Lab ops@example.org", connection_factory=_Connection, mono=lambda: now[0])
+    _Connection.reply = _Response(200, [("Content-Type", "application/json")], b"x" * 300_000,
+                                  on_read=lambda: now.__setitem__(0, now[0] + 8))  # a slow body: 8 s per chunk
+    result = fetcher.fetch("https://data.sec.gov/submissions/CIK0000320193.json")
+    assert result.kind == "SOURCE_UNAVAILABLE" and "deadline" in result.reason and now[0] < spec.DEADLINE_S + 8
+
+
+def test_a_restart_interrupts_open_attempts_and_processes_saved_records(tmp_path):
+    env = Env(tmp_path)
+    env.serve(syn.filing(ACC1))
+    env.poll()
+    # a crash between the attempt record and its outcome, and one between a record and its processing
+    env.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {"epoch": env.collector.epoch, "cik": A,
+                                                                          "url": "u", "grant_mono": 0.0})])
+    digest = env.store.put_raw(syn.listing(syn.CIK_A, [syn.filing(ACC1), syn.filing(ACC2, filed="2026-06-17")]))
+    attempt = env.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {"epoch": env.collector.epoch, "cik": A,
+                                                                                    "url": "u", "grant_mono": 1.0})])
+    wall = env.clock.wall()
+    record = env.store.append("RESPONSE", [
+        ("RESPONSE", str(attempt), {"attempt": attempt, "cik": A, "url": "u", "status": 200,
+                                    "content_type_lines": ["application/json"], "content_encoding_lines": [],
+                                    "date_lines": [], "age_lines": [], "wall_at_receipt": snapshot.iso(wall),
+                                    "verdict": "CLOCK_UNVERIFIED", "observed_at": None, "raw_sha": digest,
+                                    "byte_length": 1, "mode": "LIVE", "late_evidence": False}),
+        ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "RESPONSE", "status": 200, "reason": None})])
+    env.collector.close()
+    env.collector = EdgarCollector(env.store, env.fetch, env.clock, boot_id="boot-2")
+    assert env.collector.reconciled == {"interrupted": 1, "processed": 1}
+    outcomes = [o.body["outcome"] for o in env.store.rows("ATTEMPT_OUTCOME")]
+    assert outcomes.count("INTERRUPTED") == 1
+    assert env.store.rows("PROCESSING_OUTCOME", key=str(record))[0].body["detail"]["new_revisions"] == 1  # ACC2
+    env.serve(syn.filing(ACC1), syn.filing(ACC2, filed="2026-06-17"))
+    env.poll()
+    snap = env.settle()
+    assert {f["accession_number"] for f in snap["filings"]} == {ACC1, ACC2}
+    assert snapshot.replay(env.store, snapshot.parse_iso(snap["T"]), snap["H"]) == snap  # health of INTERRUPTED included
+    env.collector.close()
+
+
+# ------------------------------------------------------------------ the capture runner's gate -----
+from scripts.trading_lab.edgar import service  # noqa: E402
+
+
+def _authorization(tmp_path, **changes):
+    auth = {"authorizes": spec.PROVIDER_ID, "spec_hash": spec.SPEC_HASH, "ciks": [syn.CIK_A], "max_requests": 3,
+            "not_after": "2026-06-18T00:00:00+00:00", "user_agent": "Example Lab ops@example.org",
+            "granted_by": "operator", "granted_at": "2026-06-17"}
+    auth.update(changes)
+    path = tmp_path / "authorization.json"
+    path.write_text(json.dumps({k: v for k, v in auth.items() if v is not None}))
+    return path
+
+
+@pytest.mark.parametrize("changes", [
+    {"authorizes": "federal_reserve_fomc_statements_v1"}, {"spec_hash": "0" * 64}, {"ciks": []},
+    {"ciks": [str(i) for i in range(11)]}, {"ciks": ["12a"]}, {"max_requests": 0}, {"max_requests": 51},
+    {"max_requests": True}, {"not_after": "2026-06-17T12:00:00+00:00"}, {"not_after": "tomorrow"},
+    {"user_agent": "python-requests/2.31"}, {"granted_by": None},
+])
+def test_the_runner_refuses_without_a_valid_authorization_and_sends_nothing(tmp_path, changes):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    with pytest.raises(service.CaptureRefused):
+        service.run(tmp_path / "store", _authorization(tmp_path, **changes), fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert fetcher.requests == [] and not (tmp_path / "store").exists()
+
+
+def test_check_writes_nothing_and_the_run_stops_at_its_budget(tmp_path):
+    path = _authorization(tmp_path)
+    store_dir = tmp_path / "store"
+    report = service.check(store_dir, path, now=syn.START)
+    assert report["max_requests"] == 3 and report["ciks"] == [A] and not store_dir.exists()
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    fetcher.routes[A] = syn.Reply(syn.listing(syn.CIK_A, [syn.filing(ACC1)]))
+    summary = service.run(store_dir, path, fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert summary["reason"] == "request budget spent" and summary["requests"] == 3 == len(fetcher.requests)
+    assert summary["revisions"] == 1
+    expiring = _authorization(tmp_path, max_requests=50, not_after="2026-06-17T13:30:00+00:00")
+    clock2, fetcher2 = syn.SimClock(), syn.FakeFetcher(syn.SimClock())
+    fetcher2.clock = clock2
+    fetcher2.routes[A] = syn.Reply(syn.listing(syn.CIK_A, [syn.filing(ACC1)]))
+    ended = service.run(tmp_path / "store2", expiring, fetcher=fetcher2, clock=clock2, log=lambda m: None)
+    assert ended["reason"] == "authorization expired" and ended["requests"] == 3  # 13:01, 13:11, 13:21; not 13:31
