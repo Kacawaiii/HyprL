@@ -27,10 +27,12 @@ from scripts.trading_lab.edgar.collector import EdgarCollector
 from scripts.trading_lab.edgar.listing import cik10
 from scripts.trading_lab.edgar.store import EdgarStore
 from scripts.trading_lab.edgar.transport import HttpsFetcher
+from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.sources.httpclock import iso, parse_iso
-from scripts.trading_lab.sources.store import admit_existing
+from scripts.trading_lab.sources.store import StoreBusy, admit_existing
 
 MAX_AUTHORIZED_REQUESTS = 50
+STORAGE_STALL_THRESHOLD_S = 10.0  # operational supervision; not an EDGAR parsing/spec rule
 
 
 class CaptureRefused(RuntimeError):
@@ -49,6 +51,76 @@ class RealClock:
 
     def sleep(self, seconds: float) -> None:
         self._stop.wait(max(seconds, 0.0))
+
+
+def authorization_scope(auth: dict) -> dict:
+    """Public bounds only: never persist the declared contact or operator details."""
+    return {name: auth[name] for name in ("authorizes", "spec_hash", "ciks", "max_requests", "not_after")}
+
+
+class StorageWatch:
+    """Watch operation markers from a separate thread, including when the runner itself is stalled.
+
+    The monitor never takes the store lock or writes. The runner commits ended incidents before
+    reopening the request gate. A stalled incident write is itself monitored.
+    """
+
+    def __init__(self, collector, clock, *, threshold_s=STORAGE_STALL_THRESHOLD_S, log=print):
+        if threshold_s <= 0:
+            raise ValueError("storage stall threshold must be positive")
+        self.collector, self.store, self.clock = collector, collector.store, clock
+        self.threshold_s, self.log = threshold_s, log
+        self.store.use_clock(clock.mono)
+        self.incident = None
+        self.pending = []
+        self.alert_errors = []
+        self._lock = threading.Lock()
+
+    def watch_storage(self) -> None:
+        alerts = []
+        with self._lock:
+            stalled = self.store.stalled()
+            now = self.clock.mono()
+            if stalled is not None and stalled[1] >= self.threshold_s:
+                if self.incident is None:
+                    self.incident = {"operation": stalled[0], "started_mono": now - stalled[1],
+                                     "wall_detected": iso(self.clock.wall())}
+                    alerts.append("STORAGE_INCIDENT_STARTED")
+            elif self.incident is not None:
+                self.pending.append(dict(self.incident, wall_ended=iso(self.clock.wall()),
+                                         stalled_s=round(now - self.incident["started_mono"], 3)))
+                self.incident = None
+                alerts.append("STORAGE_INCIDENT_ENDED")
+            self.collector.limiter.suspended = self.incident is not None or bool(self.pending)
+        for kind in alerts:
+            try:
+                self.log(json.dumps({"alert": kind, "epoch": self.collector.epoch,
+                                     "threshold_s": self.threshold_s}, sort_keys=True))
+            except Exception as exc:
+                self.alert_errors.append(type(exc).__name__)
+
+    def record_incidents(self) -> bool:
+        self.watch_storage()
+        while True:
+            with self._lock:
+                if self.incident is not None:
+                    return False
+                if not self.pending:
+                    self.collector.limiter.suspended = False
+                    return True
+                incident = self.pending[0]
+            self.store.set_wait_bound(0.2)
+            try:
+                self.store.append("STORAGE_INCIDENT", [("STORAGE_INCIDENT", None, {
+                    "epoch": self.collector.epoch, "threshold_s": self.threshold_s,
+                    **{k: v for k, v in incident.items() if k != "started_mono"}})])
+            except StoreBusy:
+                return False
+            finally:
+                self.store.set_wait_bound(None)
+            with self._lock:
+                self.pending.pop(0)
+            self.watch_storage()
 
 
 def load_authorization(path: Path, now: datetime) -> dict:
@@ -97,45 +169,83 @@ def check(store_dir: Path, authorization: Path, *, now: datetime | None = None) 
 
 
 def run(store_dir: Path, authorization: Path, *, fetcher=None, clock=None, stop: threading.Event | None = None,
-        log=print) -> dict:
+        log=print, stall_threshold_s=STORAGE_STALL_THRESHOLD_S, monitor_interval_s=0.1) -> dict:
+    if stall_threshold_s <= 0 or monitor_interval_s <= 0:
+        raise ValueError("storage watch intervals must be positive")
     stop = stop or threading.Event()
     clock = clock or RealClock(stop)
     auth = load_authorization(authorization, clock.wall())
     not_after = parse_iso(auth["not_after"])
     store = EdgarStore(Path(store_dir), wall_clock=clock.wall)
     fetcher = fetcher or HttpsFetcher(auth["user_agent"], wall=clock.wall, mono=clock.mono)
-    collector = EdgarCollector(store, fetcher, clock, boot_id=f"boot-{int(time.time())}")
+    collector = None
+    monitor = None
+    monitor_stop = threading.Event()
     try:
+        collector = EdgarCollector(store, fetcher, clock, boot_id=f"boot-{int(time.time())}")
+        watch = StorageWatch(collector, clock, threshold_s=stall_threshold_s, log=log)
+
+        def monitor_storage():
+            while not monitor_stop.wait(monitor_interval_s):
+                watch.watch_storage()
+
+        monitor = threading.Thread(target=monitor_storage, name="edgar-storage-watch", daemon=True)
+        monitor.start()
         collector.submit_watchlist(auth["ciks"])
+        auth_hash = sha256_canonical(auth)
+        store.append("RUN_STARTED", [("RUN_STARTED", collector.epoch, {
+            "epoch": collector.epoch, "authorization_sha256": auth_hash, "authorization": authorization_scope(auth)})])
         log(f"EDGAR capture: epoch {collector.epoch}, reconciled {collector.reconciled}, "
             f"budget {auth['max_requests']} requests until {auth['not_after']}")
 
         def sent() -> int:
-            return sum(1 for t in store.rows("TRANSPORT_INVOKED") if t.body["epoch"] == collector.epoch)
+            # Restarting with the same grant must not recreate its request budget.
+            epochs = {r.body["epoch"] for r in store.rows("RUN_STARTED")
+                      if r.body["authorization_sha256"] == auth_hash}
+            return sum(1 for t in store.rows("TRANSPORT_INVOKED") if t.body["epoch"] in epochs)
+
+        def request_allowed() -> bool:
+            # This gate also runs after TRANSPORT_INVOKED: a slow commit can cross the expiry.
+            while not watch.record_incidents():
+                if stop.is_set() or clock.wall() >= not_after:
+                    return False
+                clock.sleep(0.1)
+            return not stop.is_set() and clock.wall() < not_after
+
         reason = None
         while reason is None:
             for cik in collector.watchlist():
                 if stop.is_set():
                     reason = "stopped"
-                elif sent() >= auth["max_requests"]:
-                    reason = "request budget spent"
                 elif clock.wall() >= not_after:
                     reason = "authorization expired"
+                elif sent() >= auth["max_requests"]:
+                    reason = "request budget spent"
                 if reason:
                     break
-                result = collector.poll(cik)
+                result = collector.poll(cik, request_allowed=request_allowed)
                 log(f"{iso(clock.wall())} {cik} {result['status']} {result.get('outcome', '')}")
                 if result["status"] == "SOURCE_THROTTLED":
                     reason = "throttled (403/429): the trial stops, no further request"
                     break
+                if result["status"] == "STOPPED":
+                    reason = "stopped" if stop.is_set() else "authorization expired"
+                    break
             if reason is None:
                 clock.sleep(spec.POLL_INTERVAL_S)
+        watch.record_incidents()
         summary = {"reason": reason, "requests": sent(), "records": len(store.rows("RESPONSE")),
                    "revisions": len(store.rows("FILING_REVISION")), "epoch": collector.epoch}
+        store.append("RUN_ENDED", [("RUN_ENDED", collector.epoch, summary)])
+        watch.record_incidents()
         log(f"EDGAR capture ended: {summary}")
         return summary
     finally:
-        collector.close()
+        monitor_stop.set()
+        if monitor is not None:
+            monitor.join()
+        if collector is not None:
+            collector.close()
         store.close()
 
 
