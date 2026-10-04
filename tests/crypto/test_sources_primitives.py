@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import sqlite3
+import hashlib
+import shutil
 
 import pytest
 
@@ -82,6 +84,82 @@ def test_a_read_only_reader_of_a_live_store_sees_new_commits(tmp_path):
     assert reader.view().horizon() == 2 and [r.key for r in reader.rows("EPOCH")] == ["e1", "e2"]
     reader.close()
     writer.close()
+
+
+def _bytes_of(root):
+    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in root.rglob("*") if p.is_file()}
+
+
+def test_read_only_opening_does_not_change_a_live_stores_shared_memory(tmp_path):
+    root = tmp_path / "live"
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    before = _bytes_of(root), _fingerprint(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert reader.view().horizon() == 1
+    finally:
+        reader.close()
+    assert (_bytes_of(root), _fingerprint(root)) == before
+    writer.close()
+
+
+def test_read_only_opening_a_wal_without_shared_memory_creates_no_source_file(tmp_path):
+    writer = FomcStore(tmp_path / "live", wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    root = tmp_path / "copy"
+    root.mkdir()
+    for name in ("fomc.sqlite3", "fomc.sqlite3-wal"):
+        shutil.copyfile(writer.root / name, root / name)
+    before = _bytes_of(root), _fingerprint(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert reader.view().horizon() == 1
+    finally:
+        reader.close()
+    assert (_bytes_of(root), _fingerprint(root)) == before
+    writer.close()
+
+
+def test_a_reader_opened_before_a_writer_restarts_sees_the_new_wal(tmp_path):
+    root = tmp_path / "closed"
+    _closed_store(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    assert reader.view().horizon() == 1
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e2", {})])
+    try:
+        assert reader.view().horizon() == 2
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_a_checkpoint_during_read_only_copy_retries_the_whole_snapshot(tmp_path, monkeypatch):
+    root = tmp_path / "live"
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.append("T", [("EPOCH", "e1", {})])
+    original = shutil.copyfile
+    injected = False
+
+    def copy_then_checkpoint(source, target):
+        nonlocal injected
+        result = original(source, target)
+        if source == root / "fomc.sqlite3" and not injected:
+            injected = True
+            writer.append("T", [("EPOCH", "e2", {})])
+            writer._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return result
+
+    monkeypatch.setattr(shutil, "copyfile", copy_then_checkpoint)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert injected and reader.view().horizon() == 2
+        assert [r.key for r in reader.rows("EPOCH")] == ["e1", "e2"]
+    finally:
+        reader.close()
+        writer.close()
 
 
 def test_the_rolling_limiter_takes_its_parameters():
