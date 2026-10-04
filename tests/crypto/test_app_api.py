@@ -19,6 +19,8 @@ import urllib.request
 
 import pytest
 
+from tests.crypto import loopback
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 DATA_ROOT = REPO_ROOT / "data" / "crypto"
@@ -47,12 +49,12 @@ def live_api():
     server_module = importlib.import_module("scripts.trading_lab.app_api.server")
     if not (DATA_ROOT / "coinbase_history_v1" / "manifest.json").is_file():
         pytest.skip("no market corpus in this checkout")
-    server = server_module.make_server(DATA_ROOT, port=0)
+    server = server_module.make_server(DATA_ROOT, host=loopback.host(), port=0)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{port}"
+        yield loopback.url(port)
     finally:
         server.shutdown()
         server.server_close()

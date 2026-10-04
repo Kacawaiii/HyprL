@@ -17,6 +17,8 @@ import urllib.request
 
 import pytest
 
+from tests.crypto import loopback
+
 REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
 
 
@@ -37,12 +39,12 @@ def dist(tmp_path):
 def server(dist):
     from scripts.trading_lab.app_api.server import make_server
 
-    httpd = make_server(REPO_ROOT / "data/crypto", host="127.0.0.1", port=0,
+    httpd = make_server(REPO_ROOT / "data/crypto", host=loopback.host(), port=0,
                         dist_root=dist)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+        yield loopback.url(httpd.server_address[1])
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -263,12 +265,12 @@ def test_the_api_serves_without_any_frontend_build(tmp_path):
     """A missing build must degrade to API-only, not to a broken server."""
     from scripts.trading_lab.app_api.server import make_server
 
-    httpd = make_server(REPO_ROOT / "data/crypto", host="127.0.0.1", port=0,
+    httpd = make_server(REPO_ROOT / "data/crypto", host=loopback.host(), port=0,
                         dist_root=tmp_path / "no-build-here")
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        base = loopback.url(httpd.server_address[1])
         status, _, body = _get(f"{base}/api/v1/health")
         assert status == 200 and json.loads(body)["status"] == "ok"
     finally:

@@ -21,6 +21,8 @@ import urllib.request
 
 import pytest
 
+from tests.crypto import loopback
+
 REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
 
 pytest.importorskip(
@@ -35,12 +37,12 @@ def server(tmp_path):
     dist = tmp_path / "dist"
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<!doctype html><div id=root></div>")
-    httpd = make_server(REPO_ROOT / "data/crypto", host="127.0.0.1", port=0,
+    httpd = make_server(REPO_ROOT / "data/crypto", host=loopback.host(), port=0,
                         dist_root=dist)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+        yield loopback.url(httpd.server_address[1])
     finally:
         httpd.shutdown()
         httpd.server_close()

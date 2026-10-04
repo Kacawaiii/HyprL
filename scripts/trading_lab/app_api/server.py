@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -466,13 +467,16 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
     here, so no request can influence which directory is served.
     """
     service = AppService(pathlib.Path(data_root), fomc_store=fomc_store)
+    # An IPv6 loopback (::1) needs an AF_INET6 socket; the stdlib server is AF_INET only.
+    server_class = ThreadingHTTPServer if ":" not in host else type(
+        "ThreadingHTTPServerV6", (ThreadingHTTPServer,), {"address_family": socket.AF_INET6})
     site = None
     if dist_root is not None:
         from scripts.trading_lab.ops.static_assets import StaticSite
         site = StaticSite(dist_root)
     handler = type("BoundAppApiHandler", (AppApiHandler,),
                    {"service": service, "site": site})
-    return ThreadingHTTPServer((host, port), handler)
+    return server_class((host, port), handler)
 
 
 def main(argv=None):  # pragma: no cover - entry point
