@@ -164,13 +164,13 @@ class PaperSessionSpec:
 
 def build_session_spec(models: dict, *, products, timeframe: str = "1h",
                        execution_spec: PaperExecutionSpec = PAPER_EXECUTION_SPEC_V1,
-                       window=PROTECTED_WINDOW_V1) -> PaperSessionSpec:
+                       window=PROTECTED_WINDOW_V1, model_spec=None) -> PaperSessionSpec:
     from scripts.trading_lab.paper_model import PAPER_MODEL_SPEC_V1
     fitted = tuple(sorted(
         (product, models[product].fitted.fitted_model_hash) for product in products))
     return PaperSessionSpec(
         products=tuple(products), timeframe=timeframe,
-        paper_model_spec_hash=PAPER_MODEL_SPEC_V1.paper_model_spec_hash,
+        paper_model_spec_hash=(model_spec or PAPER_MODEL_SPEC_V1).paper_model_spec_hash,
         model_fitted_hashes=fitted,
         signal_spec_hash=SIGNAL_SPEC_V1.spec_hash,
         risk_spec_hash=RISK_SPEC_V1.risk_spec_hash,
