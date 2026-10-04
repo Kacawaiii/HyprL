@@ -41,6 +41,7 @@ from scripts.trading_lab.app_api.contracts import (
     NotFoundError,
 )
 from scripts.trading_lab.app_api.sources import EdgarViews, FomcViews
+from scripts.trading_lab.app_api.paper_replay import PaperReplayViews
 from scripts.trading_lab.app_api.pagination import (
     decode_cursor,
     encode_cursor,
@@ -97,6 +98,7 @@ class AppService:
     def __init__(self, data_root, *, research_corpus_root=None,
                  research_fingerprint_path=None, fomc_store=None, edgar_store=None):
         self._root = pathlib.Path(data_root).resolve()
+        self.replay = PaperReplayViews(self._root)
         # An official event-source store, opened read-only per request. Fixed here like every
         # other path: no request can point the API at another directory.
         self.fomc = FomcViews(fomc_store)

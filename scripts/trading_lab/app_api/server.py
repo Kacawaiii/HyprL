@@ -150,6 +150,7 @@ def build_routes(service: AppService):
         "/api/v1/backtests": lambda query: service.backtests(),
         "/api/v1/paper": lambda query: service.paper_status(),
         "/api/v1/paper/status": lambda query: service.paper_status(),
+        "/api/v1/paper/replay": lambda query: service.replay.summary(),
         "/api/v1/paper/portfolio": lambda query: service.paper_portfolio(),
         "/api/v1/paper/portfolio/positions":
             lambda query: service.paper_portfolio_positions(),
@@ -305,6 +306,11 @@ class AppApiHandler(BaseHTTPRequestHandler):
         # /api/v1/providers/{provider_id}
         if len(parts) == 4 and parts[:3] == ["api", "v1", "providers"]:
             return self.service.provider_detail(unquote(parts[3]))
+        # Frozen replay evidence is separate from every live shadow route.
+        if len(parts) == 6 and parts[:4] == ["api", "v1", "paper", "replay"]:
+            return self.service.replay.page(
+                parts[4], parts[5], limit=_query_first(query, "limit"),
+                cursor=_query_first(query, "cursor"))
         # /api/v1/paper/{product}
         if len(parts) == 4 and parts[:3] == ["api", "v1", "paper"]:
             return self.service.paper_product(parts[3])

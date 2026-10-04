@@ -48,6 +48,7 @@ function mockApi(overrides: Record<string, unknown> = {}) {
     '/api/v1/paper/portfolio/pending': fixtures.paperPortfolioPendingIdle,
     '/api/v1/paper/portfolio/equity': fixtures.paperPortfolioEquity,
     '/api/v1/paper/legacy': fixtures.paperLegacy,
+    '/api/v1/paper/replay': { available: false, reason: 'no frozen replay', products: [] },
     '/api/v1/research/equities/corpus': fixtures.researchCorpusAvailable,
     ...overrides,
   };
