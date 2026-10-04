@@ -8,7 +8,7 @@ import { NOISE, VERT_UV, glow, rng, starField, portable } from '../lib/kit.js';
 export function createSingularityChapter({ isMobile }) {
   const scene = new THREE.Scene(); scene.name = 'Chapitre_04_Singularite';
   const camera = new THREE.PerspectiveCamera(40, 1, .1, 200);
-  const gold = new THREE.Color('#d8d2c6'), hot = new THREE.Color('#ffffff');
+  const gold = new THREE.Color('#ffb24a'), hot = new THREE.Color('#fff1d6');
   const hole = new THREE.Group(); hole.name = 'BlackHole'; scene.add(hole);
   const state = { aspect: 1, shipPos: new THREE.Vector3(), shipTarget: new THREE.Vector3(), roll: 0 };
 
@@ -38,14 +38,21 @@ export function createSingularityChapter({ isMobile }) {
   // Golden dust clouds.
   const cloudMaterial = (seed) => glow(NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uSeed;uniform vec3 uGold;
     void main(){vec2 p=vUv*2.-1.;float n=fbm(vUv*3.+vec2(uSeed,uTime*.01));float m=fbm(vUv*7.+n*2.);float e=smoothstep(1.,.2,length(p));
-      gl_FragColor=vec4(uGold*pow(m,3.)*e*.5+vec3(.1)*pow(n,4.)*e,1.);}`, { uTime: { value: 0 }, uSeed: { value: seed }, uGold: { value: gold } });
+      gl_FragColor=vec4(uGold*pow(m,3.)*e*.95+vec3(.14,.1,.06)*pow(n,4.)*e,1.);}`, { uTime: { value: 0 }, uSeed: { value: seed }, uGold: { value: gold } });
   const clouds = [[-9, -1.5, -6, 12], [-6, 2.5, -14, 14], [8, -3, -8, 10], [2, -4.5, -3, 9]].map(([x, y, z, s], i) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(s, s * .6), cloudMaterial(i * 4.1)); m.name = `GoldDust_${i}`; m.position.set(x, y, z); scene.add(m); return m; });
 
   // Warp streaks.
-  const r = rng(808), streakN = isMobile() ? 70 : 150, sp = new Float32Array(streakN * 6), sc = new Float32Array(streakN * 6), streaks = [];
+  const r = rng(808), streakN = isMobile() ? 110 : 260, sp = new Float32Array(streakN * 6), sc = new Float32Array(streakN * 6), streaks = [];
   for (let i = 0; i < streakN; i++) { const a = r() * Math.PI * 2, rad = 3 + r() * 13; streaks.push({ x: Math.cos(a) * rad, y: Math.sin(a) * rad * .7, z: -60 + r() * 75, v: 14 + r() * 26, len: .6 + r() * 2.2, b: .25 + r() * .75 }); }
   const streakGeo = new THREE.BufferGeometry(); streakGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3)); streakGeo.setAttribute('color', new THREE.BufferAttribute(sc, 3));
   const streakLines = new THREE.LineSegments(streakGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); streakLines.name = 'WarpStreaks'; streakLines.frustumCulled = false; scene.add(streakLines);
+
+  // Gold glitter drifting around the disc.
+  const gn = isMobile() ? 260 : 700, gpos = new Float32Array(gn * 3);
+  for (let i = 0; i < gn; i++) { const a = r() * Math.PI * 2, rad = 2.2 + Math.pow(r(), .7) * 12; gpos.set([Math.cos(a) * rad, (r() - .5) * 2.4 * (rad / 8), Math.sin(a) * rad], i * 3); }
+  const glitterGeo = new THREE.BufferGeometry(); glitterGeo.setAttribute('position', new THREE.BufferAttribute(gpos, 3));
+  const glitter = new THREE.Points(glitterGeo, new THREE.PointsMaterial({ color: gold, size: .06, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }));
+  glitter.name = 'GoldGlitter'; glitter.rotation.set(-1.42 + Math.PI / 2, 0, .1); hole.add(glitter);
 
   // The ship: sleek arrow hull, canopy, fins, twin engines.
   const ship = new THREE.Group(); ship.name = 'Vessel'; scene.add(ship);
@@ -64,9 +71,9 @@ export function createSingularityChapter({ isMobile }) {
     const trail = new THREE.Mesh(new THREE.PlaneGeometry(3.4, .5), exhaustMaterial); trail.name = `Exhaust_${s > 0 ? 'R' : 'L'}`; trail.position.set(-1.35 - 1.7, 0, s * .2); ship.add(trail);
     const trail2 = trail.clone(); trail2.rotation.x = Math.PI / 2; ship.add(trail2);
   }
-  ship.add(new THREE.PointLight(0xe8e2d8, 4, 4, 2).translateX(-1.6));
-  const sunKey = new THREE.PointLight(0xe9e2d6, 160, 30, 2); sunKey.position.set(0, .5, 1); scene.add(sunKey);
-  scene.add(new THREE.HemisphereLight(0xd8d4cc, 0x0a0806, .7));
+  ship.add(new THREE.PointLight(0xffc27a, 4, 4, 2).translateX(-1.6));
+  const sunKey = new THREE.PointLight(0xffc06a, 160, 30, 2); sunKey.position.set(0, .5, 1); scene.add(sunKey);
+  scene.add(new THREE.HemisphereLight(0xffd9a0, 0x0a0806, .7));
 
   function resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); state.aspect = w / h; const mobile = w < 600; hole.scale.setScalar(mobile ? .62 : 1); ship.scale.setScalar(mobile ? .75 : 1.25); }
   const fwd = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), mtx = new THREE.Matrix4(), qq = new THREE.Quaternion(), qr = new THREE.Quaternion();
@@ -74,7 +81,7 @@ export function createSingularityChapter({ isMobile }) {
   function update({ time, pointer, motion, local, dt }) {
     const lp = local ?? .4;
     camera.position.set(pointer.x * .7 * motion, .9 - pointer.y * .4 * motion, 17 + lp * 9); camera.lookAt(0, 3.4 - lp * 11 + (state.aspect < .8 ? 3.2 : 0), 0);
-    hole.position.y = 0; for (const m of [discMaterial, lensMaterial]) m.uniforms.uTime.value = time;
+    hole.position.y = 0; for (const m of [discMaterial, lensMaterial]) m.uniforms.uTime.value = time; glitter.rotation.y = time * .02;
     clouds.forEach((c, i) => { c.material.uniforms.uTime.value = time; c.lookAt(camera.position); c.position.x += Math.sin(time * .05 + i) * .002; });
     // Warp streaks toward the camera.
     for (let i = 0; i < streakN; i++) {
@@ -96,13 +103,13 @@ export function createSingularityChapter({ isMobile }) {
     const fade = THREE.MathUtils.smoothstep(u, 0, .06) * (1 - THREE.MathUtils.smoothstep(u, .9, 1)); ship.visible = fade > .01;
     exhaustMaterial.uniforms.uPulse.value = (.85 + .15 * Math.sin(time * 30)) * fade;
   }
-  function setPalette(color, name) { gold.set(name === 'ice' ? '#c6d6e8' : '#d8d2c6'); hot.set(name === 'ice' ? '#f4f8ff' : '#ffffff'); sunKey.color.set(name === 'ice' ? '#d9e6f2' : '#e9e2d6'); }
+  function setPalette(color, name) { gold.set(name === 'ice' ? '#8fc6ff' : '#ffb24a'); hot.set(name === 'ice' ? '#eef6ff' : '#fff1d6'); sunKey.color.set(name === 'ice' ? '#a9d4ff' : '#ffc06a'); glitter.material.color.copy(gold); }
   function exportGroup() {
     const g = new THREE.Group(); g.name = 'Chapitre_04_Singularite'; scene.updateMatrixWorld(true);
     g.add(portable(horizon, { color: 0x000000, roughness: 1 }));
-    g.add(portable(disc, { color: 0xd8d2c6, emissive: 0xd8d2c6, emissiveIntensity: 1, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
+    g.add(portable(disc, { color: 0xffb24a, emissive: 0xffb24a, emissiveIntensity: 1, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
     const s = new THREE.Group(); s.name = 'Vessel'; for (const c of ship.children) if (c.isMesh && c.material.isMeshStandardMaterial) s.add(portable(c, { color: 0x4a4e57, metalness: .55, roughness: .32 })); g.add(s);
     return g;
   }
-  return { name: 'singularity', scene, camera, resize, update, setPalette, exportGroup, post: { ca: .002, bloom: 1, exposure: 1.05, sat: .25 } };
+  return { name: 'singularity', scene, camera, resize, update, setPalette, exportGroup, post: { ca: .0032, bloom: 1.25, exposure: 1.05 } };
 }

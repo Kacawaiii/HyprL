@@ -5,13 +5,15 @@ import { NOISE, VERT_UV, glow, rng, rockGeometry, rockMaterial, starField, halfS
 /**
  * Chapitre 01 — Éclipse (références : éclipse + anneau + astéroïdes, couronne en filaments,
  * faisceau et cartes de verre). The hero copy sits inside the black disc; the corona frames it.
+ * Colours follow the reference: navy space, violet-magenta flames, a golden limb inside a cream
+ * four-point diamond, violet anamorphic light.
  */
 export function createEclipseChapter({ isMobile }) {
   const scene = new THREE.Scene(); scene.name = 'Chapitre_01_Eclipse';
   const camera = new THREE.PerspectiveCamera(43, 1, .1, 140); camera.position.set(0, 0, 14);
   const labelCamera = camera.clone();
   const labels = new THREE.Scene();
-  const accent = new THREE.Color('#dac09a'), rimWarm = new THREE.Color('#e9dccb'), streakTint = new THREE.Color('#c9ccd4');
+  const accent = new THREE.Color('#dac09a'), rimWarm = new THREE.Color('#ffb04a'), streakTint = new THREE.Color('#9a7cff'), flame = new THREE.Color('#a45cff');
   const world = new THREE.Group(); world.name = 'HYPRL_Eclipse'; scene.add(world);
 
   scene.add(new THREE.HemisphereLight(0xc5d6f4, 0x08090b, 1.3));
@@ -20,13 +22,14 @@ export function createEclipseChapter({ isMobile }) {
 
   // Deep-space nebula: blue-grey filaments, warmed around the eclipse.
   const nebulaMaterial = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uColor: { value: accent.clone() } },
+    uniforms: { uTime: { value: 0 }, uColor: { value: accent.clone() }, uFlame: { value: flame.clone() } },
     vertexShader: VERT_UV, depthWrite: false,
-    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime;uniform vec3 uColor;
+    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime;uniform vec3 uColor,uFlame;
       void main(){vec2 p=(vUv-.5)*vec2(3.2,2.);float n=fbm(p*1.3+vec2(uTime*.006,0.));float n2=fbm(p*3.4+n*2.4-vec2(0.,uTime*.004));
         float r=length(p*vec2(.8,1.));
-        vec3 col=vec3(.0015,.002,.0035)+vec3(.012,.016,.028)*pow(n2,2.4)*smoothstep(1.9,.2,r);
-        col+=uColor*exp(-r*2.6)*.035;
+        vec3 col=mix(vec3(.004,.006,.022),vec3(.008,.015,.05),smoothstep(.9,-.9,p.y));
+        col+=mix(vec3(.016,.028,.075),uFlame*.12,smoothstep(.6,.1,r))*pow(n2,2.2)*smoothstep(2.2,.2,r)*1.2;
+        col+=uFlame*exp(-r*3.4)*.032+uColor*exp(-r*3.2)*.025;
         gl_FragColor=vec4(col,1.);}`
   });
   const nebula = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), nebulaMaterial); nebula.name = 'Nebula'; nebula.renderOrder = -10; world.add(nebula);
@@ -37,17 +40,22 @@ export function createEclipseChapter({ isMobile }) {
   const eclipse = new THREE.Group(); eclipse.name = 'Eclipse'; world.add(eclipse);
 
   const coronaMaterial = glow(NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uScale,uSide;uniform vec3 uColor,uRim;
+    uniform vec3 uCream;
     void main(){vec2 p=(vUv-.5)*uScale;float r=length(p);float a=atan(p.y,p.x);float d=max(r-1.,0.);
       vec2 cs=vec2(cos(a),sin(a));
       float w1=fbm(cs*2.2+vec2(d*1.4-uTime*.035,d*.6));
       float w2=fbm(cs*5.5+vec2(w1*1.8,0.)+vec2(d*2.6-uTime*.05,-d*1.3));
       float fil=pow(w2,4.2)*3.4+pow(w1,5.)*1.2;
-      float fall=exp(-d*2.4),glowR=exp(-d*6.),hot=exp(-d*26.);
+      float fall=exp(-d*3.4),glowR=exp(-d*7.),hot=exp(-d*26.),band=exp(-d*7.);
       float side=.55+.45*cos(a-uSide);
-      vec3 col=uColor*(fil*fall*.85+glowR*.22)*(.45+.75*side)+uRim*hot*(1.4+1.6*side)+vec3(1.)*hot*hot*.9*side;
+      // Four-point diamond around the disc (concave lens, long horizontal points).
+      vec2 q=abs(p)/vec2(2.3,1.62);float star=pow(q.x,.85)+pow(q.y,.85);
+      float dia=smoothstep(1.03,.9,star)*(.45+.55*w1),diaEdge=exp(-pow((star-.99)*16.,2.));
+      vec3 col=uColor*(fil*fall*.85+glowR*.2)*(.35+.85*side)+uCream*(dia*.5+diaEdge*.45)*smoothstep(1.,1.06,r)
+        +uRim*(hot*(1.6+1.4*side)+band*.85)+vec3(1.)*hot*hot*.9*side;
       col*=smoothstep(.985,1.004,r)*smoothstep(uScale*.5,uScale*.36,r);
       gl_FragColor=vec4(col,1.);}`,
-    { uTime: { value: 0 }, uScale: { value: 5 }, uSide: { value: .75 }, uColor: { value: new THREE.Color('#c4c7cd') }, uRim: { value: rimWarm.clone() } });
+    { uTime: { value: 0 }, uScale: { value: 5 }, uSide: { value: .75 }, uColor: { value: flame.clone() }, uRim: { value: rimWarm.clone() }, uCream: { value: new THREE.Color('#f0d3a2') } });
   const corona = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), coronaMaterial); corona.name = 'Corona'; corona.position.z = -.6; eclipse.add(corona);
 
   const sphereMaterial = new THREE.ShaderMaterial({
@@ -76,7 +84,7 @@ export function createEclipseChapter({ isMobile }) {
   // Belt of asteroids following the ring.
   const rockMat = rockMaterial({ rim: accent.clone(), fill: new THREE.Color('#8caed8') });
   const rockGeos = [rockGeometry(1, 2), rockGeometry(7, 2), rockGeometry(13, 1)];
-  const r = rng(91), beltCount = isMobile() ? 48 : 96, belt = [], beltMeshes = [];
+  const r = rng(91), beltCount = isMobile() ? 54 : 132, belt = [], beltMeshes = [];
   for (let k = 0; k < 3; k++) { const m = new THREE.InstancedMesh(rockGeos[k], rockMat, Math.ceil(beltCount / 3)); m.name = `AsteroidBelt_${k}`; m.frustumCulled = false; ringPlane.add(m); beltMeshes.push(m); }
   for (let i = 0; i < beltCount; i++) {
     const k = i % 3, a = r() * Math.PI * 2, spread = (r() - .5);
@@ -103,7 +111,7 @@ export function createEclipseChapter({ isMobile }) {
       vec3 col=uColor*(halo+sx*.9+sy*.6+sd)*uPulse+vec3(1.,.98,.95)*core;
       gl_FragColor=vec4(col*smoothstep(1.,.75,d),1.);}`, { uColor: { value: accent.clone() }, uPulse: { value: 1 } }, { depthTest: false });
   const flare = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), flareMaterial); flare.name = 'DiamondFlare'; flare.renderOrder = 5; eclipse.add(flare);
-  const streakMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uColor;void main(){vec2 p=(vUv-.5)*2.;float s=exp(-abs(p.y)*30.)*exp(-abs(p.x)*1.9);gl_FragColor=vec4(uColor*s*.38,1.);}`,
+  const streakMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uColor;void main(){vec2 p=(vUv-.5)*2.;float s=exp(-abs(p.y)*30.)*exp(-abs(p.x)*1.9);gl_FragColor=vec4(uColor*s*.62,1.);}`,
     { uColor: { value: streakTint.clone() } }, { depthTest: false });
   const streak = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), streakMaterial); streak.name = 'AnamorphicStreak'; streak.renderOrder = 4; eclipse.add(streak);
 
@@ -111,7 +119,7 @@ export function createEclipseChapter({ isMobile }) {
   const beamMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uColor;uniform float uTime;
     void main(){float x=abs(vUv.x-.5);float core=exp(-x*260.);float inner=exp(-x*46.)*.22;float outer=exp(-x*9.)*.03;
       float fade=smoothstep(0.,.18,vUv.y)*(1.-smoothstep(.7,1.,vUv.y));float pulse=.92+.08*sin(uTime*.45);
-      gl_FragColor=vec4(uColor*(core*1.4+inner+outer)*fade*pulse,1.);}`, { uColor: { value: accent.clone() }, uTime: { value: 0 } });
+      gl_FragColor=vec4(uColor*(core*1.4+inner+outer)*fade*pulse,1.);}`, { uColor: { value: new THREE.Color('#d4c4ff') }, uTime: { value: 0 } });
   const beam = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1), beamMaterial); beam.name = 'LightBeam'; beam.renderOrder = 2; world.add(beam);
 
   // ── Glass panels (WebGL) + readable HTML overlays (CSS3D) ──────
@@ -153,7 +161,7 @@ export function createEclipseChapter({ isMobile }) {
     const hsN = halfSize(camera, -30); nebula.position.set(c.x * 2.2, c.y * 2.2, -30); nebula.scale.set(hsN.w * 2.6, hsN.h * 2.6, 1);
     // Beam from above the frame down to the limb.
     const top = halfSize(camera, -6.3).h; beam.position.set(c.x, (c.y + layout.R + top + 2) / 2 + .2, -6.3); beam.scale.set(mobile ? .7 : 1, top + 2 - c.y - layout.R, 1);
-    streak.scale.set(mobile ? 9 : 16, .7, 1);
+    streak.scale.set(mobile ? 12 : 26, .7, 1);
     for (const f of fgRocks) {
       const hs = halfSize(camera, f.spec.z), sx = mobile ? Math.sign(f.spec.sx) * Math.max(Math.abs(f.spec.sx), .8) : f.spec.sx;
       f.base = new THREE.Vector3(sx * hs.w, f.spec.sy * hs.h, f.spec.z); f.m.position.copy(f.base); f.m.scale.setScalar(f.spec.s * hs.h * 2 * (mobile ? .8 : 1));
@@ -197,10 +205,12 @@ export function createEclipseChapter({ isMobile }) {
     }
   }
   function setPalette(color, name) {
-    accent.copy(color); const rim = name === 'ice' ? new THREE.Color('#d4e6f5') : new THREE.Color('#e9dccb');
-    for (const m of [beamMaterial, flareMaterial, sphereMaterial, nebulaMaterial]) m.uniforms.uColor.value.copy(color);
-    coronaMaterial.uniforms.uRim.value.copy(rim); sphereMaterial.uniforms.uRim.value.copy(rim);
-    coronaMaterial.uniforms.uColor.value.set(name === 'ice' ? '#bccbdb' : '#c4c7cd');
+    const ice = name === 'ice'; accent.copy(color); rimWarm.set(ice ? '#8fd3ff' : '#ffb04a'); flame.set(ice ? '#5f8dff' : '#a45cff');
+    for (const m of [flareMaterial, sphereMaterial, nebulaMaterial]) m.uniforms.uColor.value.copy(color);
+    coronaMaterial.uniforms.uRim.value.copy(rimWarm); sphereMaterial.uniforms.uRim.value.copy(rimWarm);
+    coronaMaterial.uniforms.uColor.value.copy(flame); nebulaMaterial.uniforms.uFlame.value.copy(flame);
+    coronaMaterial.uniforms.uCream.value.set(ice ? '#cfe6ff' : '#f0d3a2'); beamMaterial.uniforms.uColor.value.set(ice ? '#bfe0ff' : '#d4c4ff');
+    streakMaterial.uniforms.uColor.value.set(ice ? '#7cb8ff' : '#9a7cff');
     rockMat.uniforms.uRim.value.copy(color); key.color.copy(color);
   }
   function exportGroup() {
@@ -212,5 +222,5 @@ export function createEclipseChapter({ isMobile }) {
     for (const { group } of panels) { const c = new THREE.Group(); c.name = group.name; c.applyMatrix4(group.matrixWorld); c.add(new THREE.Mesh(group.children[0].geometry, new THREE.MeshPhysicalMaterial({ color: 0x1c2230, metalness: .45, roughness: .22, transparent: true, opacity: .7, clearcoat: 1 }))); g.add(c); }
     return g;
   }
-  return { name: 'eclipse', scene, camera, labels, labelCamera, resize, update, setPalette, exportGroup, post: { ca: .0012, bloom: .8, exposure: 1.05, sat: .3 } };
+  return { name: 'eclipse', scene, camera, labels, labelCamera, resize, update, setPalette, exportGroup, post: { ca: .0016, bloom: .9, exposure: 1.05 } };
 }
