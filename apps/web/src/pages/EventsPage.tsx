@@ -11,6 +11,7 @@ import { Badge, EmptyState, ErrorState, Hash, LoadingState } from '../components
 import { ReadForm, readKey } from '../components/ReadForm';
 import type { Read } from '../components/ReadForm';
 import { EdgarPanel } from './EdgarPanel';
+import { TimelinePanel } from './TimelinePanel';
 import type { FomcItemSummary, FomcSourceStatus } from '../api/types';
 
 function StoreCard({ status }: { status: FomcSourceStatus }) {
@@ -232,10 +233,11 @@ function FomcPanel() {
 const SOURCES = [
   { id: 'fomc', label: 'FOMC statements' },
   { id: 'edgar', label: 'SEC EDGAR filings' },
+  { id: 'timeline', label: 'Timeline' },
 ] as const;
 
 export function EventsPage() {
-  const [source, setSource] = useState<'fomc' | 'edgar'>('fomc');
+  const [source, setSource] = useState<'fomc' | 'edgar' | 'timeline'>('fomc');
   return (
     <div className="stack">
       <div role="tablist" aria-label="Event source" className="kv">
@@ -252,7 +254,7 @@ export function EventsPage() {
           </button>
         ))}
       </div>
-      {source === 'fomc' ? <FomcPanel /> : <EdgarPanel />}
+      {source === 'fomc' ? <FomcPanel /> : source === 'edgar' ? <EdgarPanel /> : <TimelinePanel />}
     </div>
   );
 }

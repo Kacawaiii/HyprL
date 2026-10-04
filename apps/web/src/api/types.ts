@@ -1226,3 +1226,38 @@ export interface EdgarReplay extends EdgarSourceBase {
   identical: boolean;
   error: string | null;
 }
+
+// ---- official events at one instant across independent source snapshots ----------------------
+
+export interface TimelineSourceRead {
+  read_state: string;
+  identity: string | null;
+  H: number | null;
+  P: number | null;
+  reason?: string;
+}
+
+export interface TimelineRow {
+  source: 'fomc' | 'edgar';
+  id: string;
+  title: string | null;
+  form: string | null;
+  state: string;
+  revision: string;
+  content_identity: string;
+  available_at: string;
+  provenance: {
+    declared_release_at?: string | null;
+    declared_release_text?: string | null;
+    acceptance_datetime_text?: string;
+  };
+}
+
+export interface TimelineView {
+  api_version: string;
+  read_only: true;
+  T: string;
+  sources: Record<'fomc' | 'edgar', TimelineSourceRead>;
+  rows: TimelineRow[];
+  identity: string;
+}

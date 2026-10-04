@@ -20,6 +20,7 @@ import type {
   ProvidersIndex, ResearchBarPage, ResearchCorpusStatus, RiskView, SignalsView,
   FomcItemDetail, FomcReplay, FomcSnapshotView, FomcSourceStatus,
   EdgarFilingDetail, EdgarReplay, EdgarSnapshotView, EdgarSourceStatus,
+  TimelineView,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -298,6 +299,9 @@ export const apiClient = {
   getEdgarReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
     request<EdgarReplay>(
       `/api/v1/sources/edgar/replay${query({ as_of: asOf, horizon })}`, signal),
+  getTimeline: (asOf: string, fomcHorizon?: number, edgarHorizon?: number, signal?: AbortSignal) =>
+    request<TimelineView>(
+      `/api/v1/events/timeline${query({ as_of: asOf, fomc_horizon: fomcHorizon, edgar_horizon: edgarHorizon })}`, signal),
 };
 
 export type ApiClient = typeof apiClient;
