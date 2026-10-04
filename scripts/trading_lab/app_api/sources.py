@@ -58,6 +58,11 @@ def _header(snap: dict) -> dict:
     return {key: snap.get(key) for key in ("policy", "spec_hash", "mode", "T", "H", "P", "read_state", "identity")}
 
 
+def _bound_history(*rows) -> None:
+    if any(len(history) > MAX_SOURCE_ITEMS for history in rows):
+        raise AppApiError(f"source history exceeds the bound {MAX_SOURCE_ITEMS}")
+
+
 def _summary(item: dict) -> dict:
     normalized = item.get("normalized") or {}
     return {
@@ -168,6 +173,7 @@ class FomcViews:
                     "processing_outcome": outcome.body["outcome"] if outcome else None,
                     "revision": next((link.body.get("revision") for link in view.rows("LINK", key=str(resp.seq))), None)})
             out["observations"] = observations
+            _bound_history(out["revisions"], observations, item.get("links") or [])
             return out
         finally:
             store.close()
@@ -303,6 +309,7 @@ class EdgarViews:
             out["absences"] = [{key: a.body[key] for key in ("record", "observed_at", "raw_sha256", "filing_date",
                                                             "listing_oldest_filing_date")}
                                for a in view.select("FILING_ABSENCE", "source_item_id", sid)]
+            _bound_history(out["revisions"], out["observations"], out["absences"])
             return out
         finally:
             store.close()
