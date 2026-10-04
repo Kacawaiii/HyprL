@@ -1243,3 +1243,58 @@ export interface SourceTimeline {
   rows: { committed_seq: number; kind: string; key: string | null; body: Record<string, unknown> }[];
   pagination?: SourcePagination;
 }
+/* Frozen offline replay; these values are independent of the live portfolio. */
+export interface PaperReplayProduct {
+  product: string;
+  result_hash: string;
+  hashes: Record<string, string>;
+  prediction_quality: {
+    rank_ic: string | null; mae: string | null; rmse: string | null;
+    observations: number; predictions: number; unscored_predictions: number;
+    label_horizon: number; scoring_policy: string;
+  };
+  counts: {
+    bars: number; warmup_without_prediction: number; fills: number;
+    signals: Record<string, number>; targets: Record<string, number>;
+    gaps: number; expired_targets: number; pending_terminal_targets: number;
+  };
+  metrics: {
+    initial_equity: string; final_equity: string; net_return: string; net_pnl: string;
+    max_drawdown: string; annualized_sharpe: string | null; periods_per_year: number;
+    total_fees: string; total_slippage_cost: string; total_execution_cost: string;
+  };
+}
+
+export interface PaperReplaySummary {
+  available: boolean;
+  reason: string | null;
+  products: PaperReplayProduct[];
+  experiment_type?: string;
+  confirmatory?: boolean;
+  optimized?: boolean;
+  window?: { start: string; end: string; read_cutoff: string };
+  limitations?: string[];
+  determinism?: { verified: boolean; replay_count: number; first_chain_head_hash: string; second_chain_head_hash: string };
+}
+
+export interface ReplayPage {
+  returned: number; total: number; has_more: boolean; next_cursor: string | null;
+}
+
+export interface PaperReplayEquity {
+  product: string;
+  series: Array<{ timestamp: string; available_at: string; equity: string; drawdown: string }>;
+  page: ReplayPage;
+  metadata: { source_count: number; aggregation: string; worst_drawdown_peak_and_trough_kept: boolean };
+}
+
+export interface PaperReplayFill {
+  timestamp: string; available_at: string; decided_at: string;
+  side: string; quantity_delta: string; fee: string; slippage_cost: string; equity_after: string;
+}
+
+export interface PaperReplayFills {
+  product: string;
+  fills: PaperReplayFill[];
+  page: ReplayPage;
+}

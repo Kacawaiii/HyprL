@@ -171,6 +171,14 @@ export const apiClient = {
     ),
   getPaperStatus: (signal?: AbortSignal) =>
     request<PaperStatus>('/api/v1/paper/status', signal),
+  getPaperReplay: (signal?: AbortSignal) =>
+    request<import('./types').PaperReplaySummary>('/api/v1/paper/replay', signal),
+  getPaperReplayEquity: (product: string, signal?: AbortSignal) =>
+    request<import('./types').PaperReplayEquity>(
+      `/api/v1/paper/replay/${encodeURIComponent(product)}/equity?limit=500`, signal),
+  getPaperReplayFills: (product: string, cursor?: string, signal?: AbortSignal) =>
+    request<import('./types').PaperReplayFills>(
+      `/api/v1/paper/replay/${encodeURIComponent(product)}/fills${query({ limit: 100, cursor })}`, signal),
   getPaperProducts: (signal?: AbortSignal) =>
     request<{ products: PaperProductState[] }>('/api/v1/paper/products', signal),
   getPaperEvents: (product?: string, limit?: number, signal?: AbortSignal) =>

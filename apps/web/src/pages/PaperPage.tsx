@@ -17,6 +17,7 @@ import { useQuery } from '../state/useQuery';
 import { Badge, EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
 import { LineChart } from '../components/LineChart';
 import type { PaperPortfolioPosition, PendingBatch } from '../api/types';
+import { PaperReplaySection } from './PaperReplaySection';
 
 function money(value: string | null | undefined): string {
   if (!value) return '—';
@@ -38,7 +39,7 @@ function ratio(value: string | null | undefined, digits = 6): string {
   return Number.isFinite(parsed) ? parsed.toFixed(digits) : value;
 }
 
-export function PaperPage() {
+function LivePaperSession() {
   const status = useQuery('paper-portfolio', (signal) =>
     apiClient.getPaperPortfolio(signal), { staleMs: 5_000 });
   const pending = useQuery('paper-portfolio-pending', (signal) =>
@@ -222,4 +223,8 @@ export function PaperPage() {
       )}
     </div>
   );
+}
+
+export function PaperPage() {
+  return <div className="stack"><LivePaperSession /><PaperReplaySection /></div>;
 }
