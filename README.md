@@ -235,6 +235,15 @@ python scripts/execution/run_strategy_bridge.py --strategy normal --paper
 
 ---
 
+## Official event sources
+
+Point-in-time, replayable, read-only access to Federal Reserve FOMC statements and SEC EDGAR 8-K filings
+(append-only stores, causal availability, read-only API, cockpit Events page): start at
+[docs/OFFICIAL_EVENT_SOURCES.md](docs/OFFICIAL_EVENT_SOURCES.md) (architecture, guarantees, state, operator
+runbooks). Rules for coding agents: [AGENTS.md](AGENTS.md).
+
+---
+
 ## Disclaimer
 
 This project is for educational and research purposes. Trading involves risk. Past backtest performance does not guarantee future results.
