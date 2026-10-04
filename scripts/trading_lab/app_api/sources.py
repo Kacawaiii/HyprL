@@ -24,7 +24,7 @@ from scripts.trading_lab.app_api.contracts import (
 from scripts.trading_lab.fomc import snapshot, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import SCHEMA_VERSION, FomcStore
-from scripts.trading_lab.sources.store import StoreRejected
+from scripts.trading_lab.sources.store import RawCorrupt, StoreRejected
 
 _SID = re.compile(r"^[0-9a-f]{64}$")
 
@@ -61,6 +61,14 @@ def _header(snap: dict) -> dict:
 def _bound_history(*rows) -> None:
     if any(len(history) > MAX_SOURCE_ITEMS for history in rows):
         raise AppApiError(f"source history exceeds the bound {MAX_SOURCE_ITEMS}")
+
+
+def _verify_history_raws(store, digests) -> None:
+    for digest in sorted(set(digests)):
+        try:
+            store.read_raw(digest)
+        except RawCorrupt as exc:
+            raise ConflictError("source history fails its raw integrity check") from exc
 
 
 def _summary(item: dict) -> dict:
@@ -174,6 +182,8 @@ class FomcViews:
                     "revision": next((link.body.get("revision") for link in view.rows("LINK", key=str(resp.seq))), None)})
             out["observations"] = observations
             _bound_history(out["revisions"], observations, item.get("links") or [])
+            _verify_history_raws(store, [o["raw_sha256"] for o in observations] +
+                                 [r["first_raw_sha256"] for r in out["revisions"]])
             return out
         finally:
             store.close()
@@ -310,6 +320,7 @@ class EdgarViews:
                                                             "listing_oldest_filing_date")}
                                for a in view.select("FILING_ABSENCE", "source_item_id", sid)]
             _bound_history(out["revisions"], out["observations"], out["absences"])
+            _verify_history_raws(store, [o["raw_sha256"] for o in out["observations"] + out["absences"]])
             return out
         finally:
             store.close()

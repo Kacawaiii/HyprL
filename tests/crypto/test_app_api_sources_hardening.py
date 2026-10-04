@@ -66,3 +66,50 @@ def test_status_attestation_uses_the_same_horizon_as_its_counts(tmp_path, monkey
         assert status["counts"]["responses"] == 0 and status["suggested_as_of"] is None
     finally:
         writer.close()
+
+
+def test_edgar_detail_verifies_raws_of_older_revisions_too(tmp_path):
+    from tests.crypto.test_edgar_slice import Env, ACC1
+    from scripts.trading_lab.edgar import synthetic as syn
+    env = Env(tmp_path)
+    try:
+        middle = None
+        for items in ("first", "middle", "first"):
+            env.serve(syn.filing(ACC1, items=items))
+            result = env.poll()
+            if items == "middle":
+                middle = env.store.row_at("RESPONSE", result["record"]).body["raw_sha"]
+        snap = env.settle()
+        raw = env.root / "raw" / middle[:2] / middle
+        raw.write_bytes(b"synthetic corruption")
+        views = EdgarViews(env.root)
+        assert views.snapshot(as_of=snap["T"], horizon=snap["H"])["snapshot"]["read_state"] == "EDGAR_RESOLVED"
+        with pytest.raises(ConflictError, match="integrity"):
+            views.filing(ACC1, as_of=snap["T"], horizon=snap["H"])
+    finally:
+        env.collector.close()
+        env.store.close()
+
+
+def test_fomc_detail_verifies_raws_of_older_revisions_too(tmp_path):
+    from tests.crypto.fomc_support import Env, P1, SID1, statement_item
+    from scripts.trading_lab.fomc import synthetic as syn
+    env = Env(tmp_path)
+    try:
+        env.feed([statement_item()])
+        env.provider.routes[P1] = syn.page_response(body="first synthetic revision")
+        env.drive(240)
+        old_raw = env.store.rows("REVISION")[0].body["first_raw_sha256"]
+        env.provider.routes[P1] = syn.page_response(body="second synthetic revision")
+        env.drive(1000, idle=60)
+        raw = env.root / "raw" / old_raw[:2] / old_raw
+        raw.write_bytes(b"synthetic corruption")
+        views = FomcViews(env.root)
+        as_of = views.status()["suggested_as_of"]
+        assert views.snapshot(as_of=as_of)["snapshot"]["read_state"] == "FOMC_RESOLVED"
+        with pytest.raises(ConflictError, match="integrity"):
+            views.item(SID1, as_of=as_of)
+    finally:
+        env.collector.close()
+        env.store.close()
+        env.provider.close()
