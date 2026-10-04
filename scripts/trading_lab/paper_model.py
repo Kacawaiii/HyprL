@@ -22,7 +22,8 @@ reproducible without trusting a binary format or a library version.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from decimal import Decimal
 import hashlib
 import json
@@ -101,12 +102,18 @@ class PaperModelSpec:
 
 
 PAPER_MODEL_SPEC_V1 = PaperModelSpec()
+# Same frozen definition, with only the training boundary moved for the OOS
+# replay. The canonical schema stays compatible; the end gives v2 its own hash.
+PAPER_MODEL_SPEC_V2 = replace(
+    PAPER_MODEL_SPEC_V1, training_range_end="2026-04-30T23:00:00+00:00")
 
 
-def _require_training_window(rows) -> None:
+def _require_training_window(rows, *, spec: PaperModelSpec = PAPER_MODEL_SPEC_V1) -> None:
     """No bar after the frozen training end may reach the fit."""
-    end = PAPER_MODEL_SPEC_V1.training_range_end
-    late = [row.bar_open_at for row in rows if row.bar_open_at > end]
+    end = spec.training_range_end
+    boundary = datetime.fromisoformat(end)
+    late = [row.bar_open_at for row in rows
+            if datetime.fromisoformat(row.bar_open_at) > boundary]
     if late:
         raise PaperModelError(
             f"{len(late)} training rows lie after the frozen training end {end} "
@@ -116,11 +123,14 @@ def _require_training_window(rows) -> None:
 def train_paper_model(series, *, product: str,
                       spec: PaperModelSpec = PAPER_MODEL_SPEC_V1) -> dict:
     """Fit one product's shadow model and return a canonical artefact."""
+    # Check raw inputs BEFORE building labels: a late tail may be unusable as
+    # a training row while still leaking into an earlier row's forward label.
+    _require_training_window(series.points, spec=spec)
     dataset = build_dataset(series, config=DATASET_CONFIG_V2)
     rows = usable_rows(dataset)
     if not rows:
         raise PaperModelError(f"{product}: no usable training rows")
-    _require_training_window(rows)
+    _require_training_window(rows, spec=spec)
     model = RidgeRegressionPredictor(feature_columns=FEATURE_COLUMNS_V2,
                                      alpha=spec.ridge_alpha)
     model.fit(rows)
