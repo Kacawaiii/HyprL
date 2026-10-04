@@ -260,8 +260,9 @@ def test_a_small_window_is_returned_exactly_without_aggregation(service):
 # --- signals and risk: contracts, never fabricated runs --------------------
 
 
-def test_the_signals_view_reports_absence_instead_of_inventing_decisions(service):
-    payload = service.signals()
+def test_the_signals_view_reports_absence_instead_of_inventing_decisions(tmp_path):
+    module = importlib.import_module("scripts.trading_lab.app_api.service")
+    payload = module.AppService(tmp_path).signals()
     assert payload["available"] is False
     assert payload["decisions"] == []
     assert "no persisted signal run" in payload["reason"]
@@ -270,8 +271,9 @@ def test_the_signals_view_reports_absence_instead_of_inventing_decisions(service
     assert payload["signal_spec"]["optimized"] is False
 
 
-def test_the_risk_view_reports_the_contract_and_no_fabricated_targets(service):
-    payload = service.risk_targets()
+def test_the_risk_view_reports_the_contract_and_no_fabricated_targets(tmp_path):
+    module = importlib.import_module("scripts.trading_lab.app_api.service")
+    payload = module.AppService(tmp_path).risk_targets()
     assert payload["available"] is False
     assert payload["targets"] == []
     risk_engine = importlib.import_module("scripts.trading_lab.risk_engine")
