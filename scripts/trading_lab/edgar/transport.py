@@ -128,4 +128,5 @@ class HttpsFetcher:
             return FetchResult("SOURCE_UNAVAILABLE", 200, headers, None, wall,
                                f"TimeoutError: the {spec.DEADLINE_S} s deadline of the attempt passed while decoding")
         result.body = body
+        result.wall_at_receipt = self._wall()  # complete decoded bytes, the observation used by causal reads
         return result
