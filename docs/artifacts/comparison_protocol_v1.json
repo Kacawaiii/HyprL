@@ -1,0 +1,630 @@
+{
+ "admissible_decision": [
+  "inside the evaluation period and the product's price series",
+  "no protected interval touched by lookback, label or event window",
+  "price features and label exist (no gap)",
+  "every required source RESOLVED, no INTEGRITY_ERROR",
+  "price and event warm-ups complete"
+ ],
+ "calendar": {
+  "calendar_spec_hash": "1ef910eb3d4f5096ab2888ea6213df1f688870dfea02ba977bfc7faea9db6314",
+  "capture": [
+   "2027-03-02T00:00:00Z",
+   "2027-08-02T00:00:00Z"
+  ],
+  "decision_counts_upper_bounds": {
+   "crypto_per_product": {
+    "expected_to_meet_minimum": true,
+    "first_decision": "2027-04-01T00:00:00Z",
+    "last_decision": "2027-07-31T20:00:00Z",
+    "minimum_paired_test_decisions": 240,
+    "purged": 3,
+    "test": 1461,
+    "train": 1461
+   },
+   "equity_per_instrument": {
+    "expected_to_meet_minimum": false,
+    "first_decision": "2027-04-01T20:00:00Z",
+    "last_decision": "2027-07-23T20:00:00Z",
+    "minimum_paired_test_decisions": 100,
+    "purged": 5,
+    "test": 37,
+    "train": 37
+   },
+   "note": "upper bounds: before price gaps and source-state exclusions, which are known only after capture"
+  },
+  "evaluation": [
+   "2027-04-01T00:00:00Z",
+   "2027-08-01T00:00:00Z"
+  ],
+  "possible": {
+   "crypto": "hourly decisions, T = bar close, from the first feature-complete bar",
+   "equity": "one decision per session at the calendar close (early closes honoured)"
+  },
+  "price_series": {
+   "crypto_bar_opens": [
+    "2027-03-30T00:00:00Z",
+    "2027-08-01T00:00:00Z"
+   ],
+   "equity_sessions": [
+    "2027-03-01",
+    "2027-07-31"
+   ],
+   "rule": "series start after every protected interval, so no feature recursion reads one"
+  },
+  "split": {
+   "purge": "train decisions whose label window ends after the split instant are dropped",
+   "test": [
+    "2027-06-01T00:00:00Z",
+    "2027-08-01T00:00:00Z"
+   ],
+   "train": [
+    "2027-04-01T00:00:00Z",
+    "2027-06-01T00:00:00Z"
+   ]
+  }
+ },
+ "changes_need": "a new revision and canonical hash before any result exists; never an edit",
+ "evaluation": {
+  "exclusions_reported": [
+   "protected interval or label/lookback/event window",
+   "price warm-up",
+   "event warm-up",
+   "source state not RESOLVED, per source and state",
+   "price gap or missing label",
+   "unknown or unverified issuer mapping",
+   "integrity errors",
+   "null imputations (count)",
+   "decisions kept, per product, split and variant"
+  ],
+  "primary": {
+   "decision_rule": {
+    "INCONCLUSIVE_INSUFFICIENT_SAMPLE": "any minimum sample not met; no verdict is drawn",
+    "NOT_SUPPORTED": "sample sufficient and the SUPPORTED conditions not all met (no evidence of improvement, not evidence of no effect)",
+    "SUPPORTED": "R > 0, lower bound of the interval > 0, and R >= 0.005",
+    "scope": "each family on its own; no pooling across families, no other metric can overturn it"
+   },
+   "families": {
+    "CRYPTO": [
+     "BTC-USD",
+     "ETH-USD"
+    ],
+    "EQUITY": [
+     "the mapped equity instruments"
+    ]
+   },
+   "label": {
+    "crypto": "close[T+4 bars]/close[T]-1",
+    "equity": "close[t+5]/close[t]-1"
+   },
+   "metric": "R = 1 - MSE_B / MSE_A on test decisions, per product, equal-weighted mean over the family's products",
+   "minimum_sample": {
+    "blocks_per_product": 10,
+    "crypto_fomc_statements_newly_observed_in_test": 2,
+    "equity_edgar_newly_observed_accessions_in_test": 20,
+    "paired_test_decisions_per_product": {
+     "crypto": 240,
+     "equity": 100
+    }
+   },
+   "uncertainty": {
+    "block_decisions": {
+     "crypto": 24,
+     "equity": 10
+    },
+    "families_tested": 2,
+    "family_alpha_one_sided": 0.025,
+    "familywise_note": "two co-primary families, one-sided 2.5% each: family-wise one-sided 5% (Bonferroni)",
+    "interval": "percentile 2.5%-97.5% (two-sided 95%): its lower bound is the one-sided 2.5% bound",
+    "method": "circular block bootstrap of time-ordered paired decisions, same block starts for every product of a family and for both variants",
+    "resamples": 10000,
+    "seed": 20270801
+   }
+  },
+  "secondary": {
+   "annualization_periods": 8760,
+   "baselines": [
+    "ZERO",
+    "TRAIN_MEAN"
+   ],
+   "economic_crypto_only": [
+    "net_return",
+    "sharpe",
+    "max_drawdown",
+    "turnover",
+    "fees_paid"
+   ],
+   "prediction": [
+    "mae",
+    "rmse",
+    "spearman_rank_ic",
+    "directional_accuracy"
+   ],
+   "status": "reported with the same bootstrap; never part of the decision rule"
+  },
+  "stopping": "fixed periods; no optional stopping, no extension or re-run after a look"
+ },
+ "frozen_sources": {
+  "classification_policy": "ATTESTED_OBSERVATION_CLASSES_V1",
+  "edgar_spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+  "event_mapping_hash": "1780588e6c36809145c69ea409d9bfbb38ccbe72f4a3bdf8145e446f95089c99",
+  "features_v1_matrix_identity_prefix": "a5382f91",
+  "features_v2_policy": "ATTESTED_EVENT_FEATURES_V2",
+  "fomc_spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece"
+ },
+ "no_action": {
+  "capture": false,
+  "protected_intervals": "closed and untouched",
+  "requests_sent": 0,
+  "trading": false,
+  "training": false
+ },
+ "pairing": {
+  "features": {
+   "event_feature_spec_hash": "b54ae52b815dcc9a23bd728b2899f7e0e7c43cb8482f68b189ac5236e84f43fb",
+   "events": {
+    "AAPL": [
+     "new_statements_attested_7d",
+     "new_statements_attested_30d",
+     "statement_revisions_attested_7d",
+     "statement_revisions_attested_30d",
+     "hours_since_last_new_statement",
+     "new_statement_attested_within_24h",
+     "new_accessions_attested_7d",
+     "new_accessions_attested_30d",
+     "accession_revisions_attested_7d",
+     "accession_revisions_attested_30d",
+     "hours_since_last_new_accession",
+     "new_accession_item_2_02_7d",
+     "new_accession_item_5_02_7d",
+     "new_accession_item_7_01_7d",
+     "new_accession_item_8_01_7d"
+    ],
+    "BTC-USD": [
+     "new_statements_attested_7d",
+     "new_statements_attested_30d",
+     "statement_revisions_attested_7d",
+     "statement_revisions_attested_30d",
+     "hours_since_last_new_statement",
+     "new_statement_attested_within_24h"
+    ],
+    "ETH-USD": [
+     "new_statements_attested_7d",
+     "new_statements_attested_30d",
+     "statement_revisions_attested_7d",
+     "statement_revisions_attested_30d",
+     "hours_since_last_new_statement",
+     "new_statement_attested_within_24h"
+    ],
+    "MSFT": [
+     "new_statements_attested_7d",
+     "new_statements_attested_30d",
+     "statement_revisions_attested_7d",
+     "statement_revisions_attested_30d",
+     "hours_since_last_new_statement",
+     "new_statement_attested_within_24h",
+     "new_accessions_attested_7d",
+     "new_accessions_attested_30d",
+     "accession_revisions_attested_7d",
+     "accession_revisions_attested_30d",
+     "hours_since_last_new_accession",
+     "new_accession_item_2_02_7d",
+     "new_accession_item_5_02_7d",
+     "new_accession_item_7_01_7d",
+     "new_accession_item_8_01_7d"
+    ],
+    "NVDA": [
+     "new_statements_attested_7d",
+     "new_statements_attested_30d",
+     "statement_revisions_attested_7d",
+     "statement_revisions_attested_30d",
+     "hours_since_last_new_statement",
+     "new_statement_attested_within_24h",
+     "new_accessions_attested_7d",
+     "new_accessions_attested_30d",
+     "accession_revisions_attested_7d",
+     "accession_revisions_attested_30d",
+     "hours_since_last_new_accession",
+     "new_accession_item_2_02_7d",
+     "new_accession_item_5_02_7d",
+     "new_accession_item_7_01_7d",
+     "new_accession_item_8_01_7d"
+    ],
+    "QQQ": [
+     "new_statements_attested_7d",
+     "new_statements_attested_30d",
+     "statement_revisions_attested_7d",
+     "statement_revisions_attested_30d",
+     "hours_since_last_new_statement",
+     "new_statement_attested_within_24h"
+    ]
+   },
+   "prices": {
+    "crypto": [
+     "return_1",
+     "return_4",
+     "return_12",
+     "ema_spread_12_26",
+     "rsi_14",
+     "atr_pct_14"
+    ],
+    "equity": [
+     "return1",
+     "return5",
+     "return20",
+     "ema_spread10_20",
+     "rsi14",
+     "atr_pct14"
+    ]
+   },
+   "transform": {
+    "boolean": "0/1",
+    "hours_since_last_new_*": "min(hours, 720); null (no new observation yet) -> 720",
+    "null_item_flag": "0 (counted and reported)",
+    "selection": "none: every listed event column enters variant B, none is dropped or added after results"
+   }
+  },
+  "frozen_reused": {
+   "cost_model": {
+    "fee_rate": "0.0010",
+    "fill_policy": "next-contiguous-bar-open-after-decision-v1",
+    "slippage_rate": "0.0005"
+   },
+   "equity_costs": "no frozen equity execution or cost model exists: no equity economic metric is computed",
+   "execution_spec_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+   "risk_spec_hash": "f3be4fc63f684cd27c496bdfa1ce22b96b465de5a41bc169d9921f2c8d4c8dad",
+   "signal_spec_hash": "7f8b57f892a9e05ce5d2bc60c9bb114ea7dbc029ece561b7f62e9ad2d58b2939"
+  },
+  "model": {
+   "crypto": {
+    "paper_model_spec_hash": "76fbec5ab1fcd809b04cba029c86e5b1c5be1dd61ecfe7b33751365e62d1d038",
+    "spec": "ridge_regression alpha 1.0, train-fitted standardization (paper model v2)"
+   },
+   "equity": {
+    "feature_spec_hash": "2d0fb6472704ba8ea4fa4429e8a253c4c31faf4f581ddf3d209f632ba67df591",
+    "model_spec_hash": "cbbbe425a330c7fab8bd6ca1c266a6d3eebea0818f59addf7e774de4118c7162",
+    "research_spec_hash": "be4270ce5e8a1d472ffcfb12745094402d1bcc748e0d1a66d2f36707a546b177",
+    "spec": "EquityModelSpecV1 ridge alpha 1, one model per instrument",
+    "target_spec_hash": "60ba7d9346e55572bd790a7233635e4bf673fb1e486532e856073af8314183e0"
+   },
+   "fitting": "refit on the forward train block for both variants; the split is new because the frozen walk-forward geometry (252 train sessions) does not fit a 4-month window; training needs its own authorization"
+  },
+  "rule": "A and B use exactly the same decisions, labels, costs and splits; a decision where a required source is not RESOLVED is excluded from both; a family's test set is the decisions common to all its products"
+ },
+ "products": {
+  "crypto": [
+   "BTC-USD",
+   "ETH-USD"
+  ],
+  "equity": [
+   "AAPL",
+   "MSFT",
+   "QQQ",
+   "NVDA (only if its EDGAR identity is verified before capture starts; else excluded from both variants)"
+  ],
+  "required_sources": {
+   "AAPL": [
+    "fomc",
+    "edgar"
+   ],
+   "BTC-USD": [
+    "fomc"
+   ],
+   "ETH-USD": [
+    "fomc"
+   ],
+   "MSFT": [
+    "fomc",
+    "edgar"
+   ],
+   "NVDA": [
+    "fomc",
+    "edgar"
+   ],
+   "QQQ": [
+    "fomc"
+   ]
+  }
+ },
+ "protection": {
+  "admissible_ranges_price_and_label": {
+   "crypto": {
+    "decision_clock": "bar close = bar opening + 1h",
+    "event_window_clean_from": "2026-12-31T00:00:00Z",
+    "label_horizon_bars": 4,
+    "price_warmup_bars": 25,
+    "runs": [
+     {
+      "decisions": 9475,
+      "first_bar_open": "2025-08-02T01:00:00Z",
+      "first_decision_at": "2025-08-02T02:00:00Z",
+      "last_bar_open": "2026-08-31T19:00:00Z",
+      "last_decision_at": "2026-08-31T20:00:00Z",
+      "run_bars": 9504
+     },
+     {
+      "decisions": 5803,
+      "first_bar_open": "2026-12-02T01:00:00Z",
+      "first_decision_at": "2026-12-02T02:00:00Z",
+      "last_bar_open": "2027-07-31T19:00:00Z",
+      "last_decision_at": "2027-07-31T20:00:00Z",
+      "run_bars": 5832
+     }
+    ]
+   },
+   "equity": {
+    "decision_clock": "session close (calendar close_at, early closes honoured)",
+    "event_window_clean_from": "2027-03-31T00:00:00Z",
+    "label_horizon_sessions": 5,
+    "price_warmup_sessions": 20,
+    "runs": [
+     {
+      "decisions": 560,
+      "first_bar_open": "2024-08-29T13:30:00Z",
+      "first_decision_at": "2024-08-29T20:00:00Z",
+      "last_bar_open": "2026-11-20T14:30:00Z",
+      "last_decision_at": "2026-11-20T21:00:00Z",
+      "run_bars": 585
+     },
+     {
+      "decisions": 81,
+      "first_bar_open": "2027-03-30T13:30:00Z",
+      "first_decision_at": "2027-03-30T20:00:00Z",
+      "last_bar_open": "2027-07-23T13:30:00Z",
+      "last_decision_at": "2027-07-23T20:00:00Z",
+      "run_bars": 106
+     }
+    ]
+   }
+  },
+  "event_window_days": 30,
+  "label_horizon": {
+   "crypto_bars": 4,
+   "equity_sessions": 5
+  },
+  "other_reserved_intervals": "none found: the walk-forward and paper-replay periods are exploratory/consumed, not reserved; closed pilots are archives, not intervals",
+  "price_warmup": {
+   "crypto_bars": 25,
+   "equity_sessions": 20
+  },
+  "rule": "a decision is admissible only if no bar of its price features, no bar of its label window and no instant of its 30-day event window (T-30d, T] lies in a protected interval of its product",
+  "table": {
+   "AAPL": [
+    {
+     "bounds": "dates inclusive: 2026-12-01 through 2027-02-28 (the contract compares session dates: covers() reads the first ten characters)",
+     "calendar_id": "US_EQUITY_REGULAR",
+     "contract": "scripts/trading_lab/equity_research.py EQUITY_CONFIRMATORY_HOLDOUT_V1",
+     "declared_end": "2027-02-28T23:59:59Z",
+     "end_exclusive": "2027-03-01T00:00:00Z",
+     "holdout_id": "equity_confirmatory_2027q1",
+     "identity_hash": "b6ae7338670c45f5de7976d5299659af3d51e89f99529ebb209561add0c244b9",
+     "observed": false,
+     "products": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "QQQ"
+     ],
+     "research_spec_hash": "be4270ce5e8a1d472ffcfb12745094402d1bcc748e0d1a66d2f36707a546b177",
+     "single_use": true,
+     "start": "2026-12-01T00:00:00Z",
+     "timeframe": "1d",
+     "unit": "session dates"
+    }
+   ],
+   "BTC-USD": [
+    {
+     "bounds": "start inclusive; last protected bar OPENING 2026-11-30T23:00:00Z inclusive; the interval ends (exclusive) one bar later, when no protected bar can still be forming",
+     "contract": "scripts/trading_lab/protected_holdout.py PROTECTED_WINDOW_V1 (range: research_holdout.CONFIRMATORY_HOLDOUT_V2)",
+     "end_exclusive": "2026-12-01T00:00:00Z",
+     "holdout_id": "coinbase_confirmatory_2026q4",
+     "identity_hash": "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85",
+     "last_protected_bar_open": "2026-11-30T23:00:00Z",
+     "observed": false,
+     "products": [
+      "BTC-USD",
+      "ETH-USD"
+     ],
+     "single_use": true,
+     "start": "2026-09-01T00:00:00Z",
+     "timeframe": "1h",
+     "unit": "bar opening instants"
+    }
+   ],
+   "ETH-USD": [
+    {
+     "bounds": "start inclusive; last protected bar OPENING 2026-11-30T23:00:00Z inclusive; the interval ends (exclusive) one bar later, when no protected bar can still be forming",
+     "contract": "scripts/trading_lab/protected_holdout.py PROTECTED_WINDOW_V1 (range: research_holdout.CONFIRMATORY_HOLDOUT_V2)",
+     "end_exclusive": "2026-12-01T00:00:00Z",
+     "holdout_id": "coinbase_confirmatory_2026q4",
+     "identity_hash": "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85",
+     "last_protected_bar_open": "2026-11-30T23:00:00Z",
+     "observed": false,
+     "products": [
+      "BTC-USD",
+      "ETH-USD"
+     ],
+     "single_use": true,
+     "start": "2026-09-01T00:00:00Z",
+     "timeframe": "1h",
+     "unit": "bar opening instants"
+    }
+   ],
+   "MSFT": [
+    {
+     "bounds": "dates inclusive: 2026-12-01 through 2027-02-28 (the contract compares session dates: covers() reads the first ten characters)",
+     "calendar_id": "US_EQUITY_REGULAR",
+     "contract": "scripts/trading_lab/equity_research.py EQUITY_CONFIRMATORY_HOLDOUT_V1",
+     "declared_end": "2027-02-28T23:59:59Z",
+     "end_exclusive": "2027-03-01T00:00:00Z",
+     "holdout_id": "equity_confirmatory_2027q1",
+     "identity_hash": "b6ae7338670c45f5de7976d5299659af3d51e89f99529ebb209561add0c244b9",
+     "observed": false,
+     "products": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "QQQ"
+     ],
+     "research_spec_hash": "be4270ce5e8a1d472ffcfb12745094402d1bcc748e0d1a66d2f36707a546b177",
+     "single_use": true,
+     "start": "2026-12-01T00:00:00Z",
+     "timeframe": "1d",
+     "unit": "session dates"
+    }
+   ],
+   "NVDA": [
+    {
+     "bounds": "dates inclusive: 2026-12-01 through 2027-02-28 (the contract compares session dates: covers() reads the first ten characters)",
+     "calendar_id": "US_EQUITY_REGULAR",
+     "contract": "scripts/trading_lab/equity_research.py EQUITY_CONFIRMATORY_HOLDOUT_V1",
+     "declared_end": "2027-02-28T23:59:59Z",
+     "end_exclusive": "2027-03-01T00:00:00Z",
+     "holdout_id": "equity_confirmatory_2027q1",
+     "identity_hash": "b6ae7338670c45f5de7976d5299659af3d51e89f99529ebb209561add0c244b9",
+     "observed": false,
+     "products": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "QQQ"
+     ],
+     "research_spec_hash": "be4270ce5e8a1d472ffcfb12745094402d1bcc748e0d1a66d2f36707a546b177",
+     "single_use": true,
+     "start": "2026-12-01T00:00:00Z",
+     "timeframe": "1d",
+     "unit": "session dates"
+    }
+   ],
+   "QQQ": [
+    {
+     "bounds": "dates inclusive: 2026-12-01 through 2027-02-28 (the contract compares session dates: covers() reads the first ten characters)",
+     "calendar_id": "US_EQUITY_REGULAR",
+     "contract": "scripts/trading_lab/equity_research.py EQUITY_CONFIRMATORY_HOLDOUT_V1",
+     "declared_end": "2027-02-28T23:59:59Z",
+     "end_exclusive": "2027-03-01T00:00:00Z",
+     "holdout_id": "equity_confirmatory_2027q1",
+     "identity_hash": "b6ae7338670c45f5de7976d5299659af3d51e89f99529ebb209561add0c244b9",
+     "observed": false,
+     "products": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "QQQ"
+     ],
+     "research_spec_hash": "be4270ce5e8a1d472ffcfb12745094402d1bcc748e0d1a66d2f36707a546b177",
+     "single_use": true,
+     "start": "2026-12-01T00:00:00Z",
+     "timeframe": "1d",
+     "unit": "session dates"
+    }
+   ]
+  }
+ },
+ "protocol_hash": "6d8d7829f1c574c5348147defac33997e0888864c69bcf4acab4256f5ed8c437",
+ "requirements": {
+  "authorizations": [
+   "~/authorizations file naming FOMC endpoints, the capture window, request ceilings and expiry",
+   "same for EDGAR submissions (AAPL, MSFT, NVDA): older pages are out of scope of spec rev 1",
+   "one narrow NVDA ticker/CIK lookup (1 request), then a versioned mapping",
+   "Coinbase candles for the crypto series and an approved daily provider for the equity series",
+   "training of the two variants on the forward train block",
+   "a supervised multi-month EDGAR runner: the current runner admits 1-50 requests"
+  ],
+  "budgets": {
+   "capture_window": {
+    "days": 153,
+    "end_exclusive": "2027-08-02T00:00:00Z",
+    "rule": "FOMC and EDGAR run for the whole window; stop when the last supplied decision is RESOLVED",
+    "start": "2027-03-02T00:00:00Z"
+   },
+   "edgar": {
+    "global_pacing": "10s spacing, at most 6 per 60s",
+    "issuers": [
+     "AAPL",
+     "MSFT",
+     "NVDA"
+    ],
+    "listings": 66096,
+    "listings_per_issuer_per_day": 144,
+    "nvda_identity_lookup": 1,
+    "poll_interval_s": 600,
+    "total_request_ceiling": 66097
+   },
+   "fomc": {
+    "backoff_steps": 5,
+    "feed_cadence_s": 60,
+    "feed_polls": 220320,
+    "max_statements": 16,
+    "recheck_offsets_s": [
+     300,
+     3600,
+     86400,
+     604800
+    ],
+    "statement_pages_nominal": 80,
+    "statement_pages_with_maximal_retries": 480,
+    "total_request_ceiling": 220800
+   },
+   "prices": {
+    "coinbase": {
+     "bars_per_product": 2976,
+     "candles_per_request": 300,
+     "products": 2,
+     "requests": 20,
+     "series": [
+      "2027-03-30T00:00:00Z",
+      "2027-08-01T00:00:00Z"
+     ]
+    },
+    "equity_daily": {
+     "instruments": 4,
+     "requests": 4,
+     "requests_per_instrument": 1,
+     "series_dates": [
+      "2027-03-01",
+      "2027-07-31"
+     ]
+    }
+   },
+   "raw_volume_bytes_worst_case_without_deduplication": {
+    "edgar": 12244284000,
+    "fomc_feed": 18637309440,
+    "observed_deduplication": {
+     "edgar_trial": {
+      "distinct_raws": 2,
+      "responses": 8
+     },
+     "fomc_pilot": {
+      "distinct_raws": 49,
+      "responses": 128
+     }
+    },
+    "rule": "the operator sets a store-size ceiling and checks free disk before authorizing; the worst case exceeds the disk of the shared server, so the authorization must carry the ceiling and a stop",
+    "sizes_used": {
+     "edgar_listing_bytes_max_observed": 185250,
+     "fomc_raw_bytes_max_observed": 84592
+    }
+   }
+  },
+  "data": [
+   "attested FOMC and EDGAR stores over the capture window",
+   "matching prices over the series windows",
+   "verified NVDA identity",
+   "installed pandas_market_calendars pin for the equity calendar"
+  ]
+ },
+ "results_exist": false,
+ "revision": 1,
+ "schema": "comparison-protocol-v1",
+ "status": "PREREGISTERED_BEFORE_ANY_RESULT",
+ "variants": {
+  "A": "PRICES_ONLY: the frozen price features of the product class",
+  "B": "PRICES_PLUS_EVENTS_V2: A plus every EVENT_FEATURES_V2 column of the product's sources"
+ },
+ "warmup": {
+  "capture_start_plus_30_days": "2027-04-01T00:00:00Z",
+  "event": "for every required source: state RESOLVED at T, T >= attested coverage start + 30 days and T >= max(first valid read availability, last inventory availability at T) + 30 days, per issuer for EDGAR",
+  "price": "the feature-complete index of the real indicators (see protection.price_warmup), inside the series"
+ }
+}
