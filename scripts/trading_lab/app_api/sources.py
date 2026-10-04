@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import re
+import sqlite3
 
 from scripts.trading_lab.app_api.contracts import (
     APP_API_VERSION,
@@ -87,22 +88,23 @@ class FomcViews:
             raise NotFoundError("no FOMC store is configured for this API (start it with --fomc-store DIR)")
         try:
             return FomcStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            raise ConflictError(f"the configured FOMC store is refused: {exc}") from exc
+        except (StoreRejected, OSError, sqlite3.DatabaseError) as exc:
+            raise ConflictError("the configured FOMC store cannot be opened with this schema/spec") from exc
 
     def status(self) -> dict:
         if self._root is None:
             return {**self._base(), "status": "NOT_CONFIGURED", "store": None}
         try:
             store = FomcStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            return {**self._base(), "status": "REJECTED", "store": str(self._root), "reason": str(exc)}
+        except (StoreRejected, OSError, sqlite3.DatabaseError):
+            return {**self._base(), "status": "REJECTED", "store": "configured",
+                    "reason": "the configured FOMC store cannot be opened with this schema/spec"}
         try:
             view = store.view()
             txns = view.txns()
             lower = state.now_lb(store)
             return {
-                **self._base(), "status": "AVAILABLE", "store": str(self._root), "horizon": view.horizon(),
+                **self._base(), "status": "AVAILABLE", "store": "configured", "horizon": view.horizon(),
                 "first_durable_activity": txns[0][2] if txns else None,
                 "last_durable_activity": txns[-1][2] if txns else None,
                 # SERVER_NOW_LB: the latest instant the store attests from a verified response; a read
@@ -224,23 +226,24 @@ class EdgarViews:
             raise NotFoundError("no EDGAR store is configured for this API (start it with --edgar-store DIR)")
         try:
             return EdgarStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            raise ConflictError(f"the configured EDGAR store is refused: {exc}") from exc
+        except (StoreRejected, OSError, sqlite3.DatabaseError) as exc:
+            raise ConflictError("the configured EDGAR store cannot be opened with this schema/spec") from exc
 
     def status(self) -> dict:
         if self._root is None:
             return {**self._base(), "status": "NOT_CONFIGURED", "store": None}
         try:
             store = EdgarStore(self._root, wall_clock=None, read_only=True)
-        except StoreRejected as exc:
-            return {**self._base(), "status": "REJECTED", "store": str(self._root), "reason": str(exc)}
+        except (StoreRejected, OSError, sqlite3.DatabaseError):
+            return {**self._base(), "status": "REJECTED", "store": "configured",
+                    "reason": "the configured EDGAR store cannot be opened with this schema/spec"}
         try:
             view = store.view()
             txns = view.txns()
             lower = edgar_snapshot.now_lb(store)
             manifest = view.rows("MANIFEST")
             return {
-                **self._base(), "status": "AVAILABLE", "store": str(self._root), "horizon": view.horizon(),
+                **self._base(), "status": "AVAILABLE", "store": "configured", "horizon": view.horizon(),
                 "first_durable_activity": txns[0][2] if txns else None,
                 "last_durable_activity": txns[-1][2] if txns else None,
                 "suggested_as_of": iso(lower) if lower else None,
