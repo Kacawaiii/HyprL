@@ -1,10 +1,27 @@
+import { useState } from 'react';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
+import { DataTable, type Column } from '../components/DataTable';
 import { EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
+import { ProductSelect, RunProvenanceCard, unavailableDetail, useOlderRows } from '../components/RunProvenance';
+
+type Target = {
+  timestamp: string;
+  side: string;
+  target_exposure: string;
+  signal_strength: string;
+  position_target_hash: string;
+};
 
 export function RiskPage() {
-  const { data, status, error, refetch } = useQuery('risk', (signal) =>
-    apiClient.getRiskTargets(200, signal),
+  const [product, setProduct] = useState<string | null>(null);
+  const { data, status, error, refetch } = useQuery(`risk:${product ?? 'default'}`, (signal) =>
+    apiClient.getRiskTargets(200, signal, { product: product ?? undefined }),
+  );
+  const more = useOlderRows(
+    product ?? 'default', data,
+    (cursor) => apiClient.getRiskTargets(200, undefined, { product: product ?? undefined, cursor }),
+    (view) => view.targets as Target[],
   );
 
   if (status === 'loading') return <LoadingState label="Loading risk contract" />;
@@ -13,8 +30,23 @@ export function RiskPage() {
 
   const spec = data.risk_spec;
 
+  // Side and exposure are displayed exactly as the backend decided them.
+  const columns: Column<Target>[] = [
+    { key: 't', header: 'Timestamp', render: (row) => row.timestamp.replace('T', ' ').slice(0, 16) },
+    { key: 'side', header: 'Side', render: (row) => (
+      <span className={row.side === 'LONG' ? 'positive' : row.side === 'SHORT' ? 'negative' : 'muted'}>
+        {row.side}
+      </span>
+    ) },
+    { key: 'e', header: 'Target exposure', render: (row) => row.target_exposure },
+    { key: 's', header: 'Signal strength', render: (row) => row.signal_strength },
+    { key: 'h', header: 'Target', render: (row) => <Hash value={row.position_target_hash} chars={10} /> },
+  ];
+
   return (
     <div className="stack">
+      <ProductSelect value={product} shown={data.product} onChange={setProduct} />
+      <RunProvenanceCard run={data} title="Walk-forward run" />
       <section className="card">
         <h2 className="card-title">Risk contract V1</h2>
         <dl style={{ margin: 0 }}>
@@ -58,10 +90,24 @@ export function RiskPage() {
 
       <section className="card">
         <h2 className="card-title">Position targets</h2>
-        {data.available ? null : (
+        {data.available ? (
+          <>
+            <DataTable
+              rows={[...(data.targets as Target[]), ...more.older]}
+              columns={columns}
+              height={420}
+            />
+            {more.failure && <ErrorState error={more.failure} onRetry={more.loadOlder} />}
+            {more.hasMore && (
+              <button className="control" onClick={more.loadOlder} disabled={more.busy}>
+                {more.busy ? 'Loading…' : 'Load older targets'}
+              </button>
+            )}
+          </>
+        ) : (
           <EmptyState
             title="No persisted position target run available"
-            detail="Targets are derived on demand from signals. None have been recorded, and none are fabricated here."
+            detail={unavailableDetail(data.reason, 'No persisted position target run available', 'None have been recorded, and none are fabricated here.')}
           />
         )}
       </section>

@@ -67,6 +67,12 @@ function query(params: Record<string, string | number | undefined | null>): stri
   return text ? `?${text}` : '';
 }
 
+/** Which persisted run to read, and where to resume (newest first). */
+export interface RunQuery {
+  product?: string;
+  cursor?: string;
+}
+
 async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -143,10 +149,10 @@ export const apiClient = {
       })}`,
       signal,
     ),
-  getSignals: (limit?: number, signal?: AbortSignal) =>
-    request<SignalsView>(`/api/v1/signals${query({ limit })}`, signal),
-  getRiskTargets: (limit?: number, signal?: AbortSignal) =>
-    request<RiskView>(`/api/v1/risk/targets${query({ limit })}`, signal),
+  getSignals: (limit?: number, signal?: AbortSignal, run: RunQuery = {}) =>
+    request<SignalsView>(`/api/v1/signals${query({ limit, ...run })}`, signal),
+  getRiskTargets: (limit?: number, signal?: AbortSignal, run: RunQuery = {}) =>
+    request<RiskView>(`/api/v1/risk/targets${query({ limit, ...run })}`, signal),
   getBacktests: (signal?: AbortSignal) =>
     request<BacktestsIndex>('/api/v1/backtests', signal),
   getBacktestDetail: (version: string, product: string, signal?: AbortSignal) =>
