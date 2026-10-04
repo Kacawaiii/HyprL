@@ -23,7 +23,7 @@ import threading
 import time
 
 from scripts.trading_lab.edgar import spec
-from scripts.trading_lab.edgar.collector import EdgarCollector
+from scripts.trading_lab.edgar.collector import EdgarCollector, RequestCancelled
 from scripts.trading_lab.edgar.listing import cik10
 from scripts.trading_lab.edgar.store import EdgarStore
 from scripts.trading_lab.edgar.transport import HttpsFetcher
@@ -112,6 +112,13 @@ def run(store_dir: Path, authorization: Path, *, fetcher=None, clock=None, stop:
 
         def sent() -> int:
             return sum(1 for t in store.rows("TRANSPORT_INVOKED") if t.body["epoch"] == collector.epoch)
+
+        def permit_request() -> None:
+            if stop.is_set():
+                raise RequestCancelled("stopped")
+            if clock.wall() >= not_after:
+                raise RequestCancelled("authorization expired")
+
         reason = None
         while reason is None:
             for cik in collector.watchlist():
@@ -123,8 +130,15 @@ def run(store_dir: Path, authorization: Path, *, fetcher=None, clock=None, stop:
                     reason = "authorization expired"
                 if reason:
                     break
-                result = collector.poll(cik)
+                try:
+                    result = collector.poll(cik, before_request=permit_request)
+                except RequestCancelled as exc:
+                    reason = str(exc)
+                    break
                 log(f"{iso(clock.wall())} {cik} {result['status']} {result.get('outcome', '')}")
+                if result["status"] == "INTERRUPTED":
+                    reason = result["reason"]
+                    break
                 if result["status"] == "SOURCE_THROTTLED":
                     reason = "throttled (403/429): the trial stops, no further request"
                     break

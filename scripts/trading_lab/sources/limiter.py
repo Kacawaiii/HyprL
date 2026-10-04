@@ -31,10 +31,12 @@ class RollingLimiter:
     def admissible(self, t: float) -> bool:
         return self.earliest(t) == t
 
-    def grant(self) -> float:
+    def grant(self, *, check: Callable[[], None] | None = None) -> float:
         """Atomically grant, consume and register one physical start (no refund); waits until admitted
         (the step-driven path)."""
         while True:
+            if check is not None:
+                check()
             with self._lock:
                 now = self._mono()
                 if not self.suspended and self.admissible(now):

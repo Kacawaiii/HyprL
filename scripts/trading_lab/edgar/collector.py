@@ -8,6 +8,7 @@ from __future__ import annotations
 import fcntl
 from pathlib import Path
 import uuid
+from typing import Callable
 
 from scripts.trading_lab.edgar import spec
 from scripts.trading_lab.edgar.listing import (
@@ -19,6 +20,10 @@ from scripts.trading_lab.sources.limiter import RollingLimiter
 from scripts.trading_lab.sources.store import Rejected
 
 WATCHLIST_KEY = "watchlist"
+
+
+class RequestCancelled(RuntimeError):
+    """The runner's stop or authorization gate closed before transport could start."""
 
 
 def clock_verdict(wall_at_receipt, date_lines: list[str], age_lines: list[str]) -> str:
@@ -151,16 +156,27 @@ class EdgarCollector:
         return rows[0].body["ciks"] if rows else []
 
     # ---- one attempt ------------------------------------------------------------------------------
-    def poll(self, cik: str) -> dict:
+    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None) -> dict:
         cik = cik10(cik)
         if cik not in self.watchlist():
             raise Rejected(f"CIK {cik} is not on the watchlist")
         if self.paused_until is not None and self.clock.mono() < self.paused_until:
             return {"status": "PAUSED", "until_mono": self.paused_until}
-        grant = self.limiter.grant()
+        grant = self.limiter.grant(check=before_request)
         url = submissions_url(cik)
         attempt = self.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {
             "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant})])
+        if before_request is not None:
+            try:
+                before_request()  # the durable attempt may have waited past expiry or a stop signal
+            except RequestCancelled as exc:
+                reason = str(exc)
+                self.store.append("ATTEMPT_OUTCOME", [
+                    ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "INTERRUPTED",
+                                                      "status": None, "reason": reason}),
+                    health_row(cik, attempt=attempt, record=None, result_state="INTERRUPTED",
+                               reason=reason, check_at=self.store.wall_iso())])
+                return {"status": "INTERRUPTED", "attempt": attempt, "reason": reason}
         result = self.fetcher.fetch(url, started=grant)
         fetch_seconds = round(self.clock.mono() - grant, 3)  # grant to the end of the fetch (deadline evidence)
         header_lines = [[name, value] for name, value in (result.headers or [])]

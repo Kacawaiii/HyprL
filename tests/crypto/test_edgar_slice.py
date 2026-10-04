@@ -530,6 +530,56 @@ def test_a_throttled_answer_stops_the_trial(tmp_path):
     assert summary["reason"].startswith("throttled") and summary["requests"] == 1 == len(fetcher.requests)
 
 
+def test_expiry_during_the_initial_embargo_sends_nothing(tmp_path):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    path = _authorization(tmp_path, not_after=snapshot.iso(clock.wall() + timedelta(seconds=30)))
+    result = service.run(tmp_path / "store", path, fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert result["reason"] == "authorization expired" and result["requests"] == 0
+    assert fetcher.requests == []
+
+
+def test_stop_during_the_initial_embargo_sends_nothing(tmp_path):
+    import threading
+    stop = threading.Event()
+
+    class StoppingClock(syn.SimClock):
+        def sleep(self, seconds):
+            super().sleep(seconds)
+            stop.set()
+
+    clock = StoppingClock()
+    fetcher = syn.FakeFetcher(clock)
+    result = service.run(tmp_path / "store", _authorization(tmp_path), fetcher=fetcher, clock=clock,
+                         stop=stop, log=lambda m: None)
+    assert result["reason"] == "stopped" and result["requests"] == 0
+    assert fetcher.requests == []
+
+
+def test_expiry_while_the_attempt_commits_sends_nothing_and_records_an_outcome(tmp_path, monkeypatch):
+    clock = syn.SimClock()
+    fetcher = syn.FakeFetcher(clock)
+    original = EdgarStore.append
+
+    def slow_attempt(store, kind, *args, **kwargs):
+        seq = original(store, kind, *args, **kwargs)
+        if kind == "TRANSPORT_INVOKED":
+            clock.sleep(31)
+        return seq
+
+    monkeypatch.setattr(EdgarStore, "append", slow_attempt)
+    path = _authorization(tmp_path, not_after=snapshot.iso(clock.wall() + timedelta(seconds=90)))
+    result = service.run(tmp_path / "store", path, fetcher=fetcher, clock=clock, log=lambda m: None)
+    assert result["reason"] == "authorization expired" and fetcher.requests == []
+    store = EdgarStore(tmp_path / "store", wall_clock=None, read_only=True)
+    try:
+        assert len(store.rows("TRANSPORT_INVOKED")) == 1
+        assert store.rows("ATTEMPT_OUTCOME")[0].body["outcome"] == "INTERRUPTED"
+        assert snapshot.replay(store, clock.wall(), store.horizon())["read_state"] == "EDGAR_CAUSAL_VISIBILITY_UNRESOLVED"
+    finally:
+        store.close()
+
+
 def test_the_qualification_matrix_separates_observation_from_unknown(env):
     from scripts.trading_lab.edgar.qualify import qualify
     env.serve(syn.filing(ACC1), syn.filing(ACC_AMEND, form="8-K/A", filed="2026-06-17"), syn.filing(ACC2, form="10-K"))
