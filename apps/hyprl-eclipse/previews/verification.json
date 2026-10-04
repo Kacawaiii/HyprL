@@ -1,29 +1,33 @@
 {
-  "browser": "Chromium 1208 / Playwright 1.58.2",
+  "browser": "Chromium / Playwright (SwiftShader WebGL 2)",
+  "date": "2026-10-04",
+  "chapters": [
+    "eclipse",
+    "monolith",
+    "prism",
+    "singularity"
+  ],
   "checks": {
     "no_browser_errors": true,
     "no_external_requests": true,
-    "desktop_1440": true,
-    "mobile_390": true,
-    "mobile_320": true,
-    "workspace_navigation": true,
-    "keyboard_tabs_and_escape": true,
-    "focus_restoration": true,
-    "journal_persistence_and_text_escaping": true,
-    "palettes": true,
-    "animation_and_pause": true,
+    "desktop_1440_all_chapters": true,
+    "mobile_390_all_chapters": true,
+    "scroll_chapter_detection": true,
+    "palettes_gold_ice": true,
     "reduced_motion": true,
     "webgl_unavailable_fallback": true,
+    "workspace_dialog_pause_restore": true,
     "glb_download": true,
     "png_download": true
   },
   "glb_validation": {
     "errors": 0,
     "warnings": 0,
-    "infos": 5
+    "file": "hyprl-universe.glb"
   },
   "render": {
-    "drawCalls": 15,
-    "triangles": 24590
+    "drawCalls_per_frame": "16-36",
+    "triangles": "~34k-39k",
+    "post": "2 chapter passes max + bloom (4 blur) + final"
   }
 }

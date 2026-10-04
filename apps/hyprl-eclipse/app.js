@@ -1,6 +1,12 @@
 import { createEclipseScene } from './scene.js';
 const studio=document.body.classList.contains('studio-page');
-const scene=createEclipseScene(document.querySelector('#scene'),document.querySelector('#scene-labels'),{studio});
+const scene=createEclipseScene(document.querySelector('#scene'),document.querySelector('#scene-labels'),{studio,hero:document.querySelector('.hero'),stops:[...document.querySelectorAll('[data-chapter]')]});
+// Chapter rail: highlights the chapter on screen (index) or switches chapter (studio).
+const rail=[...document.querySelectorAll('[data-rail]')];
+function updateRail(){if(!scene)return;const current=scene.chapter;rail.forEach(link=>link.dataset.rail===current?link.setAttribute('aria-current','true'):link.removeAttribute('aria-current'));}
+if(!studio&&rail.length){addEventListener('scroll',()=>requestAnimationFrame(updateRail),{passive:true});setTimeout(updateRail,300);}
+const studioChapters=[...document.querySelectorAll('[data-studio-chapter]')];
+studioChapters.forEach(button=>button.addEventListener('click',()=>{scene?.setChapter(button.dataset.studioChapter);studioChapters.forEach(other=>other.setAttribute('aria-pressed',String(other===button)));const label=document.querySelector('[data-studio-title]');if(label){label.textContent=button.dataset.title;document.querySelector('[data-studio-overline]').textContent=`HYPRL / SCÈNE ${button.dataset.index}`;document.querySelector('[data-studio-text]').textContent=button.dataset.text;}}));
 // Exposed for local scene inspection and integration; no account/API connection.
 window.hyprlScene=scene;
 const motion=document.querySelector('#motion');
@@ -9,7 +15,7 @@ updateMotion();motion.addEventListener('click',()=>{scene?.setPaused(!scene.paus
 document.querySelectorAll('[data-palette]').forEach(button=>button.addEventListener('click',()=>{scene?.setPalette(button.dataset.palette);document.querySelectorAll('[data-palette]').forEach(other=>other.setAttribute('aria-pressed',String(other===button)));}));
 if(studio){
   const status=document.querySelector('.export-status');
-  for(const [id,action,message]of[['export-glb','exportGLB','Géométrie exportée. Les shaders, textes et animations restent dans le code de la scène.'],['export-png','exportPNG','Fond 3D exporté sans les textes HTML.']]){
+  for(const [id,action,message]of[['export-glb','exportGLB','Géométrie des 4 chapitres exportée. Shaders, lumière et animations restent dans le code.'],['export-png','exportPNG','Image du chapitre exportée sans les textes HTML.']]){
     const button=document.getElementById(id);button.disabled=!scene;button.addEventListener('click',async()=>{button.disabled=true;status.textContent='Préparation…';try{await scene[action]();status.textContent=message;}catch(error){status.textContent='L’export a échoué. Réessayez avec un navigateur compatible WebGL.';console.error(error);}finally{button.disabled=false;}});
   }
 }else{

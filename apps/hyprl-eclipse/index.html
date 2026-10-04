@@ -17,15 +17,15 @@
 </head>
 <body>
   <a class="skip-link" href="#contenu">Aller au contenu</a>
+  <div id="scene" class="universe" aria-hidden="true"></div>
   <header class="header">
     <a class="brand" href="#" aria-label="HYPRL, accueil"><img src="mark.svg" width="30" height="30" alt=""><span>HYPRL</span></a>
     <nav aria-label="Navigation principale"><a href="#vision">Vision</a><a href="#plateforme">Plateforme</a><a href="#approche">Notre approche</a></nav>
     <button class="access" data-workspace>Espace personnel <span>↗</span></button>
   </header>
   <main id="contenu">
-    <section class="hero" aria-labelledby="hero-title">
+    <section class="hero" data-chapter="eclipse" aria-labelledby="hero-title">
       <div class="scene-fallback" aria-hidden="true"><div class="fallback-beam"></div><div class="fallback-planet"></div></div>
-      <div id="scene" aria-hidden="true"></div>
       <div id="scene-labels" aria-hidden="true"></div>
       <div class="hero-copy">
         <div class="eyebrow"><span class="tiny-mark">✦</span> L'intelligence, en perspective <span class="eyebrow-line"></span></div>
@@ -36,16 +36,15 @@
       <div class="orbit-label label-left"><span class="label-symbol">◎</span><div>CRYPTO<span>Un nouvel horizon</span></div></div>
       <div class="orbit-label label-right"><span class="label-symbol">⌁</span><div>MULTI-ACTIFS<span>Une même perspective</span></div></div>
       <div class="scene-caption"><span class="status-dot"></span> Aperçu de l'interface · données illustratives</div>
-      <div class="scene-controls" aria-label="Personnaliser l'ambiance"><span>Ambiance</span><button data-palette="gold" aria-pressed="true">Or</button><button data-palette="ice" aria-pressed="false">Glace</button><button id="motion" aria-pressed="false" aria-label="Mettre l'animation en pause">Ⅱ</button></div>
       <a href="#vision" class="scroll-note">Voir plus bas <span>↓</span></a>
     </section>
-    <section id="vision" class="vision section-wrap">
-      <div class="section-overline">01 / LA VISION</div>
+    <section id="vision" class="vision section-wrap" data-chapter="monolith">
+      <div class="vision-inner"><div class="section-overline">01 / LA VISION</div>
       <h2>Moins de bruit.<br><span>Plus de perspective.</span></h2>
       <p>Une interface pensée pour relier votre lecture des marchés, vos stratégies et votre suivi du risque. Chaque information trouve sa place.</p>
-      <div class="market-list"><span>CRYPTO</span><i></i><span>FOREX</span><i></i><span>OR</span><i></i><span>STRATÉGIES</span></div>
+      <div class="market-list"><span>CRYPTO</span><i></i><span>FOREX</span><i></i><span>OR</span><i></i><span>STRATÉGIES</span></div></div>
     </section>
-    <section id="plateforme" class="platform section-wrap">
+    <section id="plateforme" class="platform section-wrap" data-chapter="prism" data-dim=".12">
       <div class="section-heading"><div><div class="section-overline">02 / LA PLATEFORME</div><h2>Tout votre univers.<br><span>Un seul espace.</span></h2></div><p>De la vue d'ensemble au détail.<br>Gardez le fil de vos décisions.</p></div>
       <div class="feature-grid">
         <article class="feature"><div class="feature-art chart-art"><svg viewBox="0 0 300 140" role="img" aria-label="Courbe illustrative d'une stratégie"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#b9c7d8" stop-opacity=".18"/><stop offset="1" stop-color="#b9c7d8" stop-opacity="0"/></linearGradient></defs><path d="M0 115 L25 109 L42 114 L65 85 L86 94 L110 63 L135 75 L156 45 L183 57 L200 37 L226 46 L249 23 L274 34 L300 12 V140 H0Z" fill="url(#chart-fill)"/><path d="M0 115 L25 109 L42 114 L65 85 L86 94 L110 63 L135 75 L156 45 L183 57 L200 37 L226 46 L249 23 L274 34 L300 12" fill="none" stroke="#c7d2dc" stroke-width="1.5"/></svg><span>STRATEGY OVERVIEW <i>ILLUSTRATION</i></span></div><div class="feature-number">01</div><h3>Lire les marchés</h3><p>Une vue structurée pour explorer les actifs et suivre vos signaux.</p></article>
@@ -53,8 +52,16 @@
         <article class="feature"><div class="feature-art layers-art"><div></div><div></div><div><span>YOUR WORKSPACE</span><b>HYPRL</b></div></div><div class="feature-number">03</div><h3>Suivre vos stratégies</h3><p>Un espace personnel pour organiser vos listes, vos analyses et votre journal.</p></article>
       </div>
     </section>
-    <section id="approche" class="approach section-wrap"><div><div class="section-overline">03 / NOTRE APPROCHE</div><h2>La clarté.<br><span>Avant tout.</span></h2></div><div class="approach-text"><p>Le design met les informations au premier plan. Les animations accompagnent la découverte ; votre espace de travail reste calme, lisible et concentré sur l'essentiel.</p><button class="text-link" data-workspace>Ouvrir l'aperçu de l'espace <span>↗</span></button></div></section>
+    <section id="horizon" class="interlude" data-chapter="singularity" aria-labelledby="interlude-title"><div class="section-overline">✦ INTERLUDE</div><h2 id="interlude-title">Voir plus loin.<br><span>Décider plus clairement.</span></h2><p>Pilotez le vaisseau avec votre curseur.</p></section>
+    <section id="approche" class="approach section-wrap" data-chapter="singularity" data-dim=".5"><div><div class="section-overline">03 / NOTRE APPROCHE</div><h2>La clarté.<br><span>Avant tout.</span></h2></div><div class="approach-text"><p>Le design met les informations au premier plan. Les animations accompagnent la découverte ; votre espace de travail reste calme, lisible et concentré sur l'essentiel.</p><button class="text-link" data-workspace>Ouvrir l'aperçu de l'espace <span>↗</span></button></div></section>
   </main>
+  <nav class="chapter-rail" aria-label="Chapitres de la scène">
+    <a href="#contenu" data-rail="eclipse" aria-current="true"><i></i><span>01 Éclipse</span></a>
+    <a href="#vision" data-rail="monolith"><i></i><span>02 Monolithe</span></a>
+    <a href="#plateforme" data-rail="prism"><i></i><span>03 Prisme</span></a>
+    <a href="#horizon" data-rail="singularity"><i></i><span>04 Singularité</span></a>
+  </nav>
+  <div class="scene-controls fixed-controls" aria-label="Personnaliser l'ambiance"><span>Ambiance</span><button data-palette="gold" aria-pressed="true">Or</button><button data-palette="ice" aria-pressed="false">Glace</button><button id="motion" aria-pressed="false" aria-label="Mettre l'animation en pause">Ⅱ</button></div>
   <footer class="footer section-wrap"><a class="brand" href="#"><img src="mark.svg" alt="" width="24" height="24">HYPRL</a><span>Un autre regard sur le trading.</span><a href="studio.html">Studio visuel ↗</a><p>Concept d'interface · aucune connexion à un compte de trading.</p></footer>
 
   <dialog id="workspace" aria-labelledby="workspace-title">
