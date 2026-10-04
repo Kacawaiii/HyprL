@@ -186,3 +186,136 @@ class FomcViews:
             return out
         finally:
             store.close()
+
+
+# ------------------------------------------------------------------ SEC EDGAR (spec revision 1) ---------
+from scripts.trading_lab.edgar import snapshot as edgar_snapshot  # noqa: E402
+from scripts.trading_lab.edgar import spec as edgar_spec  # noqa: E402
+from scripts.trading_lab.edgar.store import EdgarStore  # noqa: E402
+
+
+def _edgar_summary(filing: dict) -> dict:
+    fields = filing["fields"]
+    return {
+        "accession_number": filing["accession_number"], "cik": filing["cik"], "form": fields["form"],
+        "filing_date": fields["filing_date"], "report_date": fields["report_date"], "items": fields["items"],
+        "state": filing["state"], "revisions_seen": filing["revisions_seen"], "observations": filing["observations"],
+        "first_available_at": filing["first_available_at"], "first_observed_at": filing["first_observed_at"],
+        "amendment_link": filing["amendment_link"],
+        # provenance only: never an availability (E5)
+        "acceptance_datetime_text": filing["provenance"]["acceptance_datetime_text"],
+        "entity_name": filing["provenance"]["entity_name"],
+    }
+
+
+class EdgarViews:
+    """Read-only views over an EDGAR store (offline slice; the spec authorizes no capture)."""
+
+    def __init__(self, store_root=None):
+        self._root = Path(store_root).resolve() if store_root else None
+
+    def _base(self) -> dict:
+        return {"api_version": APP_API_VERSION, "source": "edgar", "provider_id": edgar_spec.PROVIDER_ID,
+                "spec_revision": edgar_spec.SPEC_REVISION, "spec_hash": edgar_spec.SPEC_HASH,
+                "schema_version": edgar_spec.SCHEMA_VERSION, "read_only": True}
+
+    def _open(self) -> EdgarStore:
+        if self._root is None:
+            raise NotFoundError("no EDGAR store is configured for this API (start it with --edgar-store DIR)")
+        try:
+            return EdgarStore(self._root, wall_clock=None, read_only=True)
+        except StoreRejected as exc:
+            raise ConflictError(f"the configured EDGAR store is refused: {exc}") from exc
+
+    def status(self) -> dict:
+        if self._root is None:
+            return {**self._base(), "status": "NOT_CONFIGURED", "store": None}
+        try:
+            store = EdgarStore(self._root, wall_clock=None, read_only=True)
+        except StoreRejected as exc:
+            return {**self._base(), "status": "REJECTED", "store": str(self._root), "reason": str(exc)}
+        try:
+            view = store.view()
+            txns = view.txns()
+            lower = edgar_snapshot.now_lb(store)
+            manifest = view.rows("MANIFEST")
+            return {
+                **self._base(), "status": "AVAILABLE", "store": str(self._root), "horizon": view.horizon(),
+                "first_durable_activity": txns[0][2] if txns else None,
+                "last_durable_activity": txns[-1][2] if txns else None,
+                "suggested_as_of": iso(lower) if lower else None,
+                "watchlist": manifest[0].body["ciks"] if manifest else [],
+                "counts": {"epochs": len(view.rows("EPOCH")), "responses": len(view.rows("RESPONSE")),
+                           "revisions": len(view.rows("FILING_REVISION")),
+                           "observations": len(view.rows("FILING_OBSERVATION")),
+                           "absences": len(view.rows("FILING_ABSENCE"))},
+            }
+        finally:
+            store.close()
+
+    def _read(self, store: EdgarStore, as_of, horizon) -> dict:
+        T, H = _as_of(as_of), _horizon(horizon, store)
+        try:
+            return edgar_snapshot.filings_as_of(store, T, H)
+        except edgar_snapshot.SnapshotFailed as exc:
+            raise ConflictError(f"the read fails closed: {exc}") from exc
+
+    @staticmethod
+    def _header(snap: dict) -> dict:
+        return {key: snap.get(key) for key in ("policy", "spec_hash", "mode", "T", "H", "P", "read_state", "identity")}
+
+    def snapshot(self, *, as_of=None, horizon=None) -> dict:
+        store = self._open()
+        try:
+            snap = self._read(store, as_of, horizon)
+            filings = snap.get("filings") or []
+            if len(filings) > MAX_SOURCE_ITEMS:
+                raise AppApiError(f"{len(filings)} filings exceed the bound {MAX_SOURCE_ITEMS}")
+            return {**self._base(), "snapshot": self._header(snap), "watchlist": snap.get("watchlist"),
+                    "health": snap.get("health"), "filings": [_edgar_summary(f) for f in filings]}
+        finally:
+            store.close()
+
+    def filing(self, accession, *, as_of=None, horizon=None) -> dict:
+        if not isinstance(accession, str) or not edgar_spec.ACCESSION.match(accession):
+            raise AppApiError("a filing is named by its accession number (0000000000-00-000000)")
+        store = self._open()
+        try:
+            snap = self._read(store, as_of, horizon)
+            out = {**self._base(), "snapshot": self._header(snap), "filing": None, "revisions": [],
+                   "observations": [], "absences": []}
+            if snap["read_state"] != "EDGAR_RESOLVED":
+                return out
+            filing = next((f for f in snap["filings"] if f["accession_number"] == accession), None)
+            if filing is None:
+                raise NotFoundError("no such filing in the snapshot as of this instant")
+            view, sid = store.view(snap["P"]), filing["source_item_id"]
+            out["filing"] = filing
+            out["revisions"] = [{"revision": r.key, "committed_seq": r.seq, "content_sha256": r.body["content_sha256"],
+                                 "first_record": r.body["first_record"], "fields": r.body["fields"]}
+                                for r in view.select("FILING_REVISION", "source_item_id", sid)]
+            out["observations"] = [{key: o.body[key] for key in ("record", "observed_at", "raw_sha256", "position",
+                                                                "revision", "entity_name")}
+                                   for o in view.select("FILING_OBSERVATION", "source_item_id", sid)]
+            out["absences"] = [{key: a.body[key] for key in ("record", "observed_at", "raw_sha256", "filing_date",
+                                                            "listing_oldest_filing_date")}
+                               for a in view.select("FILING_ABSENCE", "source_item_id", sid)]
+            return out
+        finally:
+            store.close()
+
+    def replay(self, *, as_of=None, horizon=None) -> dict:
+        store = self._open()
+        try:
+            first = self._read(store, as_of, horizon)
+            out = {**self._base(), "snapshot": self._header(first), "replay_identity": None, "identical": False, "error": None}
+            try:
+                again = edgar_snapshot.replay(store, _as_of(as_of), first["H"])
+            except edgar_snapshot.SnapshotFailed as exc:
+                out["error"] = str(exc)
+                return out
+            out["replay_identity"] = again["identity"]
+            out["identical"] = again == first
+            return out
+        finally:
+            store.close()

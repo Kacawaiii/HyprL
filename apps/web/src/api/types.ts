@@ -1151,3 +1151,78 @@ export interface FomcReplay extends FomcSourceBase {
   identical: boolean;
   error: string | null;
 }
+
+// ---- SEC EDGAR (offline slice, read-only store) -----------------------------------------------
+
+export interface EdgarSourceBase {
+  api_version: string;
+  source: 'edgar';
+  provider_id: string;
+  spec_revision: number;
+  spec_hash: string;
+  schema_version: string;
+  read_only: true;
+}
+
+export interface EdgarSourceStatus extends EdgarSourceBase {
+  status: 'AVAILABLE' | 'NOT_CONFIGURED' | 'REJECTED';
+  store: string | null;
+  reason?: string;
+  horizon?: number;
+  first_durable_activity?: string | null;
+  last_durable_activity?: string | null;
+  suggested_as_of?: string | null;
+  watchlist?: string[];
+  counts?: { epochs: number; responses: number; revisions: number; observations: number; absences: number };
+}
+
+export interface EdgarHealth {
+  result_state: string | null;
+  reason: string;
+  check_at: string | null;
+  attempt: number | null;
+  record: number | null;
+}
+
+export interface EdgarFilingSummary {
+  accession_number: string;
+  cik: string;
+  form: string;
+  filing_date: string;
+  report_date: string | null;
+  items: string | null;
+  state: 'PRESENT' | 'ABSENT_FROM_LISTING';
+  revisions_seen: number;
+  observations: number;
+  first_available_at: string | null;
+  first_observed_at: string | null;
+  amendment_link: string | null;
+  /** Provenance only: never an availability. */
+  acceptance_datetime_text: string;
+  entity_name: string | null;
+}
+
+export interface EdgarSnapshotView extends EdgarSourceBase {
+  snapshot: FomcSnapshotHeader;
+  watchlist: string[] | null;
+  health: Record<string, EdgarHealth> | null;
+  filings: EdgarFilingSummary[];
+}
+
+export interface EdgarFilingDetail extends EdgarSourceBase {
+  snapshot: FomcSnapshotHeader;
+  filing: (Record<string, unknown> & { accession_number: string; state: string }) | null;
+  revisions: { revision: string; committed_seq: number; content_sha256: string; first_record: number;
+    fields: Record<string, string | number | null> }[];
+  observations: { record: number; observed_at: string | null; raw_sha256: string; position: number;
+    revision: string; entity_name: string | null }[];
+  absences: { record: number; observed_at: string | null; raw_sha256: string; filing_date: string;
+    listing_oldest_filing_date: string }[];
+}
+
+export interface EdgarReplay extends EdgarSourceBase {
+  snapshot: FomcSnapshotHeader;
+  replay_identity: string | null;
+  identical: boolean;
+  error: string | null;
+}

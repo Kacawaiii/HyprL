@@ -7,8 +7,10 @@ Implements `docs/artifacts/edgar_capture_spec_v1.json` **revision 1**
 the SEC, and the spec authorizes none (`authorizes_capture: false`).
 
 ```
-python -m pytest tests/crypto/test_edgar_slice.py        # 24 tests, cases EDGAR01-EDGAR16
+python -m pytest tests/crypto/test_edgar_slice.py tests/crypto/test_app_api_edgar.py   # 39 + 3 tests
 python -m scripts.trading_lab.edgar.demo                  # new 8-K, correction, 8-K/A, absence, reappearance, replay
+python -m scripts.trading_lab.edgar.service --store DIR --authorization FILE --check   # no network, no write
+python -m scripts.trading_lab.app_api.server --edgar-store DIR   # read-only API + cockpit Events page
 ```
 
 ## Scope (frozen in the spec)
@@ -52,6 +54,10 @@ none inferred). A real run must first settle these with a fixture.
 | E7 fail closed: unknown shape, corrupt raw, replay mismatch | `listing.ListingRejected`, `snapshot.SnapshotFailed/ReplayFailed`, `snapshot.replay` (processing, rows and health re-derived) | EDGAR08, EDGAR12, EDGAR15 |
 | E8 bounded access: watchlist only, submissions surface only, paced, declared User-Agent | `collector.poll` (watchlist), `sources.limiter` (10 s spacing, ≤ 6/60 s, 60 s embargo), `transport.HttpsFetcher` | EDGAR14, EDGAR16, watchlist test |
 | store opening rule, read-only opening (FOMC: STORE_OPENING_RULE) | `sources.store.admit_existing`, `RecordStore(read_only=True)`, `edgar-store-v1` | EDGAR13 |
+| restart: an attempt of an earlier epoch without outcome is INTERRUPTED, a saved record without processing is processed (FOMC: reconciliation) | `collector.reconcile` | restart test (replay identical, INTERRUPTED health re-derived) |
+| one 30 s deadline over connect, request, headers and body | `transport.HttpsFetcher.fetch` | deadline test |
+| no request without an operator authorization (EDGAR spec, CIKs, budget <= 50, expiry, declared User-Agent); stops at budget, expiry or signal | `service.load_authorization/check/run` | 12 refusal cases (nothing sent, no store created), budget and expiry |
+| read-only API and cockpit journey: status, read at (as_of, horizon), filing detail (revisions, observations, absences, provenance), replay | `app_api.sources.EdgarViews`, `/api/v1/sources/edgar[/snapshot|/replay|/filings/{accession}]`, `apps/web/src/pages/EdgarPanel.tsx` | `test_app_api_edgar.py`, `apps/web/src/test/edgar.test.tsx` |
 
 The demo reads after each step and shows, for example, the corrected 8-K with two revisions seen, the
 8-K/A as its own filing, the 8-K `ABSENT_FROM_LISTING` and then `PRESENT` again, availability taken from
@@ -69,9 +75,10 @@ own spec, schema and unique kinds.
 
 - No real capture: the production fetcher (`HttpsFetcher`) is tested against an in-process fake connection
   only; real TLS, real headers, the real column set and the real `Date` behaviour are unverified (UV1–UV6).
-- Step-driven, single-threaded collector; no service, no supervisor, no storage-incident detection and no
-  reconciliation of an attempt interrupted by a crash (the FOMC service has them; EDGAR does not yet).
-- The per-request socket timeout is 30 s per operation, not a total deadline from the grant.
+- The runner is single-threaded and step-driven: no concurrent fetches, no storage-incident detection and no
+  persistent supervisor/closure (the FOMC service has them); it is bounded instead by its authorization's
+  request budget and expiry.
 - Absence detection depends on the documented window (UV3); a filing removed and replaced by the SEC with
   the same accession would show as a correction, not as a removal.
-- Not in the API or cockpit yet (the FOMC journey is).
+- Real capture needs an operator authorization file; its User-Agent must carry a real contact e-mail,
+  which only the operator can provide.

@@ -19,6 +19,7 @@ import type {
   PaperPortfolioStatus, PortfolioEquity, PortfolioFillPage, PortfolioStatus,
   ProvidersIndex, ResearchBarPage, ResearchCorpusStatus, RiskView, SignalsView,
   FomcItemDetail, FomcReplay, FomcSnapshotView, FomcSourceStatus,
+  EdgarFilingDetail, EdgarReplay, EdgarSnapshotView, EdgarSourceStatus,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -285,6 +286,18 @@ export const apiClient = {
   getFomcReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
     request<FomcReplay>(
       `/api/v1/sources/fomc/replay${query({ as_of: asOf, horizon })}`, signal),
+  /** The SEC EDGAR store (offline slice), read-only: status, a read, a filing, a verified replay. */
+  getEdgarStatus: (signal?: AbortSignal) =>
+    request<EdgarSourceStatus>('/api/v1/sources/edgar', signal),
+  getEdgarSnapshot: (asOf: string, horizon?: number, signal?: AbortSignal) =>
+    request<EdgarSnapshotView>(
+      `/api/v1/sources/edgar/snapshot${query({ as_of: asOf, horizon })}`, signal),
+  getEdgarFiling: (accession: string, asOf: string, horizon?: number, signal?: AbortSignal) =>
+    request<EdgarFilingDetail>(
+      `/api/v1/sources/edgar/filings/${encodeURIComponent(accession)}${query({ as_of: asOf, horizon })}`, signal),
+  getEdgarReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
+    request<EdgarReplay>(
+      `/api/v1/sources/edgar/replay${query({ as_of: asOf, horizon })}`, signal),
 };
 
 export type ApiClient = typeof apiClient;

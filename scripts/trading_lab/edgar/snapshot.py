@@ -36,6 +36,13 @@ def availability(store, horizon: int) -> list[causal.Avail]:
                                concerned_kinds=("FILING_OBSERVATION", "FILING_ABSENCE"))
 
 
+def now_lb(store, horizon: int | None = None) -> datetime | None:
+    """SERVER_NOW_LB: the latest verified observed_at minus the clock error bound; a read later than it is
+    unresolved by construction."""
+    seen = [causal.observed_at(r) for r in store.view(horizon).rows("RESPONSE") if causal.verified(r)]
+    return max(seen) - spec.CLOCK_ERROR_BOUND if seen else None
+
+
 def _avail_of(table: list[causal.Avail], seq: int) -> str | None:
     i = bisect_left(table, seq, key=lambda entry: entry.seq)
     if i < len(table) and table[i].seq == seq and table[i].resolved:

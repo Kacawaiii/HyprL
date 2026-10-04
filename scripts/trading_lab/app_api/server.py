@@ -188,6 +188,12 @@ def build_routes(service: AppService):
             as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
         "/api/v1/sources/fomc/replay": lambda query: service.fomc.replay(
             as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
+        # SEC EDGAR (offline slice): /api/v1/sources/edgar/filings/{accession} is matched below.
+        "/api/v1/sources/edgar": lambda query: service.edgar.status(),
+        "/api/v1/sources/edgar/snapshot": lambda query: service.edgar.snapshot(
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
+        "/api/v1/sources/edgar/replay": lambda query: service.edgar.replay(
+            as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
     }, markets_detail, chart, backtest_sub, paper_sub
 
 
@@ -301,6 +307,10 @@ class AppApiHandler(BaseHTTPRequestHandler):
         if len(parts) == 6 and parts[:5] == ["api", "v1", "sources", "fomc", "items"]:
             return self.service.fomc.item(parts[5], as_of=_query_first(query, "as_of"),
                                           horizon=_query_first(query, "horizon"))
+        # /api/v1/sources/edgar/filings/{accession}
+        if len(parts) == 6 and parts[:5] == ["api", "v1", "sources", "edgar", "filings"]:
+            return self.service.edgar.filing(parts[5], as_of=_query_first(query, "as_of"),
+                                             horizon=_query_first(query, "horizon"))
         raise AppApiError("no such endpoint")
 
     # --- verbs -----------------------------------------------------------
@@ -460,13 +470,13 @@ class AppApiHandler(BaseHTTPRequestHandler):
 
 
 def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                dist_root=None, fomc_store=None):
+                dist_root=None, fomc_store=None, edgar_store=None):
     """Build a loopback-bound read-only server over a fixed data root.
 
     ``dist_root`` turns on single-origin production mode. It is resolved once,
     here, so no request can influence which directory is served.
     """
-    service = AppService(pathlib.Path(data_root), fomc_store=fomc_store)
+    service = AppService(pathlib.Path(data_root), fomc_store=fomc_store, edgar_store=edgar_store)
     # An IPv6 loopback (::1) needs an AF_INET6 socket; the stdlib server is AF_INET only.
     server_class = ThreadingHTTPServer if ":" not in host else type(
         "ThreadingHTTPServerV6", (ThreadingHTTPServer,), {"address_family": socket.AF_INET6})
@@ -491,6 +501,8 @@ def main(argv=None):  # pragma: no cover - entry point
                         help="serve a frontend build from the same origin")
     parser.add_argument("--fomc-store", default=None,
                         help="an FOMC store directory to read (read-only: an archive or a copy)")
+    parser.add_argument("--edgar-store", default=None,
+                        help="an EDGAR store directory to read (read-only)")
     # Present so the supervisor can prove a pid belongs to this application
     # before signalling it. Parsed and ignored.
     parser.add_argument("--marker", default=None, help=argparse.SUPPRESS)
@@ -502,7 +514,7 @@ def main(argv=None):  # pragma: no cover - entry point
               "beyond the local machine")
     server = make_server(arguments.data_root, host=arguments.host,
                          port=arguments.port, dist_root=arguments.dist_root,
-                         fomc_store=arguments.fomc_store)
+                         fomc_store=arguments.fomc_store, edgar_store=arguments.edgar_store)
     if arguments.dist_root:
         print(f"HyprL on http://{arguments.host}:{arguments.port}/")
     else:

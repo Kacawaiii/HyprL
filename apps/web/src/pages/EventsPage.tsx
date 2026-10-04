@@ -8,16 +8,10 @@ import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { Badge, EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
+import { ReadForm, readKey } from '../components/ReadForm';
+import type { Read } from '../components/ReadForm';
+import { EdgarPanel } from './EdgarPanel';
 import type { FomcItemSummary, FomcSourceStatus } from '../api/types';
-
-interface Read {
-  asOf: string;
-  horizon?: number;
-}
-
-function readKey(read: Read): string {
-  return `${read.asOf}|${read.horizon ?? ''}`;
-}
 
 function StoreCard({ status }: { status: FomcSourceStatus }) {
   return (
@@ -197,19 +191,13 @@ function Snapshot({ read }: { read: Read }) {
   );
 }
 
-export function EventsPage() {
+function FomcPanel() {
   const status = useQuery('fomc-status', (signal) => apiClient.getFomcStatus(signal));
-  const [asOf, setAsOf] = useState('');
-  const [horizon, setHorizon] = useState('');
   const [read, setRead] = useState<Read | null>(null);
-  const [invalid, setInvalid] = useState<string | null>(null);
   const suggested = status.data?.suggested_as_of ?? null;
 
   useEffect(() => {
-    if (suggested && read === null) {
-      setAsOf(suggested);
-      setRead({ asOf: suggested });
-    }
+    if (suggested && read === null) setRead({ asOf: suggested });
   }, [suggested, read]);
 
   if (status.status === 'loading') return <LoadingState label="Loading event sources" />;
@@ -232,37 +220,39 @@ export function EventsPage() {
       </section>
     );
   }
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const text = horizon.trim();
-    if (text !== '' && !/^\d+$/.test(text)) {
-      setInvalid('The horizon is a commit sequence number (a whole number).');
-      return;
-    }
-    setInvalid(null);
-    setRead({ asOf: asOf.trim(), horizon: text === '' ? undefined : Number(text) });
-  }
-
   return (
     <div className="stack">
       <StoreCard status={data} />
-      <section className="card">
-        <h2 className="card-title">Read the store at an instant</h2>
-        <form onSubmit={submit} className="kv" aria-label="Point-in-time read">
-          <label>
-            As of (ISO-8601 with offset){' '}
-            <input aria-label="As of" value={asOf} onChange={(event) => setAsOf(event.target.value)} size={34} />
-          </label>
-          <label>
-            Horizon (optional){' '}
-            <input aria-label="Horizon" value={horizon} onChange={(event) => setHorizon(event.target.value)} size={8} />
-          </label>
-          <button className="control" type="submit">Read</button>
-        </form>
-        {invalid && <p role="alert"><Badge tone="warn">{invalid}</Badge></p>}
-      </section>
+      <ReadForm initialAsOf={suggested ?? ''} onRead={setRead} />
       {read && <Snapshot read={read} />}
+    </div>
+  );
+}
+
+const SOURCES = [
+  { id: 'fomc', label: 'FOMC statements' },
+  { id: 'edgar', label: 'SEC EDGAR filings' },
+] as const;
+
+export function EventsPage() {
+  const [source, setSource] = useState<'fomc' | 'edgar'>('fomc');
+  return (
+    <div className="stack">
+      <div role="tablist" aria-label="Event source" className="kv">
+        {SOURCES.map((item) => (
+          <button
+            key={item.id}
+            role="tab"
+            aria-selected={source === item.id}
+            aria-pressed={source === item.id}
+            className="control"
+            onClick={() => setSource(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      {source === 'fomc' ? <FomcPanel /> : <EdgarPanel />}
     </div>
   );
 }
