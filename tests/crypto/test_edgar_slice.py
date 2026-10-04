@@ -468,3 +468,19 @@ def test_a_throttled_answer_stops_the_trial(tmp_path):
     summary = service.run(tmp_path / "store", _authorization(tmp_path, max_requests=8), fetcher=fetcher, clock=clock,
                           log=lambda m: None)
     assert summary["reason"].startswith("throttled") and summary["requests"] == 1 == len(fetcher.requests)
+
+
+def test_the_qualification_matrix_separates_observation_from_unknown(env):
+    from scripts.trading_lab.edgar.qualify import qualify
+    env.serve(syn.filing(ACC1), syn.filing(ACC_AMEND, form="8-K/A", filed="2026-06-17"), syn.filing(ACC2, form="10-K"))
+    env.poll()
+    env.poll()
+    result = qualify(EdgarStore(env.root, wall_clock=None, read_only=True))
+    matrix = result["matrix"]
+    assert matrix["UV1"]["verdict"] == "OBSERVED_COMPATIBLE" and matrix["UV1"]["observation"]["columns_not_in_spec"] == []
+    assert matrix["UV2"]["verdict"] == "FORMAT_OBSERVED_SEMANTICS_UNKNOWN"
+    assert matrix["UV2"]["observation"]["shapes"] == {"YYYY-MM-DDTHH:MM:SS.000Z": 6}
+    assert matrix["UV3"]["verdict"] == matrix["UV4"]["verdict"] == "UNKNOWN_PERSISTS"  # never provoked
+    assert matrix["UV5"]["verdict"] == "OBSERVED_PRESENT_AND_WITHIN_TOLERANCE"
+    assert matrix["UV6"]["verdict"] == "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+    assert matrix["UV6"]["observation"]["amendment_rows"] == 2 and result["listings"] == 2

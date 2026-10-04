@@ -1,0 +1,430 @@
+{
+  "artifact": "edgar_fixture_qualification_v1",
+  "code_sha": "9dd955893412e82a4663a95b746b8f4565cd6e9f",
+  "distinct_raws": 2,
+  "in_scope_revisions_by_cik_and_form": {
+    "0000320193 8-K": 102,
+    "0000320193 8-K/A": 2,
+    "0000789019 8-K": 56,
+    "0000789019 8-K/A": 1
+  },
+  "listings": {
+    "0000320193": {
+      "listed_cik": "0000320193",
+      "name": "Apple Inc.",
+      "older_pages": 1,
+      "rows": 1001
+    },
+    "0000789019": {
+      "listed_cik": "0000789019",
+      "name": "MICROSOFT CORP",
+      "older_pages": 2,
+      "rows": 1002
+    }
+  },
+  "matrix": {
+    "UV1": {
+      "documentation": "not documented (only the URL, the window and the files array are)",
+      "observation": {
+        "columns_in_every_listing": [
+          "acceptanceDateTime",
+          "accessionNumber",
+          "act",
+          "core_type",
+          "fileNumber",
+          "filingDate",
+          "filmNumber",
+          "form",
+          "isInlineXBRL",
+          "isXBRL",
+          "isXBRLNumeric",
+          "items",
+          "primaryDocDescription",
+          "primaryDocument",
+          "reportDate",
+          "size"
+        ],
+        "columns_not_in_spec": [
+          "core_type",
+          "isXBRLNumeric"
+        ],
+        "required_present_in_all": true,
+        "type_mismatches": {}
+      },
+      "reach": "8 listing responses of 2 CIK(s) (0000320193, 0000789019)",
+      "rule_kept": "the parser still refuses any other shape (PARSER_FAILED); compatibility is observed, not guaranteed",
+      "unknown": "column names and types of filings.recent",
+      "verdict": "OBSERVED_COMPATIBLE"
+    },
+    "UV2": {
+      "documentation": "not documented",
+      "observation": {
+        "shapes": {
+          "YYYY-MM-DDTHH:MM:SS.000Z": 8012
+        }
+      },
+      "reach": "8 listing responses of 2 CIK(s) (0000320193, 0000789019)",
+      "rule_kept": "verbatim text only, never parsed into an instant or used for availability or ordering: a 'Z' suffix in the text does not prove the instant it names",
+      "unknown": "format and time zone of acceptanceDateTime",
+      "verdict": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN"
+    },
+    "UV3": {
+      "documentation": "SEC staff may authorize post-acceptance removals and corrections (VF10); the listing behaviour is not described",
+      "observation": {
+        "absences_recorded": 0,
+        "removal_provoked": false
+      },
+      "reach": "8 listing responses of 2 CIK(s) (0000320193, 0000789019)",
+      "rule_kept": "only ABSENT_FROM_LISTING inside the documented window; never a confirmed removal or a deletion",
+      "unknown": "whether and when a removed filing leaves filings.recent",
+      "verdict": "UNKNOWN_PERSISTS"
+    },
+    "UV4": {
+      "documentation": "10 requests/second maximum; the SEC may limit rates (VF6, VF7); no status or duration given",
+      "observation": {
+        "attempt_outcomes": {
+          "RESPONSE": 8
+        },
+        "throttling_provoked": false
+      },
+      "reach": "8 listing responses of 2 CIK(s) (0000320193, 0000789019)",
+      "rule_kept": "403/429 are SOURCE_THROTTLED; a trial stops; no request of any CIK for at least 600 s",
+      "unknown": "the response to a request above the fair-access rate",
+      "verdict": "UNKNOWN_PERSISTS"
+    },
+    "UV5": {
+      "documentation": "not documented",
+      "observation": {
+        "clock_verdicts": {
+          "CLOCK_VERIFIED": 8
+        },
+        "date_minus_receipt_seconds": [
+          0.126,
+          0.178,
+          0.498,
+          0.658,
+          0.027,
+          0.012,
+          0.464,
+          0.302
+        ],
+        "responses_with_one_valid_date": 8
+      },
+      "reach": "8 listing responses of 2 CIK(s) (0000320193, 0000789019)",
+      "rule_kept": "a response without a valid Date or outside 90 s stays CLOCK_UNVERIFIED and attests nothing",
+      "unknown": "presence and accuracy of the HTTP Date header",
+      "verdict": "OBSERVED_PRESENT_AND_WITHIN_TOLERANCE"
+    },
+    "UV6": {
+      "documentation": "not documented",
+      "observation": {
+        "amendment_rows": 180,
+        "columns_that_could_link": []
+      },
+      "reach": "8 listing responses of 2 CIK(s) (0000320193, 0000789019)",
+      "rule_kept": "no parent is inferred: an 8-K/A stays its own filing (amends: null)",
+      "unknown": "whether an amendment names the accession it amends in the listing",
+      "verdict": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+    }
+  },
+  "response_header_names": [
+    "access-control-allow-origin",
+    "connection",
+    "content-encoding",
+    "content-length",
+    "content-type",
+    "date",
+    "strict-transport-security",
+    "vary",
+    "x-amz-apigw-id",
+    "x-amzn-requestid",
+    "x-amzn-trace-id"
+  ],
+  "spec_decision": "spec revision 1 is kept unchanged: no observation contradicts it, every UV rule stays as conservative as written, and a revision would bind new stores to another hash and refuse this fixture store (no implicit migration). The observed compatibility is recorded here, bound to the spec hash and the code SHA.",
+  "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+  "spec_id": "sec_edgar_submissions_capture_v1",
+  "spec_revision": 1,
+  "store_schema": "edgar-store-v1",
+  "trial": {
+    "attempts": [
+      {
+        "attempt": 3,
+        "byte_length": 163997,
+        "cik": "0000320193",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 01:35:46 GMT"
+        ],
+        "fetch_seconds": 0.288,
+        "raw_sha256": "3cf0928a15c79b842e4ecef56a0ce30c5edfeda0c98643a046233fafba40dae7",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T01:35:46.126128+00:00"
+      },
+      {
+        "attempt": 6,
+        "byte_length": 185250,
+        "cik": "0000789019",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 01:35:56 GMT"
+        ],
+        "fetch_seconds": 0.315,
+        "raw_sha256": "2484a2a3b5677d892a1b25af573ce4eda7b6f449f5eda41bac6b3f106dc3139c",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000789019.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T01:35:56.178495+00:00"
+      },
+      {
+        "attempt": 9,
+        "byte_length": 163997,
+        "cik": "0000320193",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 01:45:56 GMT"
+        ],
+        "fetch_seconds": 0.335,
+        "raw_sha256": "3cf0928a15c79b842e4ecef56a0ce30c5edfeda0c98643a046233fafba40dae7",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T01:45:56.498148+00:00"
+      },
+      {
+        "attempt": 12,
+        "byte_length": 185250,
+        "cik": "0000789019",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 01:46:06 GMT"
+        ],
+        "fetch_seconds": 0.491,
+        "raw_sha256": "2484a2a3b5677d892a1b25af573ce4eda7b6f449f5eda41bac6b3f106dc3139c",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000789019.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T01:46:06.657846+00:00"
+      },
+      {
+        "attempt": 15,
+        "byte_length": 163997,
+        "cik": "0000320193",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 01:56:07 GMT"
+        ],
+        "fetch_seconds": 0.363,
+        "raw_sha256": "3cf0928a15c79b842e4ecef56a0ce30c5edfeda0c98643a046233fafba40dae7",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T01:56:07.027467+00:00"
+      },
+      {
+        "attempt": 18,
+        "byte_length": 185250,
+        "cik": "0000789019",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 01:56:17 GMT"
+        ],
+        "fetch_seconds": 0.334,
+        "raw_sha256": "2484a2a3b5677d892a1b25af573ce4eda7b6f449f5eda41bac6b3f106dc3139c",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000789019.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T01:56:17.012340+00:00"
+      },
+      {
+        "attempt": 21,
+        "byte_length": 163997,
+        "cik": "0000320193",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 02:06:17 GMT"
+        ],
+        "fetch_seconds": 0.448,
+        "raw_sha256": "3cf0928a15c79b842e4ecef56a0ce30c5edfeda0c98643a046233fafba40dae7",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T02:06:17.464395+00:00"
+      },
+      {
+        "attempt": 24,
+        "byte_length": 185250,
+        "cik": "0000789019",
+        "content_encoding": [
+          "gzip"
+        ],
+        "content_type": [
+          "application/json"
+        ],
+        "date": [
+          "Sun, 04 Oct 2026 02:06:27 GMT"
+        ],
+        "fetch_seconds": 0.242,
+        "raw_sha256": "2484a2a3b5677d892a1b25af573ce4eda7b6f449f5eda41bac6b3f106dc3139c",
+        "status": 200,
+        "url": "https://data.sec.gov/submissions/CIK0000789019.json",
+        "verdict": "CLOCK_VERIFIED",
+        "wall_at_receipt": "2026-10-04T02:06:27.301923+00:00"
+      }
+    ],
+    "authorization": "operator, in session, 2026-10-04: one bounded fixture trial; submissions endpoint only; CIKs 320193 (Apple Inc.) and 789019 (MICROSOFT CORP); at most 8 physical requests including failures; >= 600 s between requests of one CIK; 45 minutes; stop on 403/429; no continuous collection",
+    "ended": "2026-10-04T02:16:27Z, request budget spent, exit 0",
+    "outcomes": {
+      "RESPONSE": 8
+    },
+    "raw_storage": "LOCAL_RESTRICTED: raws, store and logs stay outside Git; only digests, URLs and counts here",
+    "requests": 8,
+    "started_utc": "2026-10-04T01:34:45Z",
+    "user_agent": "operator-declared organization and contact e-mail (kept outside Git)"
+  },
+  "verification": {
+    "api_journey": {
+      "detail_observations": 3,
+      "detail_revisions": 1,
+      "filings": 161,
+      "identity_equal": true,
+      "replay": true
+    },
+    "copy_unchanged_by_reads": true,
+    "integrity_check": "ok",
+    "reads": [
+      {
+        "H": 26,
+        "P": 5,
+        "T": "2026-10-04T01:37:29.178495+00:00",
+        "filings": 104,
+        "identity": "e4fe1f4a322d527fc6b1e218b871859a38ae6f9f325e7ec193498f24d8fe39e0",
+        "read_state": "EDGAR_RESOLVED",
+        "states": [
+          "PRESENT"
+        ]
+      },
+      {
+        "H": 26,
+        "P": 8,
+        "T": "2026-10-04T01:47:29.498148+00:00",
+        "filings": 161,
+        "identity": "e57825f55f0c64070dfce9a3f48ca08950229f140a1b9a09f1b703d262cbeec6",
+        "read_state": "EDGAR_RESOLVED",
+        "states": [
+          "PRESENT"
+        ]
+      },
+      {
+        "H": 26,
+        "P": 11,
+        "T": "2026-10-04T01:47:39.657846+00:00",
+        "filings": 161,
+        "identity": "5d3f3a00406d3d4a923a9b88c8affea97a2961e97c1378d896779c8e4f14c4c8",
+        "read_state": "EDGAR_RESOLVED",
+        "states": [
+          "PRESENT"
+        ]
+      },
+      {
+        "H": 26,
+        "P": 14,
+        "T": "2026-10-04T01:57:40.027467+00:00",
+        "filings": 161,
+        "identity": "755bd4d74af1ae640681beafe7b63d799e3a606e90313989d6c61be40ff6ff5d",
+        "read_state": "EDGAR_RESOLVED",
+        "states": [
+          "PRESENT"
+        ]
+      },
+      {
+        "H": 26,
+        "P": 17,
+        "T": "2026-10-04T01:57:50.012340+00:00",
+        "filings": 161,
+        "identity": "17e682363a178f750a1c1137ef957c374de2fea221addc21399f91afbdf5d5f1",
+        "read_state": "EDGAR_RESOLVED",
+        "states": [
+          "PRESENT"
+        ]
+      },
+      {
+        "H": 26,
+        "P": 20,
+        "T": "2026-10-04T02:07:50.464395+00:00",
+        "filings": 161,
+        "identity": "7232af3e9b240122bde0a4c042cfbfcd573721ce7cd45fee17d49bf45a03656c",
+        "read_state": "EDGAR_RESOLVED",
+        "states": [
+          "PRESENT"
+        ]
+      },
+      {
+        "H": 26,
+        "P": null,
+        "T": "2026-10-04T02:08:00.301923+00:00",
+        "filings": 0,
+        "identity": "6a60e7ecdd54304623055ab2ab883d9cbdde5bcc4de51a3f7c79eab8701ff46d",
+        "read_state": "EDGAR_CAUSAL_VISIBILITY_UNRESOLVED",
+        "states": []
+      },
+      {
+        "H": 26,
+        "P": null,
+        "T": "2026-10-04T03:06:27.301923+00:00",
+        "filings": 0,
+        "identity": "532d472f1cd335c2237ffcf122ac13439e81e7fed68986f798152281ee14a409",
+        "read_state": "EDGAR_CAUSAL_VISIBILITY_UNRESOLVED",
+        "states": []
+      }
+    ],
+    "reopen_identical": true,
+    "replay_identical": true,
+    "rows": {
+      "ATTEMPT_OUTCOME": 8,
+      "FILING_ABSENCE": 0,
+      "FILING_OBSERVATION": 644,
+      "FILING_REVISION": 161,
+      "PROCESSING_OUTCOME": 8,
+      "RESPONSE": 8,
+      "SOURCE_HEALTH": 8,
+      "TRANSPORT_INVOKED": 8
+    }
+  }
+}
