@@ -194,6 +194,9 @@ def build_routes(service: AppService):
             as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
         "/api/v1/sources/edgar/replay": lambda query: service.edgar.replay(
             as_of=_first(query, "as_of"), horizon=_first(query, "horizon")),
+        "/api/v1/events/timeline": lambda query: service.timeline.snapshot(
+            as_of=_first(query, "as_of"), fomc_horizon=_first(query, "fomc_horizon"),
+            edgar_horizon=_first(query, "edgar_horizon")),
     }, markets_detail, chart, backtest_sub, paper_sub
 
 

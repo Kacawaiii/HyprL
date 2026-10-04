@@ -123,6 +123,17 @@ def avail_of(table: list[Avail], seq: int) -> datetime | None:
     return None
 
 
+def revision_available_at(store: FomcStore, revision: str, table: list[Avail]) -> datetime | None:
+    """Server-attested availability of the transaction that first recorded this revision.
+
+    Revision rows are immutable and reused on A-B-A observations. A later observation of the same
+    content never changes its first availability; declared release fields are provenance only.
+    The caller supplies the causal table and the same bounded view used for its snapshot.
+    """
+    rows = store.rows("REVISION", key=revision)
+    return avail_of(table, rows[0].seq) if rows else None
+
+
 # ------------------------------------------------------------------ records by item ---------------
 def primary_responses(store: FomcStore, sid: str, *, upto: int | None = None, mode: str | None = None) -> list[Row]:
     return [r for r in store.select("RESPONSE", "sid", sid, upto=upto)

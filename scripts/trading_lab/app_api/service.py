@@ -40,7 +40,7 @@ from scripts.trading_lab.app_api.contracts import (
     AppApiError,
     NotFoundError,
 )
-from scripts.trading_lab.app_api.sources import EdgarViews, FomcViews
+from scripts.trading_lab.app_api.sources import EdgarViews, FomcViews, TimelineViews
 from scripts.trading_lab.app_api.pagination import (
     decode_cursor,
     encode_cursor,
@@ -101,6 +101,7 @@ class AppService:
         # other path: no request can point the API at another directory.
         self.fomc = FomcViews(fomc_store)
         self.edgar = EdgarViews(edgar_store)
+        self.timeline = TimelineViews(self.fomc, self.edgar)
         self._rows: dict[str, tuple[dict[str, str], ...]] = {}
         self._manifests: dict[str, dict] = {}
         # The research corpus lives outside the data root: it is gitignored

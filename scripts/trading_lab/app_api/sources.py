@@ -1,4 +1,4 @@
-"""Read-only views over an official event-source store (FOMC V1, spec revision 25).
+"""Read-only FOMC and EDGAR views and their timeline at one instant.
 
 The store is opened read-only for every request (sources.store: no byte written, every write refused),
 so the API can serve a closed archive or a copy of a running capture without touching it. Nothing here
@@ -23,6 +23,7 @@ from scripts.trading_lab.app_api.contracts import (
 from scripts.trading_lab.fomc import snapshot, spec, state
 from scripts.trading_lab.fomc.clock import iso
 from scripts.trading_lab.fomc.store import SCHEMA_VERSION, FomcStore
+from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.sources.store import StoreRejected
 
 _SID = re.compile(r"^[0-9a-f]{64}$")
@@ -319,3 +320,100 @@ class EdgarViews:
             return out
         finally:
             store.close()
+
+
+class TimelineViews:
+    """One instant across independent causal snapshots; unavailable sources remain explicit.
+
+    Each store has its own horizon and causal evidence. No cross-source watermark, source timestamp
+    or timeline ordering can make a source resolved. A failed source does not hide another's read.
+    """
+
+    def __init__(self, fomc: FomcViews, edgar: EdgarViews):
+        self._fomc, self._edgar = fomc, edgar
+
+    @staticmethod
+    def _fomc_rows(view, snap: dict) -> list[dict]:
+        table = state.availability(view, snap["H"])
+        at = view.view(snap["P"])
+        rows = []
+        for item in snap["items"]:
+            if item["state"] != "CURRENT_REVISION":
+                continue
+            available = state.revision_available_at(at, item["revision"], table)
+            if available is None:
+                raise ConflictError("the selected FOMC revision has no resolved availability")
+            normalized = item["normalized"]
+            rows.append({
+                "source": "fomc", "id": item["sid"], "title": normalized["title"], "form": None,
+                "state": item["state"], "revision": item["revision"], "content_identity": item["content_hash"],
+                "available_at": iso(available),
+                "provenance": {"declared_release_at": normalized.get("declared_release_at"),
+                               "declared_release_text": normalized.get("declared_release_text")},
+            })
+        return rows
+
+    @staticmethod
+    def _edgar_rows(_view, snap: dict) -> list[dict]:
+        rows = []
+        for filing in snap["filings"]:
+            if filing["first_available_at"] is None:
+                raise ConflictError("the selected EDGAR filing has no resolved availability")
+            rows.append({
+                "source": "edgar", "id": filing["accession_number"], "title": None,
+                "form": filing["fields"]["form"], "state": filing["state"], "revision": filing["revision"],
+                "content_identity": filing["content_sha256"], "available_at": filing["first_available_at"],
+                "provenance": {"acceptance_datetime_text": filing["provenance"]["acceptance_datetime_text"]},
+            })
+        return rows
+
+    @staticmethod
+    def _source(views, reader, project, T, horizon, collection, resolved) -> tuple[dict, list[dict]]:
+        missing = {"identity": None, "H": None, "P": None}
+        try:
+            store = views._open()
+        except NotFoundError as exc:
+            return {**missing, "read_state": "NOT_CONFIGURED", "reason": str(exc)}, []
+        except ConflictError as exc:
+            return {**missing, "read_state": "REJECTED", "reason": str(exc)}, []
+        try:
+            # Freeze the horizon before either the snapshot or its availability projection reads it.
+            H = _horizon(horizon, store)
+            view = store.view(H)
+            try:
+                snap = reader(view, T, H)
+                source = {key: snap.get(key) for key in ("identity", "H", "P", "read_state")}
+                if snap["read_state"] != resolved:
+                    return source, []
+                if len(snap[collection]) > MAX_SOURCE_ITEMS:
+                    raise AppApiError(f"{len(snap[collection])} {collection} exceed the bound {MAX_SOURCE_ITEMS}")
+                return source, project(view, snap)
+            except (snapshot.SnapshotFailed, edgar_snapshot.SnapshotFailed, ConflictError) as exc:
+                return {**missing, "H": H, "read_state": "REFUSED", "reason": str(exc)}, []
+        finally:
+            store.close()
+
+    def snapshot(self, *, as_of=None, fomc_horizon=None, edgar_horizon=None) -> dict:
+        T = _as_of(as_of)
+        # Even when a source cannot open, malformed horizon syntax is a bad request, not a read state.
+        for horizon in (fomc_horizon, edgar_horizon):
+            if horizon not in (None, ""):
+                try:
+                    value = int(str(horizon))
+                except ValueError as exc:
+                    raise AppApiError(f"horizon must be an integer commit_seq: {horizon!r}") from exc
+                if value < 0:
+                    raise AppApiError("horizon must be a nonnegative commit_seq")
+        fomc, fomc_rows = self._source(self._fomc, snapshot.events_as_of, self._fomc_rows, T, fomc_horizon,
+                                      "items", "FOMC_RESOLVED")
+        edgar, edgar_rows = self._source(self._edgar, edgar_snapshot.filings_as_of, self._edgar_rows, T, edgar_horizon,
+                                        "filings", "EDGAR_RESOLVED")
+        rows = fomc_rows + edgar_rows
+        if len(rows) > MAX_SOURCE_ITEMS:
+            raise AppApiError(f"{len(rows)} timeline rows exceed the bound {MAX_SOURCE_ITEMS}")
+        rows.sort(key=lambda row: (_as_of(row["available_at"]), row["source"], row["id"]))
+        sources = {"fomc": fomc, "edgar": edgar}
+        binding = {"T": iso(T), "sources": {name: {key: read[key] for key in ("identity", "read_state")}
+                                           for name, read in sources.items()}, "rows": rows}
+        return {"api_version": APP_API_VERSION, "read_only": True, "T": iso(T), "sources": sources,
+                "rows": rows, "identity": sha256_canonical(binding)}
