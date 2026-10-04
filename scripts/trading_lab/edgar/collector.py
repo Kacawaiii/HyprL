@@ -181,27 +181,40 @@ class EdgarCollector:
         return rows[0].body["ciks"] if rows else []
 
     # ---- one attempt ------------------------------------------------------------------------------
-    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None) -> dict:
+    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None, request_allowed=None) -> dict:
         cik = cik10(cik)
         if cik not in self.watchlist():
             raise Rejected(f"CIK {cik} is not on the watchlist")
         if self.paused_until is not None and self.clock.mono() < self.paused_until:
             return {"status": "PAUSED", "until_mono": self.paused_until}
-        grant = self.limiter.grant(check=before_request)
+
+        def check_request():
+            if before_request is not None:
+                before_request()
+            if request_allowed is not None and not request_allowed():
+                raise RequestCancelled("the run stopped before the physical request")
+
+        # Re-enter the storage/authorization gate during waits, even if grants are suspended.
+        while True:
+            check_request()
+            grant = self.limiter.try_grant()
+            if grant is not None:
+                break
+            self.clock.sleep(min(1.0, max(0.1, self.limiter.earliest(self.clock.mono()) - self.clock.mono())))
+        check_request()
         url = submissions_url(cik)
         attempt = self.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {
             "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant})])
-        if before_request is not None:
-            try:
-                before_request()  # the durable attempt may have waited past expiry or a stop signal
-            except RequestCancelled as exc:
-                reason = str(exc)
-                self.store.append("ATTEMPT_OUTCOME", [
-                    ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "INTERRUPTED",
-                                                      "status": None, "reason": reason}),
-                    health_row(cik, attempt=attempt, record=None, result_state="INTERRUPTED",
-                               reason=reason, check_at=self.store.wall_iso())])
-                return {"status": "INTERRUPTED", "attempt": attempt, "reason": reason}
+        try:
+            check_request()  # the durable attempt may have waited past expiry, stop or a storage incident
+        except RequestCancelled as exc:
+            reason = str(exc)
+            self.store.append("ATTEMPT_OUTCOME", [
+                ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "INTERRUPTED",
+                                                  "status": None, "reason": reason}),
+                health_row(cik, attempt=attempt, record=None, result_state="INTERRUPTED",
+                           reason=reason, check_at=self.store.wall_iso())])
+            return {"status": "INTERRUPTED", "attempt": attempt, "reason": reason}
         result = self.fetcher.fetch(url, started=grant)
         fetch_seconds = round(self.clock.mono() - grant, 3)  # grant to the end of the fetch (deadline evidence)
         header_lines = [[name, value] for name, value in (result.headers or [])]
