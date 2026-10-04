@@ -11,6 +11,8 @@ authorizes no capture (`authorizes_capture: false`) and no continuous collection
 python -m pytest tests/crypto/test_edgar_slice.py tests/crypto/test_app_api_edgar.py   # 39 + 3 tests
 python -m scripts.trading_lab.edgar.demo                  # new 8-K, correction, 8-K/A, absence, reappearance, replay
 python -m scripts.trading_lab.edgar.service --store DIR --authorization FILE --check   # no network, no write
+python -m scripts.trading_lab.edgar.closure close --store DIR --copy NEW_DIR --report FILE --authorization FILE
+python -m pytest tests/crypto/test_edgar_closure.py         # synthetic operational supervision and closure
 python -m scripts.trading_lab.app_api.server --edgar-store DIR   # read-only API + cockpit Events page
 ```
 
@@ -57,6 +59,9 @@ none inferred). A real run must first settle these with a fixture.
 | store opening rule, read-only opening (FOMC: STORE_OPENING_RULE) | `sources.store.admit_existing`, `RecordStore(read_only=True)`, `edgar-store-v1` | EDGAR13 |
 | restart: an attempt of an earlier epoch without outcome is INTERRUPTED, a saved record without processing is processed (FOMC: reconciliation) | `collector.reconcile` | restart test (replay identical, INTERRUPTED health re-derived) |
 | one 30 s deadline over connect, request, headers and body | `transport.HttpsFetcher.fetch` | deadline test |
+| a store operation stalled for 10 s suspends new requests; ended incidents commit before requests resume; stop/expiry are rechecked after a slow invocation commit | `service.StorageWatch`, `collector.poll(request_allowed=...)` | `test_edgar_closure.py`: blocked raw write and invocation commit, expiry/stop while blocked, one durable incident |
+| stop confirmed, owner excluded during backup, every raw verified, exact causal reads identical after reopen/replay, health replay, copy unchanged; integrity and authorized completion separate | `closure.close/consistent_copy/verify_copy/run_completion` | `test_edgar_closure.py`: budget/expiry, interrupted run, corrupt raw, altered health, recorded identity, owner/stop refusal, WAL backup |
+| persistent user timer closure at expiry, rounded up to the second; template generation never installs or starts units | `closure.closure_units/write_closure_units` | `test_edgar_closure.py`: whole/fractional seconds, templates written with no systemctl call |
 | no request without an operator authorization (EDGAR spec, CIKs, budget <= 50, expiry, declared User-Agent); stops at budget, expiry or signal | `service.load_authorization/check/run` | 12 refusal cases (nothing sent, no store created), budget and expiry |
 | read-only API and cockpit journey: status, read at (as_of, horizon), filing detail (revisions, observations, absences, provenance), replay | `app_api.sources.EdgarViews`, `/api/v1/sources/edgar[/snapshot|/replay|/filings/{accession}]`, `apps/web/src/pages/EdgarPanel.tsx` | `test_app_api_edgar.py`, `apps/web/src/test/edgar.test.tsx` |
 
@@ -117,15 +122,66 @@ opening, CAUSAL_AVAILABILITY_V3 and its prefix, strict HTTP `Date`/`Age` clock e
 and the rolling limiter. FOMC binds them to its spec unchanged (its 198 tests pass); EDGAR binds them to its
 own spec, schema and unique kinds.
 
+## Bounded-run supervision and offline closure
+
+The runner remains single-threaded for capture. A separate monitor reads the shared store's operation
+markers without its lock, including when the runner's own commit or raw write is stalled. At 10 s it
+suspends the limiter and emits a storage alert. Once writes resume, the runner commits a
+`STORAGE_INCIDENT` before opening the request gate again. The gate rechecks stop and expiry immediately
+before transport, including after an invocation commit that blocked. A reserved invocation that never
+sends is recorded as `INTERRUPTED` and remains counted conservatively.
+
+New operational `RUN_STARTED`/`RUN_ENDED` rows record public authorization bounds, an authorization
+digest and the stop reason; existing capture payloads, schema and spec revision stay unchanged. The
+declared contact is never persisted in these rows. Reusing the same authorization after restarting
+keeps its consumed request budget. Closure treats multiple owner epochs as interrupted evidence for
+the original run.
+
+`closure.close` confirms an explicitly named capture process or user unit has stopped, takes the
+existing owner lock, and holds it through a consistent SQLite backup from a read-only connection and
+the immutable raw copy. A published read-only closure directory without an owner file is also
+admissible: the directory cannot admit a collector that needs to create that file. A writable store
+without its owner file is refused. No source file is created by closure. The target must be new and
+separate from the source, and the JSON report must be outside the source.
+
+Verification opens only the copy read-only: `integrity_check`, every RESPONSE raw's digest and length,
+reads at server attesting instants plus the frozen causal bound, a read at now, reopening with identical
+snapshots, verified replay at each exact `(T, H)`, full-horizon replay including health and the unresolved
+tail, UV1–UV6 qualification, and a before/after digest of every copied file. Optional recorded reads
+(`--snapshots JSONL`, entries with `T`, `H`, `identity`) must match their recorded identities too.
+Rejected source listings remain valid evidence if their rejection replays; inability to qualify such a
+listing is explicit. Qualification observations never relax a UV rule.
+
+The JSON report separates `integrity: VALID/INVALID` from `run: ACCOMPLISHED/NOT_ACCOMPLISHED`. A stopped,
+throttled or interrupted run can have VALID integrity. Accomplishment requires the authorized budget
+or a witnessed expiry, with compatible scope and one owner epoch; closing an already interrupted run
+after its expiry proves no duration. Legacy stores can prove a spent budget using `--authorization`
+because they predate durable run bounds. Without supplied or durable bounds, completion stays
+NOT_ACCOMPLISHED. Missing stop/owner/copy verification stays INVALID, with the failed check recorded.
+
+Generate a persistent closure timer and one-shot service into a new template directory with:
+
+```
+python -m scripts.trading_lab.edgar.closure units --unit edgar-trial --code CODE_DIR --run RUN_DIR \
+  --authorization AUTHORIZATION_FILE --close-at OFFSET_AWARE_EXPIRY --out NEW_TEMPLATE_DIR
+```
+
+The templates close `RUN_DIR/store` into `RUN_DIR/closure-copy` and write
+`RUN_DIR/closure-report.json`. `Persistent=true` covers a missed expiry; `OnCalendar` is UTC, rounded
+up to the next second when necessary. Template generation performs no installation or systemd action.
+The operator must install them before an authorized run. Tests only write templates and mock capture
+unit stopping; no units are installed.
+
 ## Remaining limits
 
 - One real trial only (2 CIKs, 8 responses, 33 minutes): UV2 semantics, UV3, UV4 and the universality of
   UV6 stay unknown, and nothing here covers a new 8-K appearing during a capture, a correction, an absence
   or a failure against the real source (those are proved offline only).
-- The runner is single-threaded and step-driven: no concurrent fetches, no storage-incident detection and no
-  persistent supervisor/closure (the FOMC service has them); it is bounded instead by its authorization's
-  request budget and expiry.
+- The runner is single-threaded and step-driven, with storage supervision and persistent closure
+  templates. An operation that never resumes cannot durably record its incident; a still-held owner
+  lock prevents closure verification. No real storage fault or timer/reboot deployment has been
+  exercised; those behaviors are verified synthetically only.
 - Absence detection depends on the documented window (UV3); a filing removed and replaced by the SEC with
   the same accession would show as a correction, not as a removal.
-- Any further capture needs a new operator authorization (budget, expiry, declared contact); continuous
-  collection would also need the supervision the FOMC service has.
+- Any further capture needs a new operator authorization (budget, expiry, declared contact).
+  Continuous collection remains outside the authorization of this bounded runner.
