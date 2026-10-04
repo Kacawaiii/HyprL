@@ -1,5 +1,7 @@
 # SEC EDGAR V1 — slice and first real fixture
 
+> Entry point for both official sources (architecture, guarantees, runbooks): `docs/OFFICIAL_EVENT_SOURCES.md`.
+
 Implements `docs/artifacts/edgar_capture_spec_v1.json` **revision 1**
 (`98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce`; pinned in
 `scripts/trading_lab/edgar/spec.py`, checked by `verify_spec_binding`). The JSON is authoritative. This is an

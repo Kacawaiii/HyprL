@@ -1,5 +1,7 @@
 # FOMC V1 — offline integrated slice
 
+> Entry point for both official sources (architecture, guarantees, runbooks): `docs/OFFICIAL_EVENT_SOURCES.md`.
+
 Implements `docs/artifacts/fomc_capture_spec_v1.json` **revision 25**
 (`b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece`, superseding revision 24
 `235e474cfc9a50daa00a0835d513af12d7a5e7485af26775b589d573ce6fdb36`; pinned in
