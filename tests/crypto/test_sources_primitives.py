@@ -46,6 +46,20 @@ def test_a_read_only_store_writes_nothing_and_refuses_every_write(tmp_path):
     assert _fingerprint(tmp_path / "s") == before  # no -wal, no -shm, no meta row, no raw
 
 
+def test_store_paths_are_encoded_before_use_as_sqlite_uris(tmp_path):
+    root = tmp_path / "store?#% space"
+    digest = _closed_store(root)
+    before = _fingerprint(root)
+    reader = FomcStore(root, wall_clock=None, read_only=True)
+    try:
+        assert reader.horizon() == 1 and reader.read_raw(digest) == b"bytes"
+    finally:
+        reader.close()
+    assert _fingerprint(root) == before
+    writer = FomcStore(root, wall_clock=lambda: WALL)
+    writer.close()
+
+
 def test_read_only_rejects_a_missing_or_incompatible_store(tmp_path):
     with pytest.raises(StoreRejected):
         FomcStore(tmp_path / "none", wall_clock=None, read_only=True)

@@ -42,7 +42,7 @@ def admit_existing(db: Path, *, schema_version: str, spec_hash: str) -> None:
     wal = db.with_name(db.name + "-wal")
     # read-only; without WAL frames the file alone is the store, so `immutable` creates no side file
     immutable = "" if wal.exists() and wal.stat().st_size else "&immutable=1"
-    conn = sqlite3.connect(f"file:{db}?mode=ro{immutable}", uri=True)
+    conn = sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro{immutable}", uri=True)
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         if not tables:
@@ -111,7 +111,7 @@ class RecordStore:
         if read_only:
             wal = db.with_name(db.name + "-wal")
             immutable = "" if wal.exists() else "&immutable=1"
-            self._conn = sqlite3.connect(f"file:{db}?mode=ro{immutable}", uri=True, check_same_thread=False)
+            self._conn = sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro{immutable}", uri=True, check_same_thread=False)
             tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             if not {"txn", "rec", "meta"} <= tables:
                 self._conn.close()
