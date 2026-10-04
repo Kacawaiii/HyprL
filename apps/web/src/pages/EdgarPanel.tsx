@@ -74,8 +74,9 @@ function EdgarSnapshot({ read }: { read: Read }) {
   const [verify, setVerify] = useState(false);
   const snap = useQuery(`edgar-snapshot|${readKey(read)}`, (signal) =>
     apiClient.getEdgarSnapshot(read.asOf, read.horizon, signal));
-  const replay = useQuery(verify ? `edgar-replay|${readKey(read)}` : null, (signal) =>
-    apiClient.getEdgarReplay(read.asOf, read.horizon, signal));
+  const snapshotRead = { ...read, horizon: snap.data?.snapshot.H ?? read.horizon };
+  const replay = useQuery(verify ? `edgar-replay|${readKey(snapshotRead)}` : null, (signal) =>
+    apiClient.getEdgarReplay(snapshotRead.asOf, snapshotRead.horizon, signal));
   useEffect(() => {
     setSelected(null);
     setVerify(false);
@@ -159,7 +160,7 @@ function EdgarSnapshot({ read }: { read: Read }) {
         )}
       </section>
 
-      {selected && <FilingDetail key={selected} accession={selected} read={read} />}
+      {selected && <FilingDetail key={selected} accession={selected} read={snapshotRead} />}
     </>
   );
 }

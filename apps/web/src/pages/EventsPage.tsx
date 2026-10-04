@@ -98,8 +98,9 @@ function Snapshot({ read }: { read: Read }) {
   const [verify, setVerify] = useState(false);
   const snap = useQuery(`fomc-snapshot|${readKey(read)}`, (signal) =>
     apiClient.getFomcSnapshot(read.asOf, read.horizon, signal));
-  const replay = useQuery(verify ? `fomc-replay|${readKey(read)}` : null, (signal) =>
-    apiClient.getFomcReplay(read.asOf, read.horizon, signal));
+  const snapshotRead = { ...read, horizon: snap.data?.snapshot.H ?? read.horizon };
+  const replay = useQuery(verify ? `fomc-replay|${readKey(snapshotRead)}` : null, (signal) =>
+    apiClient.getFomcReplay(snapshotRead.asOf, snapshotRead.horizon, signal));
   useEffect(() => {
     setSelected(null);
     setVerify(false);
@@ -186,7 +187,7 @@ function Snapshot({ read }: { read: Read }) {
         )}
       </section>
 
-      {selected && <ItemDetail key={selected} sid={selected} read={read} />}
+      {selected && <ItemDetail key={selected} sid={selected} read={snapshotRead} />}
     </>
   );
 }

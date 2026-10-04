@@ -97,6 +97,8 @@ describe('SEC EDGAR journey', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'SEC EDGAR filings' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
     expect(await screen.findByText('Replay identical')).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/edgar/replay?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}`);
   });
 
   it('hides the previous filings while a different instant is loading', async () => {

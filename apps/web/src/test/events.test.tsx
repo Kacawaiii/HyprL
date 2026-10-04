@@ -126,6 +126,8 @@ describe('FOMC events journey', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
     expect(await screen.findByText('Replay identical')).toBeInTheDocument();
     expect(fetch.mock.calls.some(([path]) => String(path).startsWith('/api/v1/sources/fomc/replay?as_of='))).toBe(true);
+    expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/fomc/replay?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}`);
   });
 
   it('sends a chosen read and refuses a malformed horizon without a request', async () => {
