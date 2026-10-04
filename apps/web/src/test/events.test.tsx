@@ -96,6 +96,49 @@ beforeEach(() => invalidate());
 afterEach(() => vi.unstubAllGlobals());
 
 describe('FOMC events journey', () => {
+  it('keeps verified replay pinned while the next snapshot page is loading', async () => {
+    const fetch = renderEvents({
+      '/api/v1/sources/fomc/snapshot': { ...snapshot,
+        pagination: { limit: 200, totals: { items: 201 }, next_cursor: 'held-page' } },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
+    await screen.findByText('Replay identical');
+    let finish: ((response: Response) => void) | undefined;
+    fetch.mockImplementation((input: string) => {
+      if (String(input).includes('/replay')) return jsonResponse(replay);
+      return new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Reading the store…')).toBeInTheDocument();
+    const reads = fetch.mock.calls.map(([path]) => String(path)).filter((path) => path.includes('/replay'));
+    expect(reads).toEqual([`/api/v1/sources/fomc/replay?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}`]);
+    finish?.(await jsonResponse({ ...snapshot,
+      pagination: { limit: 200, totals: { items: 201 }, next_cursor: null } }));
+    expect(await screen.findByText('Replay identical')).toBeInTheDocument();
+  });
+
+  it('requests bounded pages on demand and pins subsequent reads to the displayed horizon', async () => {
+    const fetch = renderEvents({
+      '/api/v1/sources/fomc/snapshot': { ...snapshot,
+        pagination: { limit: 200, totals: { items: 201 }, next_cursor: 'opaque-source-page' } },
+    });
+    await screen.findByTestId('snapshot-identity');
+    expect(fetch.mock.calls.filter(([path]) => String(path).includes('/snapshot'))).toHaveLength(1);
+    fetch.mockImplementation((input: string) => {
+      const url = new URL(String(input), 'http://localhost');
+      const second = url.searchParams.has('cursor');
+      return jsonResponse({ ...snapshot, items: second ? [{ ...snapshot.items[0], title: 'Later page statement' }] : snapshot.items,
+        pagination: { limit: 200, totals: { items: 201 }, next_cursor: second ? null : 'opaque-source-page' } });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Later page statement')).toBeInTheDocument();
+    expect(screen.queryByText('Federal Reserve issues FOMC statement')).not.toBeInTheDocument();
+    expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}&limit=200&cursor=opaque-source-page`);
+    await userEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    expect(await screen.findByText('Federal Reserve issues FOMC statement')).toBeInTheDocument();
+  });
+
   it('reads the store at the server-attested instant and shows the snapshot verbatim', async () => {
     const fetch = renderEvents();
     expect(await screen.findByTestId('snapshot-identity')).toHaveTextContent(IDENTITY);
@@ -108,7 +151,7 @@ describe('FOMC events journey', () => {
     expect(within(items).getByText('For release at 2:00 p.m. EDT')).toBeInTheDocument();
     expect(within(items).getByText('CANONICAL')).toBeInTheDocument();
     const read = fetch.mock.calls.map(([path]) => String(path)).find((path) => path.includes('/snapshot'));
-    expect(read).toBe(`/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}`);
+    expect(read).toBe(`/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&limit=200`);
   });
 
   it('opens an item with its revisions and observation provenance', async () => {
@@ -143,7 +186,7 @@ describe('FOMC events journey', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Read' }));
     await waitFor(() => expect(fetch.mock.calls.length).toBeGreaterThan(before));
     expect(fetch.mock.calls.map(([path]) => String(path))).toContain(
-      `/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&horizon=300`);
+      `/api/v1/sources/fomc/snapshot?as_of=${encodeURIComponent(AS_OF)}&horizon=300&limit=200`);
   });
 
   it('shows an unresolved read as nothing known, not a guess', async () => {

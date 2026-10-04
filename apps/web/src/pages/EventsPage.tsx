@@ -1,3 +1,6 @@
+import { SourceTimeline } from '../components/SourceTimeline';
+import { SourcePager } from '../components/SourcePager';
+import { useSourcePage } from '../state/useSourcePage';
 /** Official event sources: what the FOMC store knew at an instant.
  *
  *  Every value here is a durable record or a derivation the Python reader already performs
@@ -40,8 +43,8 @@ function StoreCard({ status }: { status: FomcSourceStatus }) {
 }
 
 function ItemDetail({ sid, read }: { sid: string; read: Read }) {
-  const detail = useQuery(`fomc-item|${sid}|${readKey(read)}`, (signal) =>
-    apiClient.getFomcItem(sid, read.asOf, read.horizon, signal));
+  const detail = useSourcePage((signal, page, horizon) =>
+    apiClient.getFomcItem(sid, read.asOf, horizon, signal, page), read.horizon);
   if (detail.status === 'loading') return <LoadingState label="Loading item" />;
   if (detail.status === 'error' && detail.error) return <ErrorState error={detail.error} onRetry={detail.refetch} />;
   const data = detail.data;
@@ -89,6 +92,7 @@ function ItemDetail({ sid, read }: { sid: string; read: Read }) {
           </tbody>
         </table>
       </div>
+      <SourcePager {...detail} />
     </section>
   );
 }
@@ -96,9 +100,9 @@ function ItemDetail({ sid, read }: { sid: string; read: Read }) {
 function Snapshot({ read }: { read: Read }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [verify, setVerify] = useState(false);
-  const snap = useQuery(`fomc-snapshot|${readKey(read)}`, (signal) =>
-    apiClient.getFomcSnapshot(read.asOf, read.horizon, signal));
-  const snapshotRead = { ...read, horizon: snap.data?.snapshot.H ?? read.horizon };
+  const snap = useSourcePage((signal, page, horizon) =>
+    apiClient.getFomcSnapshot(read.asOf, horizon, signal, page), read.horizon);
+  const snapshotRead = { ...read, horizon: snap.horizon ?? read.horizon };
   const replay = useQuery(verify ? `fomc-replay|${readKey(snapshotRead)}` : null, (signal) =>
     apiClient.getFomcReplay(snapshotRead.asOf, snapshotRead.horizon, signal));
   useEffect(() => {
@@ -158,7 +162,7 @@ function Snapshot({ read }: { read: Read }) {
       )}
 
       <section className="card" aria-label="Items">
-        <h2 className="card-title">Items as of T ({data.items.length})</h2>
+        <h2 className="card-title">Items as of T ({data.pagination?.totals.items ?? data.items.length})</h2>
         {data.items.length === 0 ? (
           <div className="state">{resolved ? 'No item was known at this instant.' : 'The read is unresolved: nothing is shown as of this instant.'}</div>
         ) : (
@@ -186,6 +190,9 @@ function Snapshot({ read }: { read: Read }) {
           </div>
         )}
       </section>
+
+      <SourcePager {...snap} />
+      <SourceTimeline source="fomc" read={snapshotRead} />
 
       {selected && <ItemDetail key={selected} sid={selected} read={snapshotRead} />}
     </>

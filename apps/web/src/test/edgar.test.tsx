@@ -71,6 +71,31 @@ async function openEdgar() {
 }
 
 describe('SEC EDGAR journey', () => {
+  it('pages filing observations and loads the timeline only when opened', async () => {
+    await openEdgar();
+    await screen.findByTestId('edgar-identity');
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname.endsWith('/timeline')) return respond({ snapshot: header,
+        rows: [{ committed_seq: 5, kind: 'FILING_OBSERVATION', key: 'synthetic', body: { record: 4 } }],
+        pagination: { limit: 200, totals: { rows: 1 }, next_cursor: null } });
+      return respond({ ...detail, observations: [{ ...detail.observations[0], record: url.searchParams.has('cursor') ? 77 : 4 }],
+        pagination: { limit: 200, totals: { observations: 201, revisions: 2, absences: 1 },
+          next_cursor: url.searchParams.has('cursor') ? null : 'detail-page' } });
+    }));
+    await userEvent.click(screen.getByRole('button', { name: `Open filing ${ACC}` }));
+    const panel = await screen.findByRole('region', { name: 'Filing detail' });
+    await userEvent.click(within(panel).getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('77')).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/edgar/filings/${ACC}?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}&limit=200&cursor=detail-page`);
+    expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path).includes('/timeline'))).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Show timeline' }));
+    expect(await screen.findByText('FILING_OBSERVATION')).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.map(([path]) => String(path))).toContain(
+      `/api/v1/sources/edgar/timeline?as_of=${encodeURIComponent(AS_OF)}&horizon=${header.H}&limit=200`);
+  });
+
   it('reads filings at the server-attested instant with acceptance time as provenance only', async () => {
     await openEdgar();
     expect(await screen.findByTestId('edgar-identity')).toHaveTextContent(IDENTITY);

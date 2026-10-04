@@ -1,3 +1,5 @@
+import type { SourceTimeline } from './types';
+import type { SourcePageOptions } from '../state/useSourcePage';
 /**
  * The single door to the backend.
  *
@@ -275,26 +277,29 @@ export const apiClient = {
     request<PortfolioAttribution>(
       `/api/v1/portfolio/backtests/${encodeURIComponent(version)}/attribution`, signal),
   /** The FOMC event store, read-only: status, a read at (as_of, horizon), an item, a verified replay. */
+  getSourceTimeline: (source: 'fomc' | 'edgar', asOf: string, horizon?: number,
+    signal?: AbortSignal, page?: SourcePageOptions) => request<SourceTimeline>(
+      `/api/v1/sources/${source}/timeline${query({ as_of: asOf, horizon, ...page })}`, signal),
   getFomcStatus: (signal?: AbortSignal) =>
     request<FomcSourceStatus>('/api/v1/sources/fomc', signal),
-  getFomcSnapshot: (asOf: string, horizon?: number, signal?: AbortSignal) =>
+  getFomcSnapshot: (asOf: string, horizon?: number, signal?: AbortSignal, page?: SourcePageOptions) =>
     request<FomcSnapshotView>(
-      `/api/v1/sources/fomc/snapshot${query({ as_of: asOf, horizon })}`, signal),
-  getFomcItem: (sid: string, asOf: string, horizon?: number, signal?: AbortSignal) =>
+      `/api/v1/sources/fomc/snapshot${query({ as_of: asOf, horizon, ...page })}`, signal),
+  getFomcItem: (sid: string, asOf: string, horizon?: number, signal?: AbortSignal, page?: SourcePageOptions) =>
     request<FomcItemDetail>(
-      `/api/v1/sources/fomc/items/${encodeURIComponent(sid)}${query({ as_of: asOf, horizon })}`, signal),
+      `/api/v1/sources/fomc/items/${encodeURIComponent(sid)}${query({ as_of: asOf, horizon, ...page })}`, signal),
   getFomcReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
     request<FomcReplay>(
       `/api/v1/sources/fomc/replay${query({ as_of: asOf, horizon })}`, signal),
   /** The SEC EDGAR store (offline slice), read-only: status, a read, a filing, a verified replay. */
   getEdgarStatus: (signal?: AbortSignal) =>
     request<EdgarSourceStatus>('/api/v1/sources/edgar', signal),
-  getEdgarSnapshot: (asOf: string, horizon?: number, signal?: AbortSignal) =>
+  getEdgarSnapshot: (asOf: string, horizon?: number, signal?: AbortSignal, page?: SourcePageOptions) =>
     request<EdgarSnapshotView>(
-      `/api/v1/sources/edgar/snapshot${query({ as_of: asOf, horizon })}`, signal),
-  getEdgarFiling: (accession: string, asOf: string, horizon?: number, signal?: AbortSignal) =>
+      `/api/v1/sources/edgar/snapshot${query({ as_of: asOf, horizon, ...page })}`, signal),
+  getEdgarFiling: (accession: string, asOf: string, horizon?: number, signal?: AbortSignal, page?: SourcePageOptions) =>
     request<EdgarFilingDetail>(
-      `/api/v1/sources/edgar/filings/${encodeURIComponent(accession)}${query({ as_of: asOf, horizon })}`, signal),
+      `/api/v1/sources/edgar/filings/${encodeURIComponent(accession)}${query({ as_of: asOf, horizon, ...page })}`, signal),
   getEdgarReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
     request<EdgarReplay>(
       `/api/v1/sources/edgar/replay${query({ as_of: asOf, horizon })}`, signal),

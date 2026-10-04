@@ -1106,6 +1106,7 @@ export interface FomcItemSummary {
 }
 
 export interface FomcSnapshotView extends FomcSourceBase {
+  pagination?: SourcePagination;
   snapshot: FomcSnapshotHeader;
   discovery: { state: string; cycle_id?: number | null; B?: number | null } | null;
   health: Record<string, FomcHealthSurface> | null;
@@ -1139,6 +1140,7 @@ export interface FomcObservation {
 }
 
 export interface FomcItemDetail extends FomcSourceBase {
+  pagination?: SourcePagination;
   snapshot: FomcSnapshotHeader;
   item: (Record<string, unknown> & { sid: string; state: string }) | null;
   revisions: FomcRevision[];
@@ -1203,6 +1205,7 @@ export interface EdgarFilingSummary {
 }
 
 export interface EdgarSnapshotView extends EdgarSourceBase {
+  pagination?: SourcePagination;
   snapshot: FomcSnapshotHeader;
   watchlist: string[] | null;
   health: Record<string, EdgarHealth> | null;
@@ -1210,6 +1213,7 @@ export interface EdgarSnapshotView extends EdgarSourceBase {
 }
 
 export interface EdgarFilingDetail extends EdgarSourceBase {
+  pagination?: SourcePagination;
   snapshot: FomcSnapshotHeader;
   filing: (Record<string, unknown> & { accession_number: string; state: string }) | null;
   revisions: { revision: string; committed_seq: number; content_sha256: string; first_record: number;
@@ -1225,4 +1229,17 @@ export interface EdgarReplay extends EdgarSourceBase {
   replay_identity: string | null;
   identical: boolean;
   error: string | null;
+}
+
+/** Optional on older source API responses. Totals describe the complete frozen read. */
+export interface SourcePagination {
+  limit: number;
+  totals: Record<string, number>;
+  next_cursor: string | null;
+}
+
+export interface SourceTimeline {
+  snapshot: FomcSnapshotHeader;
+  rows: { committed_seq: number; kind: string; key: string | null; body: Record<string, unknown> }[];
+  pagination?: SourcePagination;
 }
