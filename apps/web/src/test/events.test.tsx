@@ -155,6 +155,34 @@ describe('FOMC events journey', () => {
     expect(screen.getByText(/nothing is shown as of this instant/)).toBeInTheDocument();
   });
 
+  it('hides the previous snapshot while a different instant is loading', async () => {
+    const fetch = renderEvents();
+    await screen.findByTestId('snapshot-identity');
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    const asOf = screen.getByLabelText('As of');
+    await userEvent.clear(asOf);
+    await userEvent.type(asOf, '2026-01-01T00:00:00+00:00');
+    await userEvent.click(screen.getByRole('button', { name: 'Read' }));
+    expect(screen.getByText(/Reading the store/)).toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-identity')).not.toBeInTheDocument();
+    expect(screen.queryByText('Federal Reserve issues FOMC statement')).not.toBeInTheDocument();
+  });
+
+  it('hides the previous item while another item is loading', async () => {
+    const secondSid = 'a'.repeat(64);
+    const fetch = renderEvents({
+      '/api/v1/sources/fomc/snapshot': {
+        ...snapshot, items: [...snapshot.items, { ...snapshot.items[0], sid: secondSid }],
+      },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: `Open item ${SID.slice(0, 12)}` }));
+    await screen.findByRole('region', { name: 'Item detail' });
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    await userEvent.click(screen.getByRole('button', { name: `Open item ${secondSid.slice(0, 12)}` }));
+    expect(screen.getByText(/Loading item/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Item detail' })).not.toBeInTheDocument();
+  });
+
   it('says plainly when no store is configured', async () => {
     renderEvents({ '/api/v1/sources/fomc': { ...base, status: 'NOT_CONFIGURED', store: null } });
     expect(await screen.findByText('No FOMC store configured')).toBeInTheDocument();

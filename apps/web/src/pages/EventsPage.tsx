@@ -186,7 +186,7 @@ function Snapshot({ read }: { read: Read }) {
         )}
       </section>
 
-      {selected && <ItemDetail sid={selected} read={read} />}
+      {selected && <ItemDetail key={selected} sid={selected} read={read} />}
     </>
   );
 }
@@ -224,7 +224,7 @@ function FomcPanel() {
     <div className="stack">
       <StoreCard status={data} />
       <ReadForm initialAsOf={suggested ?? ''} onRead={setRead} />
-      {read && <Snapshot read={read} />}
+      {read && <Snapshot key={readKey(read)} read={read} />}
     </div>
   );
 }

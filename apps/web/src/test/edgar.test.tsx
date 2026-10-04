@@ -98,4 +98,17 @@ describe('SEC EDGAR journey', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
     expect(await screen.findByText('Replay identical')).toBeInTheDocument();
   });
+
+  it('hides the previous filings while a different instant is loading', async () => {
+    await openEdgar();
+    await screen.findByTestId('edgar-identity');
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    const asOf = screen.getByLabelText('As of');
+    await userEvent.clear(asOf);
+    await userEvent.type(asOf, '2026-01-01T00:00:00+00:00');
+    await userEvent.click(screen.getByRole('button', { name: 'Read' }));
+    expect(screen.getByText(/Reading the store/)).toBeInTheDocument();
+    expect(screen.queryByTestId('edgar-identity')).not.toBeInTheDocument();
+    expect(screen.queryByText(ACC)).not.toBeInTheDocument();
+  });
 });

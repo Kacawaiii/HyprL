@@ -159,7 +159,7 @@ function EdgarSnapshot({ read }: { read: Read }) {
         )}
       </section>
 
-      {selected && <FilingDetail accession={selected} read={read} />}
+      {selected && <FilingDetail key={selected} accession={selected} read={read} />}
     </>
   );
 }
@@ -210,7 +210,7 @@ export function EdgarPanel() {
         </dl>
       </section>
       <ReadForm initialAsOf={suggested ?? ''} onRead={setRead} />
-      {read && <EdgarSnapshot read={read} />}
+      {read && <EdgarSnapshot key={readKey(read)} read={read} />}
     </div>
   );
 }
