@@ -143,6 +143,10 @@ def command_start(arguments) -> int:
     ]
     if site.available:
         command += ["--dist-root", str(root / DIST_DIR)]
+    # Official event-source stores, opened read-only by the API (an archive or a copy of a capture store).
+    for flag, value in (("--fomc-store", arguments.fomc_store), ("--edgar-store", arguments.edgar_store)):
+        if value:
+            command += [flag, str(pathlib.Path(value).expanduser().resolve())]
 
     try:
         result = supervisor.start(
@@ -432,6 +436,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--fomc-store", default=None,
+                        help="FOMC store directory for the Events page (opened read-only)")
+    parser.add_argument("--edgar-store", default=None,
+                        help="EDGAR store directory for the Events page (opened read-only)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     start = sub.add_parser("start", help="build if needed and serve the app")
