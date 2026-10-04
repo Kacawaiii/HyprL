@@ -1,0 +1,62 @@
+name: sources-ci
+
+on:
+  push:
+    branches: [feat/phase5, "agents/**"]
+  pull_request:
+    branches: [feat/phase5]
+
+concurrency:
+  group: sources-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      # Only what the suites import: the runtime floor (pandas, numpy, requests),
+      # cryptography (TLS tests) and the ml extra (the paper views import xgboost).
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio pandas numpy requests cryptography \
+            scikit-learn xgboost joblib
+      - name: Official-event suites
+        run: |
+          python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py \
+            tests/crypto/test_edgar_slice.py tests/crypto/test_app_api*.py tests/crypto/test_ops_server.py \
+            tests/crypto/test_equity_api.py tests/api -q
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx vitest run
+      - name: Build to a temporary directory
+        run: npx vite build --outDir "$RUNNER_TEMP/web-dist" --emptyOutDir
