@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { DataTable, type Column } from '../components/DataTable';
+import { Num } from '../components/Num';
 import { EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
 import { ProductSelect, RunProvenanceCard, unavailableDetail, useOlderRows } from '../components/RunProvenance';
 
@@ -38,8 +39,8 @@ export function RiskPage() {
         {row.side}
       </span>
     ) },
-    { key: 'e', header: 'Target exposure', render: (row) => row.target_exposure },
-    { key: 's', header: 'Signal strength', render: (row) => row.signal_strength },
+    { key: 'e', header: 'Target exposure', render: (row) => <Num value={row.target_exposure} kind="percent" /> },
+    { key: 's', header: 'Signal strength', render: (row) => <Num value={row.signal_strength} /> },
     { key: 'h', header: 'Target', render: (row) => <Hash value={row.position_target_hash} chars={10} /> },
   ];
 

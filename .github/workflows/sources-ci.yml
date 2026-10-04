@@ -38,6 +38,15 @@ jobs:
           python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py \
             tests/crypto/test_edgar_slice.py tests/crypto/test_app_api*.py tests/crypto/test_ops_server.py \
             tests/crypto/test_equity_api.py tests/api -q
+      # The paper v2 model and replay, and the engine regressions they rely on
+      # (dataset, walk-forward, signal, risk, economic backtest, paper engine).
+      - name: Paper model, replay and engine suites
+        run: |
+          python -m pytest tests/crypto/test_paper_model_v2.py tests/crypto/test_paper_replay.py \
+            tests/crypto/test_paper_shadow.py tests/crypto/test_paper_portfolio.py \
+            tests/crypto/test_market_dataset.py tests/crypto/test_walk_forward.py \
+            tests/crypto/test_signal_engine.py tests/crypto/test_risk_engine.py \
+            tests/crypto/test_economic_backtest.py tests/crypto/test_economic_backtest_results.py -q
 
   web:
     runs-on: ubuntu-latest

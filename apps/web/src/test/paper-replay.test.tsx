@@ -59,15 +59,20 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it('shows frozen OOS values verbatim on Paper, separate from the live session', async () => {
+it('shows frozen OOS values rounded, with the exact value in the tooltip, on Paper, separate from the live session', async () => {
   render(<PaperPage />);
   expect(await screen.findByRole('heading', { name: 'Shared paper portfolio' })).toBeInTheDocument();
   const section = await screen.findByRole('region', { name: 'Replay hors échantillon (v2)' });
   expect(within(section).getByText(/non confirmatoire, non optimisée/)).toBeInTheDocument();
   const btc = await within(section).findByRole('article', { name: 'Replay BTC-USD' });
-  for (const value of [product.prediction_quality.rank_ic, product.metrics.final_equity,
-    product.metrics.net_return, product.metrics.max_drawdown, product.metrics.annualized_sharpe]) {
-    expect(within(btc).getByText(value!)).toBeInTheDocument();
+  // Rounded for reading, exact value in the tooltip.
+  const shown: Array<[string, string]> = [
+    ['-0.1235', product.prediction_quality.rank_ic!], ['98,765.43', product.metrics.final_equity!],
+    ['-1.23 %', product.metrics.net_return!], ['-5.68 %', product.metrics.max_drawdown!],
+    ['-1.235', product.metrics.annualized_sharpe!],
+  ];
+  for (const [text, exact] of shown) {
+    expect(within(btc).getByText(text)).toHaveAttribute('title', exact);
   }
   expect(within(section).getByText(/2 replays identiques/)).toBeInTheDocument();
   expect(await within(btc).findByRole('img', { name: 'Replay equity BTC-USD' })).toBeInTheDocument();

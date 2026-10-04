@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import time
 
 import pytest
 
@@ -204,6 +205,15 @@ def test_a_stop_while_a_continuation_waits_consumes_no_grant_and_stays_proven(en
     service.stop(wait_s=10)  # cancelled while its continuation waits
     env.store.fault = None
     assert len(env.collector.limiter.starts) == starts and env.provider.requests.count(P1 + "x") == 0
+    # stop() may return while the worker it released is still committing the attempt's outcome (its
+    # contract leaves such attempts to the next owner): wait, in real time and bounded, for that commit.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not (
+        _primary_attempts(env) and ledger.outcome_of(env.store, _primary_attempts(env)[0].seq) is not None
+    ):
+        time.sleep(0.02)
+    for thread in list(service.workers):
+        thread.join(max(0.0, deadline - time.monotonic()))
     attempt = _primary_attempts(env)[0].seq
     outcome = ledger.outcome_of(env.store, attempt)
     assert outcome is not None and outcome.body.get("grants", 1) == 1 and len(_grants(env, attempt)) == 1
