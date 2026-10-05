@@ -6,6 +6,10 @@ result: no price row is read, nothing is trained, no request is sent. Changing a
 revision with a new hash, before any result exists.
 
     python -m scripts.trading_lab.comparison_protocol --write docs/artifacts/comparison_protocol_v1.json
+    python -m scripts.trading_lab.comparison_protocol --revision 2 --write docs/artifacts/comparison_protocol_v2.json
+
+Revision 2 (`build_v2`) keeps every rule of revision 1 and changes only the roles: crypto is the primary
+objective with its criteria unchanged, equities an exploratory arm without a confirmatory claim.
 """
 
 from __future__ import annotations
@@ -257,11 +261,64 @@ def build() -> dict:
     return {**body, "protocol_hash": sha256_canonical(body)}
 
 
+# --- revision 2 ----------------------------------------------------------------------------------
+# The operator's campaign mandate (2026-10-05): crypto is the primary objective with its fixed
+# criteria unchanged; equities become an exploratory arm of this first campaign, with no
+# confirmatory claim. V1 stays generated and committed exactly as it was.
+
+SCHEMA_V2 = "comparison-protocol-v2"
+ARTIFACT_V2 = Path(__file__).resolve().parents[2] / "docs/artifacts/comparison_protocol_v2.json"
+
+
+def build_v2() -> dict:
+    v1 = build()
+    body = json.loads(json.dumps({k: v for k, v in v1.items() if k != "protocol_hash"}))
+    body.update(schema=SCHEMA_V2, revision=2, supersedes={
+        "revision": 1, "protocol_hash": v1["protocol_hash"], "artifact": "docs/artifacts/comparison_protocol_v1.json",
+        "reason": "operator mandate 2026-10-05: crypto primary objective, equities exploratory in this first campaign",
+        "changed": ["objective", "evaluation.primary (CRYPTO only)", "evaluation.exploratory (EQUITY)",
+                    "evaluation.secondary.scope", "products.roles"],
+        "unchanged": "calendar, capture and evaluation periods, protection, warm-ups, pairing, features, models, "
+                     "costs, every crypto criterion, exclusions, requirements and budgets"})
+    body["objective"] = {"primary": "CRYPTO", "primary_products": ["BTC-USD", "ETH-USD"],
+                         "exploratory": "EQUITY", "exploratory_products": body["products"]["equity"]}
+    body["products"]["roles"] = {"crypto": "PRIMARY_CONFIRMATORY", "equity": "EXPLORATORY_NO_CLAIM"}
+    evaluation = body["evaluation"]
+    primary = evaluation["primary"]
+    uncertainty = primary["uncertainty"]
+    primary["families"] = {"CRYPTO": primary["families"]["CRYPTO"]}
+    primary["label"] = {"crypto": primary["label"]["crypto"]}
+    uncertainty["block_decisions"] = {"crypto": BLOCK["crypto"]}
+    uncertainty["families_tested"] = 1
+    uncertainty["familywise_note"] = (
+        "one confirmatory family (CRYPTO) at one-sided 2.5%, the level V1 fixed for it, kept unchanged and not "
+        "relaxed; the exploratory equity arm spends no alpha")
+    minimum = primary["minimum_sample"]
+    minimum["paired_test_decisions_per_product"] = {"crypto": MIN_BLOCKS_PER_PRODUCT * BLOCK["crypto"]}
+    del minimum["equity_edgar_newly_observed_accessions_in_test"]
+    primary["decision_rule"]["scope"] = "the CRYPTO family only; no pooling with any other product; no other metric can overturn it"
+    evaluation["exploratory"] = {
+        "family": "EQUITY", "products": body["products"]["equity"], "status": "EXPLORATORY_NO_CLAIM",
+        "computed": "the same paired metric R, its bootstrap interval (blocks of 10 sessions) and the secondary prediction "
+                    "metrics, on the same decisions, splits and exclusions, reported as descriptive statistics",
+        "verdict": "none: SUPPORTED / NOT_SUPPORTED / INCONCLUSIVE is never assigned to this arm, and no result of it "
+                   "is cited as evidence for or against events",
+        "sample_reported": {"paired_test_decisions_per_instrument": "counted and reported (the V1 count expected 37, "
+                                                                      "below the 100 a verdict would need)",
+                            "edgar_newly_observed_accessions_in_test": "counted and reported"},
+        "effect_on_primary": "none: the equity arm cannot change, delay or condition the crypto verdict",
+        "windows": "the equity sessions looked at here become exploratory; a later confirmatory equity claim needs its "
+                   "own preregistered revision on data not looked at, and the reserved equity holdout stays closed"}
+    evaluation["secondary"]["scope"] = "CRYPTO and the exploratory EQUITY arm; never part of any decision rule"
+    return {**body, "protocol_hash": sha256_canonical(body)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--write", type=Path, help="write the artifact here")
+    parser.add_argument("--revision", type=int, choices=(1, 2), default=1, help="protocol revision (V1 kept as is)")
     args = parser.parse_args()
-    protocol = build()
+    protocol = build() if args.revision == 1 else build_v2()
     text = json.dumps(protocol, indent=1, sort_keys=True) + "\n"
     if args.write:
         args.write.write_text(text)
