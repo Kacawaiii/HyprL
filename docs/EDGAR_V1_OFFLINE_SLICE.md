@@ -15,6 +15,7 @@ python -m scripts.trading_lab.edgar.demo                  # new 8-K, correction,
 python -m scripts.trading_lab.edgar.service --store DIR --authorization FILE --check   # no network, no write
 python -m scripts.trading_lab.edgar.closure close --store DIR --copy NEW_DIR --report FILE --authorization FILE
 python -m pytest tests/crypto/test_edgar_closure.py         # synthetic operational supervision and closure
+python -m pytest tests/crypto/test_edgar_supervised.py      # observed wire format, restart fences, SIGTERM
 python -m scripts.trading_lab.app_api.server --edgar-store DIR   # read-only API + cockpit Events page
 ```
 
@@ -133,11 +134,38 @@ suspends the limiter and emits a storage alert. Once writes resume, the runner c
 before transport, including after an invocation commit that blocked. A reserved invocation that never
 sends is recorded as `INTERRUPTED` and remains counted conservatively.
 
-New operational `RUN_STARTED`/`RUN_ENDED` rows record public authorization bounds, an authorization
-digest and the stop reason; existing capture payloads, schema and spec revision stay unchanged. The
-declared contact is never persisted in these rows. Reusing the same authorization after restarting
-keeps its consumed request budget. Closure treats multiple owner epochs as interrupted evidence for
-the original run.
+Operational `RUN_STARTED`/`RUN_ENDED` rows record public authorization bounds, an authorization
+digest and the stop reason. Each service attempt also records that digest: canonical JSON of the
+complete grant, with CIKs normalized to ten digits. File names, JSON whitespace and key order do not
+change it. Schema and spec revision stay unchanged. The declared contact is never persisted in these
+rows. All reservations under the same grant count across epochs, including attempts that never sent
+or were interrupted. `--check` refuses an exhausted, expired or terminated grant without writing.
+Restart using the same authorization and the same durable store; a new empty store cannot prove a
+previous launch's accounting. Never reuse a grant with a new store or edit it to recreate budget.
+
+A 403/429 commits `AUTHORIZATION_TERMINATED` in the same transaction as its outcome and health row,
+so a crash before `RUN_ENDED` cannot reopen that grant. An earlier throttled outcome also fences an
+older run without that termination row. Even a different grant retains the source-wide 600 s pause.
+Restarts restore per-CIK cooldowns from durable reservation times, conservatively allowing the full
+30 s start uncertainty; a fresh limiter epoch cannot shorten the frozen 600 s cadence. Stop and expiry
+remain cancellable during these waits. The runner checks bounds again after the last response and
+limits the between-round sleep by expiry.
+
+Production HTTPS runs in a disposable Linux worker process. The owner enforces the 30 s grant-to-body
+deadline independently of DNS, headers, read, gzip decoding, connection close and result delivery;
+it kills and reaps a hung worker before recording an unavailable outcome. Late bytes cannot enter the
+store. SIGTERM goes to the owner: an in-flight body completes within its existing deadline, is committed
+and processed, and then the owner releases its lock. A supervisor must allow that drain; the prepared
+user-unit launch below uses `KillMode=mixed` so its initial stop targets only the owner.
+
+`STORE_DIR/service-status.json` is atomically replaced without taking the SQLite lock. It names the
+PID, epoch, update instant, run state/reason, grant suspension, active/pending incidents and threshold.
+The monitor refreshes it roughly once per second and immediately on incident transitions; alerts
+`STORAGE_INCIDENT_STARTED`/`STORAGE_INCIDENT_ENDED` also appear on stdout. A supervisor reads this file,
+checks freshness and process identity, and treats a stale `running` value as lost supervision. An
+ended status is written after the monitor stops, so a late heartbeat cannot overwrite it.
+Closure retains the stricter single-epoch completion criterion: a resumed capture can finish its
+authorization budget while its interrupted original run remains NOT_ACCOMPLISHED.
 
 `closure.close` confirms an explicitly named capture process or user unit has stopped, takes the
 existing owner lock, and holds it through a consistent SQLite backup from a read-only connection and
@@ -160,6 +188,8 @@ or a witnessed expiry, with compatible scope and one owner epoch; closing an alr
 after its expiry proves no duration. Legacy stores can prove a spent budget using `--authorization`
 because they predate durable run bounds. Without supplied or durable bounds, completion stays
 NOT_ACCOMPLISHED. Missing stop/owner/copy verification stays INVALID, with the failed check recorded.
+When the complete private authorization is supplied, its canonical identity must also match the
+recorded grant; identical public bounds from a different grant cannot claim accomplishment.
 
 Generate a persistent closure timer and one-shot service into a new template directory with:
 
@@ -173,6 +203,113 @@ The templates close `RUN_DIR/store` into `RUN_DIR/closure-copy` and write
 up to the next second when necessary. Template generation performs no installation or systemd action.
 The operator must install them before an authorized run. Tests only write templates and mock capture
 unit stopping; no units are installed.
+
+## Next bounded capture: operator preparation only
+
+This template grants nothing until the operator fills and approves every placeholder in a private
+file under the host's authorization directory. Keep the contact, authorization, store, logs and
+closure reports outside Git. Proposed scope: submissions only, these two CIKs, at most eight total
+requests including failures and crash reservations, a 45-minute expiry, stop durably on 403/429,
+no continuous collection, training or trading. Retain the same file and store on restart.
+
+```json
+{
+  "authorizes": "sec_edgar_submissions_v1",
+  "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+  "ciks": ["0000320193", "0000789019"],
+  "max_requests": 8,
+  "not_after": "<OFFSET_AWARE_EXPIRY_45_MINUTES_AFTER_GRANTED_AT>",
+  "user_agent": "<ORGANIZATION> <OPERATOR_DECLARED_CONTACT>",
+  "granted_by": "<OPERATOR>",
+  "granted_at": "<OFFSET_AWARE_GRANT_INSTANT>"
+}
+```
+
+Operator commands, from this checked-out branch and with the chosen Python environment active.
+Set `EDGAR_EXPIRY` to the exact `not_after` value. Preflight and template generation are offline:
+
+```bash
+EDGAR_CODE_DIR="$PWD"
+EDGAR_RUN_DIR="$EDGAR_CODE_DIR/var/edgar-next-bounded"
+EDGAR_AUTHORIZATION="$HOME/authorizations/edgar-next-bounded.json"
+EDGAR_PYTHON="$(command -v python)"
+EDGAR_EXPIRY='<EXACT_NOT_AFTER_FROM_AUTHORIZATION>'
+mkdir -p "$EDGAR_RUN_DIR"
+chmod 700 "$EDGAR_RUN_DIR"
+"$EDGAR_PYTHON" -m scripts.trading_lab.edgar.service \
+  --store "$EDGAR_RUN_DIR/store" --authorization "$EDGAR_AUTHORIZATION" --check
+"$EDGAR_PYTHON" -m scripts.trading_lab.edgar.closure units \
+  --unit edgar-next-bounded --code "$EDGAR_CODE_DIR" --run "$EDGAR_RUN_DIR" \
+  --authorization "$EDGAR_AUTHORIZATION" --close-at "$EDGAR_EXPIRY" \
+  --out "$EDGAR_RUN_DIR/closure-templates"
+```
+
+The operator reviews and installs the generated closure timer/service as **user** units and enables
+the persistent timer before launch. The following launch/stop commands are prepared, never executed
+as part of offline qualification. They name only this new capture unit; no system units are involved.
+
+```bash
+systemd-run --user --unit=edgar-next-bounded \
+  --property="WorkingDirectory=$EDGAR_CODE_DIR" \
+  --property=KillMode=mixed --property=TimeoutStopSec=180 \
+  "$EDGAR_PYTHON" -m scripts.trading_lab.edgar.service \
+  --store "$EDGAR_RUN_DIR/store" --authorization "$EDGAR_AUTHORIZATION"
+
+# Read supervisor status; stop only the named capture.
+cat "$EDGAR_RUN_DIR/store/service-status.json"
+systemctl --user stop edgar-next-bounded.service
+
+# One closure only; the copy directory must be new. The timer invokes these same paths.
+"$EDGAR_PYTHON" -m scripts.trading_lab.edgar.closure close \
+  --unit edgar-next-bounded --store "$EDGAR_RUN_DIR/store" \
+  --copy "$EDGAR_RUN_DIR/closure-copy" --report "$EDGAR_RUN_DIR/closure-report.json" \
+  --authorization "$EDGAR_AUTHORIZATION"
+```
+
+For an already stopped capture, omit `--unit` and use fresh copy/report paths if a closure already
+exists. Optional `--snapshots JSONL` verifies recorded `(T, H, identity)` reads. Closure exit 0 requires
+both VALID integrity and ACCOMPLISHED run; exit 1 can still contain VALID captured evidence. Inspect
+the separate verdicts, qualification and unresolved tail. No launch, unit installation or capture is
+authorized by this registry entry.
+
+## Supervised offline qualification (2026-10-05)
+
+The supervision branch was merged with phase5 hardening and the real digit-string CIK fix; both
+parents' tests remain. Synthetic listings now carry the sixteen observed columns, including ignored
+`core_type` and integer/null `isXBRLNumeric`. Qualification tests send gzip through fake connections
+with every observed header name and IMF-fixdate Date values. Spec revision/hash remain unchanged.
+
+In addition, the fixture's **exact decoded listing bytes** and **exact recorded header lines** were
+replayed locally through fake connections, re-encoding the bytes as gzip. The captured Content-Length
+is preserved as header evidence; it is not a length claim about this newly compressed fake wire body.
+The local harness prohibited socket connections. The fixture was opened read-only and its full tree
+digest was identical before and after. Private inputs and outputs remain ignored; only digests,
+counts and verdicts are in `docs/artifacts/edgar_supervised_offline_qualification_v1.json`.
+
+| local case | fake requests / responses | result | closure integrity / run |
+|---|---|---|---|
+| full bounded run | 8 / 8 | 161 revisions, all CLOCK_VERIFIED; 8 raws verified, 9/9 reopen and replay reads | VALID / ACCOMPLISHED |
+| restart mid-budget | 2 + 2 / 4 | one four-request budget across epochs; exhausted relaunch sends zero; all CLOCK_VERIFIED | VALID / NOT_ACCOMPLISHED (multiple epochs) |
+| stop during limiter wait | 0 / 0 | stopped before transport | VALID / NOT_ACCOMPLISHED |
+| 429 | 1 / 0 | termination durable; same-grant restart refused | VALID / NOT_ACCOMPLISHED |
+| 30 s deadline | 1 / 0 | unavailable outcome, no raw admitted; failed request consumes budget | VALID / ACCOMPLISHED (budget, no listing qualification) |
+| store stall >10 s | 4 / 4 | zero requests while stalled, one persisted incident, 161 revisions | VALID / ACCOMPLISHED |
+
+Every case reopened/replayed identically, replayed health, and left the closure copy unchanged.
+Cases with no admitted responses cannot qualify listing or clock compatibility; their valid integrity
+and any accomplished request budget remain separate from that absence of evidence.
+
+| required behaviour | executable offline evidence |
+|---|---|
+| flock, epoch, crash reconciliation and saved-record processing | `test_watchlist_ownership_and_spec_binding`, `test_a_restart_interrupts_open_attempts_and_processes_saved_records`, `test_owner_initialization_failure_releases_flock` |
+| SIGTERM drains and processes an in-flight body, releases ownership | `test_sigterm_finishes_inflight_body_processes_it_and_releases_ownership` (real signal, fenced fake connection) |
+| alerts and supervisor status during a blocked store | `test_status_is_readable_during_a_storage_stall_and_cleared_after_recovery`; closure tests for raw-write and invocation-commit stalls |
+| grant identity on every attempt, budget across epochs, exhausted/expired refusal | `test_observed_wire_format_full_bound_and_closure`, `test_restart_mid_budget_counts_all_epochs_and_reservations`, `test_canonical_authorization_identity_survives_filename_and_json_order_changes`; slice authorization-refusal tests |
+| stop/expiry during limiter waits and after a slow commit | slice embargo/slow-commit tests, `test_stop_during_spacing_wait_keeps_only_the_finished_attempt`, closure stopped/expired-stall tests |
+| durable 403/429 stop, including crash before run termination | `test_throttle_termination_is_atomic_and_refuses_restart_even_without_run_ended` (both statuses), `test_a_new_grant_keeps_the_previous_throttle_pause_for_all_ciks` |
+| physical deadline; hung transport fenced; no late bytes | `test_hung_transport_is_killed_reaped_and_never_returns_late_bytes` (connect, headers, read, decode, close, delivery), `test_deadline_includes_decode`, `test_a_slow_commit_consumes_the_physical_deadline_without_sending` |
+| offline copy/integrity/raws/causal reads/reopen/replay/health/qualification; separate verdicts | `test_budget_closure_verifies_raws_causal_reads_reopen_replay_health_and_qualification`, closure rejection/tamper/WAL/owner tests, `test_closure_requires_the_same_grant_identity_even_with_identical_public_bounds` |
+
 
 ## Remaining limits
 
