@@ -40,8 +40,9 @@ def identifier(value):
 def key_hash(value):
     # Random 256-bit keys do not need a password KDF. Domain separation keeps
     # these digests distinct from artifact hashes. Plain keys never persist.
-    if not isinstance(value, str) or not 32 <= len(value) <= 256 or not value.isascii():
-        raise ValueError("key must contain 32..256 ASCII characters")
+    if (not isinstance(value, str) or not 32 <= len(value) <= 256 or not value.isascii()
+            or any(not 33 <= ord(char) <= 126 for char in value)):
+        raise ValueError("key must contain 32..256 visible ASCII characters")
     return hashlib.sha256(b"hyprl-b2b-api-key-v1\0" + value.encode("ascii")).hexdigest()
 
 

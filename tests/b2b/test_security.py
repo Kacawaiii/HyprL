@@ -42,7 +42,7 @@ def test_key_expiry_revocation_hash_only_configuration_and_private_file(tmp_path
     path.chmod(0o600)
     assert Configuration.load(path).authenticate("Bearer " + ALPHA).project_id == "alpha"
     assert ALPHA not in path.read_text() and ALPHA != key_hash(ALPHA)
-    for value in ("a" * 31, "é" * 40, "a" * 257):
+    for value in ("a" * 31, "é" * 40, "a" * 257, "a" * 31 + "\n", " " * 40):
         with pytest.raises(ValueError):
             key_hash(value)
     # Even a validly shaped operator hash must not authenticate an invalid

@@ -110,3 +110,7 @@ def test_example_refuses_remote_hosts_redirect_credentials_and_bad_paths():
     client = Client("http://127.0.0.1:1", "alpha", ALPHA)
     with pytest.raises(ValueError):
         client.request("/../beta/jobs")
+    # Reject malformed credentials before urllib could include their plaintext
+    # in an Invalid-header exception message.
+    with pytest.raises(ValueError, match="visible ASCII"):
+        Client("http://127.0.0.1:1", "alpha", "synthetic-malformed-key-000000000000\n")

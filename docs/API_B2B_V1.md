@@ -74,7 +74,7 @@ by up to 47 lowercase letters, digits, underscores or hyphens.
 Keys contain exactly `key_id`, `project_id`, `key_sha256`, `permissions`, `expires_at`,
 `enabled`. A key belongs to one configured project and must have an offset-qualified expiry
 and an explicit boolean enabled state. The hash is SHA-256 over
-`b"hyprl-b2b-api-key-v1\0" + key.encode("ascii")`; keys must be 32–256 ASCII characters.
+`b"hyprl-b2b-api-key-v1\0" + key.encode("ascii")`; keys must be 32–256 visible ASCII characters.
 Use random 256-bit keys, not passwords. Comparison is constant-time. The API never stores
 a plaintext credential and accepts keys only as `Authorization: Bearer <key>`, never in URLs.
 Config files must be regular, private files with no group/other permissions. Configuration
