@@ -67,8 +67,11 @@ def test_wall_budget_kills_noncompleted_work(tmp_path):
 
 def test_small_memory_budget_fails_in_worker_without_affecting_parent(tmp_path):
     with JobRunner(tmp_path) as runner:
-        identifier = runner.store.submit("dataset", {"bars": 600}, ResourceLimits(memory_mb=256))
-        assert terminal(runner.store, identifier)["state"] == "FAILED"
+        limits = ResourceLimits(memory_mb=256)
+        identifier = runner.store.submit("dataset", {"bars": 600}, limits)
+        # Some native libraries spin instead of raising when the address space runs out (seen with scipy on a
+        # 12-core WSL host); the runner's CPU budget then ends the worker. Wait for that enforced bound.
+        assert terminal(runner.store, identifier, timeout=limits.cpu_seconds + 30)["state"] == "FAILED"
         assert runner.store.status(identifier)["worker_pid"] != os.getpid()
         assert runner.store.submit("dataset", {"bars": 80})
 
