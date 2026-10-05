@@ -43,7 +43,13 @@ jobs:
       - name: Event features and protocol suites
         run: |
           python -m pytest tests/crypto/test_event_features.py tests/crypto/test_event_features_v2.py \
-            tests/crypto/test_research_protection.py tests/crypto/test_comparison_protocol.py -q
+            tests/crypto/test_research_protection.py tests/crypto/test_comparison_protocol.py \
+            tests/crypto/test_comparison_protocol_v2.py -q
+      # Supervised EDGAR service: ownership, resume, SIGTERM, budgets, throttle stop, deadline,
+      # storage stalls and the offline closure (synthetic listings with the observed wire format).
+      - name: Supervised EDGAR suites
+        run: |
+          python -m pytest tests/crypto/test_edgar_supervised.py tests/crypto/test_edgar_closure.py -q
       # The paper v2 model and replay, and the engine regressions they rely on
       # (dataset, walk-forward, signal, risk, economic backtest, paper engine).
       - name: Paper model, replay and engine suites
