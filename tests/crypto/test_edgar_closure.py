@@ -368,3 +368,46 @@ def test_published_read_only_copy_needs_no_owner_file_but_writable_stores_requir
             assert "read-only snapshot directory" in result["owner_check"]
     finally:
         source.chmod(0o700)
+
+
+def test_a_replay_that_differs_from_the_original_read_is_invalid(tmp_path, monkeypatch):
+    clock, auth, _ = capture(tmp_path)
+    real = snapshot.replay
+    monkeypatch.setattr(snapshot, "replay", lambda store, T, H: {**real(store, T, H), "identity": "different"})
+    result = close(tmp_path, auth, now=clock.wall())
+    assert result["integrity"]["verdict"] == "INVALID"
+    assert result["verification"]["replay_identical"] == 0 and result["verification"]["reopen_identical"] == 4
+    assert {f["check"] for f in result["verification"]["read_failures"]} == {"replay"}
+
+
+def test_a_verification_that_writes_into_the_copy_is_invalid(tmp_path, monkeypatch):
+    clock, auth, _ = capture(tmp_path)
+    real = closure.qualify
+
+    def writing_qualify(store):
+        (tmp_path / "copy" / "side-file").write_text("written during verification")
+        return real(store)
+    monkeypatch.setattr(closure, "qualify", writing_qualify)
+    result = close(tmp_path, auth, now=clock.wall())
+    assert not result["verification"]["copy_unchanged"] and not result["verification"]["ok"]
+    assert result["integrity"]["verdict"] == "INVALID"
+
+
+@pytest.mark.parametrize("breach", ["late_invocation", "over_budget"])
+def test_completion_refuses_a_late_invocation_or_an_exceeded_budget(tmp_path, breach):
+    clock, auth, _ = capture(tmp_path)
+    store = EdgarStore(tmp_path / "store", wall_clock=None, read_only=True)
+    try:
+        progress = closure.progress(store)
+    finally:
+        store.close()
+    scope = json.loads(auth.read_text())
+    assert closure.run_completion(progress, authorization=auth, closed_at=clock.wall(), stop={})["verdict"] == "ACCOMPLISHED"
+    if breach == "late_invocation":
+        progress["request_walls"][-1] = scope["not_after"]  # committed exactly at the expiry: already too late
+        reason = "an invocation was committed at or after the authorization expiry"
+    else:
+        progress["requests"] = scope["max_requests"] + 1
+        reason = "request budget exceeded"
+    run = closure.run_completion(progress, authorization=auth, closed_at=clock.wall(), stop={})
+    assert run["verdict"] == "NOT_ACCOMPLISHED" and reason in run["reasons"]

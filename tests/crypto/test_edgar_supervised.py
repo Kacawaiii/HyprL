@@ -436,3 +436,10 @@ def test_closure_requires_the_same_grant_identity_even_with_identical_public_bou
     result = close(tmp_path, auth, clock)
     assert result["integrity_ok"] and not result["run_ok"]
     assert "supplied authorization identity differs from the durable grant" in result["run"]["reasons"]
+
+
+def test_the_restart_throttle_pause_holds_even_when_the_cadence_is_shorter(tmp_path, monkeypatch):
+    # With the frozen constants the per-CIK cadence (600 s + 30 s) already covers the 600 s pause, which
+    # hides the throttle cooldown. Shorten the cadence to prove the pause is enforced on its own.
+    monkeypatch.setattr(spec, "POLL_INTERVAL_S", 60)
+    test_a_new_grant_keeps_the_previous_throttle_pause_for_all_ciks(tmp_path)
