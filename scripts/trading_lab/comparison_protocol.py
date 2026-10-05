@@ -99,7 +99,7 @@ def counts() -> dict:
         datetime.fromisoformat(EQUITY_SERIES_END).replace(tzinfo=UTC))
     close_of = {s.close_at: i for i, s in enumerate(sessions)}
     equity = equity_decisions()
-    horizon = SIGNAL_SPEC_V1.prediction_horizon
+    horizon = rp.crypto_label_horizon()
     crypto = split(crypto_decisions(), lambda t: t + horizon * rp.CRYPTO_BAR)
     equity_split = split(equity, lambda t: sessions[close_of[t] + EQUITY_RESEARCH_SPEC_V1.target.horizon_sessions].close_at)
     for kind, row in (("crypto", crypto), ("equity", equity_split)):
@@ -170,7 +170,7 @@ def build() -> dict:
                                           "MSFT": ["fomc", "edgar"], "NVDA": ["fomc", "edgar"], "QQQ": ["fomc"]}},
         "protection": {"table": rp.protection_table(), "event_window_days": rp.EVENT_WINDOW_DAYS,
                        "price_warmup": {"crypto_bars": rp.crypto_price_warmup(), "equity_sessions": rp.equity_price_warmup()},
-                       "label_horizon": {"crypto_bars": SIGNAL_SPEC_V1.prediction_horizon,
+                       "label_horizon": {"crypto_bars": rp.crypto_label_horizon(),
                                          "equity_sessions": EQUITY_RESEARCH_SPEC_V1.target.horizon_sessions},
                        "rule": "a decision is admissible only if no bar of its price features, no bar of its label window and "
                                "no instant of its 30-day event window (T-30d, T] lies in a protected interval of its product",

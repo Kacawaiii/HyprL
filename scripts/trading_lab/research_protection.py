@@ -26,7 +26,7 @@ from scripts.trading_lab.market_dataset import DatasetConfig, build_dataset
 from scripts.trading_lab.market_indicators import (
     atr_percent, ema_spread, relative_strength_index, return_over_period)
 from scripts.trading_lab.market_series import MarketSeries, SeriesPoint
-from scripts.trading_lab.paper_model import FEATURE_SET_V2
+from scripts.trading_lab.paper_model import FEATURE_SET_V2, PAPER_MODEL_SPEC_V2
 from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
 from scripts.trading_lab.signal_engine import SIGNAL_SPEC_V1
 
@@ -166,10 +166,16 @@ def _decision_range(run, *, warmup: int, horizon: int, close_of) -> dict | None:
             "decisions": last - first + 1, "run_bars": len(run)}
 
 
+def crypto_label_horizon() -> int:
+    """Bars of the crypto label window: the widest of the signal's prediction horizon and the
+    label the frozen paper model is trained on, so neither contract can drift past the other."""
+    return max(SIGNAL_SPEC_V1.prediction_horizon, PAPER_MODEL_SPEC_V2.label_horizon)
+
+
 def crypto_ranges(corpus_start: datetime, horizon_end_exclusive: datetime) -> dict:
     """Admissible crypto decisions for a series that may run from `corpus_start` to the horizon end."""
     interval, warmup = crypto_interval(), crypto_price_warmup()
-    label = SIGNAL_SPEC_V1.prediction_horizon
+    label = crypto_label_horizon()
     count = int((horizon_end_exclusive - corpus_start) / CRYPTO_BAR)
     opens = [corpus_start + i * CRYPTO_BAR for i in range(count)]
     runs = _runs(opens, interval, by_date=False)
@@ -209,6 +215,6 @@ def protection_flags(product: str, T: datetime) -> dict:
     return {"inside": inside, "event_window_touches": touched}
 
 
-__all__ = ["EVENT_WINDOW_DAYS", "Interval", "crypto_interval", "crypto_price_warmup", "crypto_ranges",
+__all__ = ["EVENT_WINDOW_DAYS", "Interval", "crypto_interval", "crypto_label_horizon", "crypto_price_warmup", "crypto_ranges",
            "equity_interval", "equity_price_warmup", "equity_ranges", "iso_z",
            "protection_flags", "protection_table"]

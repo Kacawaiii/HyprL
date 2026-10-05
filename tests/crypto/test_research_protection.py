@@ -95,3 +95,15 @@ def test_docs_cite_the_equity_holdout_as_the_contract_states_it():
         assert "2027-Q1" not in text, path.name  # the id is equity_confirmatory_2027q1; the range is Dec 2026 - Feb 2027
     text = (REPO / "docs/EVENT_FEATURES_V1.md").read_text()
     assert "2026-12-01" in text and "2027-02-28" in text
+
+
+def test_crypto_label_window_is_the_widest_of_signal_and_paper_model(monkeypatch):
+    from dataclasses import replace
+    from scripts.trading_lab import paper_model
+    assert rp.crypto_label_horizon() == SIGNAL_SPEC_V1.prediction_horizon == paper_model.PAPER_MODEL_SPEC_V2.label_horizon
+    start, end = datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 9, 2, tzinfo=UTC)
+    before = rp.crypto_ranges(start, end)["runs"][0]["last_decision_at"]
+    monkeypatch.setattr(rp, "PAPER_MODEL_SPEC_V2", replace(paper_model.PAPER_MODEL_SPEC_V2, label_horizon=6))
+    widened = rp.crypto_ranges(start, end)
+    assert widened["label_horizon_bars"] == 6
+    assert widened["runs"][0]["last_decision_at"] == "2026-08-31T18:00:00Z" < before == "2026-08-31T20:00:00Z"

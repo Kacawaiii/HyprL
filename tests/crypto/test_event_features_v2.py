@@ -258,3 +258,23 @@ def test_v2_is_deterministic_and_leaves_the_store_untouched(edgar):
     times = [edgar.T0, edgar.T0 + timedelta(days=1)]
     assert aapl(edgar, *times) == aapl(edgar, *times)
     assert fingerprint(edgar.root) == before
+
+
+def test_out_of_scope_forms_never_count(edgar):
+    # the collector keeps only 8-K/8-K/A today; V2 filters again so a widened scope cannot leak in
+    with v2.EventFeaturesV2(edgar_store=edgar.root) as features:
+        at = features._observations["edgar"][-1]["available_at"]
+        features._observations["edgar"].append({"source": "edgar", "event_id": "x", "kind": v2.NEWLY_OBSERVED,
+                                                "seq": 10**9, "revision": "r", "available_at": at, "cik": A,
+                                                "form": "10-Q", "items": "2.02"})
+        f = features.rows([("AAPL", edgar.T0)])[0]["sources"]["edgar"]["features"]
+    assert f["new_accessions_attested_7d"] == 0 and f["new_accession_item_2_02_7d"] is False
+
+
+def test_first_valid_read_is_metadata_only_once_attested_at_T(edgar, monkeypatch):
+    real = v2.onboarding
+    late = lambda reader, cik: {"first_valid_read_available_at": real(reader, cik)["first_valid_read_available_at"]  # noqa: E731
+                                + timedelta(days=1)}
+    monkeypatch.setattr(v2, "onboarding", late)
+    inventory = aapl(edgar, edgar.T0)[0]["sources"]["edgar"]["inventory"]
+    assert inventory["first_valid_read_available_at"] is None  # a read attested after T is unknown at T
