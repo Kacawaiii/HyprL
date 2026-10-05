@@ -26,18 +26,18 @@ def health(ledger):
         today = [r for r in runs if r["at"][:10] == at.date().isoformat() and not r["synthetic"]]
         session = calendar_session(at.date().isoformat())
         started = at >= instant('2026-10-06T12:00:00Z')
-        state = "PAUSED" if (ledger.root / "PAUSED").exists() else "HEALTHY"
-        if started and session and at >= session.open_at and not any(r["status"] == "COMPLETE" for r in today):
+        state = "PAUSED" if ledger.paused else "HEALTHY"
+        if not ledger.paused and started and session and at >= session.open_at and not any(r["status"] == "COMPLETE" for r in today):
             state = "MISSING_DAILY_RUN"
-        if any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today):
+        if not ledger.paused and any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today):
             state = "FAILED_DAILY_RUN"
         label_path = ledger.root / 'last-label.json'
-        if started and session and at >= at.replace(hour=22, minute=0, second=0, microsecond=0):
+        if not ledger.paused and started and session and at >= at.replace(hour=22, minute=0, second=0, microsecond=0):
             if not label_path.is_file() or json.loads(label_path.read_text()).get('at', '')[:10] != at.date().isoformat():
                 state = 'MISSING_LABEL_JOB'
     except (TraderError, FileNotFoundError):
         state = "EXPIRED_OR_UNAVAILABLE"
-    if state != "HEALTHY":
+    if state not in {"HEALTHY", "PAUSED"}:
         ledger.alert(state)
     payload = {"schema": "trader-health-v1", "at": iso(at), "state": state, "budget_counts": ledger.counts()}
     temp = ledger.root / "health.tmp"
@@ -66,11 +66,12 @@ def main(argv=None):
     bank = None if args.dry_run else Path.home() / '.local/share/hyprl/trader-agent-budget'
     ledger = Ledger(runtime, grant, clock=clock, budget_root=bank)
     if args.action in {"pause", "resume"}:
-        marker = runtime / "PAUSED"
+        marker = ledger.budget_root / "PAUSED"
         if args.action == "pause":
             marker.touch(mode=0o600)
         else:
             marker.unlink(missing_ok=True)
+            (runtime / 'PAUSED').unlink(missing_ok=True)
         result = {"state": "PAUSED" if args.action == "pause" else "RESUMED"}
     elif args.action in {"health", "status"}:
         result = health(ledger)

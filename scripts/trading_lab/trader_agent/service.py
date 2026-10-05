@@ -83,7 +83,7 @@ class TraderService:
             run_id = "trader:" + day + (":synthetic" if self.data.synthetic else ":real")
             try:
                 self.ledger.grant.check(at)
-                if (self.ledger.root / "PAUSED").exists():
+                if self.ledger.paused:
                     return self.summary(run_id, "PAUSED", at)
                 if not self.data.synthetic and at < instant("2026-10-06T12:00:00Z"):
                     return self.summary(run_id, "NOT_STARTED", at)
@@ -143,7 +143,7 @@ class TraderService:
 
     def before_call(self, session):
         self.ledger.grant.check(self.clock())
-        if self.clock() >= getattr(self.runner, 'deadline', session.open_at) or (self.ledger.root / "PAUSED").exists():
+        if self.clock() >= getattr(self.runner, 'deadline', session.open_at) or self.ledger.paused:
             raise TraderError("MISSED_DECISION_DEADLINE_OR_PAUSED")
 
     def record(self, decision, context):
@@ -164,7 +164,7 @@ class TraderService:
             price = context["prices"][view["asset"]]
             snapshot = {'schema':'trader-input-reference-v1', 'context_hash':decision['context_hash'],
                         'context_record_hash':context_record_hash, 'decision_time':context['decision_time'],
-                        'asset':view['asset'], 'price':price, 'headlines':context['headlines'].get(view['asset']),
+                        'asset':view['asset'], 'price':price, 'headlines_hash':sha256_canonical(context['headlines'].get(view['asset'])),
                         'macro_politics_trade_hash':sha256_canonical({a:context['headlines'][a] for a in ('macro','politics','trade')}),
                         'archives_hash':sha256_canonical(context['archives']), 'synthetic':decision['synthetic']}
             features = tuple(sorted({**price['returns'], 'vol_20d': price['vol_20d'],
@@ -206,6 +206,7 @@ class TraderService:
                 split="PROSPECTIVE_SYNTHETIC" if decision["synthetic"] else "PROSPECTIVE", provenance={
                     "authorization_hash": decision["authorization_hash"], "skill_hashes": decision["skill_hashes"],
                     "context_hash":decision['context_hash'], 'context_record_hash':context_record_hash,
-                    "sources": context["sources"], "model_contract": contract.to_dict(),
+                    "sources": {'context_record_hash':context_record_hash, 'count':len(context['sources']),
+                                'sources_hash':sha256_canonical(context['sources'])}, "model_contract": contract.to_dict(),
                     "preregistration_hash": decision["preregistration_hash"]})
             self.store.issue(prediction, evidence)

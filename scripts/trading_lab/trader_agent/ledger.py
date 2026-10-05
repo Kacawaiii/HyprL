@@ -46,6 +46,8 @@ class Ledger:
             yield
 
     def reserve(self, kind):
+        if self.paused:
+            raise TraderError('PAUSED')
         at = self.clock()
         day = at.date().isoformat()
         p = self.grant.payload
@@ -80,6 +82,10 @@ class Ledger:
             cursor = db.execute("INSERT INTO dispatch(day,kind,at,grant_hash) VALUES(?,?,?,?)",
                                 (day, kind, iso(at), self.grant.identity))
             return cursor.lastrowid
+
+    @property
+    def paused(self):
+        return (self.root / 'PAUSED').exists() or (self.budget_root / 'PAUSED').exists()
 
     def counts(self, day=None):
         with self.connect() as db:

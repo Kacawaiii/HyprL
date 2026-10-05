@@ -205,6 +205,8 @@ def archived(root, kind, at):
     views = (FomcViews if kind == "fomc" else EdgarViews)(root)
     try:
         status = views.status()
+        if status.get('status') != 'AVAILABLE':
+            return {'state':'INTEGRITY_ERROR' if status.get('status') == 'REJECTED' else 'UNAVAILABLE', 'items':[]}
         cutoff = status.get("suggested_as_of")
         if not cutoff:
             return {"state": "UNRESOLVED", "items": []}

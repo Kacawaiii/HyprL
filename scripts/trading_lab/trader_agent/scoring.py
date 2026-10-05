@@ -29,7 +29,7 @@ def realize(store, ledger, data, *, at=None):
     at = at or now()
     with ledger.owner():
         ledger.grant.check(at)
-        if (ledger.root / "PAUSED").exists():
+        if ledger.paused:
             return {"state": "PAUSED", "labels_added": 0}
         labeled = {r["payload"]["prediction_hash"] for r in rows(store, "label")}
         predictions = [p for p in rows(store, "prediction") if p["identity"] not in labeled]
@@ -212,10 +212,15 @@ def scorecard(store, *, synthetic=False, include_samples=False):
     attempts = [r['payload'] for r in rows(store, 'replay-summary') if r['payload'].get('status') == 'RUNNING'
                 and r['payload'].get('synthetic') == synthetic]
     registered = sorted({v for r in attempts for v in r.get('multiple_testing_variants', [])})
+    configurations = sorted({sha256_canonical({'models':r['payload']['decision']['models'],
+        'skills':r['payload']['decision']['skill_hashes'], 'preregistration':r['payload']['decision']['preregistration_hash']})
+        for r in rows(store, 'replay-summary') if r['payload'].get('status') == 'COMPLETE'
+        and r['payload'].get('synthetic') == synthetic})
     card = {"schema": "trader-scorecard-v1", "synthetic": synthetic, "scores": scores,
             "hypothesis_state": "EXPLORATORY_MINIMUM_MET_REQUIRES_REGISTERED_WEEKLY_BLOCK_TEST" if minimum else "PENDING_MINIMUM_SAMPLE",
             "portfolio_cohorts": cohorts,
             "multiple_testing": {"registered_variants": registered, "attempted_runs": len(attempts),
+                                 'model_configuration_hashes':configurations, 'model_configuration_count':len(configurations),
                                  "scored_population_variants": sorted(issued), "count": len(issued)},
             "limitations": ["Interim looks exploratory; overlapping 5d labels and cross-asset dependence",
                             "Equity raw-direction scores use outperformance probabilities and are secondary diagnostics",

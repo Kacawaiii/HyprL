@@ -50,6 +50,7 @@ def test_native_shape_demo_pending_labels_and_append_only_realization(service, c
     card = scorecard(service.store, synthetic=True)
     assert card['scores']['consensus/equity_etf/5d/SPY_relative']['non_abstained'] == 3
     assert card['hypothesis_state'] == 'PENDING_MINIMUM_SAMPLE'
+    assert card['multiple_testing']['model_configuration_count'] == 1
     assert scorecard(service.store)['scores'] == {}
     assert weekly_report(service.store, service.ledger.root, at=clock(), synthetic=True)['identity']
 
@@ -176,6 +177,14 @@ def test_changing_runtime_path_cannot_reset_shared_budget_bank(tmp_path, grant, 
         with pytest.raises(TraderError, match='OWNER_BUSY'):
             with second.owner():
                 pass
+    (bank/'PAUSED').touch()
+    with pytest.raises(TraderError, match='PAUSED'):
+        second.reserve('yahoo_chart')
+
+
+def test_archive_rejection_is_preserved_as_integrity_error(tmp_path):
+    from scripts.trading_lab.trader_agent.data import archived
+    assert archived(tmp_path/'missing','fomc',instant('2026-10-06T12:00:00Z'))['state'] == 'INTEGRITY_ERROR'
 
 
 def test_gdelt_spacing_persists_and_expiry_checked_after_wait(ledger, clock):
@@ -426,6 +435,8 @@ def test_first_timer_guard_and_health_expectations(service, clock):
     assert health(service.ledger)['state'] == 'MISSING_DAILY_RUN'
     clock.at = instant('2026-10-06T22:10:00Z')
     assert health(service.ledger)['state'] == 'MISSING_LABEL_JOB'
+    (service.ledger.budget_root/'PAUSED').touch()
+    assert health(service.ledger)['state'] == 'PAUSED'
 
 
 def test_pending_cohort_is_not_partial_realized_portfolio(service, clock):

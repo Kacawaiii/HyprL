@@ -113,7 +113,7 @@ class ModelRunner:
         deadline = getattr(self, 'deadline', None)
         if deadline and self.clock() >= deadline:
             raise TraderError('MISSED_DECISION_DEADLINE')
-        if (self.ledger.root / 'PAUSED').exists():
+        if self.ledger.paused:
             raise TraderError('PAUSED')
         args = command(role, self.ledger.grant)
         version = subprocess.run([args[0], "--version"], capture_output=True, text=True, timeout=15, check=True).stdout.strip()

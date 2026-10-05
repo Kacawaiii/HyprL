@@ -11,6 +11,7 @@ failed requests, retries and interrupted runs consume their reservations. One ow
 run/label jobs. Production CLI invocations share one user-level budget bank and owner lock, so changing
 the runtime path cannot reset budgets or create another owner. Dry-run budgets remain isolated.
 Every started experiment registers all 14 variants, including failed experiments.
+Completed model/version/skill configurations are counted separately by hash.
 The GDELT spacing clock is durable. Redirects and unapproved transport paths are refused.
 
 The existing crypto holdout overlaps the initial run period: BTC-USD and ETH-USD are **PROTECTED**,
@@ -85,7 +86,7 @@ version, this absence is explicit; an alias is not misrepresented as a fixed ver
 Both original analysts, both reviewed outputs and consensus become CONTRACTS_V1 PredictionRecords
 in the existing research-observability store, with actual context/features bound through PredictionEvidence.
 The full daily context is stored once as immutable evidence; each input record carries the actual
-asset inputs and verified context-record/hash references for shared macro and archive inputs. This
+asset prices/features and verified context-record/hash references for headlines, sources, macro and archive inputs. This
 keeps the existing store's byte limit intact instead of duplicating the full universe for every view.
 Analyst records retain reviewer-rejected views for false-positive measurement. Labels append separately;
 original predictions and inputs never change. Raw web bodies and full CLI transcripts are private runtime
