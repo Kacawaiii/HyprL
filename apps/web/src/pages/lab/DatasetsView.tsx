@@ -87,9 +87,9 @@ function Builder() {
 }
 
 function DatasetDetail({ job, token }: { job: JobStatus; token: string }) {
-  const { token: current, version } = useLabToken();
+  const { version } = useLabToken();
   const { selection } = useCockpit();
-  const result = useQuery(`lab:dataset:${version}:${job.id}`, (signal) => apiClient.getLabDatasetResult(token || current, job.id, signal));
+  const result = useQuery(`lab:dataset:${version}:${job.id}`, (signal) => apiClient.getLabDatasetResult(token, job.id, signal));
   return (
     <QueryBoundary query={result} label="Loading dataset manifest">
       {({ result: dataset }) => {

@@ -105,7 +105,11 @@ export function LedgerView() {
     controller.current?.abort();
     const next = new AbortController();
     controller.current = next;
-    if (!cursor) asOf.current = new Date().toISOString();
+    if (!cursor) {
+      asOf.current = new Date().toISOString();
+      setRows([]);
+      setPage(null);
+    }
     setState('loading');
     apiClient.getObservabilityPredictions({
       product: selection.product ?? undefined, modelId: selection.model ?? undefined,
