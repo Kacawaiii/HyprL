@@ -1,4 +1,9 @@
 import type { SourceTimeline } from './types';
+import type {
+  ComparisonReadiness, DatasetResult, ExperimentResult, HypothesisDetail, HypothesisRow, JobStatus,
+  LabJobs, LabModels, LedgerRow, MonitoringView, ObservabilityHealth, PredictionView, ProposalCatalogue,
+  ReferenceRow, ResearchPage, TrialRow,
+} from './labTypes';
 import type { SourcePageOptions } from '../state/useSourcePage';
 /**
  * The single door to the backend.
@@ -73,7 +78,7 @@ export interface RunQuery {
   cursor?: string;
 }
 
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, signal?: AbortSignal, extra?: Record<string, string>): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
   if (signal) {
@@ -84,7 +89,7 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   try {
     const response = await fetch(path, {
       signal: controller.signal,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...extra },
     });
     const text = await response.text();
     if (listeners.size > 0) {
@@ -116,6 +121,10 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function bearer(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
 }
 
 export interface CandleQuery {
@@ -317,6 +326,53 @@ export const apiClient = {
   getEdgarReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
     request<EdgarReplay>(
       `/api/v1/sources/edgar/replay${query({ as_of: asOf, horizon })}`, signal),
+  /** Model Lab (operator token, read only from the browser: the server refuses any request carrying an
+   *  Origin, so a POST cannot be sent from a page -- creation and cancellation are command-line acts). */
+  getLabModels: (token: string, signal?: AbortSignal) =>
+    request<LabModels>('/api/v1/lab/models', signal, bearer(token)),
+  getLabJobs: (token: string, signal?: AbortSignal) =>
+    request<LabJobs>('/api/v1/lab/jobs', signal, bearer(token)),
+  getLabJob: (token: string, id: string, signal?: AbortSignal) =>
+    request<JobStatus>(`/api/v1/lab/jobs/${encodeURIComponent(id)}`, signal, bearer(token)),
+  getLabDatasetResult: (token: string, id: string, signal?: AbortSignal) =>
+    request<DatasetResult>(`/api/v1/lab/jobs/${encodeURIComponent(id)}/results`, signal, bearer(token)),
+  getLabExperimentResult: (token: string, id: string, signal?: AbortSignal) =>
+    request<ExperimentResult>(`/api/v1/lab/jobs/${encodeURIComponent(id)}/results`, signal, bearer(token)),
+  /** Research registry and observability: read-only, same posture as the other source views. */
+  getResearchHypotheses: (options: { limit?: number; cursor?: string; asOf?: string } = {}, signal?: AbortSignal) =>
+    request<ResearchPage<HypothesisRow>>(
+      `/api/v1/research/hypotheses${query({ limit: options.limit, cursor: options.cursor, as_of: options.asOf })}`, signal),
+  getResearchHypothesis: (identity: string, signal?: AbortSignal) =>
+    request<HypothesisDetail>(`/api/v1/research/hypotheses/${encodeURIComponent(identity)}`, signal),
+  getResearchExperiments: (options: { limit?: number; cursor?: string; asOf?: string } = {}, signal?: AbortSignal) =>
+    request<ResearchPage<TrialRow>>(
+      `/api/v1/research/experiments${query({ limit: options.limit, cursor: options.cursor, as_of: options.asOf })}`, signal),
+  getResearchComparison: (signal?: AbortSignal) =>
+    request<ComparisonReadiness>('/api/v1/research/comparison', signal),
+  getResearchProposals: (signal?: AbortSignal) =>
+    request<ProposalCatalogue>('/api/v1/research/proposals', signal),
+  getObservabilityPredictions: (
+    options: { product?: string; modelId?: string; start?: string; end?: string; limit?: number; cursor?: string; asOf?: string } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<ResearchPage<LedgerRow>>(`/api/v1/observability/predictions${query({
+      product: options.product, model_id: options.modelId, start: options.start, end: options.end,
+      limit: options.limit, cursor: options.cursor, as_of: options.asOf,
+    })}`, signal),
+  getObservabilityPrediction: (identity: string, signal?: AbortSignal) =>
+    request<PredictionView>(`/api/v1/observability/predictions/${encodeURIComponent(identity)}`, signal),
+  getObservabilityReferences: (limit?: number, signal?: AbortSignal) =>
+    request<ResearchPage<ReferenceRow>>(`/api/v1/observability/references${query({ limit })}`, signal),
+  getObservabilityHealth: (signal?: AbortSignal) =>
+    request<ObservabilityHealth>('/api/v1/observability/health', signal),
+  getMonitoring: (
+    options: { asOf: string; product?: string; modelId?: string; start?: string; end?: string; referenceHash?: string },
+    signal?: AbortSignal,
+  ) =>
+    request<MonitoringView>(`/api/v1/observability/monitoring${query({
+      as_of: options.asOf, product: options.product, model_id: options.modelId,
+      start: options.start, end: options.end, reference_hash: options.referenceHash,
+    })}`, signal),
 };
 
 export type ApiClient = typeof apiClient;
