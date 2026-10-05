@@ -37,6 +37,8 @@ or realization before the horizon. Label corrections append another version; the
 original prediction or earlier labels. Execution updates likewise belong to later observation records,
 not mutations of an issued prediction.
 
+Snapshot policies require explicit `visibility="DURABLE_OBSERVED"`; this v1 does not implement
+RETROSPECTIVE_SOURCE. The builder and API require that mode explicitly, with no implicit default.
 Snapshot source sections each contain their own H, P when resolved, source snapshot identity, spec and
 provider contract bindings, read state and coverage. There is no global H. UNRESOLVED, NOT_OBSERVED,
 NOT_CONFIGURED, INTEGRITY_ERROR, NOT_APPLICABLE, UNKNOWN_MAPPING and PROTECTED survive composition.

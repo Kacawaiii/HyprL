@@ -13,6 +13,7 @@ def test_descriptors_bind_proven_implementation(name, spec):
     assert record.provider_id == spec.PROVIDER_ID and record.identities["spec_hash"] == spec.verify_spec_binding()
     assert record.limits["spacing_seconds"] == spec.SPACING_S
     assert record.clocks["clock_error_bound_seconds"] == 92
+    assert record.health["success"] == "result_state null, reason NO_FAILURE"
     assert record.activation == "READ_ONLY_ARCHIVE" and "causal_read" in record.capabilities
     assert "attests" in record.clocks["availability"] and "not server attestation" in record.clocks["ingestion"]
 

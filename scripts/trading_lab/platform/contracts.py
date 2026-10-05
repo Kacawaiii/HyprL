@@ -66,6 +66,12 @@ class Contract:
     def __post_init__(self):
         for field in fields(self):
             object.__setattr__(self, field.name, _freeze(getattr(self, field.name)))
+        if hasattr(self, "synthetic") and type(self.synthetic) is not bool:
+            raise ValueError("synthetic must be boolean")
+        for field in fields(self):
+            if field.name.endswith("_id") or field.name in ("version", "implementation_version"):
+                if not isinstance(getattr(self, field.name), str) or not getattr(self, field.name):
+                    raise ValueError("contract identifiers and versions must be nonempty strings")
         self.validate()
 
     def validate(self):
@@ -141,6 +147,14 @@ class InformationSnapshot(Contract):
             raise ValueError("products must be nonempty and unique")
         if set(self.prices) != set(self.products) or set(self.features) != set(self.products):
             raise ValueError("price and feature states required for every product")
+        if self.policies.get("visibility") != "DURABLE_OBSERVED":
+            raise ValueError("snapshot v1 requires explicit DURABLE_OBSERVED visibility")
+        for product in self.products:
+            price = self.prices[product]
+            if price["state"] not in STATES:
+                raise ValueError("unknown price state")
+            if price.get("price") and timestamp(price["price"]["available_at"]) > self.as_of:
+                raise ValueError("snapshot cannot expose a future price")
         for source in self.sources.values():
             if source["state"] not in STATES:
                 raise ValueError("unknown source state")
@@ -172,6 +186,8 @@ class ModelContract(Contract):
             raise ValueError("model identity, version and inputs required")
         if set(self.outputs) != set(OUTPUTS) or not any(v is not None for v in self.outputs.values()):
             raise ValueError("declare all output kinds; unsupported kinds are null")
+        if any(value is not None and not isinstance(value, (str, Mapping)) for value in self.outputs.values()):
+            raise ValueError("model output declarations must describe type or method")
         if not set(self.capabilities) <= MODEL_CAPABILITIES or not self.capabilities:
             raise ValueError("unknown or absent model capability")
         if not self.horizons_seconds:

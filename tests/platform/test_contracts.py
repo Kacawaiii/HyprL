@@ -41,7 +41,7 @@ def examples():
                               sources={"fomc": {"H": 12, "state": "UNRESOLVED"},
                                        "edgar": {"H": 39, "state": "NOT_OBSERVED"}},
                               prices={"BTC-USD": {"state": "NOT_OBSERVED"}}, events=(),
-                              features={"BTC-USD": {}}, policies={"v": 1}, coverage={}, quality={})
+                              features={"BTC-USD": {}}, policies={"visibility": "DURABLE_OBSERVED"}, coverage={}, quality={})
     yield DatasetManifest(dataset_id="d1", version="1", products=("BTC-USD",), decision_start=T,
                           decision_end="2026-07-01T00:00:00Z", target="return", horizon_seconds=14400,
                           snapshot_hashes=(HASH,), features_hash=HASH, exclusions=({"reason": "gap"},),
@@ -131,3 +131,21 @@ def test_times_normalized_and_future_events_rejected():
     data["events"] = [{"available_at": "2026-06-17T18:00:00.000001Z"}]
     with pytest.raises(ValueError, match="future"):
         InformationSnapshot.from_dict(data)
+
+
+@pytest.mark.parametrize("index,change", [
+    (2, {"activation": "LIVE"}), (2, {"clocks": {}}),
+    (3, {"sources": {"fomc": {"H": -1, "state": "RESOLVED"}}}),
+    (3, {"sources": {"fomc": {"H": 1, "state": "PASS"}}}),
+    (3, {"policies": {}}), (3, {"prices": {"BTC-USD": {"state": "RESOLVED", "price": {"available_at": "2027-01-01T00:00:00Z"}}}}),
+    (4, {"decision_end": T}), (4, {"snapshot_hashes": ["bad"]}),
+    (5, {"status": "PASS"}), (5, {"dataset_hash": "bad"}),
+    (6, {"available_at": "2026-06-17T21:59:59Z"}), (6, {"recorded_at": "2026-06-17T23:59:59Z"}),
+    (0, {"synthetic": "true"}), (0, {"model_id": ""}),
+])
+def test_invalid_records_rejected(index, change):
+    record = list(examples())[index]
+    data = record.to_dict()
+    data.update(change)
+    with pytest.raises(ValueError):
+        type(record).from_dict(data)

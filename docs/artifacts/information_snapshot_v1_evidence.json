@@ -1,0 +1,163 @@
+{
+  "network_requests": 0,
+  "read_only": true,
+  "reproducible": true,
+  "snapshots": [
+    {
+      "as_of": "2026-08-15T00:00:00+00:00",
+      "coverage_state": "PARTIAL",
+      "event_counts": {
+        "edgar": 0,
+        "fomc": 0
+      },
+      "fingerprint": "7829028b249e86a5021bca584ee85892cc0f455d2252945acc6c8e3125c5f8dd",
+      "observation_counts": {
+        "AAPL": {
+          "edgar": 0,
+          "fomc": 0
+        },
+        "BTC-USD": {
+          "edgar": 0,
+          "fomc": 0
+        }
+      },
+      "policies_hash": "db5251193525524027e718e944b0f87f18b53cdf700e4ad9b975952fe5f87be3",
+      "price_identities": {
+        "AAPL": null,
+        "BTC-USD": "2691d082dcc6854c36e740db5c434b21a2ecebb2a797b4a46681941646a0aa1a"
+      },
+      "price_states": {
+        "AAPL": "NOT_CONFIGURED",
+        "BTC-USD": "RESOLVED"
+      },
+      "products": [
+        "AAPL",
+        "BTC-USD"
+      ],
+      "schema": "information-snapshot-v1",
+      "sources": {
+        "edgar": {
+          "H": 26,
+          "P": 0,
+          "provider_id": "sec_edgar_submissions_v1",
+          "snapshot_identity": "f3e7403f7a806d91b74cd6090755a520759d0768288f60f8acffecf0b66e4535",
+          "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+          "state": "NOT_OBSERVED"
+        },
+        "fomc": {
+          "H": 622,
+          "P": 0,
+          "provider_id": "federal_reserve_fomc_statements_v1",
+          "snapshot_identity": "eb2d811beb235497d46b4781b9b730bf3fcc969ed05fb32a2df251c308470c8a",
+          "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+          "state": "NOT_OBSERVED"
+        }
+      },
+      "synthetic": false
+    },
+    {
+      "as_of": "2026-10-02T14:00:00+00:00",
+      "coverage_state": "PARTIAL",
+      "event_counts": {
+        "edgar": 0,
+        "fomc": 6
+      },
+      "fingerprint": "e7ae9a66d8ad09b34c7118ebd17215149baaa09c107933b5b48e7fa6549ad8a9",
+      "observation_counts": {
+        "AAPL": {
+          "edgar": 0,
+          "fomc": 6
+        },
+        "BTC-USD": {
+          "edgar": 0,
+          "fomc": 6
+        }
+      },
+      "policies_hash": "db5251193525524027e718e944b0f87f18b53cdf700e4ad9b975952fe5f87be3",
+      "price_identities": {
+        "AAPL": null,
+        "BTC-USD": null
+      },
+      "price_states": {
+        "AAPL": "NOT_CONFIGURED",
+        "BTC-USD": "PROTECTED"
+      },
+      "products": [
+        "AAPL",
+        "BTC-USD"
+      ],
+      "schema": "information-snapshot-v1",
+      "sources": {
+        "edgar": {
+          "H": 26,
+          "P": 0,
+          "provider_id": "sec_edgar_submissions_v1",
+          "snapshot_identity": "bc9b99c37e904e9b1eabab934af263b65a8ab1dda521e71faf73e989254a8914",
+          "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+          "state": "NOT_OBSERVED"
+        },
+        "fomc": {
+          "H": 622,
+          "P": 336,
+          "provider_id": "federal_reserve_fomc_statements_v1",
+          "snapshot_identity": "fd86d88c4845bf196ff0f2bbb7e422d1c368c8ed5e157a85d7c162d1e79218be",
+          "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+          "state": "RESOLVED"
+        }
+      },
+      "synthetic": false
+    },
+    {
+      "as_of": "2026-10-04T02:00:00+00:00",
+      "coverage_state": "PARTIAL",
+      "event_counts": {
+        "edgar": 104,
+        "fomc": 0
+      },
+      "fingerprint": "5986de987bf79f90aa94804ff241f06b1ec8fb650d0dbd428873f4842997a193",
+      "observation_counts": {
+        "AAPL": {
+          "edgar": 104,
+          "fomc": 0
+        },
+        "BTC-USD": {
+          "edgar": 0,
+          "fomc": 0
+        }
+      },
+      "policies_hash": "db5251193525524027e718e944b0f87f18b53cdf700e4ad9b975952fe5f87be3",
+      "price_identities": {
+        "AAPL": null,
+        "BTC-USD": null
+      },
+      "price_states": {
+        "AAPL": "NOT_CONFIGURED",
+        "BTC-USD": "PROTECTED"
+      },
+      "products": [
+        "AAPL",
+        "BTC-USD"
+      ],
+      "schema": "information-snapshot-v1",
+      "sources": {
+        "edgar": {
+          "H": 26,
+          "P": 17,
+          "provider_id": "sec_edgar_submissions_v1",
+          "snapshot_identity": "98769884f3fe5ca43f0370ddb6f9fd6e9ce14fe8c2b576f57737d4031509f8f4",
+          "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+          "state": "RESOLVED"
+        },
+        "fomc": {
+          "H": 622,
+          "P": null,
+          "provider_id": "federal_reserve_fomc_statements_v1",
+          "snapshot_identity": "619d6fdea8b8e2f5d1c898954d6a4bab263058406caa1e4f3ad36f93ab30a278",
+          "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+          "state": "UNRESOLVED"
+        }
+      },
+      "synthetic": false
+    }
+  ]
+}
