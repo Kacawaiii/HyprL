@@ -45,6 +45,13 @@ def test_key_expiry_revocation_hash_only_configuration_and_private_file(tmp_path
     for value in ("a" * 31, "é" * 40, "a" * 257):
         with pytest.raises(ValueError):
             key_hash(value)
+    # Even a validly shaped operator hash must not authenticate an invalid
+    # candidate through the dummy constant used for timing comparison.
+    bad_config = config_payload()
+    bad_config["keys"][0]["key_sha256"] = "0" * 64
+    for authorization in (None, "Bearer short", "Bearer " + "é" * 40):
+        with pytest.raises(B2BError):
+            Configuration(bad_config).authenticate(authorization)
 
 
 def test_project_permission_origin_method_and_data_grants(tmp_path):
@@ -101,8 +108,9 @@ def test_job_quota_and_ownership_commit_with_jobs_and_queue_failure_rolls_back(t
     for i in range(6):
         jobs.submit("dataset", {"synthetic": True, "i": i})
     project["job_budget"] = 3
-    with pytest.raises(ValueError, match="queue"):
+    with pytest.raises(B2BError, match="WORKER_QUEUE_EXHAUSTED") as exhausted:
         control.submit(principal, project, "synthetic-full", "dataset", {})
+    assert exhausted.value.status == 429
     assert control.usage("alpha", project)["jobs"]["used"] == 2
 
 

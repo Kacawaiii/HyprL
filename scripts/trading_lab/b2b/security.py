@@ -121,7 +121,8 @@ class Configuration:
                 pass
         match = None
         for item, expiry in self.keys:
-            if hmac.compare_digest(candidate or "0" * 64, item["key_sha256"]) and item["enabled"] and now < expiry:
+            equal = hmac.compare_digest(candidate or "0" * 64, item["key_sha256"])
+            if candidate is not None and equal and item["enabled"] and now < expiry:
                 match = Principal(item["key_id"], item["project_id"], frozenset(item["permissions"]))
         if match is None:
             raise B2BError("AUTH_REQUIRED", 401)
@@ -187,7 +188,14 @@ class ControlStore:
             db.execute("UPDATE b2b_usage SET jobs=jobs+1 WHERE project_id=?", (principal.project_id,))
             db.execute("INSERT INTO b2b_owners VALUES(?,?,?)", (principal.project_id, "job", job_id))
             self._audit(db, request_id, principal, kind + "_submit", 202, "JOB_QUEUED")
-        return self.jobs.submit(kind, payload, limits, on_submit=admit)
+        try:
+            return self.jobs.submit(kind, payload, limits, on_submit=admit)
+        except ValueError as error:
+            code = {"lab queue budget exhausted": "WORKER_QUEUE_EXHAUSTED",
+                    "persistent lab job budget exhausted": "PERSISTENT_JOB_BUDGET_EXHAUSTED"}.get(str(error))
+            if code:
+                raise B2BError(code, 429) from None
+            raise
 
     def require_owner(self, project_id, kind, identity):
         with self.jobs.connect() as db:
