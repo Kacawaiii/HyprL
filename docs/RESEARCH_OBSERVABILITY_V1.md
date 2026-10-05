@@ -65,11 +65,14 @@ Inference latency and availability remain unknown when Model Lab did not record 
 
 The authorized real demo consumes only the frozen May–July v2 corpus into a **new** private database,
 loads the frozen v2 artifacts without fitting, and requires the same result hashes as the committed
-reference. It does not open a live or archived runtime store. Original paper evidence did not record
-full feature values or an InformationSnapshot: its adapter retains a clearly named legacy input
-certificate and original feature/prediction hashes, with explicit NOT_RECORDED diagnostics. It does
-not fabricate a shared snapshot or feature vector. Historical bar-close availability remains an
-assumption, execution costs remain synthetic, and the spent OOS window remains exploratory. Its
+reference. It does not open a live or archived runtime store. Original paper evidence did not
+record an InformationSnapshot or full feature values. The adapter
+retains a clearly named legacy input certificate and original feature/prediction hashes. It
+reconstructs the six feature values using the unchanged dataset algorithm, exact seed prefix and
+Decimal precision, and refuses every vector that differs from its captured feature hash. This
+HASH_VERIFIED_RECONSTRUCTION supplies real feature distributions and decision regimes; it does not
+attest historical price availability. The missing original InformationSnapshot stays NOT_RECORDED.
+Historical bar-close availability remains an assumption, execution costs remain synthetic, and the spent OOS window remains exploratory. Its
 four-hour tail labels stay pending and its unobserved telemetry stays unknown.
 
 The private SQLite store uses WAL/FULL, append-only evidence triggers, canonical content hashes,
@@ -130,7 +133,7 @@ and labels, imports actual shadow decisions/executions, and creates validation r
 monitoring. A separate labelled synthetic scenario injects gaps, latency, errors, drift and performance
 loss and verifies all four classifications. `--paper-replay` additionally runs the authorized frozen
 replay without fitting and creates descriptive May references versus June–July observations,
-retaining unknown real feature values and inference telemetry; omit it for a wholly synthetic demo. Only private runtime stores are written.
+using hash-verified reconstructed features and retaining unknown inference telemetry; omit it for a wholly synthetic demo. Only private runtime stores are written.
 
 All endpoints below are GET/HEAD; POST returns 405. Reads never launch a workload or ingest a label.
 Unconfigured stores return 503, malformed selection/cursors 400, absent evidence at T 404 and corrupt
@@ -158,8 +161,8 @@ also accept product, model_id and a half-open start/end interval. Continuation r
 private store and is not committed. This local read-only surface does not implement multi-project B2B
 authorization; that is the separate B2B slice.
 
-Validation: 48 research cases; the combined required source/application gate, shared platform,
-Model Lab and research suites finished with **689 passed / 2 BLOCKED** (private FOMC fixtures and
+Validation: 49 research cases; the combined required source/application gate, shared platform,
+Model Lab and research suites finished with **690 passed / 2 BLOCKED** (private FOMC fixtures and
 `hyprl_api` absent). Event/protection/protocol, supervised EDGAR and frozen paper/engine regressions:
 **496 passed**. The committed evidence artifact contains only counts, identities,
 method bindings and explicit limitations. Unavailable legacy gate checks remain BLOCKED.

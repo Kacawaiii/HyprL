@@ -23,7 +23,7 @@
     "data/models/paper_v2/manifest.json": "98d04e2c0729554f0527cbf9945f94b8aaa6f41f71430866144d80d795bf264e"
   },
   "ledger": {
-    "head_hash": "aa896f962862cba9d922302301e0b6358ba0c28d9362837cce4c3251a4bc4972",
+    "head_hash": "feb937e4cc9889dbb53183231d290fb142a1a9dab373e5711ab0c5d7f5bf40cd",
     "records": 22627,
     "schema": "research-observability-store-v1",
     "verified": true
@@ -31,7 +31,7 @@
   "limitations": [
     "synthetic demonstrations establish no real edge",
     "spent real replay stays exploratory; costs synthetic; price clocks assumed",
-    "legacy replay has no recorded full feature values or InformationSnapshot",
+    "legacy replay features reconstructed and captured hashes verified; original InformationSnapshot NOT_RECORDED",
     "16 real tail/gap labels pending; unobserved inference telemetry unknown",
     "real comparison requires causally overlapping data, operator review and scoped authorizations"
   ],
@@ -41,23 +41,23 @@
   "real_monitoring": {
     "BTC-USD": {
       "available_labels": 1461,
-      "feature_values": "NOT_RECORDED",
+      "feature_values": "HASH_VERIFIED_RECONSTRUCTION",
       "inference_telemetry": "NOT_OBSERVED",
       "method_hash": "1b5ce03c0cc23654c53834fb8202dae47f22e66df2b491727852be5f3facbeae",
-      "monitoring_hash": "6199bc4e77dbbfff24c6f09ffe7490448a13736f2cc9b670e4c8f61293f0cc28",
+      "monitoring_hash": "6e1f65b404cb046d1ad3fcb56462c36429eb4b47f325248c79a03a74a037077c",
       "pending_labels": 3,
-      "reference_hash": "547f7d5759ae09acddd91b8e79886783330899f406de79686f71e1d694b4c0ca",
+      "reference_hash": "1ce4f4be6f99ee6eb301162894b518cd7569114b916199dce601e9896189db55",
       "sample": 1464,
       "scope": "EXPLORATORY"
     },
     "ETH-USD": {
       "available_labels": 1461,
-      "feature_values": "NOT_RECORDED",
+      "feature_values": "HASH_VERIFIED_RECONSTRUCTION",
       "inference_telemetry": "NOT_OBSERVED",
       "method_hash": "1b5ce03c0cc23654c53834fb8202dae47f22e66df2b491727852be5f3facbeae",
-      "monitoring_hash": "d064060f8186eefaad2a203397c8e0f50fe5dba093fedfc3521e1b2ac2212cf6",
+      "monitoring_hash": "9efdd83fdc8c55d3df8fa24cb93fa0a4056a8064ac39f38e580017aa5aa2150d",
       "pending_labels": 3,
-      "reference_hash": "96c32a979dcf6fe5cc9496285128ddf8c3a5d5a5bda00784ae8f4b45a12f665e",
+      "reference_hash": "93e8ef027d68ee09759fd9b63d556a3bba226d06daa444d117802c90775014f8",
       "sample": 1464,
       "scope": "EXPLORATORY"
     }
@@ -68,6 +68,7 @@
       "frozen_scoring_reproduced": true,
       "pending_labels": 8,
       "predictions": 2178,
+      "reconstructed_features_verified": 2178,
       "result_hash": "db669a55970326973e83ded005fe03e5eba347ed7f1f8f0f39f4e09c4c83a65c",
       "scored_predictions_hash": "70f537c08e9d06cbb75bffbecdfa1c2679a01b2fb39fdfbb7fdb02de5bb1d340"
     },
@@ -76,6 +77,7 @@
       "frozen_scoring_reproduced": true,
       "pending_labels": 8,
       "predictions": 2178,
+      "reconstructed_features_verified": 2178,
       "result_hash": "0e6f62d7b3ec9d8b28731b2ddd441885241c7ba41866c1da64200c64138cd798",
       "scored_predictions_hash": "26bf777cf2b02abbaf4e3b561f226902c11c81143b93760ba0cd181e14918508"
     }
@@ -95,13 +97,13 @@
       "model_id": "synthetic-ridge-v1",
       "monitoring": {
         "BTC-USD": {
-          "monitoring_hash": "824549e9795447ee8794661d1e4e9fa288ec26bed74c485ea28c0d3b362ea789",
-          "reference_hash": "095e47aece157b319be7bffd7b19ea3f8c8772fa9ca5e68456ecc4c7f6f03368",
+          "monitoring_hash": "70e1af1cd1c1765c8435c551b87cd490686b42ae9bf30aecbbf81d5839df7ffd",
+          "reference_hash": "b562e263897e0be7ad2691ebdec2cce788fd4ebca9610b7868990ccf41c7058d",
           "sample": 22
         },
         "ETH-USD": {
-          "monitoring_hash": "467fc4550c48fa814432b2cd6db9614b249e84cf0750dc3bc404fba4a80cfb11",
-          "reference_hash": "fafc88f2c3db9a6d6a7cf22b9340a40e473ebf4457771c07286569ffbf9bfe79",
+          "monitoring_hash": "b207d4fc875c7a2b525bd965d7cacd9cba3aca63d75e172aada28038f0bd43bf",
+          "reference_hash": "e08a94f17477cc368608cc380f00d7e2b79295f222e8deb263110b4d4daafd55",
           "sample": 22
         }
       },
@@ -117,13 +119,13 @@
       "model_id": "local-momentum-v1",
       "monitoring": {
         "BTC-USD": {
-          "monitoring_hash": "852f4bf055666142051baa788b020dd1b665251078660764fab7b6a269c174a0",
-          "reference_hash": "c91df73618efccb17fee1aabf2bbc0173f6a9551180440702c46eb1a3655166b",
+          "monitoring_hash": "17f8ee89731c954785d342f8cd44507bb0ddb8e5c8de45d35ff5db31261cd79b",
+          "reference_hash": "2e54cd459c375579f80ed8c18dd01f460323c72cbbdd7a5fcf10a6c4248475d7",
           "sample": 22
         },
         "ETH-USD": {
-          "monitoring_hash": "f48ed89825d8bc150348ac612782221443e901b596921deb31ece5ba83a21b48",
-          "reference_hash": "067c4999f6120d82b0aa32620ca654d5ab92a740c4621e8a834f631b7188ae75",
+          "monitoring_hash": "abfb04f4f7e0a1d8da63c0304065c1cce5d0fb4ab2146f8baa3305b3860940fc",
+          "reference_hash": "75b87c0ca6f69e4eb1c08bf3e6096ef3b186786d2368d0975e8c8067033914ae",
           "sample": 22
         }
       },
@@ -138,8 +140,8 @@
       "PERFORMANCE_DROP",
       "TECHNICAL_DEGRADATION"
     ],
-    "monitoring_hash": "babf075a2aa058130bc2c24e067d4ac38d9d72f48e03e041661bf83c08efeedd",
-    "reference_hash": "9ebb02fb8d4666b4124e5af6f15a78bec722cebeb995cc7224dd7b90d1c8166d",
+    "monitoring_hash": "e409f878964ee1893087b29e17748b1802895bab43435ff4dcfb19c08b1d2147",
+    "reference_hash": "6537ec4b6e6af132c7fd3ffe7b594109df35059ec9f9c6945d0f16e68dd8a75a",
     "sample": 23,
     "synthetic": true
   }
