@@ -226,6 +226,7 @@ def build_routes(service: AppService):
 
 class AppApiHandler(BaseHTTPRequestHandler):
     lab = None
+    research = None
     service: AppService = None          # injected by make_server
     site = None                         # StaticSite in production, None in dev
     server_version = "HyprLAppAPI/1.0"
@@ -257,6 +258,10 @@ class AppApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
 
     def _dispatch(self, path: str, query: dict):
+        if path.startswith('/api/v1/observability/') or any(
+                path == '/api/v1/research/' + leaf or path.startswith('/api/v1/research/' + leaf + '/')
+                for leaf in ('hypotheses', 'experiments', 'proposals', 'comparison')):
+            return self.research.dispatch(path, parse_qs(urlparse(self.path).query, keep_blank_values=True))
         routes, markets_detail, chart, backtest_sub, paper_sub = build_routes(
             self.service)
         if path in routes:
@@ -547,7 +552,7 @@ class AppApiHandler(BaseHTTPRequestHandler):
 
 def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 dist_root=None, fomc_store=None, edgar_store=None,
-                model_lab_root=None, model_lab_token=None):
+                model_lab_root=None, model_lab_token=None, research_root=None):
     """Build a loopback-bound read-only server over a fixed data root.
 
     ``dist_root`` turns on single-origin production mode. It is resolved once,
@@ -572,8 +577,9 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
     if dist_root is not None:
         from scripts.trading_lab.ops.static_assets import StaticSite
         site = StaticSite(dist_root)
+    from scripts.trading_lab.app_api.research import ResearchViews
     handler = type("BoundAppApiHandler", (AppApiHandler,),
-                   {"service": service, "site": site})
+                   {"service": service, "site": site, "research": ResearchViews(research_root)})
     server = server_class((host, port), handler)
     if model_lab_root is not None:
         from scripts.trading_lab.app_api.model_lab import ModelLabApi
@@ -595,6 +601,7 @@ def main(argv=None):  # pragma: no cover - entry point
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--dist-root", default=None,
                         help="serve a frontend build from the same origin")
+    parser.add_argument("--research-root", default=None, help="private registry and observability store to read only")
     parser.add_argument("--model-lab-root", default=None,
                         help="opt-in private synthetic job state; requires HYPRL_MODEL_LAB_TOKEN and loopback")
     parser.add_argument("--fomc-store", default=None,
@@ -614,7 +621,8 @@ def main(argv=None):  # pragma: no cover - entry point
                          port=arguments.port, dist_root=arguments.dist_root,
                          fomc_store=arguments.fomc_store, edgar_store=arguments.edgar_store,
                          model_lab_root=arguments.model_lab_root,
-                         model_lab_token=os.environ.get("HYPRL_MODEL_LAB_TOKEN"))
+                         model_lab_token=os.environ.get("HYPRL_MODEL_LAB_TOKEN"),
+                         research_root=arguments.research_root)
     if arguments.dist_root:
         print(f"HyprL on http://{arguments.host}:{arguments.port}/")
     else:
