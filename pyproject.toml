@@ -38,6 +38,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+trader = ["jsonschema==4.26.0", "pandas_market_calendars==5.4.0"]
 ml = [
     "scikit-learn>=1.2.0",
     "xgboost>=1.7.0",
