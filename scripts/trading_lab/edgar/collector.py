@@ -131,12 +131,16 @@ class EdgarCollector:
         except BlockingIOError as exc:
             self._lock.close()
             raise Rejected(f"another collector owns {store.root}") from exc
-        self.epoch = uuid.uuid4().hex
-        store.append("EPOCH", [("EPOCH", self.epoch, {"token": self.epoch, "boot_id": boot_id})])
-        self.limiter = RollingLimiter(clock.mono, clock.sleep, spacing_s=spec.SPACING_S, window_s=spec.WINDOW_S,
-                                      window_max=spec.WINDOW_MAX_STARTS, embargo_s=spec.EMBARGO_S)
-        self.paused_until: float | None = None
-        self.reconciled = self.reconcile()
+        try:
+            self.epoch = uuid.uuid4().hex
+            store.append("EPOCH", [("EPOCH", self.epoch, {"token": self.epoch, "boot_id": boot_id})])
+            self.limiter = RollingLimiter(clock.mono, clock.sleep, spacing_s=spec.SPACING_S, window_s=spec.WINDOW_S,
+                                          window_max=spec.WINDOW_MAX_STARTS, embargo_s=spec.EMBARGO_S)
+            self.paused_until: float | None = None
+            self.reconciled = self.reconcile()
+        except BaseException:
+            self.close()
+            raise
 
     def reconcile(self) -> dict:
         """After a crash or a kill: an attempt of an earlier epoch without outcome is INTERRUPTED (its
@@ -181,7 +185,8 @@ class EdgarCollector:
         return rows[0].body["ciks"] if rows else []
 
     # ---- one attempt ------------------------------------------------------------------------------
-    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None, request_allowed=None) -> dict:
+    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None, request_allowed=None,
+             authorization_sha256: str | None = None) -> dict:
         cik = cik10(cik)
         if cik not in self.watchlist():
             raise Rejected(f"CIK {cik} is not on the watchlist")
@@ -204,7 +209,8 @@ class EdgarCollector:
         check_request()
         url = submissions_url(cik)
         attempt = self.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {
-            "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant})])
+            "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant,
+            **({"authorization_sha256": authorization_sha256} if authorization_sha256 is not None else {})})])
         try:
             check_request()  # the durable attempt may have waited past expiry, stop or a storage incident
         except RequestCancelled as exc:
@@ -220,11 +226,18 @@ class EdgarCollector:
         header_lines = [[name, value] for name, value in (result.headers or [])]
         if result.kind != "RESPONSE":
             check_at = iso(result.wall_at_receipt) if result.wall_at_receipt else self.store.wall_iso()
+            termination = []
+            if result.kind == "SOURCE_THROTTLED" and authorization_sha256 is not None:
+                # Commit with the outcome: a crash before RUN_ENDED cannot reopen this grant.
+                termination = [("AUTHORIZATION_TERMINATED", authorization_sha256, {
+                    "authorization_sha256": authorization_sha256, "epoch": self.epoch,
+                    "attempt": attempt, "status": result.status, "reason": "SOURCE_THROTTLED"})]
             self.store.append("ATTEMPT_OUTCOME", [
                 ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": result.kind, "status": result.status,
                                                     "reason": result.reason, "fetch_seconds": fetch_seconds,
                                                     "header_lines": header_lines}),
-                health_row(cik, attempt=attempt, record=None, result_state=result.kind, reason=result.reason, check_at=check_at)])
+                health_row(cik, attempt=attempt, record=None, result_state=result.kind, reason=result.reason,
+                           check_at=check_at), *termination])
             if result.kind == "SOURCE_THROTTLED":
                 self.paused_until = self.clock.mono() + spec.THROTTLE_PAUSE_S
             return {"status": result.kind, "attempt": attempt, "reason": result.reason}

@@ -14,7 +14,8 @@ from scripts.trading_lab.edgar.transport import FetchResult, classify_status
 START = datetime(2026, 6, 17, 13, 0, 0, tzinfo=timezone.utc)
 CIK_A, CIK_B = "320193", "789019"
 COLUMNS = ("accessionNumber", "filingDate", "reportDate", "acceptanceDateTime", "act", "form", "fileNumber",
-           "filmNumber", "items", "size", "isXBRL", "isInlineXBRL", "primaryDocument", "primaryDocDescription")
+           "filmNumber", "items", "size", "isXBRL", "isInlineXBRL", "primaryDocument", "primaryDocDescription",
+           "core_type", "isXBRLNumeric")
 
 
 class SimClock:
@@ -38,12 +39,12 @@ def filing(accession: str, *, form: str = "8-K", filed: str = "2026-06-16", item
     return {"accessionNumber": accession, "filingDate": filed, "reportDate": filed, "acceptanceDateTime": acceptance,
             "act": "34", "form": form, "fileNumber": "001-36743", "filmNumber": "26412345", "items": items,
             "size": size, "isXBRL": 1, "isInlineXBRL": 1, "primaryDocument": primary,
-            "primaryDocDescription": form}
+            "primaryDocDescription": form, "core_type": form, "isXBRLNumeric": 1}
 
 
 def listing(cik: str, filings: list[dict], *, name: str = "Example Corp", files: bool = False) -> bytes:
     recent = {column: [f[column] for f in filings] for column in COLUMNS}
-    doc = {"cik": int(cik10(cik)), "entityType": "operating", "name": name, "tickers": ["EXM"],
+    doc = {"cik": cik10(cik), "entityType": "operating", "name": name, "tickers": ["EXM"],
            "filings": {"recent": recent, "files": [{"name": f"CIK{cik10(cik)}-submissions-001.json"}] if files else []}}
     return json.dumps(doc).encode("utf-8")
 
