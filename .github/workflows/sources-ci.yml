@@ -39,6 +39,8 @@ jobs:
           python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py \
             tests/crypto/test_edgar_slice.py tests/crypto/test_app_api*.py tests/crypto/test_ops_server.py \
             tests/crypto/test_equity_api.py tests/api -q
+      - name: Shared platform contracts and snapshots
+        run: python -m pytest tests/platform -q
       # Event features v1 and v2, protected intervals and the preregistered comparison protocol.
       - name: Event features and protocol suites
         run: |
