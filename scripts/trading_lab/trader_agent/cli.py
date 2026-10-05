@@ -3,6 +3,7 @@ import argparse
 from datetime import timedelta
 import json
 import os
+from pathlib import Path
 
 from scripts.trading_lab.research.store import ResearchStore
 
@@ -61,7 +62,9 @@ def main(argv=None):
     runtime = private_root(args.runtime)
     if args.dry_run:
         runtime = private_root(runtime / "synthetic")
-    ledger = Ledger(runtime, grant, clock=clock)
+    # One production budget bank/owner across runtime paths: changing --runtime never refunds grants.
+    bank = None if args.dry_run else Path.home() / '.local/share/hyprl/trader-agent-budget'
+    ledger = Ledger(runtime, grant, clock=clock, budget_root=bank)
     if args.action in {"pause", "resume"}:
         marker = runtime / "PAUSED"
         if args.action == "pause":

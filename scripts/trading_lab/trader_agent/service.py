@@ -128,6 +128,8 @@ class TraderService:
                 self.record(decision, context)
                 return self.summary(run_id, "COMPLETE", decision_at, decision=decision,
                     portfolios=portfolios(decision["views"]), exclusions=context["exclusions"],
+                    reviewed_analyst_portfolios={a:portfolios(decision['views'],analyst=a)
+                                                for a in ('reviewer_claude','reviewer_gpt')},
                     multiple_testing_variants=VARIANTS,
                     budget_counts=self.ledger.counts())
             except TraderError as error:
@@ -147,7 +149,7 @@ class TraderService:
     def record(self, decision, context):
         recorded = iso(self.clock())
         crypto = self.ledger.grant.payload["universe"]["crypto"]
-        proposals = portfolios(decision["views"])
+        proposals = {a:portfolios(decision['views'],analyst=a) for a in ('reviewer_claude','reviewer_gpt','consensus')}
         context_evidence = self.store.records('replay-summary', object_id=decision['run_id'] + ':context')
         if len(context_evidence) != 1 or context_evidence[0]['payload']['context_hash'] != sha256_canonical(context):
             raise TraderError('CONTEXT_BINDING_INVALID')
@@ -187,8 +189,11 @@ class TraderService:
                                          "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"]},
                     "models": decision["models"], "skill_hashes": decision["skill_hashes"], "run_id": decision["run_id"]},
                 risk={"mode": "PAPER_SHADOW_ONLY", "verdict": view["verdict"]},
-                proposed_position={"weight": proposals[view["horizon"]]["unhedged"].get(view["asset"], 0)
-                                   if view["analyst"] == "consensus" else 0, "entry_at": iso(entry)},
+                proposed_position={"weight": proposals[view['analyst']][view["horizon"]]["unhedged"].get(view["asset"], 0)
+                                   if view["analyst"] in proposals else 0, "entry_at": iso(entry),
+                                   "capital_usd":self.ledger.grant.payload['budgets']['paper_capital_usd'],
+                                   "capital_fraction":1 if view['horizon']=='1d' else .2,
+                                   "variant":view['analyst']},
                 uncertainty={"method": "uncalibrated_analyst_judgment", "calibration_claim": False},
                 costs={"equity_bps_per_side": 5, "crypto_bps_per_side": 10, "half_spread_bps": 2.5,
                        "spread_method": "preregistered_fixed_assumption_not_measured"},

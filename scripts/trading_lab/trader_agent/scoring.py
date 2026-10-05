@@ -99,9 +99,11 @@ def realize(store, ledger, data, *, at=None):
                 store.append_label(label)
                 # This is an after-the-fact SHADOW observation, never a claimed broker execution.
                 execution = ExecutionObservation(observation_id=p.prediction_id + ":shadow-fill", prediction_id=p.prediction_id,
-                    prediction_hash=p.identity, available_at=iso(available), recorded_at=iso(recorded), state="FILLED",
+                    prediction_hash=p.identity, available_at=iso(available), recorded_at=iso(recorded),
+                    state="FILLED" if p.proposed_position['weight'] else 'NO_FILL',
                     executed_position={"weight": p.proposed_position["weight"], "entry_at": iso(entry), "mode": "SHADOW"},
-                    costs={"roundtrip": cost}, proposal_gap={"method": "shadow_mark_at_recorded_open"}, errors=(),
+                    costs={"roundtrip": cost if p.proposed_position['weight'] else 0},
+                    proposal_gap={"method": "shadow_mark_at_recorded_open"}, errors=(),
                     provenance={"sources": sources, "method": "retrospective_shadow_fill_not_broker"})
                 store.append_execution(execution)
                 realized += 1
@@ -159,8 +161,8 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             groups.append("reviewer_" + {"KEEP": "kept", "REJECT": "rejected", "DOWNGRADE": "downgraded"}[view["verdict"]])
         targets = ["raw"] if population == "crypto" else ["raw", "SPY_relative"]
         baselines = inputs[row["identity"]]["baselines"] if view["analyst"] == "consensus" else {}
-        if view["analyst"] == "consensus":
-            cohort_views[(p["signal"]["session"], horizon)].append((view, labels.get(row["identity"])))
+        if view["analyst"] in {'reviewer_claude','reviewer_gpt','consensus'}:
+            cohort_views[(p["signal"]["session"], horizon, view['analyst'])].append((view, labels.get(row["identity"])))
         for target in targets:
             keys = [f"{g}/{population}/{horizon}/{target}" for g in groups]
             keys += [f"{g}/{population}/{horizon}/{target}" for g in baselines]
@@ -189,10 +191,10 @@ def scorecard(store, *, synthetic=False, include_samples=False):
     primary = scores.get("consensus/equity_etf/5d/SPY_relative", {})
     minimum = primary.get("days", 0) >= 60 and primary.get("non_abstained", 0) >= 1500
     cohorts = []
-    for (day, horizon), pairs in sorted(cohort_views.items()):
-        portfolio = portfolios([v for v, _ in pairs])[horizon]
+    for (day, horizon, analyst), pairs in sorted(cohort_views.items()):
+        portfolio = portfolios([v for v, _ in pairs], analyst=analyst)[horizon]
         values = {v['asset']: label['value'] for v, label in pairs if label}
-        result = {"session": day, "horizon": horizon, "capital_fraction": portfolio['capital_fraction'],
+        result = {"session": day, "horizon": horizon, 'analyst':analyst, "capital_fraction": portfolio['capital_fraction'],
                   "state": "COMPLETE" if len(values) == len(pairs) else "PENDING", "variants": {}}
         for variant in ('unhedged', 'spy_hedged'):
             w = portfolio[variant]

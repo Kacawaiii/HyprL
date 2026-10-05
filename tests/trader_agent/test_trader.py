@@ -42,6 +42,9 @@ def test_native_shape_demo_pending_labels_and_append_only_realization(service, c
     assert result['labels_added'] == 50 and result['pending'] == 0
     assert service.store.get(first['identity']) == first
     assert len(service.store.records('execution')) == 50
+    executed = service.store.records('execution')
+    assert any(r['payload']['state']=='NO_FILL' for r in executed)
+    assert any(r['payload']['state']=='FILLED' for r in executed)
     assert realize(service.store, service.ledger, service.data, at=clock())['labels_added'] == 0
     assert service.store.verify()['verified']
     card = scorecard(service.store, synthetic=True)
@@ -162,6 +165,19 @@ def test_atomic_daily_and_global_budgets(ledger, grant, clock):
         restarted.reserve('reviewer')
 
 
+def test_changing_runtime_path_cannot_reset_shared_budget_bank(tmp_path, grant, clock):
+    bank = tmp_path / 'shared-bank'
+    first = Ledger(tmp_path/'runtime-a',grant,clock=clock,budget_root=bank)
+    second = Ledger(tmp_path/'runtime-b',grant,clock=clock,budget_root=bank)
+    first.reserve('run')
+    with pytest.raises(TraderError, match='BUDGET_EXHAUSTED'):
+        second.reserve('run')
+    with first.owner():
+        with pytest.raises(TraderError, match='OWNER_BUSY'):
+            with second.owner():
+                pass
+
+
 def test_gdelt_spacing_persists_and_expiry_checked_after_wait(ledger, clock):
     ledger.reserve('gdelt_doc_api')
     with pytest.raises(TraderError, match='SOURCE_SPACING'):
@@ -234,6 +250,20 @@ def test_raw_cli_quota_and_bad_json(ledger, monkeypatch, raw, code):
     monkeypatch.setattr('subprocess.Popen', Process)
     with pytest.raises(TraderError, match=code):
         ModelRunner(ledger).once('analyst_gpt', 'synthetic')
+
+
+def test_successful_forecast_mentions_trade_quota_without_being_usage_quota(ledger, monkeypatch):
+    monkeypatch.setattr('subprocess.run', lambda *a, **kw: SimpleNamespace(stdout='synthetic'))
+    class Process:
+        returncode = 0
+        def __init__(self, args, **kw):
+            self.out = kw['stdout']
+        def communicate(self, *a, **kw):
+            self.out.write(json.dumps({'type':'item.completed','item':{'type':'agent_message',
+                'text':'{"regime":["Synthetic trade quota announcement, 429 units"],"views":[]}'}}))
+            self.out.flush()
+    monkeypatch.setattr('subprocess.Popen', Process)
+    assert ModelRunner(ledger).once('analyst_gpt', 'synthetic')['views'] == []
 
 
 def test_schemas_pinned_skills_and_preregistration():

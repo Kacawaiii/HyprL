@@ -1,7 +1,6 @@
 """Render/install only these agent-owned systemd user units; never trigger a run."""
 import argparse
 from pathlib import Path
-import shlex
 import subprocess
 import sys
 

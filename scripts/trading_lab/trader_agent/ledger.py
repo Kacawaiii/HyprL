@@ -9,10 +9,11 @@ from .config import TraderError, iso, now, private_root
 
 
 class Ledger:
-    def __init__(self, root, grant, *, clock=now):
+    def __init__(self, root, grant, *, clock=now, budget_root=None):
         self.root = private_root(root)
+        self.budget_root = private_root(budget_root) if budget_root else self.root
         self.grant, self.clock = grant, clock
-        self.path = self.root / "dispatch.sqlite"
+        self.path = self.budget_root / "dispatch.sqlite"
         with self.connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS dispatch (
@@ -37,7 +38,7 @@ class Ledger:
 
     @contextmanager
     def owner(self):
-        with (self.root / "owner.lock").open("a") as lock:
+        with (self.budget_root / "owner.lock").open("a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:

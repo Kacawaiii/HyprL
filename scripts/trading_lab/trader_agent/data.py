@@ -69,7 +69,7 @@ class PublicData:
         payload, source = self.fetch("yahoo_chart", chart_path(asset), {
             "period1": int(start.timestamp()), "period2": int(end.timestamp()), "interval": "1d", "events": "div,split"})
         parse_chart_meta(payload)
-        rows = adapt_chart_rows(payload, instrument_id="equity:XNAS:" + asset)
+        rows = adapt_chart_rows(payload, instrument_id=asset)
         for row in rows:
             values = [float(row[k]) for k in ('open', 'high', 'low', 'close', 'volume')]
             op, high, low, close, volume = values

@@ -1,10 +1,8 @@
 """Clearly synthetic native-shape providers and deterministic model fakes."""
 from datetime import timedelta
 import json
-import re
 
 from scripts.trading_lab.coinbase_candles import adapt_coinbase_candles
-from scripts.trading_lab.equity_calendar import USEquityRegularCalendar
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.yahoo_chart_provider import adapt_chart_rows
 
@@ -40,7 +38,9 @@ class SyntheticData:
         base = 90 + sum(ord(c) for c in asset) % 50
         values = [base + (s.open_at.toordinal() % 29) * .1 for s in sessions]
         payload = {"chart": {"error": None, "result": [{"meta": {"symbol": asset, "currency": "USD",
-            "exchangeTimezoneName": "America/New_York", "exchangeName": "NMS", "instrumentType": "EQUITY"},
+            "exchangeTimezoneName": "America/New_York", "exchangeName": "NMS", "instrumentType":
+                "ETF" if asset in self.ledger.grant.payload['universe']['sector_etfs'] +
+                                    self.ledger.grant.payload['universe']['benchmarks_not_predicted'] else "EQUITY"},
             "timestamp": [int(s.open_at.timestamp()) for s in sessions], "indicators": {"quote": [{
                 "open": values, "close": [v + .2 for v in values], "high": [v + 1 for v in values],
                 "low": [v - 1 for v in values], "volume": [1000 for _ in values]}]}}]}}

@@ -8,7 +8,9 @@ The private grant is supplied at runtime. Its expiry, universe, source hosts, mo
 timeouts, daily calls/retries and request limits govern dispatch. An expired grant fails closed.
 Daily reservations are durable SQLite FULL transactions, shared across restarts and grant updates;
 failed requests, retries and interrupted runs consume their reservations. One owner lock covers
-run/label jobs. Every started experiment registers all 14 variants, including failed experiments.
+run/label jobs. Production CLI invocations share one user-level budget bank and owner lock, so changing
+the runtime path cannot reset budgets or create another owner. Dry-run budgets remain isolated.
+Every started experiment registers all 14 variants, including failed experiments.
 The GDELT spacing clock is durable. Redirects and unapproved transport paths are refused.
 
 The existing crypto holdout overlaps the initial run period: BTC-USD and ETH-USD are **PROTECTED**,
@@ -92,11 +94,14 @@ only native-shape synthetic fakes.
 
 ## Shadow portfolios, labels and scorecard
 
-Each horizon is a separate portfolio. Signed weights are proportional to p_outperform minus 0.50;
+Each reviewed analyst and consensus has separate shadow portfolios, also separated by horizon.
+Signed weights are proportional to p_outperform minus 0.50;
 directional certainty must be at least 0.55 (for DOWN, 1 minus p_outperform). Each name, including the
 separate SPY hedge leg, is capped at 10%; gross is at most 100%. The hedge neutralizes net equity
 exposure, not estimated beta. Each 5d daily cohort receives one fifth of that portfolio's capital.
 Shadow fills are recorded later against the actual target opening mark; they are never broker fills.
+Zero proposed weight is recorded as NO_FILL. Unit-return scoring of rejected original forecasts is
+a hypothetical diagnostic, separate from filled shadow-portfolio P&L.
 
 Equity labels: open(D) to close(D) for 1d, open(D) to close(D+4) for 5d, using pinned XNYS sessions,
 including holidays, early closes and DST. Store both raw and raw-minus-SPY returns. Crypto labels:
@@ -142,7 +147,9 @@ Only these user units are installed. Run: Mon–Fri 12:00Z. Label: Mon–Fri 21:
 Persistent=false prevents catch-up inference. Holidays skip without model/source requests. After DST,
 12:00Z still precedes the calendar's 14:30Z open. No system services or other applications are changed.
 
-Private runtime layout: `dispatch.sqlite` (budgets), `evidence/research.sqlite` (immutable records),
+The production budget bank is the user-level `.local/share/hyprl/trader-agent-budget/dispatch.sqlite`;
+the owner lock is adjacent. It persists across runtime paths and grant updates. Do not delete it to retry.
+Private runtime layout: `evidence/research.sqlite` (immutable records),
 `raw/`, `transcripts/`, `alerts.jsonl`, latest `alert.json`, `health.json`, `last-label.json`, `weekly/`,
 and private service logs. Permissions are 0700 directories / 0600 files. Dry-run uses its own
 `synthetic/` subtree and budgets; it advances the fake clock to realize labels and never constructs a

@@ -1,7 +1,6 @@
 """Least-privilege CLI inference. Outputs are evidence, never hand repaired."""
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import tempfile
@@ -55,6 +54,8 @@ def parse_gpt(raw):
         events = [strict_json(line) for line in raw.splitlines() if line.strip()]
     except (ValueError, TypeError):
         raise TraderError("MODEL_JSON_INVALID") from None
+    if not all(isinstance(e, dict) for e in events):
+        raise TraderError('MODEL_JSON_INVALID')
     if any(tainted(e) for e in events):
         raise TraderError("TAINTED_RUN")
     messages = [e["item"]["text"] for e in events if e.get("type") == "item.completed"
@@ -72,6 +73,8 @@ def parse_claude(raw):
         event = strict_json(raw)
     except (ValueError, TypeError):
         raise TraderError("MODEL_JSON_INVALID") from None
+    if not isinstance(event, dict):
+        raise TraderError('MODEL_JSON_INVALID')
     if tainted(event):
         raise TraderError("TAINTED_RUN")
     if event.get("is_error") or event.get("subtype", "success") != "success":
@@ -148,7 +151,17 @@ class ModelRunner:
                     emitted = []
                 if any(tainted(e) for e in emitted):
                     raise TraderError('TAINTED_RUN')
-                if any(marker in (raw + errors).lower() for marker in QUOTA):
+                error_text = errors
+                for event in emitted:
+                    if not isinstance(event, dict):
+                        continue
+                    if event.get('type') in {'error','turn.failed'} or event.get('is_error') or 'error' in event:
+                        error_text += json.dumps(event)
+                    elif event.get('type') == 'result' and not isinstance(event.get('structured_output'), dict):
+                        error_text += str(event.get('result', ''))
+                if not emitted:
+                    error_text += raw
+                if any(marker in error_text.lower() for marker in QUOTA):
                     raise TraderError("SKIPPED_QUOTA")
                 if proc.returncode:
                     # A malicious call can be present even in a failed stream.

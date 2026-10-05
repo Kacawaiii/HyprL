@@ -26,10 +26,10 @@ def weights(views):
     return result
 
 
-def portfolios(views):
+def portfolios(views, *, analyst='consensus'):
     output = {}
     for horizon in ("1d", "5d"):
-        base = weights([v for v in views if v["analyst"] == "consensus" and v["horizon"] == horizon])
+        base = weights([v for v in views if v["analyst"] == analyst and v["horizon"] == horizon])
         # SPY hedge neutralizes net equity exposure, not estimated beta; crypto stays separate.
         hedge = -sum(w for a, w in base.items() if a not in {"BTC-USD", "ETH-USD"})
         hedged = {**base, "SPY": hedge} if hedge else dict(base)
