@@ -1,0 +1,213 @@
+{
+  "archives": {
+    "kind": "REAL_ARCHIVED_EVIDENCE",
+    "limits": [
+      "no price data opened",
+      "protected price decisions remain PROTECTED",
+      "archive event windows are not joined to synthetic training decisions"
+    ],
+    "read_only": true,
+    "reads": [
+      {
+        "attesting_source": "fomc",
+        "replay_identical": true,
+        "snapshot": {
+          "as_of": "2026-10-02T14:48:07.319660+00:00",
+          "coverage_state": "PARTIAL",
+          "event_counts": {
+            "edgar": 0,
+            "fomc": 6
+          },
+          "fingerprint": "c364a32f94f94405143b2690ec1e46dcbbbccbdfb15db79abcf2b888537ffdf9",
+          "observation_counts": {
+            "AAPL": {
+              "edgar": 0,
+              "fomc": 6
+            },
+            "BTC-USD": {
+              "edgar": 0,
+              "fomc": 6
+            }
+          },
+          "policies_hash": "db5251193525524027e718e944b0f87f18b53cdf700e4ad9b975952fe5f87be3",
+          "price_identities": {
+            "AAPL": null,
+            "BTC-USD": null
+          },
+          "price_states": {
+            "AAPL": "NOT_CONFIGURED",
+            "BTC-USD": "PROTECTED"
+          },
+          "products": [
+            "AAPL",
+            "BTC-USD"
+          ],
+          "schema": "information-snapshot-v1",
+          "sources": {
+            "edgar": {
+              "H": 26,
+              "P": 0,
+              "provider_id": "sec_edgar_submissions_v1",
+              "snapshot_identity": "9b4bb15e84d6b432c9f6a595207fc7dbbe224fe985b8521000d4b0437c732cea",
+              "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+              "state": "NOT_OBSERVED"
+            },
+            "fomc": {
+              "H": 622,
+              "P": 606,
+              "provider_id": "federal_reserve_fomc_statements_v1",
+              "snapshot_identity": "d9a2b3ccb4dea00fcd68706a4489ed27324d46b06c6e8149a5d1b959e764b5fa",
+              "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+              "state": "RESOLVED"
+            }
+          },
+          "synthetic": false
+        }
+      },
+      {
+        "attesting_source": "edgar",
+        "replay_identical": true,
+        "snapshot": {
+          "as_of": "2026-10-04T02:04:55.301923+00:00",
+          "coverage_state": "PARTIAL",
+          "event_counts": {
+            "edgar": 104,
+            "fomc": 0
+          },
+          "fingerprint": "fec92b358d5af8f625bcc02915c16463e8237db0aadb4df19d143fa1574d2c04",
+          "observation_counts": {
+            "AAPL": {
+              "edgar": 104,
+              "fomc": 0
+            },
+            "BTC-USD": {
+              "edgar": 0,
+              "fomc": 0
+            }
+          },
+          "policies_hash": "db5251193525524027e718e944b0f87f18b53cdf700e4ad9b975952fe5f87be3",
+          "price_identities": {
+            "AAPL": null,
+            "BTC-USD": null
+          },
+          "price_states": {
+            "AAPL": "NOT_CONFIGURED",
+            "BTC-USD": "PROTECTED"
+          },
+          "products": [
+            "AAPL",
+            "BTC-USD"
+          ],
+          "schema": "information-snapshot-v1",
+          "sources": {
+            "edgar": {
+              "H": 26,
+              "P": 17,
+              "provider_id": "sec_edgar_submissions_v1",
+              "snapshot_identity": "78e66fb1c5a6badc809d3bbab23931f188091db4c32b7aff8c1e1d7331345814",
+              "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+              "state": "RESOLVED"
+            },
+            "fomc": {
+              "H": 622,
+              "P": null,
+              "provider_id": "federal_reserve_fomc_statements_v1",
+              "snapshot_identity": "d4a1c033283070757e60869a33a139cd00bf8f425000cdf59f12d2c9db4721f5",
+              "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+              "state": "UNRESOLVED"
+            }
+          },
+          "synthetic": false
+        }
+      }
+    ],
+    "tree_digests": {
+      "edgar": "80c3b70a0f73f798cdd0dbf3ebe6c77fb3bb85adfba9e30275037c7eec2ad058",
+      "fomc": "da69c8ca303c6dc0f9a4d61d1c9d855eb3cada0e815c6ecebcbfccbe1392291c"
+    },
+    "unchanged": true
+  },
+  "broker_orders": 0,
+  "external_model_calls": 0,
+  "holdout_price_reads": 0,
+  "identity": "d7787fb529cf68e6b98db30655ee042bff512e8b0f6442d95b0ec2b224d58cdd",
+  "limitations": [
+    "real archives prove event reads only; synthetic models use synthetic snapshots/prices",
+    "no causally overlapping real training population is claimed",
+    "synthetic outcomes prove the software path; absent inference telemetry stays unknown"
+  ],
+  "network_requests": 0,
+  "new_real_training": false,
+  "registry": {
+    "head_hash": "2f44fd16f4a4773efacaa60208b74146c93ba3143dbe24bde07064050e9a64c7",
+    "records": 859,
+    "schema": "research-observability-store-v1",
+    "verified": true
+  },
+  "schema": "hyprl-demo-chain-v1",
+  "synthetic": {
+    "dataset_hash": "d67df70666d679f3927396d933bab36d7ff58cd7c4022b95b60da6bf52529b69",
+    "included_rows": 182,
+    "label": "SYNTHETIC DEMONSTRATION; NO SCIENTIFIC EDGE CLAIM",
+    "models": [
+      {
+        "criteria_met": {
+          "BTC-USD": true,
+          "ETH-USD": true
+        },
+        "model_id": "synthetic-ridge-v1",
+        "monitoring": {
+          "BTC-USD": {
+            "hash": "74c1b60c4c5b1ba11baba84cc5414b11a8f0b8779a9bf365ce33433a1d1db48f",
+            "reference_hash": "f1f63783e7acd9049ffe3e3a25ebebf3de36cbba2af0edb5268756a431351367",
+            "sample": 22
+          },
+          "ETH-USD": {
+            "hash": "1eeb3af057933da7cca0e79dd9b88a924700c9dc3c22aee3e8a18864708d9063",
+            "reference_hash": "e3d6c32e6992005b6fe8626ab00cab50475df1345e05fe28a939cf1ec6b1b121",
+            "sample": 22
+          }
+        },
+        "predictions": 80,
+        "reproduced_bit_for_bit": true,
+        "result_hash": "d6acea09d78088fe2b6f4492562717f9175b527e9a0fefb5575d24d11a4ccee0"
+      },
+      {
+        "criteria_met": {
+          "BTC-USD": false,
+          "ETH-USD": false
+        },
+        "model_id": "local-momentum-v1",
+        "monitoring": {
+          "BTC-USD": {
+            "hash": "b3bc163b9475c148d87bae07afda1da2aaf3e44a739afb4f86db13db8ea875ae",
+            "reference_hash": "56e6ae93e3c3c0e4918fc0a400ce61166c5e7884e5c137ffe469273e11dab1dd",
+            "sample": 22
+          },
+          "ETH-USD": {
+            "hash": "4687224a6484c30c5b4e94f15148e914f2fc8d7458ef38f280e216bf125e951f",
+            "reference_hash": "fb41707bccf9b8274903d80775ac006bde039616703c1f06bb0759fc0c54e8bf",
+            "sample": 22
+          }
+        },
+        "predictions": 80,
+        "reproduced_bit_for_bit": true,
+        "result_hash": "cf86e5458a234dea3294fbb460df6bb750dbec788a97e19d986fb26ae807d2fa"
+      }
+    ],
+    "monitoring_scenarios": {
+      "classifications": [
+        "DRIFT",
+        "MISSING_DATA",
+        "PERFORMANCE_DROP",
+        "TECHNICAL_DEGRADATION"
+      ],
+      "monitoring_hash": "53412b5f0c49c0600f397c7d61435d7a52dad416f007faedb9d560bd4c3ec485",
+      "reference_hash": "64cda23352b6b5ce07263ed903b9810b2ac2763624daf6f9b8ebffb4e225d6fc",
+      "sample": 23,
+      "synthetic": true
+    },
+    "snapshot_count": 240,
+    "snapshot_inventory_hash": "bfd5fa312483b0e638193832c0b851d9330aad003636dad478a93149d4bdbd96"
+  }
+}
