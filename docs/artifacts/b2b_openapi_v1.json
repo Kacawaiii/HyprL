@@ -1,0 +1,6163 @@
+{
+  "components": {
+    "responses": {
+      "Error400": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Invalid request"
+      },
+      "Error401": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Authentication required"
+      },
+      "Error403": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Permission denied"
+      },
+      "Error404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Unknown project resource"
+      },
+      "Error405": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Method not allowed"
+      },
+      "Error409": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Integrity/conflict"
+      },
+      "Error413": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Payload too large"
+      },
+      "Error429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Budget exhausted"
+      },
+      "Error500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Internal error"
+      },
+      "Error503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Evidence unavailable"
+      }
+    },
+    "schemas": {
+      "AuditPage": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "key_id": {
+                  "type": "string"
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "string"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "schema": {
+                  "const": "b2b-audit-entry-v1"
+                },
+                "sequence": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "status": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "sequence",
+                "schema",
+                "request_id",
+                "at",
+                "project_id",
+                "key_id",
+                "operation",
+                "status",
+                "code"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "integrity_method": {
+            "type": "string"
+          },
+          "next_after": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "schema": {
+            "const": "b2b-audit-page-v1"
+          },
+          "verified": {
+            "const": true
+          }
+        },
+        "required": [
+          "schema",
+          "entries",
+          "verified",
+          "next_after",
+          "integrity_method"
+        ],
+        "type": "object"
+      },
+      "AuditPageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AuditPage"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ContractCatalogue": {
+        "additionalProperties": false,
+        "properties": {
+          "adapters": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contract": {
+                  "$ref": "#/components/schemas/ModelContract"
+                },
+                "fingerprint": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "registration": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "contract",
+                "fingerprint",
+                "registration"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1.0.0"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderContract"
+            },
+            "type": "array"
+          },
+          "schemas": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "contract_version",
+          "schemas",
+          "providers",
+          "adapters"
+        ],
+        "type": "object"
+      },
+      "ContractCatalogueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ContractCatalogue"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "DatasetExport": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "type": "object"
+          },
+          "fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/DatasetManifest"
+          },
+          "rows": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "snapshots": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "manifest",
+          "fingerprint",
+          "rows",
+          "bars",
+          "snapshots"
+        ],
+        "type": "object"
+      },
+      "DatasetExportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DatasetExport"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "DatasetManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "type": "object"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "decision_end": {
+            "type": "string"
+          },
+          "decision_start": {
+            "type": "string"
+          },
+          "exclusions": {
+            "items": {},
+            "type": "array"
+          },
+          "features_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "horizon_seconds": {
+            "type": "integer"
+          },
+          "policies": {
+            "type": "object"
+          },
+          "products": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "const": "dataset-manifest-v1",
+            "type": "string"
+          },
+          "snapshot_hashes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "splits": {
+            "type": "object"
+          },
+          "synthetic": {
+            "type": "boolean"
+          },
+          "target": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "dataset_id",
+          "version",
+          "products",
+          "decision_start",
+          "decision_end",
+          "target",
+          "horizon_seconds",
+          "snapshot_hashes",
+          "features_hash",
+          "exclusions",
+          "splits",
+          "policies",
+          "counts",
+          "synthetic"
+        ],
+        "type": "object"
+      },
+      "DatasetView": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/DatasetManifest"
+          }
+        },
+        "required": [
+          "manifest",
+          "fingerprint"
+        ],
+        "type": "object"
+      },
+      "DatasetViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DatasetView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "error": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-error-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "request_id",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EventView": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "snapshot_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "sources": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "events",
+          "sources",
+          "snapshot_hash"
+        ],
+        "type": "object"
+      },
+      "EventViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ExperimentManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "type": "object"
+          },
+          "baselines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "budgets": {
+            "type": "object"
+          },
+          "costs": {
+            "type": "object"
+          },
+          "dataset_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "decision_criteria": {
+            "type": "object"
+          },
+          "experiment_id": {
+            "type": "string"
+          },
+          "hypothesis": {
+            "type": "object"
+          },
+          "model_contract_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "schema": {
+            "const": "experiment-manifest-v1",
+            "type": "string"
+          },
+          "splits": {
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          },
+          "synthetic": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "experiment_id",
+          "version",
+          "dataset_hash",
+          "model_contract_hash",
+          "hypothesis",
+          "parameters",
+          "splits",
+          "baselines",
+          "decision_criteria",
+          "costs",
+          "budgets",
+          "status",
+          "artifacts",
+          "synthetic"
+        ],
+        "type": "object"
+      },
+      "ExperimentView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "fingerprint": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/ExperimentManifest"
+              }
+            },
+            "required": [
+              "manifest",
+              "fingerprint"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fingerprint": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/ExperimentManifest"
+              },
+              "result": {
+                "type": "null"
+              },
+              "state": {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "FAILED",
+                  "CANCELLED",
+                  "BLOCKED"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "result",
+              "error_code"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ExperimentViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ExperimentView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "InformationSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "type": "string"
+          },
+          "companies": {
+            "type": "object"
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "events": {
+            "items": {},
+            "type": "array"
+          },
+          "features": {
+            "type": "object"
+          },
+          "policies": {
+            "type": "object"
+          },
+          "prices": {
+            "type": "object"
+          },
+          "products": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "quality": {
+            "type": "object"
+          },
+          "schema": {
+            "const": "information-snapshot-v1",
+            "type": "string"
+          },
+          "sources": {
+            "type": "object"
+          },
+          "synthetic": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema",
+          "as_of",
+          "products",
+          "companies",
+          "sources",
+          "prices",
+          "events",
+          "features",
+          "policies",
+          "coverage",
+          "quality",
+          "synthetic"
+        ],
+        "type": "object"
+      },
+      "JobPage": {
+        "additionalProperties": false,
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobStatus"
+            },
+            "type": "array"
+          },
+          "next_after": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "jobs",
+          "next_after"
+        ],
+        "type": "object"
+      },
+      "JobPageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/JobPage"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "JobStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "cancel_requested": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "dataset",
+              "experiment"
+            ]
+          },
+          "limits": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu_seconds": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "memory_mb": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "output_mb": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "wall_seconds": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "wall_seconds",
+              "cpu_seconds",
+              "memory_mb",
+              "output_mb"
+            ],
+            "type": "object"
+          },
+          "logs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "type": "number"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "progress": {
+                  "type": "number"
+                },
+                "sequence": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "sequence",
+                "code",
+                "progress",
+                "at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "progress": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "result_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETE",
+              "FAILED",
+              "BLOCKED",
+              "CANCELLED"
+            ]
+          },
+          "updated_at": {
+            "type": "number"
+          },
+          "worker_pid": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "progress",
+          "cancel_requested",
+          "worker_pid",
+          "created_at",
+          "updated_at",
+          "result_hash",
+          "error_code",
+          "limits",
+          "logs"
+        ],
+        "type": "object"
+      },
+      "JobStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "LabelRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "type": "string"
+          },
+          "horizon_seconds": {
+            "type": "integer"
+          },
+          "label_id": {
+            "type": "string"
+          },
+          "prediction_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "prediction_id": {
+            "type": "string"
+          },
+          "product": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "object"
+          },
+          "realized_at": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "label-record-v1",
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "value": {
+            "type": "object"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "label_id",
+          "prediction_id",
+          "prediction_hash",
+          "product",
+          "horizon_seconds",
+          "realized_at",
+          "available_at",
+          "recorded_at",
+          "target",
+          "value",
+          "provenance",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ModelCatalogue": {
+        "additionalProperties": false,
+        "properties": {
+          "installed_adapters": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contract": {
+                  "$ref": "#/components/schemas/ModelContract"
+                },
+                "fingerprint": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "registration": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "contract",
+                "fingerprint",
+                "registration"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/RegisteredModel"
+            },
+            "type": "array"
+          },
+          "registration": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "models",
+          "installed_adapters",
+          "registration"
+        ],
+        "type": "object"
+      },
+      "ModelCatalogueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ModelCatalogue"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ModelContract": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "horizons_seconds": {
+            "items": {},
+            "type": "array"
+          },
+          "implementation_version": {
+            "type": "string"
+          },
+          "inputs": {
+            "type": "object"
+          },
+          "limits": {
+            "type": "object"
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "outputs": {
+            "type": "object"
+          },
+          "schema": {
+            "const": "model-contract-v1",
+            "type": "string"
+          },
+          "synthetic": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "model_id",
+          "version",
+          "inputs",
+          "outputs",
+          "horizons_seconds",
+          "capabilities",
+          "limits",
+          "implementation_version",
+          "synthetic"
+        ],
+        "type": "object"
+      },
+      "ModelExport": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "type": "object"
+          },
+          "artifact_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "product": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "product",
+          "artifact",
+          "artifact_hash"
+        ],
+        "type": "object"
+      },
+      "ModelExportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ModelExport"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "MonitoringView": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "classification": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "performance": {
+            "type": "object"
+          },
+          "sample": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "const": "model-monitoring-v1"
+          },
+          "selection": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "schema",
+          "as_of",
+          "sample",
+          "selection",
+          "classification",
+          "performance"
+        ],
+        "type": "object"
+      },
+      "MonitoringViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MonitoringView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "NormalizedView": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "cik": {
+                  "pattern": "^[0-9]{10}$",
+                  "type": "string"
+                },
+                "event_id": {
+                  "type": "string"
+                },
+                "fields": {
+                  "type": "object"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "event_id",
+                "revision",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "prices": {
+            "type": "object"
+          },
+          "schema": {
+            "const": "b2b-normalized-data-v1"
+          },
+          "snapshot_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "sources": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "schema",
+          "prices",
+          "events",
+          "sources",
+          "snapshot_hash"
+        ],
+        "type": "object"
+      },
+      "NormalizedViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/NormalizedView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ObservedPredictions": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "page": {
+            "type": "object"
+          },
+          "records": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "const": "research-page-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "as_of",
+          "records",
+          "page"
+        ],
+        "type": "object"
+      },
+      "ObservedPredictionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ObservedPredictions"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "OpenAPI": {
+        "required": [
+          "openapi",
+          "info",
+          "paths",
+          "components"
+        ],
+        "type": "object"
+      },
+      "OpenAPIResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenAPI"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "PredictionPage": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "next_after": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "predictions": {
+                "items": {
+                  "$ref": "#/components/schemas/PredictionRecord"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "predictions",
+              "next_after"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fingerprint": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/ExperimentManifest"
+              },
+              "result": {
+                "type": "null"
+              },
+              "state": {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "FAILED",
+                  "CANCELLED",
+                  "BLOCKED"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "result",
+              "error_code"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PredictionPageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PredictionPage"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "PredictionRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "costs": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "decision_at": {
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "execution": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "features_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "horizon_seconds": {
+            "type": "integer"
+          },
+          "model_contract_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "outputs": {
+            "type": "object"
+          },
+          "prediction_id": {
+            "type": "string"
+          },
+          "product": {
+            "type": "string"
+          },
+          "proposed_position": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "risk": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "schema": {
+            "const": "prediction-record-v1",
+            "type": "string"
+          },
+          "signal": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "snapshot_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "synthetic": {
+            "type": "boolean"
+          },
+          "uncertainty": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema",
+          "prediction_id",
+          "model_id",
+          "model_contract_hash",
+          "artifact_hash",
+          "product",
+          "decision_at",
+          "horizon_seconds",
+          "snapshot_hash",
+          "features_hash",
+          "event_ids",
+          "outputs",
+          "signal",
+          "risk",
+          "proposed_position",
+          "execution",
+          "uncertainty",
+          "errors",
+          "costs",
+          "synthetic"
+        ],
+        "type": "object"
+      },
+      "PredictionView": {
+        "properties": {
+          "decisions": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "execution_state": {
+            "type": "string"
+          },
+          "executions": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "inputs": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "label_state": {
+            "enum": [
+              "PENDING",
+              "AVAILABLE"
+            ]
+          },
+          "labels": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "prediction": {
+            "$ref": "#/components/schemas/PredictionRecord"
+          },
+          "prediction_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prediction",
+          "prediction_hash",
+          "label_state",
+          "labels",
+          "executions",
+          "decisions",
+          "recorded_at"
+        ],
+        "type": "object"
+      },
+      "PredictionViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PredictionView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "Project": {
+        "additionalProperties": false,
+        "properties": {
+          "archives_read_only": {
+            "const": true
+          },
+          "budgets": {
+            "additionalProperties": false,
+            "properties": {
+              "jobs": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "used": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "used",
+                  "limit"
+                ],
+                "type": "object"
+              },
+              "period": {
+                "type": "string"
+              },
+              "requests": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "used": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "used",
+                  "limit"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "requests",
+              "jobs",
+              "period"
+            ],
+            "type": "object"
+          },
+          "exports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "products": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "synthetic_workloads_only": {
+            "const": true
+          },
+          "worker_limit": {
+            "const": 1
+          }
+        },
+        "required": [
+          "project_id",
+          "permissions",
+          "products",
+          "sources",
+          "exports",
+          "budgets",
+          "worker_limit",
+          "synthetic_workloads_only",
+          "archives_read_only"
+        ],
+        "type": "object"
+      },
+      "ProjectResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Project"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ProviderContract": {
+        "additionalProperties": false,
+        "properties": {
+          "activation": {
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "clocks": {
+            "type": "object"
+          },
+          "corrections": {
+            "type": "object"
+          },
+          "evidence": {
+            "items": {},
+            "type": "array"
+          },
+          "formats": {
+            "type": "object"
+          },
+          "health": {
+            "type": "object"
+          },
+          "historical_availability": {
+            "type": "object"
+          },
+          "identities": {
+            "type": "object"
+          },
+          "limits": {
+            "type": "object"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "provider-contract-v1",
+            "type": "string"
+          },
+          "shape_verification": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "provider_id",
+          "version",
+          "capabilities",
+          "identities",
+          "formats",
+          "clocks",
+          "limits",
+          "corrections",
+          "historical_availability",
+          "health",
+          "evidence",
+          "activation",
+          "shape_verification"
+        ],
+        "type": "object"
+      },
+      "QueuedExperiment": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "job_id": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "prepared": {
+            "$ref": "#/components/schemas/ExperimentManifest"
+          },
+          "state": {
+            "const": "QUEUED"
+          },
+          "synthetic": {
+            "const": true
+          }
+        },
+        "required": [
+          "job_id",
+          "state",
+          "synthetic",
+          "prepared",
+          "fingerprint"
+        ],
+        "type": "object"
+      },
+      "QueuedExperimentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/QueuedExperiment"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "QueuedJob": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "pattern": "^[a-f0-9]{32}$",
+            "type": "string"
+          },
+          "state": {
+            "const": "QUEUED"
+          },
+          "synthetic": {
+            "const": true
+          }
+        },
+        "required": [
+          "job_id",
+          "state",
+          "synthetic"
+        ],
+        "type": "object"
+      },
+      "QueuedJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/QueuedJob"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "RegisteredModel": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_id": {
+            "type": "string"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/ModelContract"
+          },
+          "contract_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "model_id": {
+            "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_id",
+          "adapter_id",
+          "contract",
+          "contract_hash"
+        ],
+        "type": "object"
+      },
+      "RegisteredModelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RegisteredModel"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "Resource": {
+        "type": "object"
+      },
+      "ResultView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "result": {
+                "additionalProperties": false,
+                "properties": {
+                  "criteria_met": {
+                    "type": "object"
+                  },
+                  "dataset_hash": {
+                    "pattern": "^[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "fingerprint": {
+                    "pattern": "^[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "limitations": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "manifest": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/DatasetManifest"
+                      },
+                      {
+                        "$ref": "#/components/schemas/ExperimentManifest"
+                      }
+                    ]
+                  },
+                  "metrics": {
+                    "type": "object"
+                  },
+                  "prepared": {
+                    "$ref": "#/components/schemas/ExperimentManifest"
+                  },
+                  "schema": {
+                    "const": "model-lab-result-v1"
+                  },
+                  "synthetic": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "synthetic"
+                ],
+                "type": "object"
+              },
+              "result_hash": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "state": {
+                "const": "COMPLETE"
+              }
+            },
+            "required": [
+              "state",
+              "result_hash",
+              "result"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fingerprint": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/ExperimentManifest"
+              },
+              "result": {
+                "type": "null"
+              },
+              "state": {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "FAILED",
+                  "CANCELLED",
+                  "BLOCKED"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "result",
+              "error_code"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ResultViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ResultView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "RevisionView": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "selected_revision": {
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "selected_revision",
+          "observations",
+          "snapshot_hash"
+        ],
+        "type": "object"
+      },
+      "RevisionViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RevisionView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "SnapshotView": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/InformationSnapshot"
+          }
+        },
+        "required": [
+          "snapshot",
+          "fingerprint"
+        ],
+        "type": "object"
+      },
+      "SnapshotViewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": "1.0.0"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SnapshotView"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "schema": {
+            "const": "b2b-response-v1"
+          }
+        },
+        "required": [
+          "schema",
+          "api_version",
+          "project_id",
+          "request_id",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "ApiKey": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Local offline v1. All routes authenticate. Synthetic workers only; no capture, real training or remote inference.",
+    "title": "HyprL B2B API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/b2b/v1/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAPIResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "openapi_head",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}": {
+      "get": {
+        "operationId": "project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "project_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/audit": {
+      "get": {
+        "operationId": "audit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPageResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "audit:read"
+      },
+      "head": {
+        "operationId": "audit_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "audit:read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/contracts": {
+      "get": {
+        "operationId": "contracts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractCatalogueResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "contracts_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/datasets": {
+      "post": {
+        "operationId": "create_dataset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "bars": {
+                    "maximum": 600,
+                    "minimum": 80,
+                    "type": "integer"
+                  },
+                  "horizon_seconds": {
+                    "const": 14400,
+                    "type": "integer"
+                  },
+                  "products": {
+                    "items": {
+                      "enum": [
+                        "BTC-USD",
+                        "ETH-USD"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 2,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "seed": {
+                    "maximum": 10000,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "start": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "synthetic": {
+                    "const": true
+                  },
+                  "target": {
+                    "const": "forward_return",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "synthetic",
+                  "products"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuedJobResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "datasets:write"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/datasets/{dataset_hash}/export": {
+      "get": {
+        "operationId": "dataset_export",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetExportResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-export-right": "dataset_rows",
+        "x-permission": "export"
+      },
+      "head": {
+        "operationId": "dataset_export_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-export-right": "dataset_rows",
+        "x-permission": "export"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/datasets/{dataset_hash}/manifest": {
+      "get": {
+        "operationId": "dataset_manifest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-export-right": "dataset_manifest",
+        "x-permission": "export"
+      },
+      "head": {
+        "operationId": "dataset_manifest_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dataset_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-export-right": "dataset_manifest",
+        "x-permission": "export"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/events": {
+      "get": {
+        "operationId": "events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "events_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/events/{event_id}/revisions": {
+      "get": {
+        "operationId": "revisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "revisions_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/experiments": {
+      "post": {
+        "operationId": "create_experiment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "dataset_hash": {
+                    "pattern": "^[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "embargo_seconds": {
+                    "maximum": 86400,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "model_id": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "dataset_hash",
+                  "model_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuedExperimentResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "experiments:write"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/experiments/{job_id}": {
+      "get": {
+        "operationId": "experiment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "experiment_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/experiments/{job_id}/models/{model_id}/export": {
+      "get": {
+        "operationId": "model_export",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelExportResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-export-right": "model_artifact",
+        "x-permission": "export"
+      },
+      "head": {
+        "operationId": "model_export_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-export-right": "model_artifact",
+        "x-permission": "export"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/experiments/{job_id}/predictions": {
+      "get": {
+        "operationId": "predictions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionPageResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "predictions_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/experiments/{job_id}/results": {
+      "get": {
+        "operationId": "results",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "results_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/jobs": {
+      "get": {
+        "operationId": "jobs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPageResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "jobs_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/jobs/{job_id}": {
+      "get": {
+        "operationId": "job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "job_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/jobs/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "jobs:cancel"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/models": {
+      "get": {
+        "operationId": "models",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogueResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "models_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "post": {
+        "operationId": "register_model",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "adapter_id": {
+                    "enum": [
+                      "synthetic-ridge-v1",
+                      "local-momentum-v1"
+                    ],
+                    "type": "string"
+                  },
+                  "model_id": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "model_id",
+                  "adapter_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisteredModelResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "models:write"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/models/{model_id}": {
+      "get": {
+        "operationId": "model",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisteredModelResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "model_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/normalized-data": {
+      "get": {
+        "operationId": "normalized_data",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NormalizedViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "normalized_data_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/observability/monitoring": {
+      "get": {
+        "operationId": "monitoring",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "split",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "artifact_hash",
+            "required": false,
+            "schema": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reference_hash",
+            "required": false,
+            "schema": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitoringViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "monitoring_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "split",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "artifact_hash",
+            "required": false,
+            "schema": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reference_hash",
+            "required": false,
+            "schema": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/observability/predictions": {
+      "get": {
+        "operationId": "observed_predictions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservedPredictionsResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "observed_predictions_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/observability/predictions/{prediction_hash}": {
+      "get": {
+        "operationId": "observed_prediction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "prediction_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "observed_prediction_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "prediction_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    },
+    "/api/b2b/v1/projects/{project_id}/snapshots": {
+      "get": {
+        "operationId": "snapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotViewResponse"
+                }
+              }
+            },
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      },
+      "head": {
+        "operationId": "snapshots_head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "products",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "visibility_mode",
+            "required": true,
+            "schema": {
+              "const": "DURABLE_OBSERVED",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fomc_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgar_horizon",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versioned project resource"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown project resource"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "409": {
+            "description": "Integrity/conflict"
+          },
+          "413": {
+            "description": "Payload too large"
+          },
+          "429": {
+            "description": "Budget exhausted"
+          },
+          "500": {
+            "description": "Internal error"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-permission": "read"
+      }
+    }
+  }
+}

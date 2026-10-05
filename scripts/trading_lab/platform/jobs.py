@@ -78,7 +78,7 @@ class JobStore:
         finally:
             db.close()
 
-    def submit(self, kind, payload, limits=None):
+    def submit(self, kind, payload, limits=None, *, on_submit=None):
         if kind not in KINDS:
             raise ValueError("unknown job kind")
         encoded = canonical_bytes(payload)
@@ -92,6 +92,10 @@ class JobStore:
                 raise ValueError("persistent lab job budget exhausted")
             if db.execute("SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')").fetchone()[0] >= 8:
                 raise ValueError("lab queue budget exhausted")
+            # Internal admission hook: tenant ownership and quotas commit with
+            # the queued job, or roll back together. Never supplied by HTTP.
+            if on_submit is not None:
+                on_submit(db, identifier)
             db.execute("INSERT INTO jobs(id,kind,state,payload,limits_json,created_at,updated_at) VALUES(?,?,'QUEUED',?,?,?,?)",
                        (identifier, kind, encoded.decode(), json.dumps(asdict(limits)), now, now))
             db.execute("INSERT INTO logs(job_id,code,progress,at) VALUES(?,'QUEUED',0,?)", (identifier, now))
