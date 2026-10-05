@@ -165,6 +165,8 @@ def progress(store) -> dict:
             "storage_incidents": len(view.rows("STORAGE_INCIDENT")),
             "watchlist": manifests[0].body["ciks"] if manifests else [],
             "request_ciks": sorted({r.body["cik"] for r in invoked}),
+            "authorization_sha256s": sorted({r.body["authorization_sha256"] for r in invoked
+                                             if "authorization_sha256" in r.body}),
             "request_walls": [walls[r.seq] for r in invoked],
             "open_attempts": sum(not view.rows("ATTEMPT_OUTCOME", key=str(r.seq))
                                  for r in view.rows("TRANSPORT_INVOKED")),
@@ -289,6 +291,18 @@ def run_completion(progress_: dict, *, authorization: Path | dict | None, closed
         reasons.append("the authorized run does not have exactly one owner epoch")
     if any(_scope(r["authorization"]) != scope for r in started):
         reasons.append("supplied bounds differ from the durable authorization")
+    identities = set(progress_.get("authorization_sha256s", [])) | {
+        r["authorization_sha256"] for r in started if "authorization_sha256" in r}
+    if len(identities) > 1:
+        reasons.append("requests belong to different authorization identities")
+    if authorization is not None:
+        supplied = (json.loads(Path(authorization).read_text(encoding="utf-8"))
+                    if not isinstance(authorization, dict) else authorization)
+        # Public durable bounds suffice when the private file is absent. If the complete grant
+        # is supplied, verify its canonical identity as well as its visible scope.
+        if "user_agent" in supplied and identities and identities != {
+                sha256_canonical(dict(supplied, ciks=scope["ciks"]))}:
+            reasons.append("supplied authorization identity differs from the durable grant")
     if progress_.get("watchlist") != scope["ciks"] or not set(progress_.get("request_ciks", [])) <= set(scope["ciks"]):
         reasons.append("the watchlist or request CIKs differ from the authorization")
     requests = progress_.get("requests", 0)

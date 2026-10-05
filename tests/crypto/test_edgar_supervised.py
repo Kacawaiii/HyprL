@@ -423,3 +423,16 @@ def test_a_new_grant_keeps_the_previous_throttle_pause_for_all_ciks(tmp_path):
     service.run(tmp_path / "store", new_grant, clock=clock, fetcher=wire.fetcher(), log=lambda m: None)
     assert len(wire.requests) == 2
     assert wire.requests[1][1] - wire.requests[0][1] >= spec.THROTTLE_PAUSE_S
+
+
+def test_closure_requires_the_same_grant_identity_even_with_identical_public_bounds(tmp_path):
+    clock = syn.SimClock()
+    wire = Wire(clock)
+    auth = authorization(tmp_path, max_requests=1)
+    service.run(tmp_path / "store", auth, clock=clock, fetcher=wire.fetcher(), log=lambda m: None)
+    payload = json.loads(auth.read_text())
+    payload["granted_by"] = "another synthetic operator"
+    auth.write_text(json.dumps(payload))
+    result = close(tmp_path, auth, clock)
+    assert result["integrity_ok"] and not result["run_ok"]
+    assert "supplied authorization identity differs from the durable grant" in result["run"]["reasons"]
