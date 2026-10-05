@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import threading
 
 from scripts.trading_lab.platform.contracts import PredictionRecord, LabelRecord, ExperimentManifest, enrich_prediction, timestamp
 from scripts.trading_lab.research.monitoring import MonitoringReference
@@ -30,6 +31,8 @@ def now():
 
 class ResearchStore:
     def __init__(self, root, *, read_only=False):
+        self._reader = None
+        self._reader_lock = threading.RLock()
         self.root = Path(root)
         self.path = self.root / 'research.sqlite'
         self.read_only = read_only
@@ -62,8 +65,25 @@ class ResearchStore:
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro' if self.read_only else str(self.path),
-                             uri=self.read_only, timeout=10)
+        if self.read_only:
+            from scripts.trading_lab.sources.store import ReadOnlyDatabase
+            def admit(db):
+                rows = db.execute('SELECT schema FROM metadata').fetchall()
+                if len(rows) != 1 or rows[0][0] != SCHEMA:
+                    raise IntegrityError('research store schema mismatch; no implicit migration')
+            # SQLite mode=ro alone still writes a WAL index in an archive.
+            # This proven reader never opens the original with SQLite.
+            # Refresh only when the source files change; a monitoring read may
+            # perform thousands of queries over the same verified archive.
+            with self._reader_lock:
+                if self._reader is None:
+                    self._reader = ReadOnlyDatabase(self.path, validator=admit)
+                else:
+                    self._reader.refresh()
+                self._reader.conn.row_factory = sqlite3.Row
+                yield self._reader.conn
+            return
+        db = sqlite3.connect(str(self.path), timeout=10)
         db.row_factory = sqlite3.Row
         try:
             if not self.read_only:
@@ -73,6 +93,15 @@ class ResearchStore:
                 yield db
         finally:
             db.close()
+
+    def close(self):
+        with self._reader_lock:
+            if self._reader is not None:
+                self._reader.close()
+                self._reader = None
+
+    def __del__(self):
+        self.close()
 
     @staticmethod
     def _chain(row):

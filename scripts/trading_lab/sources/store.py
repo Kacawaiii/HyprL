@@ -58,8 +58,9 @@ class _ReadOnlyDatabase:
     then fail closed. SQLite recovers only complete committed WAL frames in the private directory.
     Refresh between operations so long-lived readers also see a newly created WAL after a restart."""
 
-    def __init__(self, db: Path, *, schema_version: str, spec_hash: str):
+    def __init__(self, db: Path, *, schema_version: str, spec_hash: str, validator=None):
         self.db, self.schema_version, self.spec_hash = db, schema_version, spec_hash
+        self.validator = validator
         self.conn = self._temp = self._stamp = None
         self.refresh()
 
@@ -92,7 +93,10 @@ class _ReadOnlyDatabase:
                     continue
                 immutable = "" if has_wal else "&immutable=1"
                 conn = sqlite3.connect(f"{private_db.as_uri()}?mode=ro{immutable}", uri=True, check_same_thread=False)
-                _admit_connection(conn, self.db, schema_version=self.schema_version, spec_hash=self.spec_hash)
+                if self.validator is None:
+                    _admit_connection(conn, self.db, schema_version=self.schema_version, spec_hash=self.spec_hash)
+                else:
+                    self.validator(conn)
                 self.close()
                 self.conn, self._temp, self._stamp = conn, temp, before
                 conn = temp = None  # ownership transferred
@@ -122,6 +126,28 @@ def admit_existing(db: Path, *, schema_version: str, spec_hash: str) -> None:
         return
     reader = _ReadOnlyDatabase(db, schema_version=schema_version, spec_hash=spec_hash)
     reader.close()
+
+
+@contextmanager
+def read_only_connection(db: Path, *, validator):
+    """Reuse the stable private DB/WAL reader for another explicitly bound schema.
+
+    The caller's validator must admit its own schema before any rows are read.
+    Official source readers retain their mandatory schema/spec admission above.
+    """
+    reader = ReadOnlyDatabase(db, validator=validator)
+    try:
+        yield reader.conn
+    finally:
+        reader.close()
+
+
+class ReadOnlyDatabase(_ReadOnlyDatabase):
+    """Stable private DB/WAL reader with mandatory caller-owned schema admission."""
+    def __init__(self, db: Path, *, validator):
+        if not callable(validator):
+            raise ValueError("read-only database requires a schema validator")
+        super().__init__(Path(db), schema_version="", spec_hash="", validator=validator)
 
 
 class Rejected(RuntimeError):
