@@ -26,6 +26,20 @@ const PortfolioPage = lazy(() =>
   import('./pages/PortfolioPage').then((module) => ({ default: module.PortfolioPage })));
 const EventsPage = lazy(() =>
   import('./pages/EventsPage').then((module) => ({ default: module.EventsPage })));
+const LabLayout = lazy(() =>
+  import('./pages/lab/LabLayout').then((module) => ({ default: module.LabLayout })));
+const DatasetsView = lazy(() =>
+  import('./pages/lab/DatasetsView').then((module) => ({ default: module.DatasetsView })));
+const ExperimentsView = lazy(() =>
+  import('./pages/lab/ExperimentsView').then((module) => ({ default: module.ExperimentsView })));
+const ModelsView = lazy(() =>
+  import('./pages/lab/ModelsView').then((module) => ({ default: module.ModelsView })));
+const LedgerView = lazy(() =>
+  import('./pages/lab/LedgerView').then((module) => ({ default: module.LedgerView })));
+const MonitoringView = lazy(() =>
+  import('./pages/lab/MonitoringView').then((module) => ({ default: module.MonitoringView })));
+const HypothesesView = lazy(() =>
+  import('./pages/lab/HypothesesView').then((module) => ({ default: module.HypothesesView })));
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 
@@ -78,6 +92,15 @@ export function App() {
           path="settings"
           element={<Suspense fallback={<LoadingState />}><SettingsPage /></Suspense>}
         />
+        <Route path="lab" element={<Suspense fallback={<LoadingState />}><LabLayout /></Suspense>}>
+          <Route index element={<Navigate to="datasets" replace />} />
+          <Route path="datasets" element={<Suspense fallback={<LoadingState />}><DatasetsView /></Suspense>} />
+          <Route path="experiments" element={<Suspense fallback={<LoadingState />}><ExperimentsView /></Suspense>} />
+          <Route path="models" element={<Suspense fallback={<LoadingState />}><ModelsView /></Suspense>} />
+          <Route path="ledger" element={<Suspense fallback={<LoadingState />}><LedgerView /></Suspense>} />
+          <Route path="monitoring" element={<Suspense fallback={<LoadingState />}><MonitoringView /></Suspense>} />
+          <Route path="hypotheses" element={<Suspense fallback={<LoadingState />}><HypothesesView /></Suspense>} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
