@@ -74,9 +74,9 @@ export function createSingularityChapter({ isMobile }) {
           vec3 cloud=mix(uGold*vec3(.06,.038,.018),uGold*vec3(.95,.75,.45),smoothstep(.45,.8,c2)*(.35+.65*edgeLit))*(.3+1.1*lightL)+uHot*pow(c2,4.)*edgeLit*3.5*lightL;
           col=mix(col,cloud,cov);
           // near banks of gold dust, bottom left: billowing, lit from the ring
-          vec2 bq=p*2.6+vec2(0.,t*.03);vec2 bw=vec2(fbm(bq*.9),fbm(bq*.9+3.1));float b1=fbm(bq+bw*1.7),b2=fbm(bq*2.4+bw*2.+b1),b3=fbm(bq*2.4+bw*2.+b1+vec2(.03,.04));
-          float bank=smoothstep(.42,.6,b1*.7+b2*.4+.12*smoothstep(-.3,-.9,p.x))*smoothstep(.08,.3,d)*smoothstep(.0,-.55,p.x);float bl=clamp((b2-b3)*12.+.5,0.,1.);
-          vec3 bc=mix(uGold*vec3(.07,.045,.02),uGold*vec3(1.,.8,.5),smoothstep(.4,.8,b2)*(.3+.7*bl))*(.5+.8*lightL)+uHot*pow(b2,3.5)*bl*2.5;
+          vec2 bq=p*vec2(2.2,3.)+vec2(0.,t*.03);vec2 bw=vec2(fbm(bq*.7),fbm(bq*.7+3.1));float b1=fbm(bq+bw*.8),b2=1.-abs(fbm(bq*2.6+bw*.7+b1*.5)*2.-1.),b3=1.-abs(fbm(bq*2.6+bw*.7+b1*.5+vec2(.035,.045))*2.-1.);
+          float bank=smoothstep(.42,.6,b1*.7+b2*.4+.12*smoothstep(-.3,-.9,p.x))*smoothstep(.08,.3,d)*smoothstep(-.12,-.75,p.x);float bl=clamp((b2-b3)*7.+.5,0.,1.);
+          vec3 bc=mix(uGold*vec3(.05,.032,.014),uGold*vec3(.85,.62,.34),smoothstep(.55,.95,b2)*(.1+.9*bl))*(.35+.6*lightL)+uHot*pow(b2,8.)*bl*2.;
           col=mix(col,bc,bank*.92);cov=max(cov,bank);
           vec2 gw=floor(vUv*asp*500.);col+=uHot*step(.988,hash12(gw))*cov*smoothstep(.55,.8,c2)*(.6+lightL*2.)*(.5+.5*sin(t*4.+hash12(gw+2.)*50.));
           col+=uGold*exp(-d*22.)*(.03+.15*lightL);
@@ -161,10 +161,10 @@ export function createSingularityChapter({ isMobile }) {
   function update({ time, pointer, motion, local, dt }) {
     const lp = local ?? .4, mobile = state.aspect < 1;
     // Scroll pushes in: the shadow grows, the sea flows faster.
-    backdrop.uniforms.uRs.value = (mobile ? .28 : .44) + lp * .04; backdrop.uniforms.uFlow.value = .08 + lp * .1; backdrop.uniforms.uTime.value = time; backdrop.uniforms.uMotion.value = motion;
+    backdrop.uniforms.uRs.value = (mobile ? .2 : .46) + lp * (mobile ? .02 : .04); backdrop.uniforms.uFlow.value = .08 + lp * .1; backdrop.uniforms.uTime.value = time; backdrop.uniforms.uMotion.value = motion;
     // Camera drift: a slow float on top of the pointer.
     const driftX = Math.sin(time * .13) * .006 * motion, driftY = Math.sin(time * .17 + 1) * .004 * motion;
-    state.center.set((mobile ? .56 : .64) - pointer.x * .01 * motion + driftX, .47 + pointer.y * .008 * motion + driftY);
+    state.center.set((mobile ? .66 : .64) - pointer.x * .01 * motion + driftX, .47 + pointer.y * .008 * motion + driftY);
     camera.position.set(pointer.x * .25 * motion + Math.sin(time * .13) * .08 * motion, -pointer.y * .15 * motion + Math.sin(time * .17 + 1) * .05 * motion, 10); camera.position.y += .8; camera.lookAt(camera.position.x * .5, .8, 0); camera.updateMatrixWorld();
     for (let i = 0; i < sparkN; i++) {
       const s = sparks[i]; s.z += s.v * (dt || 0) * motion; if (s.z > 8) s.z -= 68;
