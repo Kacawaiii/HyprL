@@ -55,6 +55,23 @@ def synthetic_scenarios(store, *, at=None):
             'classifications': sorted(required), 'monitoring_hash': sha256_canonical(result)}
 
 
+def replay_monitoring(store, *, as_of=None):
+    """Explicit descriptive May references and June-July observations on spent data."""
+    at = as_of or now()
+    result = {}
+    for product in ('BTC-USD', 'ETH-USD'):
+        reference = make_reference(store, reference_id='spent-replay-v2-may-reference-' + product,
+            as_of=at, product=product, model_id='paper-ridge-v2',
+            start='2026-05-01T00:00:00Z', end='2026-06-01T00:00:00Z')
+        view = monitor(store, as_of=at, product=product, model_id='paper-ridge-v2',
+            start='2026-06-01T00:00:00Z', end='2026-08-01T00:00:00Z', reference_hash=reference)
+        result[product] = {'reference_hash': reference, 'sample': view['sample'],
+            'available_labels': view['performance']['sample'], 'pending_labels': view['performance']['pending'],
+            'monitoring_hash': sha256_canonical(view), 'scope': 'EXPLORATORY',
+            'method_hash': view['method_hash'], 'feature_values': 'HASH_VERIFIED_RECONSTRUCTION', 'inference_telemetry': 'NOT_OBSERVED'}
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', default='var/trading_lab/research-observability-demo')
@@ -109,8 +126,9 @@ def main(argv=None):
                 raise
     scenarios = synthetic_scenarios(store)
     replay = import_authorized_replay(store, runtime_root=root / 'replay', replay_database=args.replay_database) if args.paper_replay else None
+    real_monitoring = replay_monitoring(store) if replay else None
     print(json.dumps({'schema': 'research-observability-demo-v1', 'model_lab': reports,
-        'synthetic_scenarios': scenarios, 'authorized_replay': replay, 'comparison': comparison_diagnostic(),
+        'synthetic_scenarios': scenarios, 'authorized_replay': replay, 'real_monitoring': real_monitoring, 'comparison': comparison_diagnostic(),
         'store': store.verify(), 'network_requests': 0, 'new_real_training': False,
         'limitations': ['synthetic outcomes prove infrastructure only', 'spent real replay remains exploratory',
                         'future labels and absent telemetry remain pending or unknown']}, sort_keys=True, indent=2))

@@ -172,6 +172,32 @@ def _import_model_lab(store, dataset, result, *, shadow_path=None, recorded_at=N
             'experiment_hash': complete.identity, 'recorded_at': at, 'model_id': prepared.parameters['model_id']}
 
 
+def reconstruct_replay_features(rows_by_product):
+    """Rebuild the exact frozen feature algorithm, with the replay's actual seed prefix."""
+    from scripts.trading_lab.market_dataset import build_dataset
+    from scripts.trading_lab.paper_engine import series_from_rows
+    from scripts.trading_lab.paper_replay import REPLAY_START, REPLAY_END, SEED_BARS
+    from scripts.trading_lab.real_benchmark_v2 import DATASET_CONFIG_V2
+    reconstructed = {}
+    with localcontext() as context:
+        context.prec = 34
+        for product, rows in rows_by_product.items():
+            seed = [r for r in rows if r['bar_open_at'] < REPLAY_START][-SEED_BARS:]
+            window = [r for r in rows if REPLAY_START <= r['bar_open_at'] <= REPLAY_END]
+            dataset = build_dataset(series_from_rows(seed + window, product=product), config=DATASET_CONFIG_V2)
+            for row in dataset.rows:
+                if row.bar_open_at >= REPLAY_START and all(value is not None for _, value in row.features):
+                    reconstructed[(product, row.bar_open_at)] = [[name, str(value)] for name, value in row.features]
+    return reconstructed
+
+
+def verified_replay_features(reconstructed, *, product, bar_open_at, captured_hash):
+    features = reconstructed.get((product, bar_open_at))
+    if features is None or sha256_canonical(features) != captured_hash:
+        raise IntegrityError('reconstructed features do not match the captured prediction hash')
+    return features
+
+
 def import_authorized_replay(store, *, runtime_root, recorded_at=None, replay_database=None):
     with store.connect():
         return _import_authorized_replay(store, runtime_root=runtime_root, recorded_at=recorded_at,
@@ -216,11 +242,14 @@ def _import_authorized_replay(store, *, runtime_root, recorded_at=None, replay_d
             context.prec = 34
             actual = forward_return_labels(series_from_rows(window, product=product), horizon=4)
         labels[product] = dict(zip((r['bar_open_at'] for r in window), actual))
+    reconstructed = reconstruct_replay_features(rows)
     predictions = {}
     for event in events:
         if event.event_type != 'PREDICTION_CREATED':
             continue
         old = event.payload
+        features = verified_replay_features(reconstructed, product=event.product, bar_open_at=old['bar_open_at'],
+                                             captured_hash=old['feature_vector_hash'])
         certificate = {'schema': 'legacy-paper-input-v1', 'decision_at': old['decision_available_at'],
             'product': event.product, 'feature_hash': old['feature_vector_hash'], 'event_ids': [],
             'prediction_event_hash': event.event_hash, 'corpus_hash': corpus['corpus_content_hash'],
@@ -233,11 +262,13 @@ def _import_authorized_replay(store, *, runtime_root, recorded_at=None, replay_d
             snapshot_hash=sha256_canonical(certificate), features_hash=old['feature_vector_hash'], event_ids=(),
             outputs={k: old['prediction'] if k == 'return' else None for k in OUTPUTS}, synthetic=False)
         evidence = PredictionEvidence(prediction_id=p.prediction_id, prediction_hash=p.identity, recorded_at=at,
-            features=None, snapshot=certificate, baselines={'ZERO': '0'},
-            input_quality={'state': 'PARTIAL', 'gaps': None, 'reasons': ['FEATURE_VALUES_NOT_RECORDED', 'PRICE_CLOCK_ASSUMED']},
+            features=features, snapshot=certificate, baselines={'ZERO': '0'},
+            input_quality={'state': 'PARTIAL', 'gaps': None, 'reasons': ['PRICE_CLOCK_ASSUMED'], 'feature_state': 'HASH_VERIFIED_RECONSTRUCTION'},
             split='spent_oos', provenance={'method': 'frozen-authorized-paper-replay-import-v1',
                 'cadence_seconds': 3600, 'synthetic': False, 'cost_model': 'synthetic',
-                'original_prediction_hash': old['prediction_hash'], 'legacy_snapshot_certificate': True})
+                'original_prediction_hash': old['prediction_hash'], 'legacy_snapshot_certificate': True,
+                'feature_reconstruction': {'method': 'frozen-paper-dataset-features-v1', 'decimal_precision': 34,
+                    'seed_bars': 200, 'captured_hash_verified': True, 'historical_availability_attested': False}})
         store.issue(p, evidence)
         value = labels[p.product][old['bar_open_at']]
         if value is not None:

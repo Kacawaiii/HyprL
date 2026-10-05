@@ -1,0 +1,146 @@
+{
+  "comparison_protocol_hash": "3817ff509bdc35ec53aca85bc3c558e60b3db828efa920f12191475e9883875e",
+  "comparison_state": "WAITING_DATA",
+  "counts": {
+    "decision": 4444,
+    "execution": 4442,
+    "experiment": 4,
+    "hypothesis": 3,
+    "inference": 47,
+    "inputs": 4563,
+    "label": 4547,
+    "prediction": 4563,
+    "reference": 7,
+    "replay-summary": 1,
+    "trial": 6
+  },
+  "frozen_file_digests": {
+    "data/crypto/paper_replay_v2/BTC-USD.json": "a15c0a0e6a9e6ccf6ea64568fadbcb2918ab3dcd47eee04bb6d96d6c163b46c1",
+    "data/crypto/paper_replay_v2/ETH-USD.json": "b2def3078e7e4b6b3fc23700ea16e2d3cd4fbd99f2ce001e8226f45e9508e3bd",
+    "data/crypto/paper_replay_v2/manifest.json": "3a8d5d8d163b110bb6e55dc08599ca0f3051c2262154d6fb7affb594264fd3b3",
+    "data/models/paper_v2/BTC-USD.json": "b021613d2f56a4581499c8ef60954cc5cd4568dfc8dce2565c4406677f361b5b",
+    "data/models/paper_v2/ETH-USD.json": "eded8c50683f1c6e3b47caff2d4f5be6ee6916110ee97bc0429140e76e852a9b",
+    "data/models/paper_v2/manifest.json": "98d04e2c0729554f0527cbf9945f94b8aaa6f41f71430866144d80d795bf264e"
+  },
+  "ledger": {
+    "head_hash": "aa896f962862cba9d922302301e0b6358ba0c28d9362837cce4c3251a4bc4972",
+    "records": 22627,
+    "schema": "research-observability-store-v1",
+    "verified": true
+  },
+  "limitations": [
+    "synthetic demonstrations establish no real edge",
+    "spent real replay stays exploratory; costs synthetic; price clocks assumed",
+    "legacy replay has no recorded full feature values or InformationSnapshot",
+    "16 real tail/gap labels pending; unobserved inference telemetry unknown",
+    "real comparison requires causally overlapping data, operator review and scoped authorizations"
+  ],
+  "method_hash": "1b5ce03c0cc23654c53834fb8202dae47f22e66df2b491727852be5f3facbeae",
+  "network_requests": 0,
+  "new_real_training": false,
+  "real_monitoring": {
+    "BTC-USD": {
+      "available_labels": 1461,
+      "feature_values": "NOT_RECORDED",
+      "inference_telemetry": "NOT_OBSERVED",
+      "method_hash": "1b5ce03c0cc23654c53834fb8202dae47f22e66df2b491727852be5f3facbeae",
+      "monitoring_hash": "6199bc4e77dbbfff24c6f09ffe7490448a13736f2cc9b670e4c8f61293f0cc28",
+      "pending_labels": 3,
+      "reference_hash": "547f7d5759ae09acddd91b8e79886783330899f406de79686f71e1d694b4c0ca",
+      "sample": 1464,
+      "scope": "EXPLORATORY"
+    },
+    "ETH-USD": {
+      "available_labels": 1461,
+      "feature_values": "NOT_RECORDED",
+      "inference_telemetry": "NOT_OBSERVED",
+      "method_hash": "1b5ce03c0cc23654c53834fb8202dae47f22e66df2b491727852be5f3facbeae",
+      "monitoring_hash": "d064060f8186eefaad2a203397c8e0f50fe5dba093fedfc3521e1b2ac2212cf6",
+      "pending_labels": 3,
+      "reference_hash": "96c32a979dcf6fe5cc9496285128ddf8c3a5d5a5bda00784ae8f4b45a12f665e",
+      "sample": 1464,
+      "scope": "EXPLORATORY"
+    }
+  },
+  "real_replay": {
+    "BTC-USD": {
+      "available_labels": 2170,
+      "frozen_scoring_reproduced": true,
+      "pending_labels": 8,
+      "predictions": 2178,
+      "result_hash": "db669a55970326973e83ded005fe03e5eba347ed7f1f8f0f39f4e09c4c83a65c",
+      "scored_predictions_hash": "70f537c08e9d06cbb75bffbecdfa1c2679a01b2fb39fdfbb7fdb02de5bb1d340"
+    },
+    "ETH-USD": {
+      "available_labels": 2170,
+      "frozen_scoring_reproduced": true,
+      "pending_labels": 8,
+      "predictions": 2178,
+      "result_hash": "0e6f62d7b3ec9d8b28731b2ddd441885241c7ba41866c1da64200c64138cd798",
+      "scored_predictions_hash": "26bf777cf2b02abbaf4e3b561f226902c11c81143b93760ba0cd181e14918508"
+    }
+  },
+  "regime_hash": "2e93ee97a5348ca8686779654b25d60c03d723d62e979598aa323fd6f96626f4",
+  "replay_chain_head": "b6c1d770721f38cc50ce18e36b28ce0218a99961fe8347eb222209d5fc78340f",
+  "replay_manifest_hash": "0a943405730174954edc6a2e1af09355716e196de2d80a7bf23dc0d9cd6c4b10",
+  "schema": "research-observability-v1-evidence",
+  "scope": "EXPLORATORY",
+  "synthetic_model_lab": [
+    {
+      "criteria_met": {
+        "BTC-USD": true,
+        "ETH-USD": true
+      },
+      "experiment_hash": "2b0c8588f0639f893fd73f49eec92af1c0e27b2ebbd7c210783924b97205f3df",
+      "model_id": "synthetic-ridge-v1",
+      "monitoring": {
+        "BTC-USD": {
+          "monitoring_hash": "824549e9795447ee8794661d1e4e9fa288ec26bed74c485ea28c0d3b362ea789",
+          "reference_hash": "095e47aece157b319be7bffd7b19ea3f8c8772fa9ca5e68456ecc4c7f6f03368",
+          "sample": 22
+        },
+        "ETH-USD": {
+          "monitoring_hash": "467fc4550c48fa814432b2cd6db9614b249e84cf0750dc3bc404fba4a80cfb11",
+          "reference_hash": "fafc88f2c3db9a6d6a7cf22b9340a40e473ebf4457771c07286569ffbf9bfe79",
+          "sample": 22
+        }
+      },
+      "predictions": 80,
+      "prepared_hash": "36827d7a336ab7cc5e754c630ee487a8ccdde10bd909efa37bd265c2dcd489f8"
+    },
+    {
+      "criteria_met": {
+        "BTC-USD": false,
+        "ETH-USD": false
+      },
+      "experiment_hash": "306bd0e6cdcba128e5fcbd29d7e05b7df44690eee9f851e6b93dde6a6981d736",
+      "model_id": "local-momentum-v1",
+      "monitoring": {
+        "BTC-USD": {
+          "monitoring_hash": "852f4bf055666142051baa788b020dd1b665251078660764fab7b6a269c174a0",
+          "reference_hash": "c91df73618efccb17fee1aabf2bbc0173f6a9551180440702c46eb1a3655166b",
+          "sample": 22
+        },
+        "ETH-USD": {
+          "monitoring_hash": "f48ed89825d8bc150348ac612782221443e901b596921deb31ece5ba83a21b48",
+          "reference_hash": "067c4999f6120d82b0aa32620ca654d5ab92a740c4621e8a834f631b7188ae75",
+          "sample": 22
+        }
+      },
+      "predictions": 80,
+      "prepared_hash": "d22a3e891aa9d048e98e17af29fa00d4c0b40cf5004d1748c08b2f8784ab3669"
+    }
+  ],
+  "synthetic_scenarios": {
+    "classifications": [
+      "DRIFT",
+      "MISSING_DATA",
+      "PERFORMANCE_DROP",
+      "TECHNICAL_DEGRADATION"
+    ],
+    "monitoring_hash": "babf075a2aa058130bc2c24e067d4ac38d9d72f48e03e041661bf83c08efeedd",
+    "reference_hash": "9ebb02fb8d4666b4124e5af6f15a78bec722cebeb995cc7224dd7b90d1c8166d",
+    "sample": 23,
+    "synthetic": true
+  }
+}

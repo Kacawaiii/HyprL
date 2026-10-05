@@ -109,3 +109,26 @@ def test_engine_no_fill_and_expiry_observations_preserve_terminal_pending(store)
     assert store.prediction_view(other.identity, as_of='2026-06-01T02:00:00Z')['execution_state'] == 'EXPIRED'
     terminal, _ = issue(store, identifier='synthetic-terminal')
     assert store.prediction_view(terminal.identity, as_of='2026-06-01T02:00:00Z')['execution_state'] == 'PENDING'
+
+
+def test_reconstructed_synthetic_replay_features_bind_actual_captured_hashes(tmp_path):
+    from tests.crypto.test_paper_replay import synthetic_rows, artifact
+    from scripts.trading_lab.paper_replay import run_replay, SESSION_ID
+    from scripts.trading_lab.research.importers import reconstruct_replay_features, verified_replay_features
+    from scripts.trading_lab.sources.canonical import sha256_canonical
+    # Existing realistic synthetic bars through the unchanged frozen model, with no fit.
+    rows = synthetic_rows()
+    path = tmp_path / 'synthetic-reconstruction.sqlite'
+    result = run_replay({'BTC-USD': rows}, {'BTC-USD': artifact()}, database_path=path)
+    events = paper_events(path, session_id=SESSION_ID, expected_head=result['chain']['head_hash'])
+    rebuilt = reconstruct_replay_features({'BTC-USD': rows})
+    predictions = [e for e in events if e.event_type == 'PREDICTION_CREATED']
+    assert len(predictions) == 12
+    for event in predictions:
+        values = verified_replay_features(rebuilt, product=event.product,
+            bar_open_at=event.payload['bar_open_at'], captured_hash=event.payload['feature_vector_hash'])
+        assert len(values) == 6 and sha256_canonical(values) == event.payload['feature_vector_hash']
+    with pytest.raises(IntegrityError):
+        verified_replay_features(rebuilt, product='BTC-USD', bar_open_at=predictions[0].natural_key, captured_hash='0' * 64)
+    with pytest.raises(IntegrityError):
+        verified_replay_features(rebuilt, product='BTC-USD', bar_open_at='2026-07-01T00:00:00Z', captured_hash='0' * 64)
