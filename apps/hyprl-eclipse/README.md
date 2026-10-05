@@ -8,8 +8,8 @@ Prototype visuel autonome : présentation, univers WebGL 3D en quatre chapitres 
 | --- | --- | --- | --- |
 | 01 Monolithe | héro | plaine sombre, petit monolithe lointain, arête enneigée et pic à droite, collines dans la brume à gauche, soleil étoilé rasant, anneau planétaire géant ; les cartes de verre du héro (CSS3D) | le soleil glisse avec le curseur ; le scroll avance la caméra |
 | 02 Planète | Vision | la géante annelée du ciel du Monolithe, en croissant : nuages en bandes, limbe éclairé, ombre des anneaux sur la planète et de la planète sur les anneaux | le scroll rapproche la caméra du limbe ; le curseur tourne la vue |
-| 03 Singularité | Interlude | disque d'accrétion doré vu par la tranche comme une mer, anneau lentille en filaments concentriques, panache de poussière d'or, traînées de vitesse, vaisseau | le vaisseau suit le curseur ; le scroll agrandit l'ombre et accélère le flux |
-| 04 Prisme | Plateforme + Approche | orbe fissuré, lames de verre irisées aux franges chromatiques, lignes de lumière, reflet au sol | le curseur tourne le nuage d'éclats ; le scroll fait éclater l'orbe |
+| 03 Singularité | Interlude | disque d'accrétion doré vu par la tranche comme une mer miroir, anneau lentille géant en filaments qui tournent (photon ring blanc, vague à gauche), reflet de l'anneau sous la mer, nappes et panache de poussière d'or pailletée, étoiles déviées par la lentille, scintillement de chaleur, traînées de vitesse et étincelles, vaisseau en métal éclairé avec son reflet, halo anamorphique | le vaisseau suit le curseur ; le scroll agrandit l'ombre et accélère le flux |
+| 04 Prisme | Plateforme + Approche | verre brisé : éclats polygonaux irréguliers (triangles, lamelles, trapèzes) à biseaux brillants, paillettes de verre pilé, réfraction chromatique de l'atmosphère ; orbe à nébuleuse et liseré fin qui éclate vers la droite sous un trait de flare rose ; lignes de lumière fines ; parquet violet réfléchissant | le curseur tourne le nuage d'éclats ; le scroll fait éclater l'orbe |
 
 **Transitions, une par passage :** Monolithe → Planète, la caméra plonge vers la planète derrière un liseré de lumière ; Planète → Singularité, montée vers le haut, la planète tombe et le trou noir descend derrière une ligne d'horizon lumineuse ; Singularité → Prisme, l'écran se brise : l'image se fissure depuis un point d'impact puis part en éclats de verre 3D qui volent vers la caméra et révèlent le prisme (`lib/shatter.js`). Remonter la page rejoue chaque transition à l'envers.
 
@@ -29,7 +29,7 @@ Sous Windows, extraire l'archive puis double-cliquer sur `START-WINDOWS.cmd` (Py
 
 - `scene.js` : le moteur. Il gère le canvas fixe, le fondu entre chapitres selon le scroll, le post-traitement, la résolution adaptative, la pause et le mouvement réduit, et les exports.
 - `chapters/monolith.js`, `planet.js`, `singularity.js`, `prism.js` : un fichier par chapitre. Chaque objet est nommé et éditable.
-- `lib/shatter.js` : l'écran qui se brise (fracture de Voronoï, un seul appel de dessin). `lib/cards.js` : les cartes du héro.
+- `lib/shatter.js` : l'écran qui se brise (fracture de Voronoï en plaques de verre épaisses : biseaux, réfraction, franges RVB ; un seul appel de dessin). `lib/cards.js` : les cartes du héro.
 - `lib/smooth-scroll.js` : le défilement amorti (molette, clavier, ancres), désactivé en mouvement réduit et sur écran tactile.
 - `lib/kit.js` : le bruit GLSL, les astéroïdes procéduraux, le champ d'étoiles et les copies portables pour le glTF.
 - `index.html`, `styles.css`, `app.js` : la présentation en français. Le texte du héro est dans le disque noir, le texte de la Vision reste fixé dans le ciel, un rail de chapitres est à gauche et les contrôles d'ambiance sont fixes.
