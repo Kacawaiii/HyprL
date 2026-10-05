@@ -81,9 +81,9 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tIn;uniform vec2 uDir;
       void main(){vec3 c=texture2D(tIn,vUv).rgb*.227;c+=(texture2D(tIn,vUv+uDir*1.385).rgb+texture2D(tIn,vUv-uDir*1.385).rgb)*.316;c+=(texture2D(tIn,vUv+uDir*3.23).rgb+texture2D(tIn,vUv-uDir*3.23).rgb)*.07;gl_FragColor=vec4(c,1.);}` });
   const finalMat = new THREE.ShaderMaterial({
-    uniforms: { tA: { value: null }, tB: { value: null }, tBloom: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uCAa: { value: 0 }, uCAb: { value: 0 }, uBloom: { value: 1 }, uExpo: { value: 1 }, uDim: { value: 0 }, uVig: { value: .85 }, uSat: { value: 1 }, uTime: { value: 0 }, uAspect: { value: 1 }, uAccent: { value: new THREE.Color() }, uRes: { value: new THREE.Vector2() } },
+    uniforms: { tA: { value: null }, tB: { value: null }, tBloom: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uCAa: { value: 0 }, uCAb: { value: 0 }, uBloom: { value: 1 }, uExpo: { value: 1 }, uDim: { value: 0 }, uVig: { value: .85 }, uSat: { value: 1 }, uTime: { value: 0 }, uAspect: { value: 1 }, uAccent: { value: new THREE.Color() }, uFlare: { value: 0 }, uFlareTint: { value: new THREE.Color(1, 1, 1) }, uRes: { value: new THREE.Vector2() } },
     vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
-    fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB,tBloom;uniform float uCAa,uCAb,uBloom,uExpo,uDim,uSat,uVig;uniform vec2 uRes;uniform vec3 uAccent;${TRANSITION}
+    fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB,tBloom;uniform float uCAa,uCAb,uBloom,uExpo,uDim,uSat,uVig,uFlare;uniform vec2 uRes;uniform vec3 uAccent,uFlareTint;${TRANSITION}
       vec3 ca(sampler2D t,vec2 uv,float s){vec2 d=(uv-.5)*s;return vec3(texture2D(t,uv+d).r,texture2D(t,uv).g,texture2D(t,uv-d).b);}
       vec3 rblur(sampler2D t,vec2 uv,float s){vec3 c=vec3(0.);vec2 d=(uv-.5)*s;for(int i=0;i<7;i++)c+=texture2D(t,uv-d*(float(i)/6.)).rgb;return c/7.;}
       vec3 aces(vec3 x){return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.);}
@@ -100,13 +100,18 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
             vec3 b=mix(ca(tB,ub,uCAb),rblur(tB,ub,.07*(1.-uMix)),smoothstep(0.,.35,1.-uMix))*(.65+.35*uMix);
             float r=ringDist(vUv),e=ringEdge();col=mix(a,b,reveal(r));
             seam=(exp(-pow((r-e)/.009,2.))*.75+exp(-pow((r-e)/.04,2.))*.16)*pulse;}}
-        col+=texture2D(tBloom,vUv).rgb*uBloom;col*=uExpo;col=mix(vec3(dot(col,vec3(.2126,.7152,.0722))),col,uSat);
+        col+=texture2D(tBloom,vUv).rgb*uBloom;
+        // Anamorphic flare: the brightest points smeared into a thin horizontal streak (chapters that ask for it).
+        if(uFlare>.001){vec3 fl=vec3(0.);for(int i=1;i<=10;i++){float o=float(i*i)*.0032;fl+=(texture2D(tBloom,vUv+vec2(o,0.)).rgb+texture2D(tBloom,vUv-vec2(o,0.)).rgb)*exp(-float(i)*.3);}
+          float fl2=dot(fl,vec3(.3,.5,.2))*.12;col+=uFlareTint*fl2*fl2*uFlare;}
+        col*=uExpo;col=mix(vec3(dot(col,vec3(.2126,.7152,.0722))),col,uSat);
         col+=mix(vec3(1.),uAccent,.45)*seam;
         vec2 p=vUv-.5;col*=1.-dot(p,p)*uVig;col*=1.-uDim;
         col=aces(col);col=pow(col,vec3(1./2.2));
         col+=(h(vUv*uRes+fract(uTime*7.))-.5)*.022;
         gl_FragColor=vec4(col,1.);}` });
 
+  const white = new THREE.Color(1, 1, 1);
   let W = 1, H = 1, PR = 1, quality = 1, slowFrames = 0, sampled = 0;
   function resize() {
     W = container.clientWidth || innerWidth; H = container.clientHeight || innerHeight; if (!W || !H) return;
@@ -178,7 +183,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     }
     quad.material = finalMat; const u = finalMat.uniforms;
     u.tA.value = rtA.texture; u.tB.value = rtB.texture; u.tBloom.value = rtS1.texture; u.uMix.value = kind === 2 ? 1 : mixT;
-    u.uCAa.value = pa.ca; u.uCAb.value = pb.ca; u.uBloom.value = lerp(pa.bloom, pb.bloom); u.uExpo.value = lerp(pa.exposure, pb.exposure); u.uDim.value = s.dim; u.uSat.value = lerp(pa.sat ?? 1, pb.sat ?? 1); u.uVig.value = lerp(pa.vignette ?? .85, pb.vignette ?? .85); u.uTime.value = elapsed;
+    u.uCAa.value = pa.ca; u.uCAb.value = pb.ca; u.uBloom.value = lerp(pa.bloom, pb.bloom); u.uExpo.value = lerp(pa.exposure, pb.exposure); u.uDim.value = s.dim; u.uSat.value = lerp(pa.sat ?? 1, pb.sat ?? 1); u.uVig.value = lerp(pa.vignette ?? .85, pb.vignette ?? .85); u.uFlare.value = lerp(pa.flare ?? 0, pb.flare ?? 0); u.uFlareTint.value.copy(mixT > .5 ? pb.flareTint ?? white : pa.flareTint ?? white); u.uTime.value = elapsed;
     renderer.setRenderTarget(null); renderer.render(quadScene, quadCam);
     // Readable overlays only while the first chapter (the hero) is on screen.
     const heroOn = (s.a === 0 && (1 - mixT) > .02) || (s.b === 0 && mixT > .02);

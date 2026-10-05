@@ -3,120 +3,197 @@ import { NOISE, VERT_SCREEN, glow, rng, portable } from '../lib/kit.js';
 
 /**
  * Chapitre 03 — Singularité (référence : trou noir doré, disque vu par la tranche, vaisseau).
- * The accretion disc lies edge-on across the frame like a golden sea; above and below it the lensed far side of the
- * disc forms the ring, built from fine concentric filaments, wider and brighter on the approaching (left) side where a
- * plume of gold dust rises. Speed streaks run out of the vanishing point; the ship heads into it, steered by the
- * pointer. Backdrop in screen space (2.5D), ship and sparks in 3D.
+ * The accretion disc lies edge-on across the frame like a mirror-like golden sea; above it the lensed far side of the
+ * disc forms a huge ring that overflows the frame, built from fine flowing filaments, white-hot at the photon ring,
+ * wider and brighter on the approaching (left) side where it curls outward into the sea like a wave. The sea mirrors
+ * the ring, carries banks of gold dust; a plume of dust wraps the ring on the left. Stars bend around the shadow,
+ * the air shimmers at the photon ring, speed streaks run out of the vanishing point and sparks rush at the camera.
+ * The ship, steered by the pointer, flies into the scene with its reflection and engine light on the sea.
+ * Backdrop in screen space (2.5D), ship, reflection and sparks in 3D.
  */
 export function createSingularityChapter({ isMobile }) {
   const scene = new THREE.Scene(); scene.name = 'Chapitre_03_Singularite';
   const camera = new THREE.PerspectiveCamera(40, 1, .1, 400); camera.position.set(0, 0, 10);
   const gold = new THREE.Color('#ffb24a'), hot = new THREE.Color('#fff1d6');
-  const state = { aspect: 1, center: new THREE.Vector2(.62, .47), horizon: .47, ship: new THREE.Vector3(), shipTarget: new THREE.Vector3(), roll: 0 };
+  const state = { aspect: 1, center: new THREE.Vector2(.64, .47), horizon: .47, ship: new THREE.Vector3(), shipTarget: new THREE.Vector3(), roll: 0 };
+  const shipUv = new THREE.Vector2(.7, .5);
 
   const backdrop = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uC: { value: state.center }, uH: { value: .47 }, uRs: { value: .2 }, uGold: { value: gold }, uHot: { value: hot }, uFlow: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uC: { value: state.center }, uH: { value: .47 }, uRs: { value: .4 }, uGold: { value: gold }, uHot: { value: hot }, uFlow: { value: 0 }, uShip: { value: shipUv }, uMotion: { value: 1 } },
     vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false,
-    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect,uH,uRs,uFlow;uniform vec2 uC;uniform vec3 uGold,uHot;
-      // Lensed disc: concentric filaments around the shadow, a photon ring, a wide bright plume on the left.
-      float ringI(vec2 p){float r=length(p),a=atan(p.y,p.x);if(r<uRs)return 0.;
-        float left=smoothstep(-.1,1.,-cos(a));float plume=smoothstep(.2,1.,-cos(a))*smoothstep(-.9,.3,sin(a));
-        float rr=r-uRs*(1.+.18*plume*sin(a*3.+uTime*.05));
-        float w=.018+.075*left*left+.05*plume;
-        float fil=pow(fbm(vec2(r*120.,a*1.6+uTime*.25)),1.6)*1.1+pow(fbm(vec2(r*340.,a*4.-uTime*.4)),2.)*.8;
-        float body=exp(-max(rr,0.)/w)*smoothstep(-.003,.01,rr)*(.15+fil*1.3);
-        float photon=exp(-pow((r-uRs*1.025)/.0028,2.))*1.5+exp(-pow((r-uRs*1.06)/.01,2.))*.25;
-        return (body*(.18+.95*left)+photon*(.45+.6*left));}
-      void main(){vec2 asp=vec2(uAspect,1.);vec2 p=(vUv-uC)*asp;float y=vUv.y-uH;
-        vec3 col=vec3(.002,.0018,.0015);
-        vec2 g=floor(vUv*asp*260.);float st=step(.9965,hash12(g))*(.5+.5*sin(uTime*2.+hash12(g+3.)*40.));col+=vec3(.9,.85,.75)*st*.6;
-        float I=ringI(p);
-        // the edge-on disc: a bright seam on the horizon, glowing toward the left and the centre
-        float seam=exp(-abs(y)*160.)*(.3+.55*smoothstep(.9,-.2,(vUv.x-uC.x)*uAspect))+exp(-abs(y)*25.)*.06;
-        // the golden sea below the horizon: perspective flow toward the viewer, clouds, reflected ring
-        vec3 sea=vec3(0.);float cov=0.;
-        if(y<0.){float z=.06/(-y+.002);vec2 w=vec2((vUv.x-uC.x)*uAspect*z,z+uTime*uFlow);
-          float cl=fbm(w*vec2(.9,.22));float cl2=fbm(w*vec2(2.6,.6)+cl*1.4);cov=smoothstep(.3,.8,cl*.6+cl2*.6);
-          float lightL=smoothstep(.75,-.35,(vUv.x-uC.x)*uAspect);
-          sea=mix(uGold*vec3(.4,.26,.12),uGold,cl2)*cov*(.14+1.15*lightL)*smoothstep(-.7,-.02,y);
-          sea+=uHot*pow(cl2,7.)*cov*2.2*(.3+lightL);
-          vec2 m=vec2(p.x+(fbm(w*vec2(.5,3.))-.5)*.03,-p.y);I=max(I,ringI(m)*.5*(1.-cov*.5));
+    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect,uH,uRs,uFlow,uMotion;uniform vec2 uC,uShip;uniform vec3 uGold,uHot;
+      // Lensed far side of the disc (p from the centre, upper half): fine filaments flowing around the shadow,
+      // a white-hot photon ring, thin on the receding right, wide on the approaching left where it curls into a wave.
+      vec3 ring(vec2 p){float r=length(p),a=atan(p.y,p.x);
+        float left=smoothstep(-.35,1.,-cos(a)),s=max(sin(a),0.);
+        float wave=left*left*exp(-s*7.);
+        float w=.06+.17*left*left+.28*wave;
+        float rr=(r-uRs)/w;if(rr<-.05)return vec3(0.);
+        float t=uTime*uMotion;
+        // filaments: concentric, streaked along the angle (motion blur), drifting around the ring
+        float ang=a*(1.+.6*wave)+rr*wave*.9;
+        float f1=vnoise(vec2(rr*42.,ang*2.4-t*.35)),f2=vnoise(vec2(rr*130.,ang*6.-t*.6)),f3=vnoise(vec2(rr*12.,ang*1.2-t*.15));
+        float fil=pow(f1,4.)*2.2+pow(f2,6.)*2.2+f3*f3*.3;
+        float env=smoothstep(-.04,.04,rr)*exp(-rr*(2.-1.*wave))*smoothstep(1.4,.5,rr);
+        float lum=env*(.03+fil)*(.45+1.2*left+.9*wave);
+        float photon=exp(-pow((r-uRs)/.0022,2.))*(.7+2.2*left)+exp(-pow((r-uRs*1.01)/.012,2.))*(.05+.35*left);
+        vec3 c=mix(uGold*vec3(1.,.9,.75),uHot,clamp(exp(-rr*3.)*.8+fil*.4,0.,1.))*lum+mix(uGold,uHot,.85)*photon;
+        return c;}
+      // star field with gravitational lensing: an image at p shows the source at p(1 - rE^2/r^2)
+      vec3 stars(vec2 p){float r=length(p);if(r<uRs*1.01)return vec3(0.);vec2 b=p*(1.-uRs*uRs*1.3/(r*r));
+        vec2 g=floor(b*300.),f=fract(b*300.)-.5;float h=hash12(g);float tw=.6+.4*sin(uTime*2.+h*60.);
+        float s=step(.991,h)*smoothstep(.45,.05,length(f))*tw;return vec3(.95,.88,.75)*s*(.4+1.6*step(.9993,h));}
+      void main(){vec2 asp=vec2(uAspect,1.);vec2 p=(vUv-uC)*asp;float y=vUv.y-uH;float t=uTime*uMotion;
+        vec3 col=vec3(.0025,.002,.0016);
+        float r=length(p),a=atan(p.y,p.x);
+        float leftX=smoothstep(.15,-.75,p.x);
+        if(y>=0.){
+          // heat shimmer just outside the photon ring
+          vec2 sh=(vec2(vnoise(p*40.+t*1.3),vnoise(p*40.-t*1.1+7.))-.5)*.0025*exp(-abs(r-uRs)*40.);
+          col+=stars(p+sh);
+          col+=ring(p+sh);
+          // the plume: gold dust wrapping the ring on the left, lit by it, with glitter
+          vec2 pp=p*3.2+vec2(t*.015,-t*.02);vec2 wq=vec2(fbm(pp*.8),fbm(pp*.8+vec2(4.2,1.3)));
+          float d1=fbm(pp+wq*1.6),d2=fbm(pp*2.3+wq*2.2+d1);
+          float band=smoothstep(uRs*1.1,uRs*1.35,r)*smoothstep(uRs*2.2,uRs*1.5,r)*smoothstep(.75,.97,-cos(a))*smoothstep(.03,.12,y);
+          float dust=smoothstep(.45,.72,d1*.65+d2*.45)*band;
+          float lit=(.6+.8*exp(-max(r-uRs*1.3,0.)*4.));
+          vec3 plume=mix(uGold*vec3(.34,.25,.15),mix(uGold,uHot,.6),smoothstep(.45,.75,d2))*lit+uHot*pow(d2,5.)*2.5*lit;
+          col=mix(col,plume,dust*.85);
+          vec2 gq=floor(vUv*asp*420.);col+=uHot*step(.993,hash12(gq))*dust*lit*2.5*(.5+.5*sin(t*3.+hash12(gq+1.)*40.));
+        }else{
+          // the sea: mirror of the ring, rippled, with banks of gold dust coming at the camera
+          float d=-y;float z=.05/(d+.004);vec2 w=vec2((vUv.x-uC.x)*uAspect*z,z*.4+t*uFlow);
+          float c1=fbm(w*7.),c2=fbm(w*19.+c1*2.4),c3=fbm(w*19.+c1*2.4+vec2(.08,-.05));
+          float edgeLit=clamp((c2-c3)*9.+.5,0.,1.);
+          float lightL=smoothstep(.35,-.7,p.x);
+          float cov=smoothstep(.45,.6,c1*.65+c2*.45-.1+.2*lightL)*(.12+.88*lightL)*smoothstep(.01,.06,d);
+          vec2 m=vec2(p.x+(fbm(w*vec2(.5,4.))-.5)*.035*smoothstep(0.,.2,d),-p.y);
+          vec3 refl=ring(m)*.6+stars(m)*.5;
+          col+=refl*(1.-cov*.85);
+          vec3 cloud=mix(uGold*vec3(.06,.038,.018),uGold*vec3(.95,.75,.45),smoothstep(.45,.8,c2)*(.35+.65*edgeLit))*(.3+1.1*lightL)+uHot*pow(c2,4.)*edgeLit*3.5*lightL;
+          col=mix(col,cloud,cov);
+          // near banks of gold dust, bottom left: billowing, lit from the ring
+          vec2 bq=p*2.6+vec2(0.,t*.03);vec2 bw=vec2(fbm(bq*.9),fbm(bq*.9+3.1));float b1=fbm(bq+bw*1.7),b2=fbm(bq*2.4+bw*2.+b1),b3=fbm(bq*2.4+bw*2.+b1+vec2(.03,.04));
+          float bank=smoothstep(.42,.6,b1*.7+b2*.4+.12*smoothstep(-.3,-.9,p.x))*smoothstep(.08,.3,d)*smoothstep(.0,-.55,p.x);float bl=clamp((b2-b3)*12.+.5,0.,1.);
+          vec3 bc=mix(uGold*vec3(.07,.045,.02),uGold*vec3(1.,.8,.5),smoothstep(.4,.8,b2)*(.3+.7*bl))*(.5+.8*lightL)+uHot*pow(b2,3.5)*bl*2.5;
+          col=mix(col,bc,bank*.92);cov=max(cov,bank);
+          vec2 gw=floor(vUv*asp*500.);col+=uHot*step(.988,hash12(gw))*cov*smoothstep(.55,.8,c2)*(.6+lightL*2.)*(.5+.5*sin(t*4.+hash12(gw+2.)*50.));
+          col+=uGold*exp(-d*22.)*(.03+.15*lightL);
+          // engine light and ship mirrored on the water, stretched vertically
+          vec2 e=(vUv-vec2(uShip.x+.012,uH-(uShip.y-uH)-.01))*asp;col+=mix(uGold,uHot,.6)*exp(-abs(e.x)*90.)*exp(-abs(e.y)*30.)*.6*smoothstep(0.,.02,d);
+          // speed streaks out of the vanishing point
+          vec2 v=(vUv-vec2(uC.x-.03,uH))*asp;float rd=length(v),th=atan(v.y,v.x);float bin=floor(th*110.);
+          float lane=step(.55,hash12(vec2(bin,3.)));float dash=smoothstep(.55,1.,fract(log(rd+.02)*1.3-t*(1.6+uFlow*8.)+hash12(vec2(bin,9.))));
+          float thin=smoothstep(.55,0.,abs(fract(th*110.)-.5)*2.*rd*110.);
+          col+=mix(uGold,uHot,.75)*lane*dash*thin*smoothstep(.05,.45,rd)*1.1;
         }
-        // plume of gold dust rising on the left, above the horizon
-        vec2 q=p-vec2(-uRs*1.6,.05);float plumeMask=smoothstep(.75,.0,length(q*vec2(.55,1.)))*smoothstep(-.02,.12,y)*smoothstep(.0,-.6,p.x+.1);
-        float dust=fbm(q*3.+vec2(uTime*.02,-uTime*.03))*fbm(q*7.-uTime*.02);
-        vec3 plume=mix(uGold*vec3(.55,.36,.17),uHot,smoothstep(.28,.5,dust))*smoothstep(.16,.48,dust)*plumeMask*1.25;
-        col+=mix(uGold,uHot,clamp(I*.6,0.,1.))*I*.95;
-        col+=uGold*seam*1.1+uHot*exp(-abs(y)*500.)*.6*smoothstep(1.,.0,abs(vUv.x-uC.x)*2.);
-        col=col*(1.-cov*.35)+sea+plume;
-        // speed streaks out of the vanishing point (on the horizon, at the centre)
-        vec2 d=(vUv-vec2(uC.x,uH))*asp;float rd=length(d),th=atan(d.y,d.x);float bin=floor(th*90.);
-        float lane=step(.7,hash12(vec2(bin,7.)));float dash=smoothstep(.75,1.,fract(log(rd+.02)*3.-uTime*(1.2+uFlow*6.)+hash12(vec2(bin,1.))));
-        float thin=smoothstep(.6,0.,abs(fract(th*90.)-.5)*2.*rd*60.);
-        col+=mix(uGold,uHot,.6)*lane*dash*thin*smoothstep(.04,.35,rd)*.85;
-        col*=1.-smoothstep(.55,1.1,length((vUv-.5)*asp))*.5;
+        // the edge-on disc on the horizon: white-hot seam, brightest on the left where the wave lands
+        float seam=exp(-abs(y)*420.)*(.35+1.4*leftX)+exp(-abs(y)*60.)*(.06+.4*leftX);
+        col+=mix(uGold,uHot,.7)*seam*smoothstep(1.,.0,(vUv.x-uC.x)*uAspect*.9);
+        col*=1.-smoothstep(.6,1.2,length((vUv-.5)*asp))*.55;
         gl_FragColor=vec4(col,1.);}`
   });
   const sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), backdrop); sky.frustumCulled = false; sky.renderOrder = -10; sky.name = 'Singularity'; scene.add(sky);
 
-  // Gold sparks drifting toward the camera.
-  const r = rng(808), sparkN = isMobile() ? 220 : 600, sp = new Float32Array(sparkN * 3), sparks = [];
-  for (let i = 0; i < sparkN; i++) sparks.push({ x: (r() - .5) * 26, y: (r() - .5) * 10 - 1.5, z: -60 + r() * 66, v: 4 + r() * 9 });
-  const sparkGeo = new THREE.BufferGeometry(); sparkGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
-  const sparkPts = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: 0xffc46a, size: .045, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }));
-  sparkPts.name = 'GoldSparks'; sparkPts.frustumCulled = false; scene.add(sparkPts);
-
-  // The ship: sleek arrow hull, canopy, fins, twin engines with white-hot exhaust and long light trails.
-  const ship = new THREE.Group(); ship.name = 'Vessel'; scene.add(ship);
-  const hullShape = new THREE.Shape([[2.3, 0], [.7, .2], [-.3, 1.05], [-.85, 1.05], [-.55, .32], [-1.15, .3], [-1.15, -.3], [-.55, -.32], [-.85, -1.05], [-.3, -1.05], [.7, -.2]].map(([x, y]) => new THREE.Vector2(x, y)));
-  const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: .12, bevelEnabled: true, bevelThickness: .06, bevelSize: .05, bevelSegments: 2 }); hullGeo.center(); hullGeo.rotateX(-Math.PI / 2);
-  const metal = new THREE.MeshStandardMaterial({ color: 0x3a3d44, metalness: .7, roughness: .3 });
-  const hull = new THREE.Mesh(hullGeo, metal); hull.name = 'Hull'; ship.add(hull);
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.MeshStandardMaterial({ color: 0x0b0d12, metalness: .9, roughness: .1 })); canopy.name = 'Canopy'; canopy.scale.set(.55, .13, .17); canopy.position.set(.55, .12, 0); ship.add(canopy);
-  const finShape = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(.55, 0), new THREE.Vector2(.05, .42)]);
-  for (const s of [-1, 1]) { const fin = new THREE.Mesh(new THREE.ExtrudeGeometry(finShape, { depth: .03, bevelEnabled: false }), metal); fin.name = `Fin_${s > 0 ? 'R' : 'L'}`; fin.position.set(-1.05, .05, s * .25); fin.rotation.x = s * .25; ship.add(fin); }
-  const engineGeo = new THREE.CylinderGeometry(.11, .14, .5, 20); engineGeo.rotateZ(Math.PI / 2);
-  const exhaustMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uHot,uGold;uniform float uPulse;void main(){vec2 p=vUv-vec2(1.,.5);float core=exp(-abs(p.y)*46.)*exp(p.x*1.4);float g=exp(-length(p*vec2(.7,3.))*4.);
-    gl_FragColor=vec4((uHot*core*2.4+mix(uGold,uHot,.4)*g*.9)*uPulse,1.);}`, { uHot: { value: hot }, uGold: { value: gold }, uPulse: { value: 1 } }, { side: THREE.DoubleSide });
-  for (const s of [-1, 1]) {
-    const e = new THREE.Mesh(engineGeo, metal); e.name = `Engine_${s > 0 ? 'R' : 'L'}`; e.position.set(-1.1, 0, s * .2); ship.add(e);
-    const trail = new THREE.Mesh(new THREE.PlaneGeometry(9, .55), exhaustMaterial); trail.name = `Exhaust_${s > 0 ? 'R' : 'L'}`; trail.position.set(-1.35 - 4.5, 0, s * .2); ship.add(trail);
-    const trail2 = trail.clone(); trail2.rotation.x = Math.PI / 2; ship.add(trail2);
+  // Gold sparks rushing at the camera, drawn as short motion-blurred streaks (bright head, fading tail).
+  const r = rng(808), sparkN = isMobile() ? 110 : 260, sp = new Float32Array(sparkN * 6), sc = new Float32Array(sparkN * 6), sparks = [];
+  for (let i = 0; i < sparkN; i++) {
+    sparks.push({ x: (r() - .5) * 30, y: -r() * r() * 5 + .4, z: -60 + r() * 66, v: 5 + r() * 12 });
+    const b = .35 + r() * .65; sc.set([1 * b, .78 * b, .45 * b, 0, 0, 0], i * 6);
   }
-  ship.add(new THREE.PointLight(0xffd9a0, 6, 6, 2).translateX(-1.6));
-  const key = new THREE.DirectionalLight(0xffc06a, 3.2); key.position.set(-6, 1, -4); scene.add(key);
-  scene.add(new THREE.HemisphereLight(0xffd9a0, 0x1a1006, .6));
+  const sparkGeo = new THREE.BufferGeometry(); sparkGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3)); sparkGeo.setAttribute('color', new THREE.BufferAttribute(sc, 3));
+  const sparkMaterial = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const sparkLines = new THREE.LineSegments(sparkGeo, sparkMaterial); sparkLines.name = 'GoldSparks'; sparkLines.frustumCulled = false; scene.add(sparkLines);
+
+  // The ship: lit metal with panel lines, swept wings, twin engines, canopy, fins.
+  const keyDir = new THREE.Vector3(-.75, .1, .35).normalize(), seaDir = new THREE.Vector3(-.2, -1, .25).normalize();
+  const metalMaterial = dim => new THREE.ShaderMaterial({
+    uniforms: { uKey: { value: keyDir }, uSea: { value: seaDir }, uGold: { value: gold }, uHot: { value: hot }, uDim: { value: dim }, uTone: { value: new THREE.Color('#3a3e46') } },
+    vertexShader: /* glsl */`varying vec3 vW;varying vec3 vN;varying vec3 vL;void main(){vec4 w=modelMatrix*vec4(position,1.);vW=w.xyz;vN=normalize(mat3(modelMatrix)*normal);vL=position;gl_Position=projectionMatrix*viewMatrix*w;}`,
+    fragmentShader: /* glsl */`varying vec3 vW;varying vec3 vN;varying vec3 vL;uniform vec3 uKey,uSea,uGold,uHot,uTone;uniform float uDim;
+      void main(){vec3 n=normalize(vN);if(!gl_FrontFacing)n=-n;vec3 v=normalize(cameraPosition-vW);
+        float panel=1.-.45*max(step(.94,fract(vL.x*5.3)),step(.95,fract((vL.z+vL.y)*4.1)));
+        float k=max(dot(n,uKey),0.),s=max(dot(n,uSea),0.),fr=pow(1.-max(dot(n,v),0.),3.);
+        float spec=pow(max(dot(reflect(-uKey,n),v),0.),40.),spec2=pow(max(dot(reflect(-normalize(vec3(.3,.9,.4)),n),v),0.),18.);
+        vec3 col=uTone*panel*(.06+k*.35*uGold+s*.2*uGold+max(n.y,0.)*.25)+uHot*spec*2.2+vec3(.8,.85,.95)*spec2*.6+mix(uGold,uHot,.5)*fr*.2;
+        gl_FragColor=vec4(col*uDim,1.);}`,
+    side: THREE.DoubleSide
+  });
+  const exhaustMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uHot,uGold;uniform float uPulse;void main(){vec2 p=vUv-vec2(1.,.5);float core=exp(-abs(p.y)*60.)*exp(p.x*.9);float g=exp(-abs(p.y)*9.)*exp(p.x*2.2);
+    gl_FragColor=vec4((uHot*core*2.6+mix(uGold,uHot,.4)*g*.55)*uPulse,1.);}`, { uHot: { value: hot }, uGold: { value: gold }, uPulse: { value: 1 } }, { side: THREE.DoubleSide });
+  const nozzleMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uHot;uniform float uPulse;void main(){float d=length(vUv-.5)*2.;gl_FragColor=vec4(uHot*(exp(-d*d*6.)*2.5+exp(-d*2.5)*.6)*uPulse,1.);}`, { uHot: { value: hot }, uPulse: { value: 1 } }, { side: THREE.DoubleSide });
+  const fuselageGeo = new THREE.LatheGeometry([[0, -1.3], [.2, -1.25], [.3, -.7], [.3, .3], [.25, 1.1], [.14, 1.8], [0, 2.3]].map(([x, y]) => new THREE.Vector2(x, y)), 24);
+  fuselageGeo.rotateZ(-Math.PI / 2); fuselageGeo.scale(1, .55, 1);
+  const wingShape = new THREE.Shape([[.7, 0], [-.55, 1.55], [-.95, 1.6], [-.8, .9], [-1.05, 0]].map(([x, y]) => new THREE.Vector2(x, y)));
+  const wingGeo = new THREE.ExtrudeGeometry(wingShape, { depth: .05, bevelEnabled: true, bevelThickness: .02, bevelSize: .02, bevelSegments: 1 }); wingGeo.rotateX(Math.PI / 2);
+  const finShape = new THREE.Shape([[0, 0], [.45, 0], [-.05, .28], [-.18, .28]].map(([x, y]) => new THREE.Vector2(x, y)));
+  const finGeo = new THREE.ExtrudeGeometry(finShape, { depth: .03, bevelEnabled: false });
+  const engineGeo = new THREE.CylinderGeometry(.13, .16, .9, 20); engineGeo.rotateZ(Math.PI / 2);
+  const podGeo = new THREE.BoxGeometry(.5, .08, .22);
+  function buildShip(material, name) {
+    const g = new THREE.Group(); g.name = name;
+    const add = (geo, x, y, z, part, rx = 0, sx = 1) => { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); m.rotation.x = rx; m.scale.z = sx; m.name = part; g.add(m); return m; };
+    add(fuselageGeo, 0, 0, 0, 'Fuselage');
+    for (const s of [-1, 1]) {
+      const side = s > 0 ? 'R' : 'L';
+      add(wingGeo, -.2, -.02, 0, `Wing_${side}`, 0, s);
+      add(engineGeo, -.85, -.02, s * .48, `Engine_${side}`);
+      add(finGeo, -1.05, .05, s * .62, `Fin_${side}`, s * -.35);
+      add(podGeo, -.3, .1, s * 1.05, `Pod_${side}`);
+      const noz = new THREE.Mesh(new THREE.PlaneGeometry(.36, .36), nozzleMaterial); noz.rotation.y = Math.PI / 2; noz.position.set(-1.31, -.02, s * .48); noz.name = `Nozzle_${side}`; g.add(noz);
+      const trail = new THREE.Mesh(new THREE.PlaneGeometry(16, .5), exhaustMaterial); trail.name = `Exhaust_${side}`; trail.position.set(-1.3 - 8, -.02, s * .48); g.add(trail);
+      const trail2 = trail.clone(); trail2.rotation.x = Math.PI / 2; g.add(trail2);
+    }
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), metalMaterial(.35)); canopy.name = 'Canopy'; canopy.scale.set(.55, .14, .17); canopy.position.set(.75, .12, 0); g.add(canopy);
+    return g;
+  }
+  const hullMaterial = metalMaterial(1), mirrorMaterial = metalMaterial(.18);
+  const ship = buildShip(hullMaterial, 'Vessel'); scene.add(ship);
+  const mirror = buildShip(mirrorMaterial, 'VesselReflection'); scene.add(mirror);
 
   function resize(w, h) {
     camera.aspect = w / h; camera.fov = w / h < 1 ? 60 : 40; camera.updateProjectionMatrix(); state.aspect = w / h;
     backdrop.uniforms.uAspect.value = state.aspect; backdrop.uniforms.uH.value = state.horizon = .47;
-    ship.scale.setScalar(state.aspect < 1 ? .5 : .62);
+    const s = state.aspect < 1 ? .38 : .5; ship.scale.setScalar(s); mirror.scale.set(s, -s, s);
   }
-  const fwd = new THREE.Vector3(), tmp = new THREE.Vector3(), xAxis = new THREE.Vector3(1, 0, 0);
+  const fwd = new THREE.Vector3(), tmp = new THREE.Vector3(), xAxis = new THREE.Vector3(1, 0, 0), horizonPoint = new THREE.Vector3();
   function update({ time, pointer, motion, local, dt }) {
-    const lp = local ?? .4;
+    const lp = local ?? .4, mobile = state.aspect < 1;
     // Scroll pushes in: the shadow grows, the sea flows faster.
-    backdrop.uniforms.uRs.value = .33 + lp * .05; backdrop.uniforms.uFlow.value = .08 + lp * .1; backdrop.uniforms.uTime.value = time;
-    state.center.set((state.aspect < 1 ? .55 : .62) - pointer.x * .01 * motion, .47 + pointer.y * .008 * motion);
-    camera.position.set(pointer.x * .25 * motion, -pointer.y * .15 * motion, 10); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
-    for (let i = 0; i < sparkN; i++) { const s = sparks[i]; s.z += s.v * (dt || 0) * motion; if (s.z > 8) s.z -= 68; sp[i * 3] = s.x; sp[i * 3 + 1] = s.y; sp[i * 3 + 2] = s.z; }
+    backdrop.uniforms.uRs.value = (mobile ? .28 : .44) + lp * .04; backdrop.uniforms.uFlow.value = .08 + lp * .1; backdrop.uniforms.uTime.value = time; backdrop.uniforms.uMotion.value = motion;
+    // Camera drift: a slow float on top of the pointer.
+    const driftX = Math.sin(time * .13) * .006 * motion, driftY = Math.sin(time * .17 + 1) * .004 * motion;
+    state.center.set((mobile ? .56 : .64) - pointer.x * .01 * motion + driftX, .47 + pointer.y * .008 * motion + driftY);
+    camera.position.set(pointer.x * .25 * motion + Math.sin(time * .13) * .08 * motion, -pointer.y * .15 * motion + Math.sin(time * .17 + 1) * .05 * motion, 10); camera.position.y += .8; camera.lookAt(camera.position.x * .5, .8, 0); camera.updateMatrixWorld();
+    for (let i = 0; i < sparkN; i++) {
+      const s = sparks[i]; s.z += s.v * (dt || 0) * motion; if (s.z > 8) s.z -= 68;
+      const len = .25 + s.v * .05; sp.set([s.x, s.y, s.z, s.x * (1 - len * .02), s.y * (1 - len * .02), s.z - len], i * 6);
+    }
     sparkGeo.attributes.position.needsUpdate = true;
-    // Ship: right of the centre, just above the sea, heading into the vanishing point; the pointer steers it.
-    const mobile = state.aspect < 1;
-    state.shipTarget.set((mobile ? .9 : 3.1) + pointer.x * 1.4 * motion + Math.sin(time * .4) * .15, -.05 - pointer.y * .7 * motion + Math.sin(time * .9) * .06, 1.5);
-    const prevX = state.ship.x; state.ship.lerp(state.shipTarget, state.ship.lengthSq() ? .06 : 1); ship.position.copy(state.ship);
-    tmp.set(state.center.x * 2 - 1, state.horizon * 2 - 1, .98).unproject(camera);
-    fwd.copy(tmp).sub(ship.position).normalize();
+    // Ship: right of the centre, just above the sea, heading into the scene; the pointer steers it.
+    state.shipTarget.set((mobile ? .55 : 1.7) + pointer.x * 1.2 * motion + Math.sin(time * .4) * .12 * motion, .02 - pointer.y * .25 * motion + Math.sin(time * .9) * .04 * motion, 1.5);
+    const prevX = state.ship.x; state.ship.lerp(state.shipTarget, state.ship.lengthSq() ? .06 : 1);
+    fwd.set(-.3, 0, -1).normalize();
     ship.quaternion.setFromUnitVectors(xAxis, fwd);
     state.roll += (THREE.MathUtils.clamp(-(state.ship.x - prevX) * 8 - pointer.x * .3 * motion, -.5, .5) - state.roll) * .08;
-    ship.rotateX(state.roll + .25);
-    exhaustMaterial.uniforms.uPulse.value = .85 + .15 * Math.sin(time * 30);
+    ship.rotateX(state.roll - .2);
+    // The sea plane at the ship's depth: where the horizon line crosses it. Mirror the ship about it.
+    horizonPoint.set(0, state.horizon * 2 - 1, .5).unproject(camera).sub(camera.position);
+    const seaY = camera.position.y + horizonPoint.y * (camera.position.z - state.ship.z) / -horizonPoint.z;
+    ship.position.set(state.ship.x, seaY + .22 + state.ship.y, state.ship.z);
+    mirror.position.set(ship.position.x, 2 * seaY - ship.position.y, ship.position.z); mirror.quaternion.copy(ship.quaternion);
+    mirror.quaternion.set(-mirror.quaternion.x, mirror.quaternion.y, -mirror.quaternion.z, mirror.quaternion.w);
+    tmp.set(-1.1, 0, 0).applyMatrix4(ship.matrixWorld.compose(ship.position, ship.quaternion, ship.scale)).project(camera); shipUv.set(tmp.x * .5 + .5, tmp.y * .5 + .5);
+    exhaustMaterial.uniforms.uPulse.value = nozzleMaterial.uniforms.uPulse.value = .85 + .15 * Math.sin(time * 30 * motion);
   }
-  function setPalette(color, name) { gold.set(name === 'ice' ? '#8fc6ff' : '#ffb24a'); hot.set(name === 'ice' ? '#eef6ff' : '#fff1d6'); key.color.set(name === 'ice' ? '#a9d4ff' : '#ffc06a'); sparkPts.material.color.set(name === 'ice' ? '#a9d4ff' : '#ffc46a'); }
+  function setPalette(color, name) { gold.set(name === 'ice' ? '#8fc6ff' : '#ffb24a'); hot.set(name === 'ice' ? '#eef6ff' : '#fff1d6'); }
   function exportGroup() {
     const g = new THREE.Group(); g.name = 'Chapitre_03_Singularite';
-    const s = new THREE.Group(); s.name = 'Vessel'; for (const c of ship.children) if (c.isMesh && c.material.isMeshStandardMaterial) s.add(portable(c, { color: 0x3a3d44, metalness: .7, roughness: .3 })); g.add(s);
+    const s = new THREE.Group(); s.name = 'Vessel'; ship.updateMatrixWorld(true);
+    for (const c of ship.children) if (c.isMesh && c.material === hullMaterial) s.add(portable(c, { color: 0x6a6e78, metalness: .8, roughness: .3 }));
+    g.add(s);
     return g;
   }
-  return { name: 'singularity', scene, camera, resize, update, setPalette, exportGroup, post: { ca: .003, bloom: 1, exposure: 1 } };
+  return { name: 'singularity', scene, camera, resize, update, setPalette, exportGroup, post: { ca: .0015, bloom: 1.1, exposure: 1, flare: .5 } };
 }

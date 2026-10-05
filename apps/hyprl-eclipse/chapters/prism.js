@@ -1,148 +1,257 @@
 import * as THREE from 'three';
-import { NOISE, VERT_SCREEN, VERT_WORLD, glow, rng, portable, portableInstances } from '../lib/kit.js';
+import { NOISE, VERT_SCREEN, VERT_WORLD, glow, rng, portable } from '../lib/kit.js';
 
 /**
- * Chapitre 03 — Prisme (référence : orbe qui éclate, éclats de verre irisés, lignes de lumière,
- * aberration chromatique). Scroll breaks the orb further; the pointer turns the cloud.
+ * Chapitre 04 — Prisme (référence : orbe qui éclate, verre brisé irisé, lignes de lumière, sol de planches).
+ * Deep indigo atmosphere; large thin shards of broken glass (irregular polygons: triangles, slivers, trapezoids) with
+ * bevelled bright edges, a crushed-glass sparkle inside, fresnel sheen and a chromatic refraction of the atmosphere
+ * behind them; a nebula orb with a thin bright rim bursting to the right under a pink lens streak; thin light lines;
+ * a reflective violet plank floor with a white glare. Scroll breaks the orb further; the pointer turns the cloud.
  */
+
+// The atmosphere, shared by the backdrop and the shards (which refract it): uv in screen space, bottom-up.
+const PRISM_BG = /* glsl */`uniform vec2 uOrb;uniform float uAspect;uniform vec3 uViolet;
+  vec3 prismBg(vec2 uv){vec2 asp=vec2(uAspect,1.);
+    vec3 col=mix(vec3(.008,.007,.035),vec3(.0015,.002,.008),smoothstep(.3,.9,uv.y));
+    col+=vec3(.1,.025,.42)*exp(-length((uv-vec2(.5,.42))*asp*vec2(.85,1.15))*3.8)*.5;
+    col+=uViolet*exp(-length((uv-uOrb)*asp)*5.)*.16;
+    col+=vec3(.6,.68,1.)*exp(-length((uv-vec2(.5,-.04))*asp*vec2(1.,1.7))*6.)*.45;
+    return col;}`;
+
+/** Convex outline of a broken piece, in a unit box (x across, y along): never a rectangle. */
+function outline(kind, r) {
+  const j = () => (r() - .5) * .2;
+  switch (kind) {
+    case 'tri': return [[-.5 + r() * .4, -.5], [.5, -.5 + r() * .5], [(r() - .5) * .8, .5]];
+    case 'sliver': return [[-.5, -.5 + r() * .15], [.5, -.5 + r() * .45], [.5 - r() * .3, .5 - r() * .1], [-.5 + r() * .2, .5]];
+    case 'trap': return [[-.5, -.5 + j()], [.5, -.5], [.25 + j(), .5], [-.3 + j(), .5 - r() * .2]];
+    default: return [[-.5, -.2 + j()], [-.1 + j(), -.5], [.5, -.35 + j()], [.4 + j(), .3], [-.2 + j(), .5]];
+  }
+}
+
+/**
+ * Bakes broken-glass pieces into one geometry. Each piece: a thin slab (front, back, bevelled sides) with
+ * aEdge (0 centre → 1 outline on the faces, 2 on the sides), aUv (local, world-scaled, for the sparkle),
+ * aCenter, aDir (explosion offset per unit), aSpin (axis, rate), aLook (brightness, seed, blur).
+ */
+function buildShards(specs) {
+  const P = [], N = [], E = [], UV = [], C = [], D = [], S = [], L = [];
+  const q = new THREE.Quaternion(), v = new THREE.Vector3(), n = new THREE.Vector3();
+  for (const s of specs) {
+    const r = rng(s.seed), pts = outline(s.kind, r).map(([x, y]) => [x * s.w, y * s.h]);
+    const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length, cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+    q.copy(s.quat); const th = s.th / 2;
+    const push = (x, y, z, nx, ny, nz, e) => {
+      v.set(x, y, z).applyQuaternion(q).add(s.center); n.set(nx, ny, nz).applyQuaternion(q);
+      P.push(v.x, v.y, v.z); N.push(n.x, n.y, n.z); E.push(e); UV.push(x, y); C.push(s.center.x, s.center.y, s.center.z);
+      D.push(s.dir.x, s.dir.y, s.dir.z); S.push(...s.spin); L.push(...s.look);
+    };
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      push(cx, cy, th, 0, 0, 1, 0); push(a[0], a[1], th, 0, 0, 1, 1); push(b[0], b[1], th, 0, 0, 1, 1);
+      push(cx, cy, -th, 0, 0, -1, 0); push(b[0], b[1], -th, 0, 0, -1, 1); push(a[0], a[1], -th, 0, 0, -1, 1);
+      const ex = b[0] - a[0], ey = b[1] - a[1], len = Math.hypot(ex, ey) || 1, nx = ey / len, ny = -ex / len;
+      push(a[0], a[1], th, nx, ny, 0, 2); push(a[0], a[1], -th, nx, ny, 0, 2); push(b[0], b[1], -th, nx, ny, 0, 2);
+      push(a[0], a[1], th, nx, ny, 0, 2); push(b[0], b[1], -th, nx, ny, 0, 2); push(b[0], b[1], th, nx, ny, 0, 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  g.setAttribute('aEdge', new THREE.Float32BufferAttribute(E, 1)); g.setAttribute('aUv', new THREE.Float32BufferAttribute(UV, 2));
+  g.setAttribute('aCenter', new THREE.Float32BufferAttribute(C, 3)); g.setAttribute('aDir', new THREE.Float32BufferAttribute(D, 3));
+  g.setAttribute('aSpin', new THREE.Float32BufferAttribute(S, 4)); g.setAttribute('aLook', new THREE.Float32BufferAttribute(L, 3));
+  return g;
+}
+
 export function createPrismChapter({ isMobile }) {
-  const scene = new THREE.Scene(); scene.name = 'Chapitre_03_Prisme';
+  const scene = new THREE.Scene(); scene.name = 'Chapitre_04_Prisme';
   const camera = new THREE.PerspectiveCamera(45, 1, .1, 200); camera.position.set(0, 0, 12);
-  const violet = new THREE.Color('#7a55ff'), orbPos = new THREE.Vector3(1.2, 1.3, -3);
-  const state = { aspect: 1, explode: .5 };
+  const violet = new THREE.Color('#7a55ff'), orbPos = new THREE.Vector3(-.9, 3, -5);
+  const state = { aspect: 1, explode: .5, mobile: false };
+  const orbUv = new THREE.Vector2(.45, .7), common = { uOrb: { value: orbUv }, uAspect: { value: 1 }, uViolet: { value: violet } };
+  // World point under a screen position (sx, sy from the top-left, 0..1) at depth z, for the resting camera.
+  const at = (sx, sy, z) => { const h = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * (12 - z); return new THREE.Vector3((sx * 2 - 1) * h * state.aspect, (1 - sy * 2) * h, z); };
+  const screenH = z => 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * (12 - z);
 
   const bgMaterial = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uOrb: { value: new THREE.Vector2(.6, .62) }, uViolet: { value: violet } },
-    vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false,
-    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect;uniform vec2 uOrb;uniform vec3 uViolet;
-      void main(){vec2 asp=vec2(uAspect,1.);float r=length((vUv-uOrb)*asp);
-        vec3 col=mix(vec3(.018,.013,.08),vec3(.004,.003,.02),smoothstep(.05,.9,vUv.y));
-        col+=uViolet*(exp(-r*2.6)*.1+exp(-r*8.)*.2);
-        float b=length((vUv-vec2(.45,-.05))*asp);col+=mix(uViolet,vec3(.75,.8,1.),.5)*exp(-b*4.5)*.5;
-        float n=fbm(vUv*vec2(3.,2.)*asp+vec2(uTime*.01,0.));col+=uViolet*pow(n,3.)*.08;
-        gl_FragColor=vec4(col,1.);}`
+    uniforms: { ...common, uTime: { value: 0 } }, vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false,
+    fragmentShader: NOISE + PRISM_BG + /* glsl */`varying vec2 vUv;uniform float uTime;
+      void main(){vec3 col=prismBg(vUv);float n=fbm(vUv*vec2(3.*uAspect,2.)+vec2(uTime*.01,0.));col+=uViolet*pow(n,3.)*.04;gl_FragColor=vec4(col,1.);}`
   });
   const bg = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMaterial); bg.name = 'Backdrop'; bg.frustumCulled = false; bg.renderOrder = -10; scene.add(bg);
 
-  // Reflective plank floor (bluish, fading into the dark).
+  // Reflective plank floor: boards running into the distance, staggered butt joints, grain, the glare near the camera.
   const floorMaterial = new THREE.ShaderMaterial({
-    uniforms: { uOrb: { value: orbPos }, uViolet: { value: violet }, uTime: { value: 0 } },
+    uniforms: { uViolet: { value: violet }, uTime: { value: 0 } },
     vertexShader: VERT_WORLD, transparent: true, depthWrite: false,
-    fragmentShader: NOISE + /* glsl */`varying vec3 vW;uniform vec3 uOrb,uViolet;uniform float uTime;
-      void main(){float plank=smoothstep(.0,.04,abs(fract(vW.x*.55)-.5)*2.-.02);float seam=1.-plank;
-        float grain=fbm(vec2(vW.x*2.,vW.z*.25))*.5+.5;
-        vec3 v=normalize(cameraPosition-vW);float fres=pow(clamp(1.-v.y,0.,1.),3.);
-        float refl=exp(-abs(vW.x-uOrb.x)*.35)*exp(-abs(vW.z-uOrb.z)*.06);
-        vec3 col=vec3(.02,.03,.1)*grain*(.6+fres)+uViolet*refl*.5*(.7+.3*grain)+vec3(.6,.7,1.)*seam*.06*refl;
-        float glare=exp(-abs(vW.x+.5)*.5)*exp(-abs(vW.z-5.)*.25);col+=mix(uViolet,vec3(.85,.9,1.),.6)*glare*(.35+.25*grain)+vec3(.7,.75,1.)*seam*glare*.15;
-        float fade=smoothstep(-40.,-6.,vW.z)*smoothstep(14.,2.,vW.z);
-        gl_FragColor=vec4(col,fade);}`
+    fragmentShader: NOISE + /* glsl */`varying vec3 vW;uniform vec3 uViolet;uniform float uTime;
+      void main(){float bw=1.25;float id=floor(vW.x/bw);float fx=fract(vW.x/bw);
+        float seam=1.-smoothstep(.0,.035,min(fx,1.-fx));
+        float jz=fract(vW.z*.07+hash12(vec2(id,3.)));float joint=1.-smoothstep(0.,.012,min(jz,1.-jz));
+        float tone=.75+.5*hash12(vec2(id,9.));float grain=.75+.25*fbm(vec2(vW.x*7.,vW.z*.35));
+        vec3 v=normalize(cameraPosition-vW);float fres=pow(clamp(1.-v.y,0.,1.),4.);
+        vec3 col=vec3(.07,.06,.3)*tone*grain*(.3+fres*.7);
+        float glare=exp(-length(vec2(vW.x*.45,(vW.z-9.)*.3)));float centre=exp(-abs(vW.x)*.18)*exp(-abs(vW.z+6.)*.12);
+        col+=mix(vec3(.3,.3,1.),vec3(.9,.92,1.),.3*glare)*(glare*.7+centre*.25)*(.45+.55*grain)*tone;
+        col=col*(1.-.75*(seam+joint))+vec3(.6,.65,1.)*seam*glare*.25;
+        float fade=smoothstep(-30.,-4.,vW.z);
+        gl_FragColor=vec4(max(col,0.),fade);}`
   });
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), floorMaterial); floor.name = 'PlankFloor'; floor.rotation.x = -Math.PI / 2; floor.position.set(0, -4.4, -10); scene.add(floor);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 60), floorMaterial); floor.name = 'PlankFloor'; floor.rotation.x = -Math.PI / 2; floor.position.set(0, -4.6, -14); scene.add(floor);
 
-  // The orb, cracked with a 3D Voronoi pattern.
+  // The orb: dark glass with a thin bright rim, a nebula swirling inside, its shell breaking away on the right.
   const orbMaterial = new THREE.ShaderMaterial({
     uniforms: { uTime: { value: 0 }, uViolet: { value: violet }, uCrack: { value: .5 } },
     vertexShader: /* glsl */`varying vec3 vP;varying vec3 vN;varying vec3 vV;void main(){vP=position;vec4 mv=modelViewMatrix*vec4(position,1.);vN=normalize(normalMatrix*normal);vV=normalize(-mv.xyz);gl_Position=projectionMatrix*mv;}`,
-    fragmentShader: /* glsl */`varying vec3 vP;varying vec3 vN;varying vec3 vV;uniform float uTime,uCrack;uniform vec3 uViolet;
+    fragmentShader: NOISE + /* glsl */`varying vec3 vP;varying vec3 vN;varying vec3 vV;uniform float uTime,uCrack;uniform vec3 uViolet;
       vec3 h3(vec3 p){p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6)));return fract(sin(p)*43758.5453);}
-      void main(){vec3 p=vP*2.4;vec3 i=floor(p),f=fract(p);float d1=8.,d2=8.;
-        for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)for(int z=-1;z<=1;z++){vec3 g=vec3(x,y,z);vec3 o=h3(i+g);float d=length(g+o-f);if(d<d1){d2=d1;d1=d;}else if(d<d2)d2=d;}
-        float crack=1.-smoothstep(0.,.07+uCrack*.05,d2-d1);
-        float fres=pow(clamp(1.-dot(normalize(vN),normalize(vV)),0.,1.),2.5);
-        vec3 col=vec3(.01,.008,.03)+uViolet*fres*.9+vec3(.85,.8,1.)*fres*fres*.6+mix(uViolet,vec3(1.),.5)*crack*(.6+uCrack*2.2);
+      void main(){vec3 n=normalize(vN);float c=max(dot(n,normalize(vV)),0.);
+        vec3 p=vP*2.;vec3 i=floor(p),f=fract(p);float d1=8.,d2=8.;vec3 cell=vec3(0.);
+        for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)for(int z=-1;z<=1;z++){vec3 g=vec3(x,y,z);vec3 o=h3(i+g);float d=length(g+o-f);if(d<d1){d2=d1;d1=d;cell=i+g;}else if(d<d2)d2=d;}
+        // shell pieces missing on the bursting side
+        float gone=step(h3(cell).x,uCrack*1.1-.15)*smoothstep(.0,.5,n.x);if(gone>.5)discard;
+        float crack=1.-smoothstep(0.,.05,d2-d1);
+        vec2 q=n.xy;float rr=length(q);float ang=atan(q.y,q.x)+(1.-rr)*3.2+uTime*.06;
+        float neb=fbm(vec2(cos(ang),sin(ang))*1.6+rr*3.+uTime*.02);float neb2=fbm(q*5.+neb*2.);
+        float band=exp(-pow((q.y+.25-.25*q.x)/.3,2.));
+        vec3 inner=mix(uViolet*.7,vec3(1.,.82,1.),smoothstep(.4,.8,neb2))*pow(neb,1.6)*band*3.;
+        float rim=pow(1.-c,10.)*4.+pow(1.-c,3.)*.2;
+        vec3 col=vec3(.015,.01,.05)+inner+mix(uViolet,vec3(.9,.88,1.),.6)*rim*(.6+.6*smoothstep(.3,-.6,n.x+n.y*.3))+vec3(.8,.75,1.)*crack*smoothstep(.4,1.,uCrack)*.5*(1.-c*.5);
         gl_FragColor=vec4(col,1.);}`
   });
-  const orb = new THREE.Mesh(new THREE.SphereGeometry(1.25, 96, 64), orbMaterial); orb.name = 'Orb'; orb.position.copy(orbPos); scene.add(orb);
-  const haloMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uViolet;uniform float uPower;void main(){float d=length(vUv-.5)*2.;float edgeF=smoothstep(1.,.75,d);float ring=exp(-((d-.52)*14.)*((d-.52)*14.))*.6+exp(-d*3.)*.35;gl_FragColor=vec4(mix(uViolet,vec3(1.),.35)*ring*uPower*edgeF,1.);}`,
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), orbMaterial); orb.name = 'Orb'; scene.add(orb);
+  const haloMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uViolet;uniform float uPower;void main(){float d=length(vUv-.5)*2.;float ring=exp(-pow((d-.5)*16.,2.))*.5+exp(-pow((d-.5)*5.,2.))*.12*step(.5,d);gl_FragColor=vec4(mix(uViolet,vec3(1.),.35)*ring*uPower*smoothstep(1.,.7,d),1.);}`,
     { uViolet: { value: violet }, uPower: { value: 1 } }, { depthTest: false });
-  const halo = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), haloMaterial); halo.name = 'OrbHalo'; halo.position.copy(orbPos); halo.renderOrder = 3; scene.add(halo);
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), haloMaterial); halo.name = 'OrbHalo'; halo.renderOrder = 3; scene.add(halo);
 
-  // Shards: iridescent glass slabs on explosion trajectories.
-  const count = isMobile() ? 26 : 64, r = rng(303);
-  const shardGeo = new THREE.BoxGeometry(1, 1, 1);
-  const seeds = new Float32Array(count); for (let i = 0; i < count; i++) seeds[i] = r();
-  shardGeo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
+  // Broken glass: one material for every piece.
   const shardMaterial = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uViolet: { value: violet } },
-    vertexShader: /* glsl */`attribute float aSeed;varying vec3 vW;varying vec3 vN;varying vec3 vL;varying float vSeed;
-      void main(){mat4 m=modelMatrix*instanceMatrix;vec4 w=m*vec4(position,1.);vW=w.xyz;vN=normalize(mat3(m)*normal);vL=position;vSeed=aSeed;gl_Position=projectionMatrix*viewMatrix*w;}`,
-    fragmentShader: /* glsl */`varying vec3 vW;varying vec3 vN;varying vec3 vL;varying float vSeed;uniform float uTime;uniform vec3 uViolet;
-      void main(){vec3 n=normalize(vN);vec3 v=normalize(cameraPosition-vW);float c=clamp(abs(dot(n,v)),0.,1.);float f=pow(1.-c,2.);
-        vec3 dd=clamp(.5-abs(vL),0.,.5);float mid=dd.x+dd.y+dd.z-max(dd.x,max(dd.y,dd.z))-min(dd.x,min(dd.y,dd.z));float edge=exp(-mid*2.*34.);
-        float h=c*2.2+vW.y*.12+uTime*.04+vSeed;vec3 film=.5+.5*cos(6.2831*(h+vec3(0.,.33,.67)));
-        vec3 col=uViolet*(.08+f*.45)+film*(f*.35+edge*.22)+vec3(.9,.88,1.)*edge*(.4+.35*f)+vec3(1.)*pow(max(dot(reflect(-v,n),normalize(vec3(.3,.8,.5))),0.),30.)*.6;
-        gl_FragColor=vec4(col,1.);}`,
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+    uniforms: { ...common, uTime: { value: 0 }, uExplode: { value: .5 }, uMotion: { value: 1 } },
+    vertexShader: /* glsl */`attribute float aEdge;attribute vec2 aUv;attribute vec3 aCenter,aDir,aLook;attribute vec4 aSpin;uniform float uTime,uExplode,uMotion;
+      varying vec3 vW;varying vec3 vN;varying float vEdge;varying vec2 vUv;varying vec3 vLook;varying vec4 vClip;
+      mat3 rot(vec3 a,float t){a=normalize(a);float c=cos(t),s=sin(t),k=1.-c;
+        return mat3(c+a.x*a.x*k,a.y*a.x*k+a.z*s,a.z*a.x*k-a.y*s, a.x*a.y*k-a.z*s,c+a.y*a.y*k,a.z*a.y*k+a.x*s, a.x*a.z*k+a.y*s,a.y*a.z*k-a.x*s,c+a.z*a.z*k);}
+      void main(){mat3 R=rot(aSpin.xyz,aSpin.w*(uTime*uMotion+uExplode*3.));
+        vec3 p=aCenter+aDir*uExplode+R*(position-aCenter);vec4 w=modelMatrix*vec4(p,1.);
+        vW=w.xyz;vN=normalize(mat3(modelMatrix)*(R*normal));vEdge=aEdge;vUv=aUv;vLook=aLook;gl_Position=projectionMatrix*viewMatrix*w;vClip=gl_Position;}`,
+    fragmentShader: NOISE + PRISM_BG + /* glsl */`uniform float uTime;varying vec3 vW;varying vec3 vN;varying float vEdge;varying vec2 vUv;varying vec3 vLook;varying vec4 vClip;
+      void main(){vec3 n=normalize(vN);vec3 v=normalize(cameraPosition-vW);if(dot(n,v)<0.)n=-n;
+        float c=dot(n,v),fres=pow(1.-c,3.);float side=step(1.5,vEdge),bevel=smoothstep(.9,.995,vEdge)*(1.-side);
+        // refraction of the atmosphere behind, split per channel
+        vec2 suv=vClip.xy/vClip.w*.5+.5;vec2 off=(mat3(viewMatrix)*n).xy*.07;
+        vec3 refr=vec3(prismBg(suv-off*1.25).r,prismBg(suv-off).g,prismBg(suv-off*.75).b);
+        vec3 lav=vec3(.84,.8,1.);float B=vLook.x;
+        // broad sheen across the face, frosted cloud and crushed-glass sparkle inside
+        float sheen=pow(max(dot(reflect(-v,n),normalize(vec3(-.35,-.5,.8))),0.),2.)+pow(max(dot(reflect(-v,n),normalize(vec3(.4,.6,.7))),0.),6.)*.6;
+        float frost=fbm3(vUv*3.+vLook.y*17.);
+        vec2 su=vUv/max(vLook.z,.05)*vec2(70.,90.)+vLook.y*31.;vec2 g=floor(su);float h=hash12(g);float tw=.5+.5*sin(uTime*2.5+h*80.+dot(v,vec3(23.,17.,11.)));
+        float sparkle=step(.9-.1*B,h)*smoothstep(.45,.0,length(fract(su)-.5))*tw*tw*1.4;
+        float grad=smoothstep(-.6,.8,dot(vUv,vec2(.35,.6))/max(length(vUv)+.4,.4)+frost*.5);
+        float along=clamp(vUv.y/max(vLook.z,.01)+.5,0.,1.);along=fract(vLook.y*7.)>.5?along:1.-along;
+        float hot=clamp(smoothstep(.2,1.,along)*.75+sheen*.5+grad*.2,0.,1.);vec3 body=mix(uViolet*.45,lav,hot)*(.35+.65*frost)*B*B*(.18+.95*hot);
+        vec3 film=.5+.5*cos(6.2831*(c*1.6+vLook.y+vec3(0.,.33,.67)));
+        vec3 col=mix(refr*vec3(.7,.6,1.)*.8,refr*1.25,B)+body*1.1+lav*sparkle*(.1+2.2*B*B)*(.3+.7*hot)*(1.-side);
+        col+=(vec3(1.)*1.6+film*.4)*bevel*(.08+.92*B*B)+(lav*1.3+film*.5)*side*(.1+1.1*B*B);
+        col+=mix(lav,film,.3)*fres*(.1+.6*B);
+        gl_FragColor=vec4(col,mix(.6+.3*hot*B,.95,max(bevel,side)));}`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide
   });
-  const shards = new THREE.InstancedMesh(shardGeo, shardMaterial, count); shards.name = 'GlassShards'; shards.frustumCulled = false;
-  const cloud = new THREE.Group(); cloud.name = 'ShardCloud'; cloud.position.copy(orbPos); scene.add(cloud); cloud.add(shards);
-  const shardData = [];
-  for (let i = 0; i < count; i++) {
-    const dir = new THREE.Vector3(r() - .5, (r() - .5) * .75, (r() - .35) * .7).normalize(), long = r() < .55;
-    shardData.push({ dir, d0: 1.5 + r() * 1.8, speed: 1 + r() * 3.2, axis: new THREE.Vector3(r() - .5, r() - .5, r() - .5).normalize(), spin: (r() - .5) * .5, phase: r() * 6,
-      scale: long ? new THREE.Vector3(.06 + r() * .12, .9 + r() * 2, .015 + r() * .02) : new THREE.Vector3(.28 + r() * .7, .2 + r() * .55, .015 + r() * .015) });
+
+  // Pieces flung by the orb: small, mostly bursting to the right.
+  const fragN = isMobile() ? 26 : 54, r = rng(303), fragSpecs = [];
+  const kinds = ['tri', 'sliver', 'trap', 'penta'];
+  for (let i = 0; i < fragN; i++) {
+    const dir = new THREE.Vector3(.35 + r() * 1.1, (r() - .45) * .9, (r() - .5) * .8).normalize(), d0 = 1.05 + r() * 1.4, size = .06 + Math.pow(r(), 3) * .3;
+    fragSpecs.push({ kind: kinds[i % 4], seed: 100 + i, w: size * (.3 + r() * .6), h: size * (1 + r()), th: .02 + size * .05,
+      center: dir.clone().multiplyScalar(d0), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(r() * 6, r() * 6, r() * 6)),
+      dir: dir.clone().multiplyScalar(1.5 + r() * 3.5), spin: [r() - .5, r() - .5, r() - .5, (r() - .5) * .8], look: [.55 + r() * .45, r(), size * 2] });
+  }
+  const fragGeo = buildShards(fragSpecs);
+  const frags = new THREE.Mesh(fragGeo, shardMaterial); frags.name = 'OrbFragments'; frags.frustumCulled = false;
+  const cloud = new THREE.Group(); cloud.name = 'ShardCloud'; scene.add(cloud); cloud.add(frags);
+
+  // The large pieces, placed on the frame like the reference: [x, y (from the top), depth, length, width (screen
+  // heights), angle on screen (deg), tilt, brightness, kind]. A: the huge bright sliver bottom left with the glare.
+  const pieces = [
+    [.34, .69, 5.5, .86, .085, -31, .25, 1, 'sliver'], [.63, .7, 3, .34, .08, -22, -.5, .95, 'trap'], [.245, .45, 1.5, .17, .035, 78, .4, .85, 'sliver'],
+    [.585, .33, -1, .27, .05, 96, -.3, 1, 'sliver'], [.11, .15, 7, .16, .08, -32, .5, .6, 'trap'], [.47, .05, 7, .15, .05, 68, -.4, .6, 'tri'],
+    [.73, .05, 6, .22, .035, 32, .3, .7, 'sliver'], [.44, .47, -2.5, .36, .2, 22, .9, .2, 'penta'], [.68, .47, -2, .32, .18, -28, -.9, .18, 'trap'],
+    [.96, .4, 5, .55, .13, 98, .5, .22, 'sliver'], [.9, .9, 5, .16, .07, 22, -.6, .35, 'tri'], [.04, .84, 6, .3, .08, 58, .6, .35, 'sliver'],
+    [.31, .24, 1, .1, .05, -60, .7, .7, 'tri'], [.8, .27, 2, .09, .04, 40, -.7, .65, 'tri']
+  ];
+  const mobilePieces = new Set([0, 1, 3, 4, 7, 9, 11]);
+  let piecesMesh = null;
+  function buildPieces() {
+    if (piecesMesh) { piecesMesh.geometry.dispose(); scene.remove(piecesMesh); }
+    const rr = rng(77), specs = [];
+    pieces.forEach(([sx, sy, z, len, wid, ang, tilt, bright, kind], i) => {
+      if (state.mobile && !mobilePieces.has(i)) return;
+      const H = screenH(z), x = state.mobile ? .5 + (sx - .5) * .8 : sx;
+      const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt * .35, tilt, THREE.MathUtils.degToRad(ang - 90)));
+      const center = at(x, sy, z);
+      specs.push({ kind, seed: 500 + i, w: wid * H, h: len * H, th: .05 + wid * H * .06, center, quat,
+        dir: new THREE.Vector3(center.x * .04, center.y * .03, .2), spin: [rr() - .5, rr() - .5, rr() * .3, (rr() - .5) * .025], look: [bright, rr(), len * H] });
+    });
+    piecesMesh = new THREE.Mesh(buildShards(specs), shardMaterial); piecesMesh.name = 'GlassShards'; piecesMesh.frustumCulled = false; piecesMesh.renderOrder = 2; scene.add(piecesMesh);
   }
 
-  // Light lines crossing the scene.
-  const lineCount = isMobile() ? 6 : 10, lp = [], lc = [];
-  for (let i = 0; i < lineCount; i++) {
-    const a = r() * Math.PI, o = new THREE.Vector3((r() - .5) * 6, (r() - .5) * 4, -2 - r() * 6), d = new THREE.Vector3(Math.cos(a), Math.sin(a), (r() - .5) * .6).multiplyScalar(14 + r() * 10);
-    lp.push(o.x - d.x, o.y - d.y, o.z - d.z, o.x + d.x, o.y + d.y, o.z + d.z); const b = .1 + r() * .28; lc.push(b * .8, b * .75, b, b * .8, b * .75, b);
-  }
-  const lineGeo = new THREE.BufferGeometry(); lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); lineGeo.setAttribute('color', new THREE.Float32BufferAttribute(lc, 3));
-  const lines = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); lines.name = 'LightLines'; scene.add(lines);
-
-  // Debris dust flung from the orb.
-  const dn = isMobile() ? 220 : 520, dpos = new Float32Array(dn * 3), ddir = [];
-  for (let i = 0; i < dn; i++) ddir.push({ v: new THREE.Vector3(r() - .5, (r() - .5) * .8, (r() - .4) * .8).normalize(), d: 1.3 + r() * 3.5, s: .4 + r() * 2 });
+  // Debris flung from the orb: bright dust and dark grit.
+  const dn = isMobile() ? 400 : 1100, dpos = new Float32Array(dn * 3), ddir = [];
+  for (let i = 0; i < dn; i++) ddir.push({ v: new THREE.Vector3(.2 + r() * 1.2, (r() - .5) * .7, (r() - .5) * .7).normalize(), d: 1 + r() * 2.5, s: .5 + r() * 3 });
   const debrisGeo = new THREE.BufferGeometry(); debrisGeo.setAttribute('position', new THREE.BufferAttribute(dpos, 3));
-  const debris = new THREE.Points(debrisGeo, new THREE.PointsMaterial({ color: 0xcfc4ff, size: .035, transparent: true, opacity: .8, blending: THREE.AdditiveBlending, depthWrite: false })); debris.name = 'Debris'; debris.frustumCulled = false; cloud.add(debris);
+  const debris = new THREE.Points(debrisGeo, new THREE.PointsMaterial({ color: 0xd8d0ff, size: .11, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false })); debris.name = 'Debris'; debris.frustumCulled = false; cloud.add(debris);
+  const grit = new THREE.Points(debrisGeo, new THREE.PointsMaterial({ color: 0x07051a, size: .12, transparent: true, opacity: .9, depthWrite: false })); grit.name = 'Grit'; grit.frustumCulled = false; grit.geometry.setDrawRange(0, Math.floor(dn * .35)); cloud.add(grit);
 
-  // Large slabs close to the camera, at the edges of the frame (kept off the copy and the cards).
-  const fgSpecs = [[-1.04, -.42, 4, 1.1, 5.2, .06, .3, .2, .38], [.9, -.3, 3, .8, 3.2, .06, -.4, .5, -.55], [.72, .82, 1.5, 1.6, .9, .05, .6, -.3, .4], [-.88, .62, 1, .55, 2.4, .05, .2, .6, -.9], [1.02, -.92, 4.5, .9, 3.4, .06, 1.2, .3, 1.4]];
-  const fgBase = fgSpecs.map(() => new THREE.Vector3());
-  const fgShards = new THREE.InstancedMesh(shardGeo, shardMaterial, fgSpecs.length); fgShards.name = 'ForegroundShards'; fgShards.frustumCulled = false; scene.add(fgShards);
-  const streakMaterial = glow(/* glsl */`varying vec2 vUv;uniform vec3 uColor;void main(){vec2 p=(vUv-.5)*2.;float s=exp(-abs(p.y)*26.)*exp(-abs(p.x)*1.7)+exp(-abs(p.y)*90.)*exp(-abs(p.x)*.9)*.6;gl_FragColor=vec4(uColor*s*.8,1.);}`,
-    { uColor: { value: new THREE.Color('#e08cff') } }, { depthTest: false });
-  const streak = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), streakMaterial); streak.name = 'AnamorphicStreak'; streak.renderOrder = 4; scene.add(streak);
+  // Screen-space light: thin crisp light lines, the pink anamorphic streak across the orb, the glare at the bottom.
+  const LINES = [[.24, 0, .62, 1], [0, .69, 1, .13], [.56, 0, .34, 1], [.3, .37, .9, .49], [0, .54, .72, .36], [.12, .64, .88, .84]];
+  const overlayMaterial = new THREE.ShaderMaterial({
+    uniforms: { ...common, uTime: { value: 0 }, uLines: { value: LINES.map(l => new THREE.Vector4(l[0], 1 - l[1], l[2], 1 - l[3])) }, uRes: { value: new THREE.Vector2(1, 1) }, uFlare: { value: 1 } },
+    vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false, transparent: true, blending: THREE.AdditiveBlending,
+    fragmentShader: /* glsl */`varying vec2 vUv;uniform vec4 uLines[6];uniform vec2 uOrb,uRes;uniform float uAspect,uTime,uFlare;uniform vec3 uViolet;
+      void main(){vec2 asp=vec2(uAspect,1.);vec3 col=vec3(0.);
+        for(int i=0;i<6;i++){vec2 a=uLines[i].xy*asp,b=uLines[i].zw*asp,p=vUv*asp;vec2 ab=b-a;float t=clamp(dot(p-a,ab)/dot(ab,ab),0.,1.);
+          float d=length(p-a-ab*t)*uRes.y;float k=.55+.45*sin(uTime*.7+float(i)*2.1);
+          float fade=smoothstep(0.,.25,t)*smoothstep(1.,.75,t)*.6+.4;
+          col+=mix(vec3(.75,.7,1.),vec3(1.),.5)*(exp(-d*d*.45)*.7+exp(-d*.4)*.025)*k*fade;}
+        vec2 o=(vUv-uOrb)*asp;
+        col+=vec3(1.,.55,.85)*exp(-abs(o.y)*190.)*exp(-abs(o.x)*6.)*1.3*uFlare+vec3(1.,.85,.95)*exp(-abs(o.y)*600.)*exp(-abs(o.x)*3.5)*.8*uFlare;
+        col+=vec3(.85,.4,1.)*exp(-abs(o.y)*45.)*exp(-abs(o.x)*5.)*.25*uFlare;
+        vec2 g=(vUv-vec2(.5,.07))*asp;col+=vec3(.92,.94,1.)*(exp(-length(g*vec2(1.,1.5))*7.)*1.1+exp(-length(g)*4.)*.04);
+        gl_FragColor=vec4(col,1.);}`
+  });
+  const overlay = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), overlayMaterial); overlay.name = 'LightLines'; overlay.frustumCulled = false; overlay.renderOrder = 10; scene.add(overlay);
 
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v3 = new THREE.Vector3(), tmp = new THREE.Vector3(), tmpE = new THREE.Euler();
+  const tmp = new THREE.Vector3();
   function resize(w, h) {
-    camera.aspect = w / h; camera.updateProjectionMatrix(); state.aspect = w / h; bgMaterial.uniforms.uAspect.value = state.aspect;
-    const mobile = w < 600; orbPos.set(mobile ? .4 : 3.5, mobile ? 2.6 : 2.4, -5); orb.position.copy(orbPos); halo.position.copy(orbPos); cloud.position.copy(orbPos);
-    orb.scale.setScalar(mobile ? .7 : 1); halo.scale.setScalar(mobile ? .7 : 1);
-    fgSpecs.forEach(([sx, sy, z], i) => { const hh = (12 - z) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)); fgBase[i].set(sx * hh * state.aspect, sy * hh, z); }); streak.position.copy(orbPos).add(tmp.set(0, 0, .5)); streak.scale.set(mobile ? 9 : 15, .8, 1);
-    tmp.copy(orbPos).project(camera); bgMaterial.uniforms.uOrb.value.set(tmp.x * .5 + .5, tmp.y * .5 + .5);
+    camera.aspect = w / h; camera.updateProjectionMatrix(); state.aspect = w / h; state.mobile = w < 600;
+    common.uAspect.value = state.aspect; overlayMaterial.uniforms.uRes.value.set(w, h);
+    camera.position.set(0, 0, 12); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
+    orbPos.copy(at(state.mobile ? .5 : .45, state.mobile ? .28 : .3, -5));
+    const radius = (state.mobile ? .1 : .11) * screenH(-5) * (state.mobile ? state.aspect * 1.6 : 1);
+    orb.position.copy(orbPos); orb.scale.setScalar(radius); halo.position.copy(orbPos); halo.scale.setScalar(radius * .75); cloud.position.copy(orbPos); cloud.scale.setScalar(radius / 1.35);
+    tmp.copy(orbPos).project(camera); orbUv.set(tmp.x * .5 + .5, tmp.y * .5 + .5);
+    buildPieces();
   }
   function update({ time, pointer, motion, local }) {
-    const lp01 = local ?? .5; state.explode = .15 + lp01 * .75 + Math.sin(time * .25) * .04 * motion;
-    camera.position.set(pointer.x * .5 * motion, -pointer.y * .35 * motion, 12 - lp01 * 1.5); camera.lookAt(0, .3, -3);
-    cloud.rotation.set(pointer.y * .25 * motion + Math.sin(time * .1) * .05, pointer.x * .45 * motion + time * .03, 0);
-    orb.rotation.y = time * .05; orbMaterial.uniforms.uCrack.value = state.explode; orbMaterial.uniforms.uTime.value = time;
-    shardMaterial.uniforms.uTime.value = time; bgMaterial.uniforms.uTime.value = time;
-    haloMaterial.uniforms.uPower.value = .7 + state.explode * .6;
-    for (let i = 0; i < count; i++) {
-      const s = shardData[i], dist = s.d0 + state.explode * s.speed + Math.sin(time * .3 + s.phase) * .12;
-      v3.copy(s.dir).multiplyScalar(dist); q.setFromAxisAngle(s.axis, s.phase + time * s.spin + state.explode * s.spin * 4);
-      shards.setMatrixAt(i, m4.compose(v3, q, s.scale));
-    }
-    shards.instanceMatrix.needsUpdate = true;
-    fgSpecs.forEach(([, , , sx, sy, sz, ax, ay, az], i) => {
-      const base = fgBase[i]; v3.set(base.x - pointer.x * .9 * motion, base.y + pointer.y * .6 * motion + Math.sin(time * .2 + i) * .08, base.z);
-      q.setFromEuler(tmpE.set(ax + time * .03 * (i % 2 ? 1 : -1), ay + time * .02, az)); fgShards.setMatrixAt(i, m4.compose(v3, q, tmp.set(sx, sy, sz)));
-    });
-    fgShards.instanceMatrix.needsUpdate = true;
-    for (let i = 0; i < dn; i++) { const d = ddir[i], k = d.d + state.explode * d.s; dpos[i * 3] = d.v.x * k; dpos[i * 3 + 1] = d.v.y * k + Math.sin(time * .4 + i) * .03; dpos[i * 3 + 2] = d.v.z * k; }
+    const lp01 = local ?? .5; state.explode = .2 + lp01 * .75 + Math.sin(time * .25) * .04 * motion;
+    camera.position.set(pointer.x * .5 * motion + Math.sin(time * .11) * .1 * motion, -pointer.y * .35 * motion, 12 - lp01 * 1.2); camera.lookAt(pointer.x * .2 * motion, 0, 0);
+    cloud.rotation.set(pointer.y * .2 * motion, pointer.x * .35 * motion + Math.sin(time * .05) * .1 * motion, 0);
+    orb.rotation.y = time * .05 * motion; orbMaterial.uniforms.uCrack.value = state.explode; orbMaterial.uniforms.uTime.value = time;
+    for (const m of [shardMaterial, bgMaterial, overlayMaterial, floorMaterial]) m.uniforms.uTime.value = time;
+    shardMaterial.uniforms.uExplode.value = state.explode; shardMaterial.uniforms.uMotion.value = motion;
+    haloMaterial.uniforms.uPower.value = .6 + state.explode * .5; overlayMaterial.uniforms.uFlare.value = .7 + state.explode * .5;
+    for (let i = 0; i < dn; i++) { const d = ddir[i], k = d.d + state.explode * d.s; dpos[i * 3] = d.v.x * k; dpos[i * 3 + 1] = d.v.y * k + Math.sin(time * .4 + i) * .03 * motion; dpos[i * 3 + 2] = d.v.z * k; }
     debrisGeo.attributes.position.needsUpdate = true;
-    lines.rotation.z = Math.sin(time * .05) * .04;
   }
   function setPalette() {}
   function exportGroup() {
-    const g = new THREE.Group(); g.name = 'Chapitre_03_Prisme';
+    const g = new THREE.Group(); g.name = 'Chapitre_04_Prisme';
     g.add(portable(orb, { color: 0x1a1240, emissive: 0x6f4dff, emissiveIntensity: .25, roughness: .15, metalness: .1 }));
-    g.add(portableInstances(shards, { color: 0xb9aaff, transparent: true, opacity: .45, roughness: .05, metalness: 0 }, 'GlassShards', new THREE.BoxGeometry(1, 1, 1)));
+    const glass = { color: 0xb9aaff, transparent: true, opacity: .55, roughness: .05, metalness: 0 };
+    // Glass as plain geometry (position + normal), at rest.
+    const lean = m => { const c = new THREE.Mesh(new THREE.BufferGeometry(), m.material); c.name = m.name; c.geometry.setAttribute('position', m.geometry.attributes.position); c.geometry.setAttribute('normal', m.geometry.attributes.normal); m.parent.add(c); const out = portable(c, glass); c.removeFromParent(); return out; };
+    if (piecesMesh) g.add(lean(piecesMesh)); g.add(lean(frags));
     return g;
   }
-  return { name: 'prism', scene, camera, resize, update, setPalette, exportGroup, post: { ca: .011, bloom: 1.1, exposure: 1.1 } };
+  return { name: 'prism', scene, camera, resize, update, setPalette, exportGroup, post: { ca: .013, bloom: .9, exposure: 1, sat: 1.35, vignette: 1.2, flare: .25, flareTint: new THREE.Color('#ff9ae6') } };
 }
