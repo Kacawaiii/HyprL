@@ -6,6 +6,8 @@ import { LoadingState } from './components/States';
 
 // Route-level splitting: the chart and research views should not weigh on a
 // first paint of Overview.
+const CockpitPage = lazy(() =>
+  import('./pages/CockpitPage').then((module) => ({ default: module.CockpitPage })));
 const MarketsPage = lazy(() =>
   import('./pages/MarketsPage').then((module) => ({ default: module.MarketsPage })));
 const SignalsPage = lazy(() =>
@@ -32,6 +34,10 @@ export function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage />} />
+        <Route
+          path="cockpit"
+          element={<Suspense fallback={<LoadingState />}><CockpitPage /></Suspense>}
+        />
         <Route
           path="markets"
           element={<Suspense fallback={<LoadingState />}><MarketsPage /></Suspense>}

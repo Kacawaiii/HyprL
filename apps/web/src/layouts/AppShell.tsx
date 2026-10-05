@@ -1,14 +1,17 @@
 /** The cockpit frame: sidebar, topbar, scrolling content.
  *  It stays usable when a request fails -- navigation must never depend on data. */
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useSearchParams } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { PerfOverlay } from '../components/PerfOverlay';
 import { applyTheme, readTheme, writeTheme } from '../lib/theme';
 import type { ThemePreference } from '../lib/theme';
+import { carrySelection, parseSelection, writeSelection } from '../lib/cockpit';
+import type { Mode } from '../lib/cockpit';
 
 const NAV = [
+  { to: '/cockpit', label: 'Cockpit', icon: '◉' },
   { to: '/', label: 'Overview', icon: '◫', end: true },
   { to: '/markets', label: 'Markets', icon: '◪' },
   { to: '/signals', label: 'Signals', icon: '⌁' },
@@ -27,6 +30,11 @@ export function AppShell() {
   // Read once, synchronously: resolving the theme after a request would
   // paint the wrong one first and flash.
   const [theme, setTheme] = useState<ThemePreference>(() => readTheme());
+  const [params, setParams] = useSearchParams();
+  const mode = parseSelection(params).mode;
+  // The mode, product, period and model ride in the URL; links carry them to every page.
+  const carry = carrySelection(params);
+  const setMode = (value: Mode) => setParams((current) => writeSelection(current, { mode: value }));
   const health = useQuery('health', (signal) => apiClient.getHealth(signal), {
     staleMs: 10_000,
   });
@@ -50,7 +58,7 @@ export function AppShell() {
           {NAV.map((item) => (
             <NavLink
               key={item.to}
-              to={item.to}
+              to={{ pathname: item.to, search: carry }}
               end={item.end}
               className="nav-link"
               onClick={() => setOpen(false)}
@@ -77,6 +85,18 @@ export function AppShell() {
             ☰
           </button>
           <div className="topbar-spacer" />
+          <div className="mode-switch" role="group" aria-label="Cockpit mode">
+            {(['beginner', 'expert'] as const).map((value) => (
+              <button
+                key={value}
+                className="control"
+                aria-pressed={mode === value}
+                onClick={() => setMode(value)}
+              >
+                {value === 'beginner' ? 'Beginner' : 'Expert'}
+              </button>
+            ))}
+          </div>
           <span className="status-pill">
             <span className="status-dot" data-state={state} aria-hidden="true" />
             {state === 'ok' ? `API ${health.data?.core_status ?? ''}` : `API ${state}`}

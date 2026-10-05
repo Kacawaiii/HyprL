@@ -181,3 +181,34 @@ table.data tr:hover td { background: var(--surface-hover); }
   .shell[data-open='true'] .sidebar { transform: translateX(0); }
   .content { padding: var(--space-4); }
 }
+
+/* --- cockpit --- */
+.mode-switch { display: inline-flex; gap: 0; }
+.mode-switch .control:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.mode-switch .control:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+.cockpit-selection { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.cockpit-chart svg { width: 100%; height: auto; max-height: 340px; display: block; }
+.cockpit-chart svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cockpit-chart .axis { stroke: var(--border-strong); }
+.cockpit-chart .tick { fill: var(--text-muted); font: 10px var(--font-mono); }
+.cockpit-chart .mark-price { stroke: var(--accent); stroke-width: 1.5; }
+.cockpit-chart .mark-projection line { stroke: var(--warning); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.cockpit-chart .mark-projection circle { fill: var(--warning); }
+.cockpit-chart .mark-decision { stroke: var(--text-muted); stroke-width: 1.5; fill: var(--text-muted); }
+.cockpit-chart .mark-decision.long { fill: var(--positive); stroke: var(--positive); }
+.cockpit-chart .mark-decision.short { fill: var(--negative); stroke: var(--negative); }
+.cockpit-chart .mark-fill { fill: var(--text); }
+.cockpit-chart .mark-event { stroke: var(--text-dim); stroke-dasharray: 2 4; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-4); list-style: none; padding: 0; margin: var(--space-2) 0; font-size: 11px; color: var(--text-muted); }
+.swatch { display: inline-block; width: 12px; height: 3px; margin-right: 6px; vertical-align: middle; background: var(--text-muted); }
+.swatch.price { background: var(--accent); }
+.swatch.projection { background: var(--warning); }
+.swatch.event { background: var(--text-dim); }
+@media (max-width: 600px) {
+  .topbar { gap: var(--space-2); padding: 0 var(--space-3); }
+  .status-pill { display: none; }
+  .cockpit-selection { gap: var(--space-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}

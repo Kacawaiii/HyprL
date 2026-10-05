@@ -220,6 +220,17 @@ export interface SignalsView extends RunProvenance {
   page: Page;
 }
 
+export interface ProtectionLevels {
+  take_profit: string | null;
+  stop_loss: string | null;
+  policy_version: string;
+  /** Who defined the levels: the strategy itself or a versioned risk policy. */
+  origin: string;
+  method: string;
+  gap_treatment?: string;
+  intrabar_ambiguity?: string;
+}
+
 export interface RiskView extends RunProvenance {
   available: boolean;
   reason?: string;
@@ -233,6 +244,8 @@ export interface RiskView extends RunProvenance {
     raw_target_exposure?: string;
     risk_scale?: string;
     out_of_sample?: string;
+    /** Present only when the strategy or a versioned risk policy supplies protection levels. */
+    protection?: ProtectionLevels;
   }>;
   page: Page;
 }
