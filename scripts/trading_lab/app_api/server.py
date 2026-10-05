@@ -11,8 +11,8 @@ Three boundaries are deliberate:
   state to its whole network on the assumption that the network is friendly.
 * **Explicit CORS origins.** A wildcard would let any page a browser happens to
   be visiting read this API.
-* **GET only.** Every mutating verb is refused at the router, so no endpoint
-  can grow a write path by accident.
+* **GET only by default.** An explicitly configured, authenticated loopback
+  Model Lab can POST synthetic job controls under /api/v1/lab only.
 
 In production the same server also serves the built frontend, so the cockpit
 and its API share one origin and cross-origin rules stop applying to the app
@@ -26,6 +26,7 @@ bug in the wrong place.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -87,6 +88,10 @@ def _query_first(query: dict, name: str, default=None):
     """
     values = query.get(name)
     return values[0] if values else default
+
+
+def _reject_json_constant(value):
+    raise ValueError("JSON constants must be finite")
 
 
 def build_routes(service: AppService):
@@ -220,6 +225,7 @@ def build_routes(service: AppService):
 
 
 class AppApiHandler(BaseHTTPRequestHandler):
+    lab = None
     service: AppService = None          # injected by make_server
     site = None                         # StaticSite in production, None in dev
     server_version = "HyprLAppAPI/1.0"
@@ -458,6 +464,9 @@ class AppApiHandler(BaseHTTPRequestHandler):
     def do_GET(self, *, body: bool = True):  # noqa: N802 - stdlib signature
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
+        if parsed.path == "/api/v1/lab" or parsed.path.startswith("/api/v1/lab/"):
+            self._lab_request("GET", parsed, body=body)
+            return
         if parsed.path == "/api/v1/paper/events/stream":
             if not body:
                 self._respond(200, {"stream": "text/event-stream"}, body=False)
@@ -495,16 +504,57 @@ class AppApiHandler(BaseHTTPRequestHandler):
                             "allowed": list(ALLOWED_METHODS),
                             "api_version": APP_API_VERSION})
 
-    do_POST = do_PUT = do_PATCH = do_DELETE = _refuse
+    def _lab_request(self, method, parsed, *, body=True):
+        from scripts.trading_lab.app_api.model_lab import LabApiError
+        try:
+            if self.lab is None:
+                raise LabApiError("Model Lab is not configured", 503)
+            self.lab.authorize(self.headers.get("Authorization"), self.headers.get("Origin"))
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            payload = None
+            if method == "POST":
+                if self.headers.get("Content-Type", "").split(";")[0] != "application/json" or self.headers.get("Transfer-Encoding"):
+                    raise LabApiError("Model Lab requires bounded application/json", 400)
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    raise LabApiError("invalid content length", 400) from None
+                if not 1 <= length <= 16384:
+                    raise LabApiError("Model Lab payload must be 1..16384 bytes", 413)
+                self.connection.settimeout(5)
+                try:
+                    payload = json.loads(self.rfile.read(length), parse_constant=_reject_json_constant)
+                except (ValueError, UnicodeDecodeError, TimeoutError):
+                    raise LabApiError("invalid Model Lab JSON", 400) from None
+            payload = self.lab.dispatch(method, parsed.path, query, payload)
+        except AppApiError as error:
+            self._respond(getattr(error, "status", 400), {"error": str(error), "api_version": APP_API_VERSION}, body=body)
+            return
+        except Exception:
+            self._respond(500, {"error": "internal error", "api_version": APP_API_VERSION}, body=body)
+            return
+        self._respond(202 if method == "POST" and "job_id" in payload else 200, payload, body=body)
+
+    def do_POST(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/v1/lab/"):
+            self._lab_request("POST", parsed)
+        else:
+            self._refuse()
+
+    do_PUT = do_PATCH = do_DELETE = _refuse
 
 
 def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                dist_root=None, fomc_store=None, edgar_store=None):
+                dist_root=None, fomc_store=None, edgar_store=None,
+                model_lab_root=None, model_lab_token=None):
     """Build a loopback-bound read-only server over a fixed data root.
 
     ``dist_root`` turns on single-origin production mode. It is resolved once,
     here, so no request can influence which directory is served.
     """
+    if model_lab_root is not None and host not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError("Model Lab requires a loopback listener")
     service = AppService(pathlib.Path(data_root), fomc_store=fomc_store, edgar_store=edgar_store)
     # An IPv6 loopback (::1) needs an AF_INET6 socket; the stdlib server is AF_INET only.
     class SourceServer(ThreadingHTTPServer):
@@ -512,6 +562,8 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
 
         def server_close(self):
             super().server_close()
+            if self.RequestHandlerClass.lab is not None:
+                self.RequestHandlerClass.lab.close()
             service.fomc.close()
             service.edgar.close()
 
@@ -522,7 +574,15 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
         site = StaticSite(dist_root)
     handler = type("BoundAppApiHandler", (AppApiHandler,),
                    {"service": service, "site": site})
-    return server_class((host, port), handler)
+    server = server_class((host, port), handler)
+    if model_lab_root is not None:
+        from scripts.trading_lab.app_api.model_lab import ModelLabApi
+        try:
+            handler.lab = ModelLabApi(model_lab_root, token=model_lab_token)
+        except Exception:
+            server.server_close()
+            raise
+    return server
 
 
 def main(argv=None):  # pragma: no cover - entry point
@@ -535,6 +595,8 @@ def main(argv=None):  # pragma: no cover - entry point
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--dist-root", default=None,
                         help="serve a frontend build from the same origin")
+    parser.add_argument("--model-lab-root", default=None,
+                        help="opt-in private synthetic job state; requires HYPRL_MODEL_LAB_TOKEN and loopback")
     parser.add_argument("--fomc-store", default=None,
                         help="an FOMC store directory to read (read-only: an archive or a copy)")
     parser.add_argument("--edgar-store", default=None,
@@ -550,7 +612,9 @@ def main(argv=None):  # pragma: no cover - entry point
               "beyond the local machine")
     server = make_server(arguments.data_root, host=arguments.host,
                          port=arguments.port, dist_root=arguments.dist_root,
-                         fomc_store=arguments.fomc_store, edgar_store=arguments.edgar_store)
+                         fomc_store=arguments.fomc_store, edgar_store=arguments.edgar_store,
+                         model_lab_root=arguments.model_lab_root,
+                         model_lab_token=os.environ.get("HYPRL_MODEL_LAB_TOKEN"))
     if arguments.dist_root:
         print(f"HyprL on http://{arguments.host}:{arguments.port}/")
     else:

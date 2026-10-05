@@ -41,6 +41,8 @@ jobs:
             tests/crypto/test_equity_api.py tests/api -q
       - name: Shared platform contracts and snapshots
         run: python -m pytest tests/platform -q
+      - name: Synthetic Model Lab datasets, adapters, jobs, experiments and API
+        run: python -m pytest tests/model_lab -q
       # Event features v1 and v2, protected intervals and the preregistered comparison protocol.
       - name: Event features and protocol suites
         run: |
