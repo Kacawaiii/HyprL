@@ -37,7 +37,7 @@ demo (`python -m examples.b2b_client --demo`): COMPLETE, 40 synthetic prediction
 with the two read-only closure archives: archive and synthetic sections equal `docs/artifacts/ops_demo_chain_v1_evidence.json`
 field for field (only the run-specific ledger head hash differs). Read-only server on loopback against that runtime:
 health, sources, research, observability, comparison readiness, cockpit and `/api-docs` answer 200; POST answers 405.
-`tests/ops/test_track_record_report.py` cannot collect (legacy, section 3). Browser check stays **BLOCKED**.
+`tests/ops/test_track_record_report.py` cannot collect (legacy, section 3). The browser check was then run on the operator's workstation (row below, phase5@b638d7a).
 
 ## 1. Delivered and verified
 
@@ -103,7 +103,7 @@ health, sources, research, observability, comparison readiness, cockpit and `/ap
 | `docs/MVP_ACCEPTANCE.md` acceptance | WAITING_AUTHORIZATION (operator sign-off) | none | phase5@d744ba3 | 23/23 PASS | operator accepts |
 | Two GATE checks that skip | BLOCKED | private official FOMC fixtures; `hyprl_api` package absent | none | 2 skipped in every GATE run | not counted as passes |
 | Legacy `tests/ops/test_track_record_report.py` | BLOCKED: cannot collect | `scripts/ops/alpaca_track_record_snapshot.py`, absent since the initial release `3756275` | none (not in GATE or CI) | collection error `FileNotFoundError` on `abb50e2` | operator decides: delete the legacy Alpaca test or restore its script; never counted as a pass |
-| Real-browser check of the cockpit journeys | BLOCKED | a browser binary (none on this host; download outside git/pip/npm scope, system libraries need sudo) | none | journeys pass in jsdom only (`journey.test.tsx`) | operator installs a browser or authorizes a Playwright browser download |
+| Real-browser check of the cockpit journeys | DONE on the operator's workstation (Chromium, headless) | a host with a browser (the agent host has none) | phase5@b638d7a | built app served read-only with the archived FOMC/EDGAR stores and the demo registry (`scripts/demo_chain.sh`): 19 views at 1440 px and 4 at 390 px with reduced motion, 0 console/page/API errors, 0 non-GET requests, Beginner→Expert keeps the selection (`/cockpit?mode=expert`), keyboard reaches the controls. The first run found the System page blank (NOT_CONFIGURED workers shape); fixed in a9d88cd with a regression test; CI 37321309534 | rerun the walk after each cockpit change; add it to CI once a browser is available there |
 
 ## 4. Future platform extension
 
