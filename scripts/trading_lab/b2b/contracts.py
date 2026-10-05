@@ -179,8 +179,10 @@ def openapi():
     schemas["Resource"] = {"type": "object"}
     payloads = {
         "SnapshotView": obj({"snapshot": {"$ref": "#/components/schemas/InformationSnapshot"}, "fingerprint": HASH}, ("snapshot", "fingerprint")),
-        "EventView": obj({"events": {"type": "array", "items": {"type": "object"}}, "sources": {"type": "object"}, "snapshot_hash": HASH}, ("events", "sources", "snapshot_hash")),
-        "RevisionView": obj({"event_id": {"type": "string"}, "selected_revision": {"type": "string"}, "observations": {"type": "array", "items": {"type": "object"}}, "snapshot_hash": HASH}, ("event_id", "selected_revision", "observations", "snapshot_hash")),
+        "EventView": obj({"events": {"type": "array", "items": {"type": "object"}}, "sources": {"type": "object"}, "snapshot_hash": HASH,
+                          "synthetic": {"type": "boolean"}}, ("events", "sources", "snapshot_hash", "synthetic")),
+        "RevisionView": obj({"event_id": {"type": "string"}, "selected_revision": {"type": "string"}, "observations": {"type": "array", "items": {"type": "object"}}, "snapshot_hash": HASH,
+                             "synthetic": {"type": "boolean"}}, ("event_id", "selected_revision", "observations", "snapshot_hash", "synthetic")),
         "DatasetView": obj({"manifest": {"$ref": "#/components/schemas/DatasetManifest"}, "fingerprint": HASH}, ("manifest", "fingerprint")),
         "PredictionPage": obj({"predictions": {"type": "array", "items": {"$ref": "#/components/schemas/PredictionRecord"}}, "next_after": {"type": ["integer", "null"]}}, ("predictions", "next_after")),
         "RegisteredModel": obj({"model_id": SLUG, "adapter_id": {"type": "string"}, "contract": {"$ref": "#/components/schemas/ModelContract"}, "contract_hash": HASH}, ("model_id", "adapter_id", "contract", "contract_hash")),
@@ -214,7 +216,7 @@ def openapi():
         "NormalizedView": obj({"schema": {"const": "b2b-normalized-data-v1"}, "prices": objects,
             "events": array(obj({"source": text, "event_id": text, "revision": text, "fields": objects,
                                  "cik": {"type": "string", "pattern": "^[0-9]{10}$"}}, ("source", "event_id", "revision", "fields"))),
-            "sources": objects, "snapshot_hash": HASH}, ("schema", "prices", "events", "sources", "snapshot_hash")),
+            "sources": objects, "snapshot_hash": HASH, "synthetic": {"type": "boolean"}}, ("schema", "prices", "events", "sources", "snapshot_hash", "synthetic")),
         "ModelCatalogue": obj({"models": array(ref("RegisteredModel")), "installed_adapters": array(adapter), "registration": text},
                               ("models", "installed_adapters", "registration")),
         "DatasetExport": obj({"manifest": ref("DatasetManifest"), "fingerprint": HASH, "rows": array(objects), "bars": objects, "snapshots": objects},

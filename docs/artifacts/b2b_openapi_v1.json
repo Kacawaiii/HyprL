@@ -506,12 +506,16 @@
           },
           "sources": {
             "type": "object"
+          },
+          "synthetic": {
+            "type": "boolean"
           }
         },
         "required": [
           "events",
           "sources",
-          "snapshot_hash"
+          "snapshot_hash",
+          "synthetic"
         ],
         "type": "object"
       },
@@ -1322,6 +1326,9 @@
           },
           "sources": {
             "type": "object"
+          },
+          "synthetic": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -1329,7 +1336,8 @@
           "prices",
           "events",
           "sources",
-          "snapshot_hash"
+          "snapshot_hash",
+          "synthetic"
         ],
         "type": "object"
       },
@@ -2272,13 +2280,17 @@
           "snapshot_hash": {
             "pattern": "^[a-f0-9]{64}$",
             "type": "string"
+          },
+          "synthetic": {
+            "type": "boolean"
           }
         },
         "required": [
           "event_id",
           "selected_revision",
           "observations",
-          "snapshot_hash"
+          "snapshot_hash",
+          "synthetic"
         ],
         "type": "object"
       },

@@ -141,7 +141,8 @@ Snapshot/event/data reads require `as_of`, comma-separated granted `products` an
 commit-sequence horizons. There is no invented common horizon. Publication text, observation,
 ingestion and attested availability remain separate; acquisition today cannot make a historical
 publication available yesterday. UNRESOLVED, NOT_OBSERVED, absent sources, integrity errors,
-protected prices and partial coverage remain visible. Source provenance includes archive-wide
+protected prices and partial coverage remain visible. Event, revision and normalized-data views
+also carry the snapshot's explicit `synthetic` label. Source provenance includes archive-wide
 digests and coverage; event records and price selections are restricted to the granted products.
 
 Job/prediction pages use `after` offsets and `limit` (1–200), returning nullable `next_after`.

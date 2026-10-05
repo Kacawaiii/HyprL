@@ -151,10 +151,11 @@ class B2BApi:
             if operation == "snapshots":
                 return {"snapshot": snapshot, "fingerprint": identity}
             if operation == "events":
-                return {"events": snapshot["events"], "sources": snapshot["sources"], "snapshot_hash": identity}
+                return {"events": snapshot["events"], "sources": snapshot["sources"], "snapshot_hash": identity,
+                        "synthetic": snapshot["synthetic"]}
             if operation == "normalized_data":
                 return {"schema": "b2b-normalized-data-v1", "prices": snapshot["prices"], "events": normalized,
-                        "sources": snapshot["sources"], "snapshot_hash": identity}
+                        "sources": snapshot["sources"], "snapshot_hash": identity, "synthetic": snapshot["synthetic"]}
             event_id = params["event_id"]
             event = next((e for e in snapshot["events"] if e["event_id"] == event_id), None)
             if event is None:
@@ -162,7 +163,8 @@ class B2BApi:
             observations = {sha256_canonical(o): o for feature in snapshot["features"].values()
                             for o in feature["observations"][event["source"]] if o["event_id"] == event_id}
             return {"event_id": event_id, "selected_revision": event["revision"],
-                    "observations": sorted(observations.values(), key=lambda o: o["seq"]), "snapshot_hash": identity}
+                    "observations": sorted(observations.values(), key=lambda o: o["seq"]), "snapshot_hash": identity,
+                    "synthetic": snapshot["synthetic"]}
         if operation == "register_model":
             adapter = self.registry.create(payload["adapter_id"])
             registration = {**payload, "contract": adapter.contract.to_dict(), "contract_hash": adapter.contract.identity}

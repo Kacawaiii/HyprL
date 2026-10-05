@@ -41,12 +41,16 @@ def test_versioned_events_revisions_normalized_shapes_and_read_only_archives(tmp
         assert snapshot["coverage"]["state"] == "PARTIAL"
         assert request(base, "/snapshots", query=selection(edgar.T, fomc_horizon=1))[0] == 403
         normalized = request(base, "/normalized-data", query=query)[1]["data"]
+        assert normalized["synthetic"]
         assert normalized["events"] and all(row["cik"] == "0000320193" for row in normalized["events"])
         assert normalized["snapshot_hash"] == data["fingerprint"]
-        events = request(base, "/events", query=query)[1]["data"]["events"]
+        event_view = request(base, "/events", query=query)[1]["data"]
+        assert event_view["synthetic"]
+        events = event_view["events"]
         assert events and all(e["observation_class"] == "INITIAL_INVENTORY" for e in events)
         event_id = events[0]["event_id"]
         revisions = request(base, "/events/" + event_id + "/revisions", query=query)[1]["data"]
+        assert revisions["synthetic"]
         assert revisions["selected_revision"] == events[0]["revision"] and revisions["observations"]
         assert all(o["available_at"] <= snapshot["as_of"] for o in revisions["observations"])
         assert request(base, "/events", query=selection("2000-01-01T00:00:00Z"))[1]["data"]["events"] == []
