@@ -234,7 +234,7 @@ def test_cli_restrictions_schema_and_empty_directory(ledger, monkeypatch):
             self.out.write(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'{}'}}) + '\n')
             self.out.flush()
     monkeypatch.setattr('subprocess.Popen', Process)
-    assert ModelRunner(ledger).once('analyst_gpt', 'synthetic prompt') == {}
+    assert ModelRunner(ledger, clock=ledger.clock).once('analyst_gpt', 'synthetic prompt') == {}
 
 
 @pytest.mark.parametrize('raw,code', [('{"error":"rate limit"}', 'SKIPPED_QUOTA'), ('bad-json','MODEL_JSON_INVALID')])
@@ -249,7 +249,7 @@ def test_raw_cli_quota_and_bad_json(ledger, monkeypatch, raw, code):
             self.out.flush()
     monkeypatch.setattr('subprocess.Popen', Process)
     with pytest.raises(TraderError, match=code):
-        ModelRunner(ledger).once('analyst_gpt', 'synthetic')
+        ModelRunner(ledger, clock=ledger.clock).once('analyst_gpt', 'synthetic')
 
 
 def test_successful_forecast_mentions_trade_quota_without_being_usage_quota(ledger, monkeypatch):
@@ -263,7 +263,7 @@ def test_successful_forecast_mentions_trade_quota_without_being_usage_quota(ledg
                 'text':'{"regime":["Synthetic trade quota announcement, 429 units"],"views":[]}'}}))
             self.out.flush()
     monkeypatch.setattr('subprocess.Popen', Process)
-    assert ModelRunner(ledger).once('analyst_gpt', 'synthetic')['views'] == []
+    assert ModelRunner(ledger, clock=ledger.clock).once('analyst_gpt', 'synthetic')['views'] == []
 
 
 def test_schemas_pinned_skills_and_preregistration():
@@ -365,7 +365,7 @@ def test_subprocess_timeout_kills_and_reaps_process_group(ledger, monkeypatch):
                 raise subprocess.TimeoutExpired('synthetic', 60)
     monkeypatch.setattr('subprocess.Popen', Process)
     with pytest.raises(TraderError, match='MODEL_TIMEOUT'):
-        ModelRunner(ledger).once('analyst_gpt', 'synthetic')
+        ModelRunner(ledger, clock=ledger.clock).once('analyst_gpt', 'synthetic')
     assert killed[0][0] == Process.pid and len(calls) == 2
 
 
