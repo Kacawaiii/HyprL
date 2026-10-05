@@ -1,0 +1,135 @@
+{
+  "broker_orders": 0,
+  "demos": [
+    {
+      "bit_for_bit": true,
+      "criteria_met": {
+        "BTC-USD": true,
+        "ETH-USD": true
+      },
+      "dataset_counts": {
+        "by_product": {
+          "BTC-USD": 91,
+          "ETH-USD": 91
+        },
+        "excluded": 58,
+        "included": 182
+      },
+      "dataset_hash": "d67df70666d679f3927396d933bab36d7ff58cd7c4022b95b60da6bf52529b69",
+      "experiment_hash": "13300e4a723e2a1c6a6eb22f0860d7505deea716e5f123b5699b685a6ca6c802",
+      "experiment_id": "synthetic-exp-7683256140c9d47b13b53b10",
+      "model_id": "synthetic-ridge-v1",
+      "prediction_count": 80,
+      "reproduction_count": 2,
+      "result_hash": "fe891750dc8d998637b1daeaec0e366c7927578263d5983a971c412db11c0f2b",
+      "runtime": {
+        "blas_threads": 1,
+        "decimal_precision": 34,
+        "implementation": "model-lab-experiment-v1",
+        "numpy": "2.5.3",
+        "python": "3.12.3",
+        "scikit-learn": "1.9.1",
+        "source_hashes": {
+          "economic_backtest.py": "2c526c63e2e13e3c9f027f9a63a48bdde7de4985feff3c4e000606e1d7a1fad3",
+          "event_features/v2.py": "4397fb3c3ce372d8d72ad904ce4539e72579de7f1395ee9846de04ba65a640a3",
+          "market_dataset.py": "8b9fc81ee2f71f8d882bdd3918d2559ace527e1679e3d413e0021563292806f0",
+          "market_indicators.py": "9a13563336c1cce105eea0a712f5f97ec00c40bab383cc1b39532a4965727713",
+          "models.py": "6899d8fe9d420dc75f0b969f841f991f54628e5c25617b3c2834012b612d4a48",
+          "paper_engine.py": "8ca82a3147c43dc6805e427a98115c93af56273ceba12ed49c15fe9f8302d8b5",
+          "paper_event_store.py": "92b9b81b32889222d0ad04aeeb202c1480837b835deb106eae265be0c351dd6e",
+          "paper_model.py": "73db9d2bd04fbde9b6c03f6209170af88ceee68dc36cca1b1333b827ee574099",
+          "platform/adapters.py": "762badf4ade4ab5bbc21b0fcb640cdd8761c5eda83933720da0fed539ce51e01",
+          "platform/contracts.py": "3e9df25b8f28e4bc460f827443de763477f82ded17bce0ac410e1d99c77358b0",
+          "platform/datasets.py": "37b9aca566081f367e2ace20852ef347c2f57b6f9e0b6ba92ef91e282d6097b2",
+          "platform/experiments.py": "da6517b65c4ab75bdbdf93d6907c6c54f644dd62cca842175cf246970c548fd8",
+          "platform/jobs.py": "1451c70793bb17f295f5aec301503935099ffc7476442a0b386dd5241d3ab84c",
+          "platform/local_momentum.py": "e9f97a33bdcc1cf8fad4c9c98aedcd5194be21092bda3f2493e98ff237c097fe",
+          "platform/prices.py": "1a9fef540fd4c8de96aeddaaf357a37993f63ad9e352bfcdbc1ada5cb8cb699d",
+          "platform/snapshot.py": "afbe13c245a03860c7537336949c9953b82cdb2da46eedaf061f540825898a3f",
+          "research_protection.py": "bc441b7134c4b4a162b6175db615c407c4c3a5318b90a1db7f697dbacf7bd4e1",
+          "risk_engine.py": "56ef562fcee24f896debb39114b64f456d82ee41640e876997f9f7343af27fd2",
+          "signal_engine.py": "f4033ff0cccc833d549eaeeaf95dfedb2a8510fbb226e62d93b9cd6fa8bceefb",
+          "walk_forward.py": "30bab6ea43b956a7c11b7c75acb91442deb1695aa98e36ff6886189e0d369883"
+        },
+        "xgboost": "3.4.1"
+      },
+      "shadow_chain_hash": "edf44e4336d19e38c590891b45543cd29ea5aff206fec9d64b24b4103ae958c9",
+      "shadow_event_count": 364,
+      "snapshot_count": 240,
+      "worker_processes_isolated": true
+    },
+    {
+      "bit_for_bit": true,
+      "criteria_met": {
+        "BTC-USD": false,
+        "ETH-USD": false
+      },
+      "dataset_counts": {
+        "by_product": {
+          "BTC-USD": 91,
+          "ETH-USD": 91
+        },
+        "excluded": 58,
+        "included": 182
+      },
+      "dataset_hash": "d67df70666d679f3927396d933bab36d7ff58cd7c4022b95b60da6bf52529b69",
+      "experiment_hash": "8925785372c12991424e1fbe6353c374bbc7d2fb5bd7aa660d1d37a2a5e6a51f",
+      "experiment_id": "synthetic-exp-0a076fd3cd8e4b38de6506f1",
+      "model_id": "local-momentum-v1",
+      "prediction_count": 80,
+      "reproduction_count": 2,
+      "result_hash": "1f1eb2a69a0c2b630aa1d4a7db4b1b081ef3c9458760386158b9a303b24d4c7c",
+      "runtime": {
+        "blas_threads": 1,
+        "decimal_precision": 34,
+        "implementation": "model-lab-experiment-v1",
+        "numpy": "2.5.3",
+        "python": "3.12.3",
+        "scikit-learn": "1.9.1",
+        "source_hashes": {
+          "economic_backtest.py": "2c526c63e2e13e3c9f027f9a63a48bdde7de4985feff3c4e000606e1d7a1fad3",
+          "event_features/v2.py": "4397fb3c3ce372d8d72ad904ce4539e72579de7f1395ee9846de04ba65a640a3",
+          "market_dataset.py": "8b9fc81ee2f71f8d882bdd3918d2559ace527e1679e3d413e0021563292806f0",
+          "market_indicators.py": "9a13563336c1cce105eea0a712f5f97ec00c40bab383cc1b39532a4965727713",
+          "models.py": "6899d8fe9d420dc75f0b969f841f991f54628e5c25617b3c2834012b612d4a48",
+          "paper_engine.py": "8ca82a3147c43dc6805e427a98115c93af56273ceba12ed49c15fe9f8302d8b5",
+          "paper_event_store.py": "92b9b81b32889222d0ad04aeeb202c1480837b835deb106eae265be0c351dd6e",
+          "paper_model.py": "73db9d2bd04fbde9b6c03f6209170af88ceee68dc36cca1b1333b827ee574099",
+          "platform/adapters.py": "762badf4ade4ab5bbc21b0fcb640cdd8761c5eda83933720da0fed539ce51e01",
+          "platform/contracts.py": "3e9df25b8f28e4bc460f827443de763477f82ded17bce0ac410e1d99c77358b0",
+          "platform/datasets.py": "37b9aca566081f367e2ace20852ef347c2f57b6f9e0b6ba92ef91e282d6097b2",
+          "platform/experiments.py": "da6517b65c4ab75bdbdf93d6907c6c54f644dd62cca842175cf246970c548fd8",
+          "platform/jobs.py": "1451c70793bb17f295f5aec301503935099ffc7476442a0b386dd5241d3ab84c",
+          "platform/local_momentum.py": "e9f97a33bdcc1cf8fad4c9c98aedcd5194be21092bda3f2493e98ff237c097fe",
+          "platform/prices.py": "1a9fef540fd4c8de96aeddaaf357a37993f63ad9e352bfcdbc1ada5cb8cb699d",
+          "platform/snapshot.py": "afbe13c245a03860c7537336949c9953b82cdb2da46eedaf061f540825898a3f",
+          "research_protection.py": "bc441b7134c4b4a162b6175db615c407c4c3a5318b90a1db7f697dbacf7bd4e1",
+          "risk_engine.py": "56ef562fcee24f896debb39114b64f456d82ee41640e876997f9f7343af27fd2",
+          "signal_engine.py": "f4033ff0cccc833d549eaeeaf95dfedb2a8510fbb226e62d93b9cd6fa8bceefb",
+          "walk_forward.py": "30bab6ea43b956a7c11b7c75acb91442deb1695aa98e36ff6886189e0d369883"
+        },
+        "xgboost": "3.4.1"
+      },
+      "shadow_chain_hash": "13aea90864c39658a9bdcd9876b40387fb0ef56da0348ad29f67cc05837b181f",
+      "shadow_event_count": 364,
+      "snapshot_count": 240,
+      "worker_processes_isolated": true
+    }
+  ],
+  "new_real_training": 0,
+  "official_requests": 0,
+  "remote_model_calls": 0,
+  "schema": "model-lab-v1-evidence",
+  "synthetic": true,
+  "unchanged_reference_file_sha256": {
+    "data/crypto/paper_replay_v2/BTC-USD.json": "a15c0a0e6a9e6ccf6ea64568fadbcb2918ab3dcd47eee04bb6d96d6c163b46c1",
+    "data/crypto/paper_replay_v2/ETH-USD.json": "b2def3078e7e4b6b3fc23700ea16e2d3cd4fbd99f2ce001e8226f45e9508e3bd",
+    "data/crypto/paper_replay_v2/manifest.json": "3a8d5d8d163b110bb6e55dc08599ca0f3051c2262154d6fb7affb594264fd3b3",
+    "data/models/paper_v1/BTC-USD.json": "f15a0141a98175ee6fc67759ea80d21f45b269be0ed895f8222260cbb8dc06f2",
+    "data/models/paper_v1/ETH-USD.json": "1a4abcac1313d103543eec62b04c26b0d5f5cdb97e1ffccbae7900ca72201321",
+    "data/models/paper_v2/BTC-USD.json": "b021613d2f56a4581499c8ef60954cc5cd4568dfc8dce2565c4406677f361b5b",
+    "data/models/paper_v2/ETH-USD.json": "eded8c50683f1c6e3b47caff2d4f5be6ee6916110ee97bc0429140e76e852a9b"
+  },
+  "validation_command": "python -m pytest tests/model_lab -q",
+  "validation_passed": 52
+}
