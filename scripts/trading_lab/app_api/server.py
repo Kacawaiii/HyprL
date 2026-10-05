@@ -131,7 +131,18 @@ def build_routes(service: AppService):
                 cursor=_first(query, "cursor"))
         raise AppApiError("no such endpoint")
 
+    def information_snapshot(query):
+        allowed = {"as_of", "products", "visibility_mode", "fomc_horizon", "edgar_horizon"}
+        if set(query) - allowed or any(len(v) != 1 for v in query.values()):
+            raise AppApiError("snapshot accepts one value per as_of, products, visibility_mode and named source horizon")
+        return service.snapshots.snapshot(
+            as_of=_first(query, "as_of"), products=_first(query, "products"),
+            visibility_mode=_first(query, "visibility_mode"),
+            fomc_horizon=_first(query, "fomc_horizon"), edgar_horizon=_first(query, "edgar_horizon"))
+
     return {
+        "/api/v1/snapshots": information_snapshot,
+        "/api/v1/contracts/providers": lambda query: service.snapshots.providers(),
         "/api/v1/health": lambda query: service.health(),
         "/api/v1/system": lambda query: service.system(),
         "/api/v1/overview": lambda query: service.overview(),

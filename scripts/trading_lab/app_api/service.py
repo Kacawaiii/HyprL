@@ -43,6 +43,7 @@ from scripts.trading_lab.app_api.contracts import (
 )
 from scripts.trading_lab.app_api.sources import EdgarViews, FomcViews
 from scripts.trading_lab.app_api.paper_replay import PaperReplayViews
+from scripts.trading_lab.app_api.snapshots import SnapshotViews
 from scripts.trading_lab.app_api.pagination import (
     decode_cursor,
     encode_cursor,
@@ -105,6 +106,7 @@ class AppService:
         # other path: no request can point the API at another directory.
         self.fomc = FomcViews(fomc_store)
         self.edgar = EdgarViews(edgar_store)
+        self.snapshots = SnapshotViews(self._root, fomc_store=fomc_store, edgar_store=edgar_store)
         self._rows: dict[str, tuple[dict[str, str], ...]] = {}
         self._manifests: dict[str, dict] = {}
         self._signal_runs: dict[str, tuple] = {}
