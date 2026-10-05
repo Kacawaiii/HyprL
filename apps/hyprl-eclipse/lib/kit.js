@@ -19,6 +19,9 @@ void main(){mat4 m=modelMatrix;
   #endif
   vec4 w=m*vec4(position,1.);vW=w.xyz;vN=normalize(mat3(m)*normal);vUv=uv;gl_Position=projectionMatrix*viewMatrix*w;}`;
 
+/** Smooth normal perturbed by a height field h(p) through screen derivatives: per-pixel relief, no triangle facets. */
+export const BUMP = /* glsl */`vec3 bumpN(vec3 n,vec3 p,float h){vec3 sx=dFdx(p),sy=dFdy(p);vec3 r1=cross(sy,n),r2=cross(n,sx);float det=dot(sx,r1);vec3 g=sign(det)*(dFdx(h)*r1+dFdy(h)*r2);return normalize(abs(det)*n-g);}`;
+
 /** Additive glow material (light, flares, rings). */
 export function glow(fragmentShader, uniforms = {}, extra = {}) {
   return new THREE.ShaderMaterial({ uniforms, vertexShader: extra.vertexShader || VERT_UV, fragmentShader,
@@ -38,7 +41,7 @@ export function noise3(x, y, z) {
 }
 export const noise2 = (x, y) => noise3(x, y, .5);
 
-/** Irregular asteroid: displaced icosahedron, flat shaded in the shader. */
+/** Irregular asteroid: displaced icosahedron, smooth shaded with procedural surface relief. */
 export function rockGeometry(seed, detail = 2) {
   const g = new THREE.IcosahedronGeometry(1, detail), p = g.attributes.position, v = new THREE.Vector3();
   const r = rng(seed * 97 + 13), sx = .75 + r() * .5, sy = .6 + r() * .45, sz = .8 + r() * .4;
@@ -51,13 +54,19 @@ export function rockGeometry(seed, detail = 2) {
   return g;
 }
 
-/** Flat-shaded, back-lit rock (rim light from a point: eclipse, sun, disc). */
+/** Back-lit rock (rim light from a point: eclipse, sun, disc), smooth normals plus fine relief in object space. */
 export function rockMaterial({ light = new THREE.Vector3(), rim = new THREE.Color('#dac09a'), fill = new THREE.Color('#8caed8'), base = new THREE.Color('#0a0b0e') } = {}) {
   return new THREE.ShaderMaterial({
     uniforms: { uLight: { value: light }, uRim: { value: rim }, uFill: { value: fill }, uBase: { value: base }, uFade: { value: 1 } },
-    vertexShader: VERT_WORLD,
-    fragmentShader: /* glsl */`varying vec3 vW;uniform vec3 uLight,uRim,uFill,uBase;uniform float uFade;
-      void main(){vec3 n=normalize(cross(dFdx(vW),dFdy(vW)));vec3 v=normalize(cameraPosition-vW);vec3 l=normalize(uLight-vW);
+    vertexShader: /* glsl */`varying vec3 vW;varying vec3 vN;varying vec3 vL;
+      void main(){mat4 m=modelMatrix;
+        #ifdef USE_INSTANCING
+        m=modelMatrix*instanceMatrix;
+        #endif
+        vec4 w=m*vec4(position,1.);vW=w.xyz;vN=normalize(mat3(m)*normal);vL=position;gl_Position=projectionMatrix*viewMatrix*w;}`,
+    fragmentShader: NOISE + BUMP + /* glsl */`varying vec3 vW;varying vec3 vN;varying vec3 vL;uniform vec3 uLight,uRim,uFill,uBase;uniform float uFade;
+      void main(){float h=fbm(vL.xy*5.+vL.z*3.1)*.05+fbm(vL.yz*13.)*.018;vec3 n=bumpN(normalize(vN),vW,h);
+        vec3 v=normalize(cameraPosition-vW);vec3 l=normalize(uLight-vW);
         float diff=max(dot(n,l),0.);float rim=pow(clamp(1.-dot(n,v),0.,1.),2.2);
         float front=max(dot(n,normalize(vec3(-.35,.45,1.))),0.);
         float edge=pow(rim,1.4);vec3 col=uBase*(.3+front*.7)+uFill*front*.018+uRim*(diff*diff*.16+edge*(.12+diff*1.1));

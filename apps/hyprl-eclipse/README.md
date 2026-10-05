@@ -6,14 +6,12 @@ Prototype visuel autonome : présentation, univers WebGL 3D en quatre chapitres 
 
 | Chapitre | Section | Ce qu'on voit | Interaction |
 | --- | --- | --- | --- |
-| 01 Éclipse | héro | astre noir, couronne en filaments, liseré argenté, anneau orbital incliné, ceinture d'astéroïdes, débris au premier plan, diamant + traînée anamorphique, faisceau, cartes de verre | le diamant suit le curseur autour du limbe ; parallaxe en profondeur |
-| 02 Monolithe | Vision | brume au sol, crêtes enneigées, pic à droite, anneau planétaire géant, soleil rasant à 4 rayons, monolithe | le soleil glisse sur l'horizon avec le curseur ; le scroll avance la caméra |
-| 03 Prisme | Plateforme | orbe fissuré (Voronoï), éclats de verre irisés, lignes de lumière, poussière, sol en lattes, aberration chromatique | le curseur tourne le nuage d'éclats ; le scroll fait éclater l'orbe |
-| 04 Singularité | Interlude + Approche | disque d'accrétion argenté, image lentille, anneau de photons, nappes de brume, traînées de vitesse, vaisseau | le vaisseau suit le curseur et s'incline ; le scroll recule la caméra |
+| 01 Monolithe | héro | plaine sombre, petit monolithe lointain, arête enneigée et pic à droite, collines dans la brume à gauche, soleil étoilé rasant, anneau planétaire géant ; les cartes de verre du héro (CSS3D) | le soleil glisse avec le curseur ; le scroll avance la caméra |
+| 02 Planète | Vision | la géante annelée du ciel du Monolithe, en croissant : nuages en bandes, limbe éclairé, ombre des anneaux sur la planète et de la planète sur les anneaux | le scroll rapproche la caméra du limbe ; le curseur tourne la vue |
+| 03 Singularité | Interlude | disque d'accrétion doré vu par la tranche comme une mer, anneau lentille en filaments concentriques, panache de poussière d'or, traînées de vitesse, vaisseau | le vaisseau suit le curseur ; le scroll agrandit l'ombre et accélère le flux |
+| 04 Prisme | Plateforme + Approche | orbe fissuré, lames de verre irisées aux franges chromatiques, lignes de lumière, reflet au sol | le curseur tourne le nuage d'éclats ; le scroll fait éclater l'orbe |
 
-**Chaque chapitre suit sa référence.** Éclipse : espace bleu nuit, flammes violet-magenta, limbe doré dans un losange crème à quatre pointes, traînée violette. Monolithe : monochrome, brume, lumière rasante. Prisme : indigo profond, grandes lames de verre irisées aux franges chromatiques, reflet au sol. Singularité : disque d'accrétion doré, poussière chaude, paillettes d'or. Les textes gardent un halo sombre discret pour rester lisibles sur les scènes lumineuses.
-
-Un seul canvas fixe rend les chapitres. Au scroll, la caméra plonge dans le chapitre courant (zoom et flou radial) pendant que le suivant s'ouvre depuis le centre derrière un fin liseré de lumière, comme un limbe d'éclipse. Le défilement est amorti à la molette et au clavier (`lib/smooth-scroll.js`, piloté par la boucle de rendu pour que la page et la 3D bougent dans la même image) ; le tactile garde son inertie native. Chaque bloc de texte apparaît en montant depuis un léger flou, en cascade dans sa section. Le post-traitement est écrit à la main : aberration chromatique, bloom, vignette, grain et tonemapping ACES. Les ambiances **Or** et **Glace** recolorent les quatre chapitres.
+**Transitions, une par passage :** Monolithe → Planète, la caméra plonge vers la planète derrière un liseré de lumière ; Planète → Singularité, montée vers le haut, la planète tombe et le trou noir descend derrière une ligne d'horizon lumineuse ; Singularité → Prisme, l'écran se brise : l'image se fissure depuis un point d'impact puis part en éclats de verre 3D qui volent vers la caméra et révèlent le prisme (`lib/shatter.js`). Remonter la page rejoue chaque transition à l'envers.
 
 ## Ouvrir
 
@@ -30,7 +28,8 @@ Sous Windows, extraire l'archive puis double-cliquer sur `START-WINDOWS.cmd` (Py
 ## Livrables
 
 - `scene.js` : le moteur. Il gère le canvas fixe, le fondu entre chapitres selon le scroll, le post-traitement, la résolution adaptative, la pause et le mouvement réduit, et les exports.
-- `chapters/eclipse.js`, `monolith.js`, `prism.js`, `singularity.js` : un fichier par chapitre. Chaque objet est nommé et éditable.
+- `chapters/monolith.js`, `planet.js`, `singularity.js`, `prism.js` : un fichier par chapitre. Chaque objet est nommé et éditable.
+- `lib/shatter.js` : l'écran qui se brise (fracture de Voronoï, un seul appel de dessin). `lib/cards.js` : les cartes du héro.
 - `lib/smooth-scroll.js` : le défilement amorti (molette, clavier, ancres), désactivé en mouvement réduit et sur écran tactile.
 - `lib/kit.js` : le bruit GLSL, les astéroïdes procéduraux, le champ d'étoiles et les copies portables pour le glTF.
 - `index.html`, `styles.css`, `app.js` : la présentation en français. Le texte du héro est dans le disque noir, le texte de la Vision reste fixé dans le ciel, un rail de chapitres est à gauche et les contrôles d'ambiance sont fixes.

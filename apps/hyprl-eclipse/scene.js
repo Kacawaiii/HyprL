@@ -2,16 +2,20 @@ import * as THREE from 'three';
 import { CSS3DRenderer } from './vendor/CSS3DRenderer.js';
 import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { VERT_SCREEN, smooth } from './lib/kit.js';
-import { createEclipseChapter } from './chapters/eclipse.js';
 import { createMonolithChapter } from './chapters/monolith.js';
-import { createPrismChapter } from './chapters/prism.js';
+import { createPlanetChapter } from './chapters/planet.js';
 import { createSingularityChapter } from './chapters/singularity.js';
+import { createPrismChapter } from './chapters/prism.js';
+import { createShatter } from './lib/shatter.js';
 
-export const CHAPTERS = ['eclipse', 'monolith', 'prism', 'singularity'];
+export const CHAPTERS = ['monolith', 'planet', 'singularity', 'prism'];
+// How the frame passes from one chapter to the next (scrolling back plays it in reverse).
+const TRANSITION_KIND = { 'monolith>planet': 0, 'planet>singularity': 1, 'singularity>prism': 2 };
 
 /**
- * HYPRL universe: four procedural 3D chapters behind the page, cross-faded on scroll,
- * composited with chromatic aberration, bloom, vignette and grain. No textures, no network.
+ * HYPRL universe: four procedural 3D chapters behind the page, joined on scroll by a zoom into the planet,
+ * a climb upward and a shattering screen, composited with chromatic aberration, bloom, vignette and grain.
+ * No textures, no network.
  *
  * container       fixed full-viewport element for the WebGL canvas
  * labelContainer  element covering the hero, for the readable CSS3D card overlays
@@ -36,22 +40,30 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   const cssRenderer = new CSS3DRenderer(); labelContainer?.append(cssRenderer.domElement);
 
   const ctx = { isMobile };
-  const chapters = [createEclipseChapter(ctx), createMonolithChapter(ctx), createPrismChapter(ctx), createSingularityChapter(ctx)];
+  const chapters = [createMonolithChapter(ctx), createPlanetChapter(ctx), createSingularityChapter(ctx), createPrismChapter(ctx)];
   const byName = Object.fromEntries(chapters.map((c, i) => [c.name, i]));
+  const shatter = createShatter({ isMobile });
 
   // ── Chapter transition, shared by the bloom and final passes ──
   // The camera flies into chapter A while B settles from a slight zoom, revealed from the centre by an
   // expanding, ragged ring of light (an eclipse limb opening onto the next scene).
-  const TRANSITION = /* glsl */`uniform float uMix,uTime,uAspect;
+  const TRANSITION = /* glsl */`uniform float uMix,uTime,uAspect;uniform int uKind;
     float tHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     float tNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
       return mix(mix(tHash(i),tHash(i+vec2(1,0)),f.x),mix(tHash(i+vec2(0,1)),tHash(i+vec2(1,1)),f.x),f.y);}
-    vec2 zoomA(vec2 uv){return (uv-.5)/(1.+.35*uMix*uMix)+.5;}
-    vec2 zoomB(vec2 uv){float k=1.-uMix;return (uv-.5)/(1.+.24*k*k)+.5;}
+    float eMix(){return uMix*uMix*(3.-2.*uMix);}
+    // kind 0: fly into A, B settles from a zoom. kind 1: climb: A falls away downward, B descends from above.
+    vec2 zoomA(vec2 uv){if(uKind==1){float e=eMix();return vec2(.5+(uv.x-.5)/(1.+.3*e),.5+(uv.y-.5)/(1.+.3*e)+.6*e);}
+      return (uv-.5)/(1.+.35*uMix*uMix)+.5;}
+    vec2 zoomB(vec2 uv){float k=1.-uMix;if(uKind==1){float e=1.-eMix();return vec2(.5+(uv.x-.5)/(1.+.2*e),.5+(uv.y-.5)/(1.+.2*e)-.5*e);}
+      if(uKind==2)return (uv-.5)/(1.+.12*k*k)+.5;return (uv-.5)/(1.+.24*k*k)+.5;}
     float ringEdge(){return mix(-.25,1.45,uMix);}
     float ringDist(vec2 uv){vec2 p=(uv-.5)*vec2(uAspect,1.);float r=length(p)/(.5*length(vec2(uAspect,1.)));
       vec2 d=p/(length(p)+1e-4);return r+(tNoise(d*1.6+uTime*.1)-.5)*.07+(tNoise(uv*9.+uTime*.05)-.5)*.02;}
-    float reveal(float r){float e=ringEdge();return uMix>.999?1.:1.-smoothstep(e-.09,e+.008,r);}`;
+    float reveal(float r){float e=ringEdge();return uMix>.999?1.:1.-smoothstep(e-.09,e+.008,r);}
+    // kind 1 reveal: a bright horizon sweeps down the frame, B above it.
+    float climbEdge(){return mix(1.12,-.12,eMix());}
+    float revealOf(vec2 uv){if(uKind==2)return 1.;if(uKind==1){float e=climbEdge()+(tNoise(vec2(uv.x*3.,uTime*.2))-.5)*.03;return uMix>.999?1.:smoothstep(e-.015,e+.11,uv.y);}return reveal(ringDist(uv));}`;
 
   // ── Post-processing chain (all hand-written, three core only) ──
   const rtOpts = { type: THREE.HalfFloatType, depthBuffer: true, samples: isMobile() ? 2 : 4 };
@@ -60,32 +72,37 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   const rtS1 = new THREE.WebGLRenderTarget(1, 1, small), rtS2 = new THREE.WebGLRenderTarget(1, 1, small);
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), quadScene = new THREE.Scene();
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled = false; quadScene.add(quad);
-  const brightMat = new THREE.ShaderMaterial({ uniforms: { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 1 }, uTexel: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
+  const brightMat = new THREE.ShaderMaterial({ uniforms: { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 1 }, uTexel: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB;uniform vec2 uTexel;${TRANSITION}
-      vec3 s(vec2 uv){if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,zoomA(uv)).rgb,texture2D(tB,zoomB(uv)).rgb,reveal(ringDist(uv)));}
+      vec3 s(vec2 uv){if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,zoomA(uv)).rgb,texture2D(tB,zoomB(uv)).rgb,revealOf(uv));}
       void main(){vec3 c=(s(vUv+uTexel*vec2(-1,-1))+s(vUv+uTexel*vec2(1,-1))+s(vUv+uTexel*vec2(-1,1))+s(vUv+uTexel*vec2(1,1)))*.25;
         float l=dot(c,vec3(.2126,.7152,.0722));gl_FragColor=vec4(c*smoothstep(.35,1.2,l),1.);}` });
   const blurMat = new THREE.ShaderMaterial({ uniforms: { tIn: { value: null }, uDir: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tIn;uniform vec2 uDir;
       void main(){vec3 c=texture2D(tIn,vUv).rgb*.227;c+=(texture2D(tIn,vUv+uDir*1.385).rgb+texture2D(tIn,vUv-uDir*1.385).rgb)*.316;c+=(texture2D(tIn,vUv+uDir*3.23).rgb+texture2D(tIn,vUv-uDir*3.23).rgb)*.07;gl_FragColor=vec4(c,1.);}` });
   const finalMat = new THREE.ShaderMaterial({
-    uniforms: { tA: { value: null }, tB: { value: null }, tBloom: { value: null }, uMix: { value: 0 }, uCAa: { value: 0 }, uCAb: { value: 0 }, uBloom: { value: 1 }, uExpo: { value: 1 }, uDim: { value: 0 }, uSat: { value: 1 }, uTime: { value: 0 }, uAspect: { value: 1 }, uAccent: { value: new THREE.Color() }, uRes: { value: new THREE.Vector2() } },
+    uniforms: { tA: { value: null }, tB: { value: null }, tBloom: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uCAa: { value: 0 }, uCAb: { value: 0 }, uBloom: { value: 1 }, uExpo: { value: 1 }, uDim: { value: 0 }, uVig: { value: .85 }, uSat: { value: 1 }, uTime: { value: 0 }, uAspect: { value: 1 }, uAccent: { value: new THREE.Color() }, uRes: { value: new THREE.Vector2() } },
     vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
-    fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB,tBloom;uniform float uCAa,uCAb,uBloom,uExpo,uDim,uSat;uniform vec2 uRes;uniform vec3 uAccent;${TRANSITION}
+    fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB,tBloom;uniform float uCAa,uCAb,uBloom,uExpo,uDim,uSat,uVig;uniform vec2 uRes;uniform vec3 uAccent;${TRANSITION}
       vec3 ca(sampler2D t,vec2 uv,float s){vec2 d=(uv-.5)*s;return vec3(texture2D(t,uv+d).r,texture2D(t,uv).g,texture2D(t,uv-d).b);}
       vec3 rblur(sampler2D t,vec2 uv,float s){vec3 c=vec3(0.);vec2 d=(uv-.5)*s;for(int i=0;i<7;i++)c+=texture2D(t,uv-d*(float(i)/6.)).rgb;return c/7.;}
       vec3 aces(vec3 x){return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.);}
       float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
       void main(){vec3 col;float seam=0.;
         if(uMix<.001)col=ca(tA,vUv,uCAa);
-        else{vec2 ua=zoomA(vUv),ub=zoomB(vUv);
-          vec3 a=mix(ca(tA,ua,uCAa),rblur(tA,ua,.09*uMix),smoothstep(0.,.35,uMix))*(1.-.4*uMix);
-          vec3 b=mix(ca(tB,ub,uCAb),rblur(tB,ub,.07*(1.-uMix)),smoothstep(0.,.35,1.-uMix))*(.65+.35*uMix);
-          float r=ringDist(vUv),e=ringEdge(),pulse=sin(3.14159*uMix);col=mix(a,b,reveal(r));
-          seam=(exp(-pow((r-e)/.009,2.))*.75+exp(-pow((r-e)/.04,2.))*.16)*pulse;}
+        else if(uKind==2)col=ca(tB,zoomB(vUv),uCAb);   // shatter: B underneath, A's shards were drawn over it
+        else{vec2 ua=zoomA(vUv),ub=zoomB(vUv);float pulse=sin(3.14159*uMix);
+          if(uKind==1){vec3 a=vec3(0.),b=vec3(0.);float ba=.08*uMix,bb=.07*(1.-uMix);
+            for(int i=0;i<7;i++){float o=float(i)/6.-.5;a+=texture2D(tA,ua+vec2(0.,o*ba)).rgb;b+=texture2D(tB,ub+vec2(0.,o*bb)).rgb;}
+            a=a/7.*(1.-.5*uMix);b=b/7.*(.6+.4*uMix);float e=climbEdge();col=mix(a,b,revealOf(vUv));
+            seam=(exp(-pow((vUv.y-e)/.006,2.))*.6+exp(-pow((vUv.y-e)/.05,2.))*.2)*pulse;}
+          else{vec3 a=mix(ca(tA,ua,uCAa),rblur(tA,ua,.09*uMix),smoothstep(0.,.35,uMix))*(1.-.4*uMix);
+            vec3 b=mix(ca(tB,ub,uCAb),rblur(tB,ub,.07*(1.-uMix)),smoothstep(0.,.35,1.-uMix))*(.65+.35*uMix);
+            float r=ringDist(vUv),e=ringEdge();col=mix(a,b,reveal(r));
+            seam=(exp(-pow((r-e)/.009,2.))*.75+exp(-pow((r-e)/.04,2.))*.16)*pulse;}}
         col+=texture2D(tBloom,vUv).rgb*uBloom;col*=uExpo;col=mix(vec3(dot(col,vec3(.2126,.7152,.0722))),col,uSat);
         col+=mix(vec3(1.),uAccent,.45)*seam;
-        vec2 p=vUv-.5;col*=1.-dot(p,p)*.85;col*=1.-uDim;
+        vec2 p=vUv-.5;col*=1.-dot(p,p)*uVig;col*=1.-uDim;
         col=aces(col);col=pow(col,vec3(1./2.2));
         col+=(h(vUv*uRes+fract(uTime*7.))-.5)*.022;
         gl_FragColor=vec4(col,1.);}` });
@@ -101,7 +118,8 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     finalMat.uniforms.uRes.value.set(pw, ph); brightMat.uniforms.uTexel.value.set(1 / pw, 1 / ph);
     finalMat.uniforms.uAspect.value = brightMat.uniforms.uAspect.value = W / H;
     const heroH = hero ? hero.offsetHeight : H;
-    chapters[0].resize(W, heroH, H); for (const c of chapters.slice(1)) c.resize(W, H);
+    chapters[0].resize(W, H, heroH); for (const c of chapters.slice(1)) c.resize(W, H);
+    shatter.resize(W, H);
     if (labelContainer) cssRenderer.setSize(W, heroH);
     dirty = true;
   }
@@ -147,19 +165,22 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     renderer.info.reset();
     const s = readScroll(dt); s.dt = dt; lastBlend = s;
     const A = chapters[s.a], B = chapters[s.b], mixT = s.a === s.b ? 0 : s.t;
+    const kind = mixT > .001 ? TRANSITION_KIND[`${A.name}>${B.name}`] ?? TRANSITION_KIND[`${B.name}>${A.name}`] ?? 0 : 0;
     renderChapter(A, rtA, s, PR); if (mixT > .001) renderChapter(B, rtB, s, PR);
+    if (kind === 2) { renderer.setRenderTarget(rtB); renderer.autoClear = false; renderer.clearDepth(); shatter.render(renderer, rtA.texture, mixT, elapsed); renderer.autoClear = true; }
+    brightMat.uniforms.uKind.value = finalMat.uniforms.uKind.value = kind;
     const pa = A.post, pb = mixT > .001 ? B.post : A.post, lerp = (x, y) => x + (y - x) * mixT;
-    quad.material = brightMat; Object.assign(brightMat.uniforms.tA, { value: rtA.texture }); brightMat.uniforms.tB.value = rtB.texture; brightMat.uniforms.uMix.value = mixT; brightMat.uniforms.uTime.value = elapsed;
+    quad.material = brightMat; Object.assign(brightMat.uniforms.tA, { value: rtA.texture }); brightMat.uniforms.tB.value = rtB.texture; brightMat.uniforms.uMix.value = kind === 2 ? 1 : mixT; brightMat.uniforms.uTime.value = elapsed;
     renderer.setRenderTarget(rtS1); renderer.render(quadScene, quadCam);
     quad.material = blurMat;
     for (const [src, dst, dir] of [[rtS1, rtS2, [1, 0]], [rtS2, rtS1, [0, 1]], [rtS1, rtS2, [2, 0]], [rtS2, rtS1, [0, 2]]]) {
       blurMat.uniforms.tIn.value = src.texture; blurMat.uniforms.uDir.value.set(dir[0] / rtS1.width, dir[1] / rtS1.height); renderer.setRenderTarget(dst); renderer.render(quadScene, quadCam);
     }
     quad.material = finalMat; const u = finalMat.uniforms;
-    u.tA.value = rtA.texture; u.tB.value = rtB.texture; u.tBloom.value = rtS1.texture; u.uMix.value = mixT;
-    u.uCAa.value = pa.ca; u.uCAb.value = pb.ca; u.uBloom.value = lerp(pa.bloom, pb.bloom); u.uExpo.value = lerp(pa.exposure, pb.exposure); u.uDim.value = s.dim; u.uSat.value = lerp(pa.sat ?? 1, pb.sat ?? 1); u.uTime.value = elapsed;
+    u.tA.value = rtA.texture; u.tB.value = rtB.texture; u.tBloom.value = rtS1.texture; u.uMix.value = kind === 2 ? 1 : mixT;
+    u.uCAa.value = pa.ca; u.uCAb.value = pb.ca; u.uBloom.value = lerp(pa.bloom, pb.bloom); u.uExpo.value = lerp(pa.exposure, pb.exposure); u.uDim.value = s.dim; u.uSat.value = lerp(pa.sat ?? 1, pb.sat ?? 1); u.uVig.value = lerp(pa.vignette ?? .85, pb.vignette ?? .85); u.uTime.value = elapsed;
     renderer.setRenderTarget(null); renderer.render(quadScene, quadCam);
-    // Readable overlays only while the eclipse chapter is on screen.
+    // Readable overlays only while the first chapter (the hero) is on screen.
     const heroOn = (s.a === 0 && (1 - mixT) > .02) || (s.b === 0 && mixT > .02);
     const heroWeight = s.a === 0 ? 1 - mixT : (s.b === 0 ? mixT : 0);
     if (labelContainer) {
@@ -209,7 +230,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     // Portable geometry + PBR materials for every chapter. Shaders, glow and animation stay in code.
     const asset = new THREE.Scene(); asset.name = 'HYPRL_Universe_Portable';
     chapters.forEach((c, i) => { const g = c.exportGroup(); g.position.x = i * 40; asset.add(g); });
-    asset.userData = { description: 'HYPRL — 4 chapitres (Éclipse, Monolithe, Prisme, Singularité). Géométrie éditable ; shaders, lumière et animation dans chapters/*.js.', palette };
+    asset.userData = { description: 'HYPRL — 4 chapitres (Monolithe, Planète, Singularité, Prisme). Géométrie éditable ; shaders, lumière et animation dans chapters/*.js.', palette };
     const result = await new GLTFExporter().parseAsync(asset, { binary: true });
     download(new Blob([result], { type: 'model/gltf-binary' }), 'hyprl-universe.glb');
     asset.traverse(o => { if (o.material) for (const m of [].concat(o.material)) m.dispose(); });
@@ -225,7 +246,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
       disposed = true; cancelAnimationFrame(frame); resizeObserver.disconnect(); removeEventListener('scroll', onScroll); interaction.removeEventListener('pointermove', pointerMove);
       document.documentElement.removeEventListener('pointerleave', pointerLeave); media.removeEventListener('change', mediaChange);
       for (const c of chapters) c.scene.traverse(o => { o.geometry?.dispose(); if (o.material) for (const m of [].concat(o.material)) m.dispose(); });
-      for (const t of [rtA, rtB, rtS1, rtS2]) t.dispose(); renderer.dispose(); renderer.domElement.remove(); cssRenderer.domElement.remove();
+      shatter.dispose(); for (const t of [rtA, rtB, rtS1, rtS2]) t.dispose(); renderer.dispose(); renderer.domElement.remove(); cssRenderer.domElement.remove();
     }
   };
 }
