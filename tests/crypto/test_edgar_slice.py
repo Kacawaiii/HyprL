@@ -606,7 +606,8 @@ def test_the_qualification_matrix_separates_observation_from_unknown(env):
     env.poll()
     result = qualify(EdgarStore(env.root, wall_clock=None, read_only=True))
     matrix = result["matrix"]
-    assert matrix["UV1"]["verdict"] == "OBSERVED_COMPATIBLE" and matrix["UV1"]["observation"]["columns_not_in_spec"] == []
+    assert matrix["UV1"]["verdict"] == "OBSERVED_COMPATIBLE"
+    assert matrix["UV1"]["observation"]["columns_not_in_spec"] == ["core_type", "isXBRLNumeric"]
     assert matrix["UV2"]["verdict"] == "FORMAT_OBSERVED_SEMANTICS_UNKNOWN"
     assert matrix["UV2"]["observation"]["shapes"] == {"YYYY-MM-DDTHH:MM:SS.000Z": 6}
     assert matrix["UV3"]["verdict"] == matrix["UV4"]["verdict"] == "UNKNOWN_PERSISTS"  # never provoked

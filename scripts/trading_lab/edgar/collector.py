@@ -131,12 +131,16 @@ class EdgarCollector:
         except BlockingIOError as exc:
             self._lock.close()
             raise Rejected(f"another collector owns {store.root}") from exc
-        self.epoch = uuid.uuid4().hex
-        store.append("EPOCH", [("EPOCH", self.epoch, {"token": self.epoch, "boot_id": boot_id})])
-        self.limiter = RollingLimiter(clock.mono, clock.sleep, spacing_s=spec.SPACING_S, window_s=spec.WINDOW_S,
-                                      window_max=spec.WINDOW_MAX_STARTS, embargo_s=spec.EMBARGO_S)
-        self.paused_until: float | None = None
-        self.reconciled = self.reconcile()
+        try:
+            self.epoch = uuid.uuid4().hex
+            store.append("EPOCH", [("EPOCH", self.epoch, {"token": self.epoch, "boot_id": boot_id})])
+            self.limiter = RollingLimiter(clock.mono, clock.sleep, spacing_s=spec.SPACING_S, window_s=spec.WINDOW_S,
+                                          window_max=spec.WINDOW_MAX_STARTS, embargo_s=spec.EMBARGO_S)
+            self.paused_until: float | None = None
+            self.reconciled = self.reconcile()
+        except BaseException:
+            self.close()
+            raise
 
     def reconcile(self) -> dict:
         """After a crash or a kill: an attempt of an earlier epoch without outcome is INTERRUPTED (its
@@ -181,37 +185,59 @@ class EdgarCollector:
         return rows[0].body["ciks"] if rows else []
 
     # ---- one attempt ------------------------------------------------------------------------------
-    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None) -> dict:
+    def poll(self, cik: str, *, before_request: Callable[[], None] | None = None, request_allowed=None,
+             authorization_sha256: str | None = None) -> dict:
         cik = cik10(cik)
         if cik not in self.watchlist():
             raise Rejected(f"CIK {cik} is not on the watchlist")
         if self.paused_until is not None and self.clock.mono() < self.paused_until:
             return {"status": "PAUSED", "until_mono": self.paused_until}
-        grant = self.limiter.grant(check=before_request)
+
+        def check_request():
+            if before_request is not None:
+                before_request()
+            if request_allowed is not None and not request_allowed():
+                raise RequestCancelled("the run stopped before the physical request")
+
+        # Re-enter the storage/authorization gate during waits, even if grants are suspended.
+        while True:
+            check_request()
+            grant = self.limiter.try_grant()
+            if grant is not None:
+                break
+            self.clock.sleep(min(1.0, max(0.1, self.limiter.earliest(self.clock.mono()) - self.clock.mono())))
+        check_request()
         url = submissions_url(cik)
         attempt = self.store.append("TRANSPORT_INVOKED", [("TRANSPORT_INVOKED", None, {
-            "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant})])
-        if before_request is not None:
-            try:
-                before_request()  # the durable attempt may have waited past expiry or a stop signal
-            except RequestCancelled as exc:
-                reason = str(exc)
-                self.store.append("ATTEMPT_OUTCOME", [
-                    ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "INTERRUPTED",
-                                                      "status": None, "reason": reason}),
-                    health_row(cik, attempt=attempt, record=None, result_state="INTERRUPTED",
-                               reason=reason, check_at=self.store.wall_iso())])
-                return {"status": "INTERRUPTED", "attempt": attempt, "reason": reason}
+            "epoch": self.epoch, "cik": cik, "url": url, "grant_mono": grant,
+            **({"authorization_sha256": authorization_sha256} if authorization_sha256 is not None else {})})])
+        try:
+            check_request()  # the durable attempt may have waited past expiry, stop or a storage incident
+        except RequestCancelled as exc:
+            reason = str(exc)
+            self.store.append("ATTEMPT_OUTCOME", [
+                ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": "INTERRUPTED",
+                                                  "status": None, "reason": reason}),
+                health_row(cik, attempt=attempt, record=None, result_state="INTERRUPTED",
+                           reason=reason, check_at=self.store.wall_iso())])
+            return {"status": "INTERRUPTED", "attempt": attempt, "reason": reason}
         result = self.fetcher.fetch(url, started=grant)
         fetch_seconds = round(self.clock.mono() - grant, 3)  # grant to the end of the fetch (deadline evidence)
         header_lines = [[name, value] for name, value in (result.headers or [])]
         if result.kind != "RESPONSE":
             check_at = iso(result.wall_at_receipt) if result.wall_at_receipt else self.store.wall_iso()
+            termination = []
+            if result.kind == "SOURCE_THROTTLED" and authorization_sha256 is not None:
+                # Commit with the outcome: a crash before RUN_ENDED cannot reopen this grant.
+                termination = [("AUTHORIZATION_TERMINATED", authorization_sha256, {
+                    "authorization_sha256": authorization_sha256, "epoch": self.epoch,
+                    "attempt": attempt, "status": result.status, "reason": "SOURCE_THROTTLED"})]
             self.store.append("ATTEMPT_OUTCOME", [
                 ("ATTEMPT_OUTCOME", str(attempt), {"attempt": attempt, "outcome": result.kind, "status": result.status,
                                                     "reason": result.reason, "fetch_seconds": fetch_seconds,
                                                     "header_lines": header_lines}),
-                health_row(cik, attempt=attempt, record=None, result_state=result.kind, reason=result.reason, check_at=check_at)])
+                health_row(cik, attempt=attempt, record=None, result_state=result.kind, reason=result.reason,
+                           check_at=check_at), *termination])
             if result.kind == "SOURCE_THROTTLED":
                 self.paused_until = self.clock.mono() + spec.THROTTLE_PAUSE_S
             return {"status": result.kind, "attempt": attempt, "reason": result.reason}

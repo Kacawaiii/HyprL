@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 import gzip
 import http.client
 import io
+import multiprocessing
 import re
 import ssl
+import threading
 import time
 import zlib
 from typing import Callable
@@ -65,12 +67,13 @@ def decode_body(raw: bytes, coding_lines: list[str]) -> tuple[bytes | None, str 
 class HttpsFetcher:
     def __init__(self, user_agent: str, *, connection_factory: Callable = http.client.HTTPSConnection,
                  wall: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-                 mono: Callable[[], float] = time.monotonic):
+                 mono: Callable[[], float] = time.monotonic, fenced: bool | None = None):
         if not isinstance(user_agent, str) or not spec.USER_AGENT.match(user_agent.strip()):
             raise ValueError("the SEC asks automated clients to declare a User-Agent naming an organization and a "
                              "contact e-mail (e.g. 'Example Lab ops@example.org'); refusing to start without one")
         self.user_agent = user_agent.strip()
         self._factory, self._wall, self._mono = connection_factory, wall, mono
+        self._fenced = connection_factory is http.client.HTTPSConnection if fenced is None else fenced
         self._context = ssl.create_default_context()  # system trust store, hostname checking, CERT_REQUIRED
 
     @staticmethod
@@ -80,6 +83,68 @@ class HttpsFetcher:
             sock.settimeout(seconds)
 
     def fetch(self, url: str, *, started: float | None = None) -> FetchResult:
+        """Fence production HTTPS in a disposable process, including DNS, read, decode and close.
+
+        A socket timeout cannot bound DNS or a transport ignoring timeouts. The parent owns the
+        deadline and kills/reaps the worker before returning; late bytes can never enter the store.
+        Injected offline connections may opt in to exercise this physical fence.
+        """
+        started = self._mono() if started is None else started
+        if not self._fenced:
+            return self._fetch(url, started=started)
+        left = started + spec.DEADLINE_S - self._mono()
+        if left <= 0:
+            return FetchResult("SOURCE_UNAVAILABLE", reason=f"the {spec.DEADLINE_S} s deadline of the attempt passed")
+        # This service runs on Linux. Fork keeps the injected clocks/connections usable offline;
+        # the worker only touches transport, never the inherited store or ownership lock.
+        context = multiprocessing.get_context("fork")
+        reader, writer = context.Pipe(duplex=False)
+
+        def receive_one():
+            reader.close()
+            try:
+                writer.send(self._fetch(url, started=started))
+            except Exception as exc:
+                writer.send(FetchResult("SOURCE_UNAVAILABLE", reason=f"transport worker: {type(exc).__name__}"))
+            finally:
+                writer.close()
+
+        worker = context.Process(target=receive_one, name="edgar-transport", daemon=True)
+        received = threading.Event()
+        outcomes = []
+
+        def receive_result():
+            try:
+                outcomes.append(reader.recv())
+            except (EOFError, OSError):
+                outcomes.append(FetchResult("SOURCE_UNAVAILABLE", reason="transport worker exited without an outcome"))
+            finally:
+                received.set()
+
+        receiver = None
+        try:
+            worker.start()
+            writer.close()
+            # recv() can block on a partial IPC frame. Keep the deadline owner independent of it.
+            receiver = threading.Thread(target=receive_result, name="edgar-transport-result", daemon=True)
+            receiver.start()
+            left = started + spec.DEADLINE_S - self._mono()
+            if left > 0 and received.wait(left):
+                if self._mono() <= started + spec.DEADLINE_S:
+                    return outcomes[0]
+            return FetchResult("SOURCE_UNAVAILABLE", reason=f"the {spec.DEADLINE_S} s physical deadline fenced transport")
+        finally:
+            writer.close()
+            if worker.pid is not None:
+                if worker.is_alive():
+                    worker.kill()
+                worker.join()
+                worker.close()
+            if receiver is not None:
+                receiver.join(timeout=1.0)  # killed worker closes the only writer, unblocking any partial frame
+            reader.close()
+
+    def _fetch(self, url: str, *, started: float | None = None) -> FetchResult:
         """One listing under one deadline of DEADLINE_S counted from `started` (the grant, on this fetcher's
         monotonic clock) to the decoded body; without `started`, from now."""
         parts = urlsplit(url)

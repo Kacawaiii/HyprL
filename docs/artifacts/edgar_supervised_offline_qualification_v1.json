@@ -1,0 +1,175 @@
+{
+  "artifact": "edgar_supervised_offline_qualification_v1",
+  "base_sha": "d744ba3",
+  "code_sha": "e15d7ab94f72fd6e666e5f84cd3a142c971a7c35",
+  "headers_mode": "exact recorded headers; exact decoded raws gzip re-encoded offline; recorded Content-Length retained as evidence",
+  "network_connections": 0,
+  "outcomes": {
+    "deadline": {
+      "clock_verdicts": {},
+      "copy_unchanged": true,
+      "health_replay": true,
+      "integrity": "VALID",
+      "physical_fake_requests": 1,
+      "qualification": {
+        "UV1": "OBSERVED_INCOMPATIBLE",
+        "UV2": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN",
+        "UV3": "UNKNOWN_PERSISTS",
+        "UV4": "UNKNOWN_PERSISTS",
+        "UV5": "OBSERVED_INCOMPLETE",
+        "UV6": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+      },
+      "raws_verified": 0,
+      "reason": "request budget spent",
+      "reopen_identical": 1,
+      "replay_identical": 1,
+      "requests_consumed": 1,
+      "responses": 0,
+      "revisions": 0,
+      "run": "ACCOMPLISHED",
+      "storage_incidents": 0
+    },
+    "full": {
+      "clock_verdicts": {
+        "CLOCK_VERIFIED": 8
+      },
+      "copy_unchanged": true,
+      "health_replay": true,
+      "integrity": "VALID",
+      "physical_fake_requests": 8,
+      "qualification": {
+        "UV1": "OBSERVED_COMPATIBLE",
+        "UV2": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN",
+        "UV3": "UNKNOWN_PERSISTS",
+        "UV4": "UNKNOWN_PERSISTS",
+        "UV5": "OBSERVED_PRESENT_AND_WITHIN_TOLERANCE",
+        "UV6": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+      },
+      "raws_verified": 8,
+      "reason": "request budget spent",
+      "reopen_identical": 9,
+      "replay_identical": 9,
+      "requests_consumed": 8,
+      "responses": 8,
+      "revisions": 161,
+      "run": "ACCOMPLISHED",
+      "storage_incidents": 0
+    },
+    "restart": {
+      "clock_verdicts": {
+        "CLOCK_VERIFIED": 4
+      },
+      "copy_unchanged": true,
+      "health_replay": true,
+      "integrity": "VALID",
+      "physical_fake_requests": 4,
+      "qualification": {
+        "UV1": "OBSERVED_COMPATIBLE",
+        "UV2": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN",
+        "UV3": "UNKNOWN_PERSISTS",
+        "UV4": "UNKNOWN_PERSISTS",
+        "UV5": "OBSERVED_PRESENT_AND_WITHIN_TOLERANCE",
+        "UV6": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+      },
+      "raws_verified": 4,
+      "reason": "request budget spent",
+      "reopen_identical": 5,
+      "replay_identical": 5,
+      "requests_consumed": 4,
+      "responses": 4,
+      "revisions": 161,
+      "run": "NOT_ACCOMPLISHED",
+      "storage_incidents": 0
+    },
+    "stall": {
+      "clock_verdicts": {
+        "CLOCK_VERIFIED": 4
+      },
+      "copy_unchanged": true,
+      "health_replay": true,
+      "integrity": "VALID",
+      "physical_fake_requests": 4,
+      "qualification": {
+        "UV1": "OBSERVED_COMPATIBLE",
+        "UV2": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN",
+        "UV3": "UNKNOWN_PERSISTS",
+        "UV4": "UNKNOWN_PERSISTS",
+        "UV5": "OBSERVED_PRESENT_AND_WITHIN_TOLERANCE",
+        "UV6": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+      },
+      "raws_verified": 4,
+      "reason": "request budget spent",
+      "reopen_identical": 5,
+      "replay_identical": 5,
+      "requests_consumed": 4,
+      "responses": 4,
+      "revisions": 161,
+      "run": "ACCOMPLISHED",
+      "storage_incidents": 1
+    },
+    "stop_limiter": {
+      "clock_verdicts": {},
+      "copy_unchanged": true,
+      "health_replay": true,
+      "integrity": "VALID",
+      "physical_fake_requests": 0,
+      "qualification": {
+        "UV1": "OBSERVED_INCOMPATIBLE",
+        "UV2": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN",
+        "UV3": "UNKNOWN_PERSISTS",
+        "UV4": "UNKNOWN_PERSISTS",
+        "UV5": "OBSERVED_INCOMPLETE",
+        "UV6": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+      },
+      "raws_verified": 0,
+      "reason": "stopped",
+      "reopen_identical": 1,
+      "replay_identical": 1,
+      "requests_consumed": 0,
+      "responses": 0,
+      "revisions": 0,
+      "run": "NOT_ACCOMPLISHED",
+      "storage_incidents": 0
+    },
+    "throttle": {
+      "clock_verdicts": {},
+      "copy_unchanged": true,
+      "health_replay": true,
+      "integrity": "VALID",
+      "physical_fake_requests": 1,
+      "qualification": {
+        "UV1": "OBSERVED_INCOMPATIBLE",
+        "UV2": "FORMAT_OBSERVED_SEMANTICS_UNKNOWN",
+        "UV3": "UNKNOWN_PERSISTS",
+        "UV4": "UNKNOWN_PERSISTS",
+        "UV5": "OBSERVED_INCOMPLETE",
+        "UV6": "NO_LINK_COLUMN_OBSERVED_UNIVERSALITY_UNKNOWN"
+      },
+      "raws_verified": 0,
+      "reason": "throttled (403/429): the trial stops, no further request",
+      "reopen_identical": 1,
+      "replay_identical": 1,
+      "requests_consumed": 1,
+      "responses": 0,
+      "restart_refused": true,
+      "revisions": 0,
+      "run": "NOT_ACCOMPLISHED",
+      "storage_incidents": 0
+    }
+  },
+  "raw_inputs": "PRIVATE_IGNORED; no copied store, response headers or raw bytes in Git",
+  "raw_lengths": [
+    163997,
+    185250
+  ],
+  "raw_sha256": [
+    "2484a2a3b5677d892a1b25af573ce4eda7b6f449f5eda41bac6b3f106dc3139c",
+    "3cf0928a15c79b842e4ecef56a0ce30c5edfeda0c98643a046233fafba40dae7"
+  ],
+  "source_digest_after": "80c3b70a0f73f798cdd0dbf3ebe6c77fb3bb85adfba9e30275037c7eec2ad058",
+  "source_digest_before": "80c3b70a0f73f798cdd0dbf3ebe6c77fb3bb85adfba9e30275037c7eec2ad058",
+  "source_unchanged": true,
+  "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+  "spec_revision": 1,
+  "store_schema": "edgar-store-v1"
+}
