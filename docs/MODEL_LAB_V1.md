@@ -147,13 +147,14 @@ permissions or the existing GET/HEAD endpoints. Unconfigured controls report una
 | GET/HEAD | `/api/v1/lab/jobs/{id}/results` | pending/terminal state or full synthetic result and hash |
 | GET/HEAD | `/api/v1/lab/artifacts/{kind}/{hash}` | kind = model, predictions, backtests, shadow or experiment |
 
-JSON control bodies are bounded at 16 KiB. Unknown parameters, uploaded datasets, client paths,
+JSON control bodies are bounded at 16 KiB. Stored artifact identities are verified on every read;
+corruption returns an integrity conflict (409) before any artifact is exposed. Unknown parameters, uploaded datasets, client paths,
 import strings and unsupported model/horizon/schema combinations are refused. A semantically
 invalid dataset configuration fails in its worker with a durable diagnostic. Source POSTs still
 return 405. Frozen real replay evidence remains available at the unchanged read-only
 `GET /api/v1/paper/replay` and its existing pages; Model Lab never refits or rewrites that evidence.
 
-Validation: `python -m pytest tests/model_lab -q` — **52 passed** locally. The suites cover hash mutations, causal price
+Validation: `python -m pytest tests/model_lab -q` — **54 passed** locally. The suites cover hash mutations, causal price
 dependencies, holdout-before-read checks, temporal leakage and embargo, train-only transforms,
 serialized inference without labels, frozen model identities, separate worker PIDs, resource
 failures, cancellation, restart, queue ownership and the authenticated HTTP flow.

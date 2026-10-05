@@ -16,12 +16,12 @@
         "included": 182
       },
       "dataset_hash": "d67df70666d679f3927396d933bab36d7ff58cd7c4022b95b60da6bf52529b69",
-      "experiment_hash": "13300e4a723e2a1c6a6eb22f0860d7505deea716e5f123b5699b685a6ca6c802",
-      "experiment_id": "synthetic-exp-7683256140c9d47b13b53b10",
+      "experiment_hash": "adcc44c9edbfbebd8a2566acc466485100a85ae1740b87b9267db5497c088083",
+      "experiment_id": "synthetic-exp-0421fbc243f3e6d3344c5b58",
       "model_id": "synthetic-ridge-v1",
       "prediction_count": 80,
       "reproduction_count": 2,
-      "result_hash": "fe891750dc8d998637b1daeaec0e366c7927578263d5983a971c412db11c0f2b",
+      "result_hash": "52bf9fea5f2d552eeac1e8146703e54ec0e01f41d2437876ac224d70fc627832",
       "runtime": {
         "blas_threads": 1,
         "decimal_precision": 34,
@@ -42,7 +42,7 @@
           "platform/contracts.py": "3e9df25b8f28e4bc460f827443de763477f82ded17bce0ac410e1d99c77358b0",
           "platform/datasets.py": "37b9aca566081f367e2ace20852ef347c2f57b6f9e0b6ba92ef91e282d6097b2",
           "platform/experiments.py": "da6517b65c4ab75bdbdf93d6907c6c54f644dd62cca842175cf246970c548fd8",
-          "platform/jobs.py": "1451c70793bb17f295f5aec301503935099ffc7476442a0b386dd5241d3ab84c",
+          "platform/jobs.py": "035ecc87fa3f0af3e6c5cab64dd484d65020a8379e6bcb911ff91f5785ee645c",
           "platform/local_momentum.py": "e9f97a33bdcc1cf8fad4c9c98aedcd5194be21092bda3f2493e98ff237c097fe",
           "platform/prices.py": "1a9fef540fd4c8de96aeddaaf357a37993f63ad9e352bfcdbc1ada5cb8cb699d",
           "platform/snapshot.py": "afbe13c245a03860c7537336949c9953b82cdb2da46eedaf061f540825898a3f",
@@ -53,7 +53,7 @@
         },
         "xgboost": "3.4.1"
       },
-      "shadow_chain_hash": "edf44e4336d19e38c590891b45543cd29ea5aff206fec9d64b24b4103ae958c9",
+      "shadow_chain_hash": "2c34df36f0869abded2fcb2b9bad69976d956b0dfb68b975aa9ef525ceaf1c6c",
       "shadow_event_count": 364,
       "snapshot_count": 240,
       "worker_processes_isolated": true
@@ -73,12 +73,12 @@
         "included": 182
       },
       "dataset_hash": "d67df70666d679f3927396d933bab36d7ff58cd7c4022b95b60da6bf52529b69",
-      "experiment_hash": "8925785372c12991424e1fbe6353c374bbc7d2fb5bd7aa660d1d37a2a5e6a51f",
-      "experiment_id": "synthetic-exp-0a076fd3cd8e4b38de6506f1",
+      "experiment_hash": "106d3364b255a107769a6da0e0915354a2fd9fcd52171c748e0818d907f397ee",
+      "experiment_id": "synthetic-exp-3f04f5e7341f4830add98b0f",
       "model_id": "local-momentum-v1",
       "prediction_count": 80,
       "reproduction_count": 2,
-      "result_hash": "1f1eb2a69a0c2b630aa1d4a7db4b1b081ef3c9458760386158b9a303b24d4c7c",
+      "result_hash": "50421b98b319d6d9e8280b13b9a5f976a1638c846fcc540f27c5bf1e0d8a607a",
       "runtime": {
         "blas_threads": 1,
         "decimal_precision": 34,
@@ -99,7 +99,7 @@
           "platform/contracts.py": "3e9df25b8f28e4bc460f827443de763477f82ded17bce0ac410e1d99c77358b0",
           "platform/datasets.py": "37b9aca566081f367e2ace20852ef347c2f57b6f9e0b6ba92ef91e282d6097b2",
           "platform/experiments.py": "da6517b65c4ab75bdbdf93d6907c6c54f644dd62cca842175cf246970c548fd8",
-          "platform/jobs.py": "1451c70793bb17f295f5aec301503935099ffc7476442a0b386dd5241d3ab84c",
+          "platform/jobs.py": "035ecc87fa3f0af3e6c5cab64dd484d65020a8379e6bcb911ff91f5785ee645c",
           "platform/local_momentum.py": "e9f97a33bdcc1cf8fad4c9c98aedcd5194be21092bda3f2493e98ff237c097fe",
           "platform/prices.py": "1a9fef540fd4c8de96aeddaaf357a37993f63ad9e352bfcdbc1ada5cb8cb699d",
           "platform/snapshot.py": "afbe13c245a03860c7537336949c9953b82cdb2da46eedaf061f540825898a3f",
@@ -110,7 +110,7 @@
         },
         "xgboost": "3.4.1"
       },
-      "shadow_chain_hash": "13aea90864c39658a9bdcd9876b40387fb0ef56da0348ad29f67cc05837b181f",
+      "shadow_chain_hash": "6a8f12ec2ff37ef676a94b1108943a96d9b3e3e22788c215e10fbe0ee6ca74c6",
       "shadow_event_count": 364,
       "snapshot_count": 240,
       "worker_processes_isolated": true
@@ -131,5 +131,5 @@
     "data/models/paper_v2/ETH-USD.json": "eded8c50683f1c6e3b47caff2d4f5be6ee6916110ee97bc0429140e76e852a9b"
   },
   "validation_command": "python -m pytest tests/model_lab -q",
-  "validation_passed": 52
+  "validation_passed": 54
 }
