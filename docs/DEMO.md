@@ -52,6 +52,34 @@ To inspect the result in the existing cockpit Lab/monitoring views, start the re
 `/api/v1/ops/health` serves versions and operational telemetry. The new model-control listener is
 separate from this read-only presentation. Browser qualification remains the cockpit lane's task.
 
+## Cockpit walkthrough
+
+Start the read-only app against the demo registry (above) and the web dev server
+(`cd apps/web && npm ci && npm run dev`). Every page below only reads; nothing sends a write.
+
+1. **Events**: the FOMC/EDGAR snapshot at the store's own attested instant and horizon, with identity,
+   source health, items and the verified replay. Horizons stay separate per source.
+2. **Lab → Datasets** (unlock with the local operator token once): the synthetic dataset, its admissible
+   decisions and each exclusion reason. The page prepares commands; it does not send them.
+3. **Lab → Models**: declared capabilities of the internal model and the local adapter; frozen reference
+   versus demonstration models.
+4. **Lab → Experiments**: results against the baselines. The negative result is kept and labelled.
+5. **Lab → Predictions**: one record with its snapshot/feature evidence; outputs a model did not provide read
+   "not provided"; pending labels stay pending.
+6. **Lab → Monitoring**: missing data, technical degradation, drift and performance drop, kept apart, with the
+   sample and method behind every edge figure.
+7. **System → Operations health**: running versions, last operations, freshness, error codes, job and EDGAR
+   budgets, workers and API resources from `/api/v1/ops/health`. An unobserved value reads "not observed";
+   archive age is not a live-feed guarantee.
+8. **API docs**: the B2B main path with required permissions, links to `docs/API_B2B_V1.md`, the OpenAPI document and
+   `examples/b2b_client.py`. The cockpit holds no project key and sends no B2B request; run
+   `python -m examples.b2b_client --demo` for the same path over HTTP.
+
+Automated: `apps/web/src/test/journey.test.tsx` walks steps 1-8 in one mounted app on real-shaped responses and
+asserts no non-GET request; `ops-health.test.tsx` and `api-docs.test.tsx` cover the panel and the page
+(the latter checks every listed route and permission against `docs/artifacts/b2b_openapi_v1.json`).
+These run in jsdom: a browser check is still BLOCKED (no browser binary on this host).
+
 Qualification: `python -m pytest tests/ops_supervision -q`, plus the required source/API suites,
 shared snapshots/contracts, Model Lab and research tests. The CI workflow runs the new offline
 qualification without private archive inputs. Public demonstration evidence contains only

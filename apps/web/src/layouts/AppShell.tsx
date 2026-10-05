@@ -23,6 +23,7 @@ const NAV = [
   { to: '/lab', label: 'Lab', icon: '⚗' },
   { to: '/events', label: 'Events', icon: '◆' },
   { to: '/system', label: 'System', icon: '⚙' },
+  { to: '/api-docs', label: 'API docs', icon: '❯' },
   { to: '/settings', label: 'Settings', icon: '⚒' },
 ];
 

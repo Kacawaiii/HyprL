@@ -3,30 +3,8 @@ import { useQuery } from '../state/useQuery';
 import { Badge, CapabilityBadge, ErrorState, Hash, LoadingState } from '../components/States';
 import { ProductError } from '../components/ProductError';
 import type { HealthState } from '../api/types';
-
-/** Bytes for people. The exact figure is never the point on this page; the
- *  order of magnitude is. */
-function bytes(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '—';
-  if (value < 1024) return `${value} B`;
-  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
-  let size = value / 1024;
-  let index = 0;
-  while (size >= 1024 && index < units.length - 1) {
-    size /= 1024;
-    index += 1;
-  }
-  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[index]}`;
-}
-
-function duration(seconds: number | null | undefined): string {
-  if (!seconds || seconds < 0) return '—';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours) return `${hours}h ${minutes}m`;
-  if (minutes) return `${minutes}m`;
-  return `${Math.floor(seconds)}s`;
-}
+import { bytes, duration } from '../lib/ops';
+import { OpsHealthPanel } from './OpsHealthPanel';
 
 const TONE: Record<HealthState, 'ok' | 'warn' | 'off'> = {
   HEALTHY: 'ok',
@@ -244,6 +222,8 @@ export function SystemPage() {
           )}
         </section>
       )}
+
+      <OpsHealthPanel />
 
       <section className="card">
         <h2 className="card-title">Health</h2>

@@ -20,7 +20,7 @@ import type {
   BenchmarkDetail, BenchmarkSummary, CalendarsIndex, CandlePage, ChartSeries,
   Health, HealthHistory, InstrumentDetail, InstrumentSessions,
   InstrumentsIndex, MarketsIndex,
-  OpsRecovery, OpsRuntime, OpsSettings, OpsStorage, Overview,
+  OpsHealth, OpsRecovery, OpsRuntime, OpsSettings, OpsStorage, Overview,
   PortfolioAttribution, PortfolioBacktestsIndex, PortfolioDetail,
   PaperLegacy, PaperPortfolioEquity, PaperPortfolioPending,
   PaperPortfolioStatus, PortfolioEquity, PortfolioFillPage, PortfolioStatus,
@@ -218,6 +218,8 @@ export const apiClient = {
   getHealthHistory: (component?: string, limit?: number, signal?: AbortSignal) =>
     request<HealthHistory>(
       `/api/v1/ops/health-history${query({ component, limit })}`, signal),
+  getOpsHealth: (signal?: AbortSignal) =>
+    request<OpsHealth>('/api/v1/ops/health', signal),
   getOpsRuntime: (signal?: AbortSignal) =>
     request<OpsRuntime>('/api/v1/ops/runtime', signal),
   getOpsRecovery: (signal?: AbortSignal) =>

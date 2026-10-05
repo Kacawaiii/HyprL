@@ -40,6 +40,8 @@ const MonitoringView = lazy(() =>
   import('./pages/lab/MonitoringView').then((module) => ({ default: module.MonitoringView })));
 const HypothesesView = lazy(() =>
   import('./pages/lab/HypothesesView').then((module) => ({ default: module.HypothesesView })));
+const ApiDocsPage = lazy(() =>
+  import('./pages/ApiDocsPage').then((module) => ({ default: module.ApiDocsPage })));
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 
@@ -87,6 +89,10 @@ export function App() {
         <Route
           path="portfolio"
           element={<Suspense fallback={<LoadingState />}><PortfolioPage /></Suspense>}
+        />
+        <Route
+          path="api-docs"
+          element={<Suspense fallback={<LoadingState />}><ApiDocsPage /></Suspense>}
         />
         <Route
           path="settings"

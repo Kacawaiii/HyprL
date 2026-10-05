@@ -1338,3 +1338,115 @@ export interface PaperReplayFills {
   fills: PaperReplayFill[];
   page: ReplayPage;
 }
+
+/* --- operations health v1 (`GET /api/v1/ops/health`, schema hyprl-ops-health-v1) ---
+ *
+ * Read-only telemetry. A field the server could not observe is null or NOT_OBSERVED, never zero. */
+
+export type OpsServiceState = 'RUNNING' | 'STOPPED' | 'STALE' | 'FOREIGN';
+
+export interface OpsSpecVersion { hash: string | null; revision: number | null }
+
+export interface OpsRunningVersions {
+  git_sha: string | null;
+  implementation_hash: string | null;
+  api?: string;
+  specs: Record<string, OpsSpecVersion>;
+}
+
+export interface OpsSourceHealth {
+  state: string;
+  horizon?: string | null;
+  last_durable_activity?: string | null;
+  attested_as_of?: string | null;
+  age_seconds?: number | null;
+  read_only?: boolean;
+  spec_hash?: string;
+  counts?: Record<string, number> | null;
+  freshness_method?: string;
+  read_state?: string;
+  source_health?: Record<string, {
+    result_state: string | null;
+    reason: string | null;
+    check_at: string | null;
+  }> | null;
+}
+
+export interface OpsServiceHealth {
+  state: OpsServiceState;
+  pid: number | null;
+  reason?: string;
+  rss_bytes?: number | null;
+  running_versions: OpsRunningVersions | null;
+}
+
+export interface OpsOperation {
+  at: string | null;
+  action: 'start' | 'stop' | 'resume' | 'backup' | 'restore';
+  service: string;
+  state: 'COMPLETE' | 'BLOCKED' | 'UNKNOWN';
+  code: string | null;
+}
+
+export interface OpsWorkerBudgets {
+  jobs_limit: number;
+  jobs_used: number;
+  jobs_remaining: number;
+  artifact_bytes_limit: number;
+  artifact_bytes_used: number;
+  queue_limit: number;
+  queue_used: number;
+  worker_limit: number;
+}
+
+export interface OpsWorkers {
+  state: string;
+  states?: Record<string, number>;
+  workers: { pid: number | null; progress: number; limits: Record<string, unknown> }[];
+  errors?: string[];
+  budgets: OpsWorkerBudgets | null;
+}
+
+export interface OpsEdgarBudgets {
+  authorization_sha256: string;
+  requests_limit: number;
+  requests_used: number;
+  requests_remaining: number;
+  not_after: string;
+  terminated: boolean;
+  expired: boolean;
+  scope: string;
+}
+
+export interface OpsEdgarService {
+  state: string;
+  age_seconds?: number | null;
+  freshness_limit_seconds?: number;
+  grants_suspended?: boolean;
+  storage_incident?: boolean;
+  pending_incidents?: number | null;
+  budgets: OpsEdgarBudgets | null;
+}
+
+export interface OpsHealth {
+  schema: string;
+  read_only: boolean;
+  observed_at: string;
+  status: 'OBSERVED' | 'DEGRADED';
+  running_versions: OpsRunningVersions;
+  sources: Record<string, OpsSourceHealth>;
+  services: Record<string, OpsServiceHealth>;
+  last_operations: OpsOperation[];
+  errors: string[];
+  workers: OpsWorkers;
+  edgar_service: OpsEdgarService;
+  resources: {
+    scope: string;
+    api_pid: number;
+    api_rss_bytes: number | null;
+    api_cpu_seconds: number;
+    api_threads: number;
+    runtime_disk_free_bytes: number | null;
+  };
+  limitations: string[];
+}
