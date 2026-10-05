@@ -33,7 +33,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-asyncio pandas numpy requests cryptography \
-            scikit-learn xgboost joblib pandas_market_calendars==5.4.0
+            scikit-learn xgboost joblib pandas_market_calendars==5.4.0 \
+            jsonschema==4.26.0 openapi-spec-validator==0.9.0
       - name: Official-event suites
         run: |
           python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py \
@@ -45,6 +46,10 @@ jobs:
         run: python -m pytest tests/model_lab -q
       - name: Research registry, prediction ledger, monitoring and read-only API
         run: python -m pytest tests/research -q
+      - name: Project-scoped B2B auth, isolation, budgets, audit, exports and OpenAPI
+        run: |
+          python -m scripts.trading_lab.b2b.openapi --check
+          python -m pytest tests/b2b -q
       # Event features v1 and v2, protected intervals and the preregistered comparison protocol.
       - name: Event features and protocol suites
         run: |
