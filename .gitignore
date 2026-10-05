@@ -187,3 +187,6 @@ var/
 # Local release bundles are build output, not source. They are reproducible
 # from a commit, so committing 18 MB of them would only bloat the history.
 /dist/
+
+# Synthetic real-shaped trader API responses for the cockpit Vitest suite (see tests/trader_agent/export_views.py)
+!apps/web/src/test/traderFixtures.json
