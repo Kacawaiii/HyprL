@@ -27,17 +27,23 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       # Only what the suites import: the runtime floor (pandas, numpy, requests),
-      # cryptography (TLS tests) and the ml extra (the paper views import xgboost).
+      # cryptography (TLS tests), the ml extra (the paper views import xgboost) and the
+      # pinned equity calendar (research protection and comparison protocol suites).
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-asyncio pandas numpy requests cryptography \
-            scikit-learn xgboost joblib
+            scikit-learn xgboost joblib pandas_market_calendars==5.4.0
       - name: Official-event suites
         run: |
           python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py \
             tests/crypto/test_edgar_slice.py tests/crypto/test_app_api*.py tests/crypto/test_ops_server.py \
             tests/crypto/test_equity_api.py tests/api -q
+      # Event features v1 and v2, protected intervals and the preregistered comparison protocol.
+      - name: Event features and protocol suites
+        run: |
+          python -m pytest tests/crypto/test_event_features.py tests/crypto/test_event_features_v2.py \
+            tests/crypto/test_research_protection.py tests/crypto/test_comparison_protocol.py -q
       # The paper v2 model and replay, and the engine regressions they rely on
       # (dataset, walk-forward, signal, risk, economic backtest, paper engine).
       - name: Paper model, replay and engine suites
