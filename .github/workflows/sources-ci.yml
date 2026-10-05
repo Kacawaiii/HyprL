@@ -46,6 +46,8 @@ jobs:
         run: python -m pytest tests/model_lab -q
       - name: Research registry, prediction ledger, monitoring and read-only API
         run: python -m pytest tests/research -q
+      - name: Prospective paper trader, restricted runners, budgets, labels and API
+        run: python -m pytest tests/trader_agent -q
       - name: Project-scoped B2B auth, isolation, budgets, audit, exports and OpenAPI
         run: |
           python -m scripts.trading_lab.b2b.openapi --check

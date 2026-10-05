@@ -258,6 +258,8 @@ class AppApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
 
     def _dispatch(self, path: str, query: dict):
+        if path.startswith('/api/v1/trader/'):
+            return self.trader.dispatch(path, parse_qs(urlparse(self.path).query, keep_blank_values=True))
         if path == "/api/v1/ops/health":
             if query:
                 raise AppApiError("operations health does not accept query parameters")
@@ -558,7 +560,7 @@ class AppApiHandler(BaseHTTPRequestHandler):
 
 def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 dist_root=None, fomc_store=None, edgar_store=None,
-                model_lab_root=None, model_lab_token=None, research_root=None, ops_root=None):
+                model_lab_root=None, model_lab_token=None, research_root=None, ops_root=None, trader_root=None):
     """Build a loopback-bound read-only server over a fixed data root.
 
     ``dist_root`` turns on single-origin production mode. It is resolved once,
@@ -584,11 +586,12 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
         from scripts.trading_lab.ops.static_assets import StaticSite
         site = StaticSite(dist_root)
     from scripts.trading_lab.app_api.research import ResearchViews
+    from scripts.trading_lab.app_api.trader import TraderViews
     from scripts.trading_lab.ops.control import versions, local_path
     if ops_root is not None:
         ops_root = local_path(ops_root)
     handler = type("BoundAppApiHandler", (AppApiHandler,),
-                   {"service": service, "site": site, "research": ResearchViews(research_root),
+                   {"service": service, "site": site, "research": ResearchViews(research_root), "trader": TraderViews(trader_root),
                     "ops_root": ops_root, "running_versions": versions()})
     server = server_class((host, port), handler)
     if model_lab_root is not None:
@@ -612,6 +615,7 @@ def main(argv=None):  # pragma: no cover - entry point
     parser.add_argument("--dist-root", default=None,
                         help="serve a frontend build from the same origin")
     parser.add_argument("--research-root", default=None, help="private registry and observability store to read only")
+    parser.add_argument("--trader-root", default=None, help="private paper trader runtime to read only")
     parser.add_argument("--ops-root", default=None, help="read private operations telemetry under this worktree var")
     parser.add_argument("--model-lab-root", default=None,
                         help="opt-in private synthetic job state; requires HYPRL_MODEL_LAB_TOKEN and loopback")
@@ -633,7 +637,7 @@ def main(argv=None):  # pragma: no cover - entry point
                          fomc_store=arguments.fomc_store, edgar_store=arguments.edgar_store,
                          model_lab_root=arguments.model_lab_root,
                          model_lab_token=os.environ.get("HYPRL_MODEL_LAB_TOKEN"),
-                         research_root=arguments.research_root, ops_root=arguments.ops_root)
+                         research_root=arguments.research_root, ops_root=arguments.ops_root, trader_root=arguments.trader_root)
     if arguments.dist_root:
         print(f"HyprL on http://{arguments.host}:{arguments.port}/")
     else:

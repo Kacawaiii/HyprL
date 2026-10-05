@@ -1,0 +1,383 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "trader-decision-v1"
+    },
+    "run_id": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "session": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "decision_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "context_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "authorization_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "preregistration_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "skill_hashes": {
+      "type": "object",
+      "properties": {
+        "TRADER_SKILL.md": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "REVIEWER_SKILL.md": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "TRADER_SKILL.md",
+        "REVIEWER_SKILL.md"
+      ],
+      "additionalProperties": false
+    },
+    "models": {
+      "type": "object",
+      "properties": {
+        "analyst_claude": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "cli_version": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "reported_version": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "model",
+            "cli_version",
+            "reported_version"
+          ],
+          "additionalProperties": false
+        },
+        "analyst_gpt": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "cli_version": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "reported_version": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "model",
+            "cli_version",
+            "reported_version"
+          ],
+          "additionalProperties": false
+        },
+        "reviewer": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "cli_version": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "reported_version": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "model",
+            "cli_version",
+            "reported_version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "analyst_claude",
+        "analyst_gpt",
+        "reviewer"
+      ],
+      "additionalProperties": false
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "views": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "horizon": {
+            "enum": [
+              "1d",
+              "5d"
+            ]
+          },
+          "analyst": {
+            "enum": [
+              "analyst_claude",
+              "analyst_gpt",
+              "reviewer_claude",
+              "reviewer_gpt",
+              "consensus"
+            ]
+          },
+          "view": {
+            "enum": [
+              "UP",
+              "DOWN",
+              "ABSTAIN"
+            ]
+          },
+          "p_outperform": {
+            "type": "number",
+            "minimum": 0.2,
+            "maximum": 0.8
+          },
+          "verdict": {
+            "enum": [
+              "KEEP",
+              "DOWNGRADE",
+              "REJECT",
+              "ABSTAIN"
+            ]
+          },
+          "raw_view": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "asset": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "horizon": {
+                    "enum": [
+                      "1d",
+                      "5d"
+                    ]
+                  },
+                  "view": {
+                    "enum": [
+                      "UP",
+                      "DOWN",
+                      "ABSTAIN"
+                    ]
+                  },
+                  "p_outperform": {
+                    "type": "number",
+                    "minimum": 0.2,
+                    "maximum": 0.8
+                  },
+                  "confidence_reason": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "catalysts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "format": "uri",
+                          "maxLength": 2048
+                        },
+                        "published_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "fact": {
+                          "type": "string",
+                          "maxLength": 2000
+                        }
+                      },
+                      "required": [
+                        "url",
+                        "published_at",
+                        "fact"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 10
+                  },
+                  "priced_in_assessment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "second_order": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "counter_thesis": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "falsifier": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "event_risk": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "asset",
+                  "horizon",
+                  "view",
+                  "p_outperform",
+                  "confidence_reason",
+                  "catalysts",
+                  "priced_in_assessment",
+                  "second_order",
+                  "counter_thesis",
+                  "falsifier",
+                  "event_risk"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "review": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "analyst": {
+                    "enum": [
+                      "analyst_claude",
+                      "analyst_gpt"
+                    ]
+                  },
+                  "asset": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "horizon": {
+                    "enum": [
+                      "1d",
+                      "5d"
+                    ]
+                  },
+                  "verdict": {
+                    "enum": [
+                      "KEEP",
+                      "DOWNGRADE",
+                      "REJECT"
+                    ]
+                  },
+                  "reason_code": {
+                    "enum": [
+                      "supported",
+                      "unsupported",
+                      "priced_in",
+                      "generic",
+                      "counter_evidence",
+                      "overconfidence",
+                      "disagreement",
+                      "abstained"
+                    ]
+                  },
+                  "adjusted_p": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0.2,
+                        "maximum": 0.8
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "analyst",
+                  "asset",
+                  "horizon",
+                  "verdict",
+                  "reason_code",
+                  "adjusted_p",
+                  "note"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "asset",
+          "horizon",
+          "analyst",
+          "view",
+          "p_outperform",
+          "verdict",
+          "raw_view",
+          "review"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 500
+    }
+  },
+  "required": [
+    "schema",
+    "run_id",
+    "session",
+    "decision_at",
+    "context_hash",
+    "authorization_hash",
+    "preregistration_hash",
+    "skill_hashes",
+    "models",
+    "synthetic",
+    "views"
+  ],
+  "additionalProperties": false
+}
