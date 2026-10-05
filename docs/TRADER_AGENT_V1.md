@@ -164,6 +164,17 @@ Read-only API, opt in with `--trader-root "$TRADER_RUNTIME"` when starting the e
 | `/api/v1/trader/ledger?after=0&limit=100` | append-only PredictionRecord page; next_after continuation |
 | `/api/v1/trader/scorecard` | real-only scores, pending cohorts and multiple-testing register |
 | `/api/v1/trader/alerts?limit=100` | bounded private-runtime alert summaries |
+| `/api/v1/trader/runs?after=0&limit=100` | run summaries (status, reason, budget counts) without the decision body |
+| `/api/v1/trader/labels?after=0&limit=100` | append-only LabelRecord page, served apart from predictions; absent until a label is realized |
+| `/api/v1/trader/context?date=YYYY-MM-DD` | that day's prices, source URL/time/digest, exclusions and limitations; no headline text, no archive content |
+| `/api/v1/trader/series?limit=100` | one timestamped reference price per asset per run (not a price history) |
+| `/api/v1/trader/health` | the supervisor's `health.json` / `last-label.json` and the pause marker; a missing file is `null`, never healthy |
+| `/api/v1/trader/scorecard?synthetic=1` | the scorecard of a dry-run (synthetic) runtime; a real runtime holds no synthetic record |
+
+The cockpit's **Agent trader** view (`/trader`, Beginner and Expert) reads only these routes. Its Vitest fixtures,
+`apps/web/src/test/traderFixtures.json`, come from the synthetic runner through the API itself
+(`python -m tests.trader_agent.export_views apps/web/src/test/traderFixtures.json`); `tests/trader_agent/test_views.py`
+fails when they drift.
 
 POST/PUT/PATCH/DELETE remain refused by the existing API. Raw bodies, transcripts, credentials and
 runtime paths are never returned. Labels/execution histories are also available through the existing

@@ -29,6 +29,10 @@ import type {
   EdgarFilingDetail, EdgarReplay, EdgarSnapshotView, EdgarSourceStatus,
 } from './types';
 
+import type {
+  TraderAlerts, TraderContext, TraderHealth, TraderLabels, TraderLedger, TraderRuns, TraderScorecard, TraderSeries, TraderToday,
+} from './traderTypes';
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 /** Mirrors the server ceilings so the UI cannot compose an illegal request. */
@@ -135,6 +139,21 @@ export interface CandleQuery {
 }
 
 export const apiClient = {
+  /** The paper trader (read only, bounded). A dry-run runtime holds synthetic records; its scorecard needs `synthetic`. */
+  getTraderToday: (date: string | undefined, signal?: AbortSignal) =>
+    request<TraderToday>(`/api/v1/trader/today${query({ date })}`, signal),
+  getTraderRuns: (signal?: AbortSignal) => request<TraderRuns>(`/api/v1/trader/runs${query({ limit: 100 })}`, signal),
+  getTraderLedger: (after: number, limit: number, signal?: AbortSignal) =>
+    request<TraderLedger>(`/api/v1/trader/ledger${query({ after, limit })}`, signal),
+  getTraderLabels: (after: number, limit: number, signal?: AbortSignal) =>
+    request<TraderLabels>(`/api/v1/trader/labels${query({ after, limit })}`, signal),
+  getTraderScorecard: (synthetic: boolean, signal?: AbortSignal) =>
+    request<TraderScorecard>(`/api/v1/trader/scorecard${query({ synthetic: synthetic ? 1 : undefined })}`, signal),
+  getTraderAlerts: (signal?: AbortSignal) => request<TraderAlerts>(`/api/v1/trader/alerts${query({ limit: 200 })}`, signal),
+  getTraderContext: (date: string | undefined, signal?: AbortSignal) =>
+    request<TraderContext>(`/api/v1/trader/context${query({ date })}`, signal),
+  getTraderSeries: (signal?: AbortSignal) => request<TraderSeries>(`/api/v1/trader/series${query({ limit: 200 })}`, signal),
+  getTraderHealth: (signal?: AbortSignal) => request<TraderHealth>('/api/v1/trader/health', signal),
   getHealth: (signal?: AbortSignal) => request<Health>('/api/v1/health', signal),
   getSystem: (signal?: AbortSignal) =>
     request<import('./types').SystemInfo>('/api/v1/system', signal),

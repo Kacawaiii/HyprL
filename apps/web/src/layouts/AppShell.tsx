@@ -21,6 +21,7 @@ const NAV = [
   { to: '/portfolio', label: 'Portfolio', icon: '◈' },
   { to: '/research', label: 'Research', icon: '⌕' },
   { to: '/lab', label: 'Lab', icon: '⚗' },
+  { to: '/trader', label: 'Agent trader', icon: '◎' },
   { to: '/events', label: 'Events', icon: '◆' },
   { to: '/system', label: 'System', icon: '⚙' },
   { to: '/api-docs', label: 'API docs', icon: '❯' },

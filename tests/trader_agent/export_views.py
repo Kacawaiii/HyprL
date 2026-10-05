@@ -19,7 +19,7 @@ from scripts.trading_lab.trader_agent.service import TraderService
 from scripts.trading_lab.trader_agent.synthetic import Clock, SyntheticData, SyntheticRunner
 
 
-PAGE = 40
+PAGE = 50
 
 
 def grant_payload():
