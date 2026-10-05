@@ -172,3 +172,6 @@ observability API when its `--research-root` selects this runtime's `evidence/` 
 Validation: `python -m pytest tests/trader_agent -q`, followed by the AGENTS.md gate. The new suite is
 added to sources-ci without weakening existing steps. Deployment reports distinguish unavailable
 checks, excluded products and future real-run behavior from verified synthetic evidence.
+The release proof is [trader_agent_v1_evidence.json](artifacts/trader_agent_v1_evidence.json): only
+digests, identities, counts and synthetic outcomes. The existing 100,000-record / 256 MiB research
+store ceiling stays enforced; long-duration capacity and real inference behavior remain unproven.

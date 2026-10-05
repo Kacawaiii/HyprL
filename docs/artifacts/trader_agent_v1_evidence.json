@@ -1,0 +1,116 @@
+{
+  "schema": "trader-agent-v1-evidence",
+  "implementation_sha": "2b9df19",
+  "preregistration_hash": "d8f6468c3460794ad950cf87757da1544ee216b1efcbc6c7f736cf0d66e6665f",
+  "skill_hashes": {
+    "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
+    "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
+  },
+  "synthetic": {
+    "views": 320,
+    "labels_at_issue": 0,
+    "labels_realized": 320,
+    "verified_chain": {
+      "schema": "research-observability-store-v1",
+      "records": 1283,
+      "head_hash": "0e3a30126b3854fe20b625991d589894b905771156f49a84c3922d696911090b",
+      "verified": true
+    },
+    "source_network_requests": 0,
+    "external_model_calls": 0,
+    "user_service_result": "success"
+  },
+  "verification": {
+    "trader_cases": 45,
+    "trader_platform_research_passed": 179,
+    "gate_passed": 504,
+    "gate_blocked": [
+      "private official FOMC fixtures absent",
+      "FastAPI absent; legacy hyprl_api package absent from this branch"
+    ],
+    "web_changed": false
+  },
+  "runners": {
+    "claude_cli_version": "2.1.289",
+    "codex_cli_version": "0.160.0",
+    "offline_argument_probes_passed": 3,
+    "claude_tools": [
+      "WebSearch",
+      "WebFetch"
+    ],
+    "codex_shell_tool_feature": false,
+    "codex_unified_exec_disabled": false,
+    "cwd": "EMPTY_TEMPORARY_DIRECTORY",
+    "taint_rejects_command_and_file_events": true,
+    "real_invocations": 0
+  },
+  "timers": {
+    "scope": "user",
+    "run_first": "2026-10-06T12:00:00Z",
+    "run": "Mon-Fri 12:00 UTC",
+    "label": "Mon-Fri 21:30 UTC",
+    "health": "hourly :05 UTC",
+    "unit_hashes": {
+      "hyprl-trader-health.service": "83f84450d3a3aa57e4266c778635cc6307b28a32d2f6cd3b47b9d4572834ee49",
+      "hyprl-trader-health.timer": "4b533bce7d60faef3b480a7ac2bce10d701c03e211a627d615d6e8127db052d6",
+      "hyprl-trader-label.service": "c324ad71533ee938b5c664e9c179705786b7d5a515505c69546c95af3e1df614",
+      "hyprl-trader-label.timer": "a499e333be509172efd3fb7107b8832dcba3aaaf96131cdcd1caa2c607381074",
+      "hyprl-trader-run.service": "e296e7fd06c8ffb8abfc8e37478f390fd605ca40e7127ee41be100080434f8cb",
+      "hyprl-trader-run.timer": "7f981611711d14b6a312aa60205f6a50c4e03dc4e769b41a9d680d418370c0d3"
+    },
+    "health_service_result": "HEALTHY"
+  },
+  "archives": {
+    "fomc": {
+      "read_only": true,
+      "state": "FOMC_RESOLVED",
+      "binding": {
+        "policy": "FOMC_CURRENT_CONTENT_SELECTION_V1",
+        "spec_hash": "b9d2a5997434457b5ce947c22bf80d94013d27a0e0bdb4b6be4b04a4c0c01ece",
+        "mode": "DURABLE_OBSERVED",
+        "T": "2026-10-02T14:48:07.319660+00:00",
+        "H": 622,
+        "P": 606,
+        "read_state": "FOMC_RESOLVED",
+        "identity": "d9a2b3ccb4dea00fcd68706a4489ed27324d46b06c6e8149a5d1b959e764b5fa"
+      },
+      "selected_items": 17,
+      "scanned_items": 17,
+      "scan_truncated": false,
+      "archive_unchanged": true,
+      "fingerprint": {
+        "hash": "3ab72acd71c1f514b3cafaa2be7b16ba146b156f2aa14b2d6c9c27acbe0458cc",
+        "files": 50,
+        "bytes": 4682618
+      }
+    },
+    "edgar": {
+      "read_only": true,
+      "state": "EDGAR_RESOLVED",
+      "binding": {
+        "policy": "EDGAR_FILINGS_AS_OF_V1",
+        "spec_hash": "98828c552bd2ca50550c07d542d28382e1138eae6a32493ee247466b5ffee5ce",
+        "mode": "DURABLE_OBSERVED",
+        "T": "2026-10-04T02:04:55.301923+00:00",
+        "H": 26,
+        "P": 17,
+        "read_state": "EDGAR_RESOLVED",
+        "identity": "78e66fb1c5a6badc809d3bbab23931f188091db4c32b7aff8c1e1d7331345814"
+      },
+      "selected_items": 100,
+      "scanned_items": 161,
+      "scan_truncated": false,
+      "archive_unchanged": true,
+      "fingerprint": {
+        "hash": "ea6a4a8761bc89f67b071d94ca6dcf9cdb8c27a58aca7630cd3f6606d1139957",
+        "files": 3,
+        "bytes": 1107007
+      }
+    }
+  },
+  "protected_exclusions": {
+    "BTC-USD": "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85",
+    "ETH-USD": "bf95ee8577bbb3444fa14d964ff1db951910b693ff58ebdce8ecbda2eb24af85"
+  },
+  "scientific_evidence": "NONE; synthetic verification only; minimum prospective sample not reached"
+}
