@@ -6,7 +6,7 @@ import re
 
 from scripts.trading_lab.app_api.contracts import AppApiError
 from scripts.trading_lab.platform.contracts import digest
-from scripts.trading_lab.platform.jobs import JobRunner, ResourceLimits
+from scripts.trading_lab.platform.jobs import ArtifactIntegrityError, JobRunner, ResourceLimits
 
 
 class LabApiError(AppApiError):
@@ -83,6 +83,8 @@ class ModelLabApi:
             raise LabApiError("no such Model Lab endpoint", 404 if method in ("GET", "POST") else 405)
         except LabApiError:
             raise
+        except ArtifactIntegrityError:
+            raise LabApiError("Model Lab artifact integrity failure", 409) from None
         except KeyError:
             raise LabApiError("Model Lab resource not found", 404) from None
         except (TypeError, ValueError, OverflowError):

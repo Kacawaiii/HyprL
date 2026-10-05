@@ -106,6 +106,23 @@ def test_safe_error_codes_and_immutable_artifacts(tmp_path):
             runner.store.put_artifact("model", {"synthetic": False}, identity=key)
 
 
+@pytest.mark.parametrize("kind", ["model", "dataset"])
+def test_artifact_reads_detect_persistent_corruption(tmp_path, dataset, kind):
+    from copy import deepcopy
+    store = JobStore(tmp_path)
+    if kind == "dataset":
+        key = store.put_artifact(kind, dataset, identity=dataset["fingerprint"])
+        modified = deepcopy(dataset)
+        modified["rows"][0]["label"] = "999"
+    else:
+        key = store.put_artifact(kind, {"synthetic": True})
+        modified = {"synthetic": False}
+    with store.connect() as db:
+        db.execute("UPDATE artifacts SET payload=? WHERE hash=?", (json.dumps(modified), key))
+    with pytest.raises(ValueError, match="digest"):
+        store.artifact(key, kind=kind)
+
+
 @pytest.mark.parametrize("limits", [{"wall_seconds": 181}, {"cpu_seconds": 0}, {"memory_mb": 2048},
                                     {"output_mb": 64}, {"wall_seconds": True}])
 def test_resource_limit_validation(limits):

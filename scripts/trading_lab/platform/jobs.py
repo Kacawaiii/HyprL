@@ -27,6 +27,10 @@ MAX_PAYLOAD_BYTES = 65536
 MAX_ARTIFACT_BYTES = 24 * 1024 * 1024
 
 
+class ArtifactIntegrityError(ValueError):
+    """A stored artifact no longer matches its content identity."""
+
+
 @dataclass(frozen=True)
 class ResourceLimits:
     wall_seconds: int = 120
@@ -154,7 +158,18 @@ class JobStore:
             row = db.execute("SELECT payload FROM artifacts WHERE hash=? AND kind=?", (key, kind)).fetchone()
         if row is None:
             raise KeyError("unknown artifact")
-        return json.loads(row[0])
+        try:
+            payload = json.loads(row[0])
+            if kind == "dataset":
+                from scripts.trading_lab.platform.datasets import verify_dataset
+                actual = verify_dataset(payload).identity
+            else:
+                actual = sha256_canonical(payload)
+            if actual != key:
+                raise ValueError("artifact digest mismatch")
+        except (ValueError, TypeError, KeyError):
+            raise ArtifactIntegrityError("artifact digest mismatch") from None
+        return payload
 
     def finish(self, identifier, state, *, result_hash=None, error_code=None):
         if state not in TERMINAL:

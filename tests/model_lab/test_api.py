@@ -63,7 +63,7 @@ def test_authentication_origin_method_and_loopback_boundaries(tmp_path):
 
 
 def test_invalid_controls_and_payloads_never_expose_operator_paths(tmp_path):
-    with server_at(tmp_path) as (_, base):
+    with server_at(tmp_path) as (server, base):
         for payload in ({"synthetic": False}, {"synthetic": True, "provider_url": "synthetic-unsupported"},
                         {"synthetic": True, "store": str(tmp_path)}):
             code, response = request(base, "/api/v1/lab/datasets", method="POST", payload=payload)
@@ -76,6 +76,13 @@ def test_invalid_controls_and_payloads_never_expose_operator_paths(tmp_path):
         assert request(base, "/api/v1/lab/../snapshots")[0] == 404
         assert request(base, "/api/v1/lab/experiments", method="POST",
                        payload={"dataset_hash": "0" * 64, "entry_point": "arbitrary"})[0] == 400
+        store = server.RequestHandlerClass.lab.store
+        key = store.put_artifact("model", {"synthetic": True})
+        with store.connect() as db:
+            db.execute("UPDATE artifacts SET payload=? WHERE hash=?", ('{"synthetic":false}', key))
+        code, response = request(base, "/api/v1/lab/artifacts/model/" + key)
+        assert code == 409 and "integrity" in response["error"]
+        assert str(tmp_path) not in json.dumps(response)
 
 
 def test_http_dataset_experiment_results_and_cancel_use_workers(tmp_path, monkeypatch):
