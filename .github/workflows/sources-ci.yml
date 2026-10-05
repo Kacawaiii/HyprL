@@ -63,6 +63,12 @@ jobs:
           python -m pytest tests/crypto/test_edgar_supervised.py tests/crypto/test_edgar_closure.py -q
       - name: Offline operations, read-only health, backup/restore and reproducible demo
         run: python -m pytest tests/ops_supervision -q
+      # Local `hyprl` CLI (start/stop/status/doctor/export/import, store flags) and the
+      # per-product holdout guard: the proof of the local operations row, not run before.
+      - name: Local operations CLI and holdout guard suites
+        run: |
+          python -m pytest tests/crypto/test_ops_runtime.py tests/crypto/test_ops_export.py \
+            tests/crypto/test_hyprl_cli*.py tests/crypto/test_holdout_product_guard.py -q
       # The paper v2 model and replay, and the engine regressions they rely on
       # (dataset, walk-forward, signal, risk, economic backtest, paper engine).
       - name: Paper model, replay and engine suites

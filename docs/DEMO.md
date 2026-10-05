@@ -38,7 +38,8 @@ Monitoring arrivals use a fixed demonstration clock (`2026-08-01T00:00:00Z`); mo
 the existing fixed June synthetic prices/seed. SHA identities reproduce in the same numeric
 runtime. Different Python/numeric libraries or implementation digests can change the model
 identity and are bound by the existing experiment runtime contract. A repeat in a **new** directory
-preserves every prior run.
+preserves every prior run. The research registry `head_hash` is run-specific (the append-only ledger
+stamps wall-clock `recorded_at` on some records); its record count (859) and `verified: true` reproduce.
 
 Archive events are not attached to the June synthetic model rows. There is no admitted overlapping
 real price/event training population in this demonstration. Synthetic prices, model training,
@@ -56,6 +57,15 @@ separate from this read-only presentation. Browser qualification remains the coc
 
 Start the read-only app against the demo registry (above) and the web dev server
 (`cd apps/web && npm ci && npm run dev`). Every page below only reads; nothing sends a write.
+The Lab pages also need the demo's job state and a local token (otherwise `/api/v1/lab` answers 503,
+or 401 without the token); the token is a private value you choose, never committed:
+
+```bash
+export HYPRL_MODEL_LAB_TOKEN=<private local value>
+python -m scripts.trading_lab.app_api.server --host 127.0.0.1 \
+  --research-root var/trading_lab/demo-001/registry --model-lab-root var/trading_lab/demo-001/lab \
+  --fomc-store "$HYPRL_FOMC_ARCHIVE" --edgar-store "$HYPRL_EDGAR_ARCHIVE"   # archive flags optional
+```
 
 1. **Events**: the FOMC/EDGAR snapshot at the store's own attested instant and horizon, with identity,
    source health, items and the verified replay. Horizons stay separate per source.
