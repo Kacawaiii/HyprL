@@ -116,7 +116,7 @@ function Panel({ health }: { health: OpsHealth }) {
       <h3>Workers and budgets</h3>
       <dl style={{ margin: 0 }}>
         <Row label="Model Lab workers"><Badge tone={tone(workers.state)}>{workers.state}</Badge></Row>
-        {workers.workers.map((worker, index) => (
+        {(workers.workers ?? []).map((worker, index) => (
           <Row key={index} label={`Worker ${worker.pid ?? 'pid unknown'}`}>
             {Math.round(worker.progress * 100)}%
           </Row>

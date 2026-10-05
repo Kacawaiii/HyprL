@@ -30,6 +30,15 @@ beforeEach(() => invalidate());
 afterEach(() => vi.unstubAllGlobals());
 
 describe('operations health panel', () => {
+  it('renders the server shape when no worker or EDGAR service is configured', async () => {
+    // Served by scripts/trading_lab/ops/telemetry.py when nothing is configured: `{ state }` only.
+    open({ ...opsHealth, workers: { state: 'NOT_CONFIGURED' }, edgar_service: { state: 'NOT_CONFIGURED' } });
+    const panel = await screen.findByRole('region', { name: 'Operations health' });
+    expect(await within(panel).findByTestId('ops-status')).toHaveTextContent('OBSERVED');
+    expect(within(panel).getAllByText('NOT_CONFIGURED').length).toBeGreaterThanOrEqual(2);
+    expect(within(panel).getByText('Job budgets').nextSibling).toHaveTextContent('not observed');
+  });
+
   it('shows versions, operations, freshness, budgets, workers and resources', async () => {
     const fetchMock = open(opsHealth);
     const panel = await screen.findByRole('region', { name: 'Operations health' });

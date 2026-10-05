@@ -1399,12 +1399,13 @@ export interface OpsWorkerBudgets {
   worker_limit: number;
 }
 
+/** A NOT_CONFIGURED worker or EDGAR service is served as `{ state }` alone: every other field is optional. */
 export interface OpsWorkers {
   state: string;
   states?: Record<string, number>;
-  workers: { pid: number | null; progress: number; limits: Record<string, unknown> }[];
+  workers?: { pid: number | null; progress: number; limits: Record<string, unknown> }[];
   errors?: string[];
-  budgets: OpsWorkerBudgets | null;
+  budgets?: OpsWorkerBudgets | null;
 }
 
 export interface OpsEdgarBudgets {
@@ -1425,7 +1426,7 @@ export interface OpsEdgarService {
   grants_suspended?: boolean;
   storage_incident?: boolean;
   pending_incidents?: number | null;
-  budgets: OpsEdgarBudgets | null;
+  budgets?: OpsEdgarBudgets | null;
 }
 
 export interface OpsHealth {
