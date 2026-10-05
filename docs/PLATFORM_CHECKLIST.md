@@ -1,8 +1,8 @@
 # HyprL platform checklist
 
 Single source of truth for what the platform does **today**, what is buildable now, what waits for data or an
-authorization, and what is future. Written 2026-10-05 against `origin/feat/phase5` = `d744ba3` (CI run
-`37233200078`, success). Rows are updated by the slice that changes them.
+authorization, and what is future. Written 2026-10-05 against `origin/feat/phase5` = `caa5bfc` (CI run
+`37250006768`, success; code identical to `d744ba3`, run `37233200078`). Rows are updated by the slice that changes them.
 
 States: **DONE** (the path works *and* its proof exists), **IN_PROGRESS**, **BLOCKED**, **WAITING_DATA**,
 **WAITING_AUTHORIZATION**, **NOT_STARTED**. A skipped or unrunnable check is BLOCKED, never a pass. "Branch/SHA" is
@@ -33,7 +33,8 @@ Proof shorthand: **GATE** = the AGENTS.md Python suites (`tests/crypto/test_fomc
 | Paper model v2 (trained to 2026-04-30) and out-of-sample replay | DONE as a mechanism; result is **no edge** | paper engine | phase5@d744ba3 | `tests/crypto/test_paper_model_v2.py`, `test_paper_replay.py`; spec hash `76fbec5a…d1d038`; `docs/PAPER_REPLAY_OOS_V2.md`: rank IC −0.073 (BTC) / −0.079 (ETH), ETH one losing round trip | none; not a commercial claim (see MORNING limits) |
 | Equity research / benchmark v1 (AAPL, MSFT, NVDA, QQQ, exploratory) | DONE as exploratory | equity corpus | phase5@d744ba3 | `docs/artifacts/equity_benchmark_v1_results.json` result hash `664782bc…98291b`; `tests/crypto/test_equity_*.py` | equity is the exploratory arm of this campaign (section 3) |
 | Point-in-time join of attested events to decision times, event features v1, coverage matrix | DONE (offline); no price window overlaps attested coverage | FOMC/EDGAR snapshots | phase5@d744ba3 (`0fa3de9`, `af20f28`) | `tests/crypto/test_event_features.py` (24 cases, GATE+ 528 passed / 2 skipped); matrix identity `a5382f91…917d4`; `docs/EVENT_FEATURES_V1.md` | prices-only vs prices+events comparison needs data (section 3) |
-| CI (`sources-ci`: Python gate, paper/engine suites, web job with build) | DONE | none | phase5@d744ba3 | run `37233200078` success on `d744ba3` | extend with each new suite |
+| CI (`sources-ci`: Python gate, paper/engine suites, web job with build) | DONE | none | phase5@caa5bfc | runs `37233200078` (`d744ba3`) and `37250006768` (`caa5bfc`) success | extend with each new suite |
+| Unified platform checklist (this document) | DONE | none | phase5@caa5bfc | GATE 504 passed / 2 skipped (351 s, doc-only slice); CI `37250006768` success | each slice updates its rows |
 | Source read documentation | DONE | none | phase5@d744ba3 | `docs/OFFICIAL_EVENT_SOURCES.md`, per-source registries | none |
 
 ## 2. Buildable now (no new data, no new authorization)
