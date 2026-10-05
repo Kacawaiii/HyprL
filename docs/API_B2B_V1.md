@@ -225,6 +225,12 @@ audit denials/successes and tamper detection, export rights, native synthetic so
 causal/pinned revision selection, integrity failures and unchanged archive bytes, the complete
 HTTP client flow and worker isolation. Generated OpenAPI is standard-validated; HTTP responses
 are checked against its schemas. `sources-ci` adds this suite without weakening any existing step.
+The final local B2B/archive run passed all 26 tests; the broader platform/lab/research/provider
+run passed 317. Required GATE passed 504 tests with two legacy checks still BLOCKED (private
+FOMC fixtures and the absent `hyprl_api` package). The merged cockpit passed typecheck, lint
+and 209 Vitest cases. The initial default-thread FOMC redirect-journal run failed; the original
+upstream source-store implementation and all seven journal tests passed with numerical-library
+threads limited to one, followed by the complete unchanged GATE passing with that resource setting.
 
 Monitoring reads a configured private project ResearchStore and returns 503 when absent. Worker
 experiments produce prediction records immediately; publishing them to an observability archive
