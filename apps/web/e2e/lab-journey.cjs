@@ -112,11 +112,15 @@ async function journey(browser) {
   await shot(page, '3-monitoring');
   pass('monitoring job ran on the experiment predictions; diagnosis shown with limitations');
 
-  // Cancel: a long dataset job, cancelled from the page before it publishes.
+  // Cancel: with one worker, a second long dataset waits QUEUED behind the first, so a fast runner
+  // cannot finish it before the page shows its cancel control. It is cancelled before it publishes.
   await page.getByRole('link', { name: 'Datasets', exact: true }).click();
   await page.getByLabel(/Hourly bars/).fill('600');
   await page.getByRole('button', { name: 'Build dataset' }).click();
   await page.getByText(/queued in an isolated worker/).waitFor();
+  await page.getByLabel(/Seed/).fill('8');
+  await page.getByRole('button', { name: 'Build dataset' }).click();
+  await page.getByLabel('Dataset jobs').getByText('QUEUED').first().waitFor();
   await page.getByRole('button', { name: 'Cancel this job' }).click();
   await page.getByText(/Cancellation recorded/).waitFor();
   await page.getByLabel('Dataset jobs').getByText('CANCELLED').first().waitFor({ timeout: 60_000 });
