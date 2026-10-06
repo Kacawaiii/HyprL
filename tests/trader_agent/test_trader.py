@@ -585,3 +585,18 @@ def test_catchup_refused_too_close_to_the_close(service, clock):
     service.ledger.reserve('run')
     clock.at = instant('2026-10-06T19:00:00Z')                                          # less than 80 min to the close
     assert service.run(catchup=True)['error'] == 'MISSED_DECISION_DEADLINE'
+
+
+def test_catchup_refused_once_any_model_was_called(service, clock):
+    clock.at = instant('2026-10-06T15:00:00Z')
+    service.ledger.reserve('run')
+    service.ledger.reserve('analyst_claude')                                            # a model call was made: no recovery
+    assert service.run(catchup=True)['error'] == 'CATCHUP_NOT_ALLOWED'
+
+
+def test_close_entry_window_is_strictly_after_the_decision_and_equities_only():
+    from scripts.trading_lab.trader_agent.data import label_window
+    entry, exit_1d = label_window('AAPL', '2026-10-06', '1d', ['BTC-USD'], 'close')
+    assert entry.isoformat().startswith('2026-10-06T20:00:00') and exit_1d.isoformat().startswith('2026-10-07T20:00:00')
+    with pytest.raises(TraderError, match='UNSUPPORTED_ENTRY'):
+        label_window('BTC-USD', '2026-10-06', '1d', ['BTC-USD'], 'close')
