@@ -1,0 +1,115 @@
+{
+  "schema": "calibration-risk-policy-evidence-v1",
+  "synthetic": true,
+  "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+  "report_identity": "51178d989ef13a5844b9fc8454813b56907d75938e7d55e79577b00c2e35448e",
+  "reproductions": 2,
+  "real_fits": 0,
+  "external_model_calls": 0,
+  "official_source_requests": 0,
+  "orders": 0,
+  "frozen_reference_mutations": 0,
+  "products": [
+    {
+      "product": "BTC-USD",
+      "dataset_hash": "5527cf1d4133122eb594c2b06a362b3093649443dd3b8137ecffb42d6963da8c",
+      "model_contract_hash": "114aaaae05d3742a42b0f3ac6f6bd6fcb48d6be6217341d75a47a6365f92e59c",
+      "test_count": 160,
+      "folds": [
+        {
+          "calibration_hash": "09127750a0e8c3d3c9bd636cf434a20439b8e4d53aa5a8ba78422caf0c059e4e",
+          "train_population_hash": "f9fa7a0f0b4014a1482d325c0d414282ec6aef3d14202bc5a1587ceeccfa42c3",
+          "train_count": 296,
+          "test_population_hash": "dd118fcf19801d444c7fe93880008d61567a978ed41bc87bd734b61f7adfb707",
+          "test_count": 80
+        },
+        {
+          "calibration_hash": "e608ba5e9b8184aa7c7e8f5575581b4eb4403977b1acaddd103b1c77a46d7b8d",
+          "train_population_hash": "a52ee1c69e75e0444c501c4d10f4d40cd66c8550e950d2e0e940980b5a2f137d",
+          "train_count": 376,
+          "test_population_hash": "ed32c6e1558f8d52d63bc7aff1108f0c9be86679f8064b37d2a3a21d17bb7bd4",
+          "test_count": 80
+        }
+      ]
+    },
+    {
+      "product": "ETH-USD",
+      "dataset_hash": "c72ce604b1e4a873f481f4a377c60fefe9ed7597b144809084afc024bf4ff81e",
+      "model_contract_hash": "114aaaae05d3742a42b0f3ac6f6bd6fcb48d6be6217341d75a47a6365f92e59c",
+      "test_count": 160,
+      "folds": [
+        {
+          "calibration_hash": "4aaa2c45a169444dd3671423505e4d312dc15895fbf08f66a8db14152e832dfc",
+          "train_population_hash": "14fb595f2eff9803f627f076eeaad82e2c6761716edc2d17ff7bc812907468cc",
+          "train_count": 296,
+          "test_population_hash": "7a0639cc6ad3599587ed36fe593bf89e2a124d5f10c8d07541fd4608e5ccac54",
+          "test_count": 80
+        },
+        {
+          "calibration_hash": "91acf256c2fc8cb12e314958084611599c29880e0e9fb36240103658de036f62",
+          "train_population_hash": "fb59d2b9ed05569a44e2c92110eda318afcfe79a26b63022cdbb401a51f4f7bd",
+          "train_count": 376,
+          "test_population_hash": "3ef1c22626cdbb7b479fbccb112d55a4698b48bec0484d2b8aef91c6f704099c",
+          "test_count": 80
+        }
+      ]
+    }
+  ],
+  "simulations": [
+    {
+      "plan_hash": "fd2c45752c98ddbc3ce3da6d4ea7741277a2924c25c784ff8e62e7a3d27513ff",
+      "result_hash": "dc372dd7b82b0da59eec3727cc181758c5b5fce093a62c8e1dfb2659d7df4d43",
+      "observed_population_hash": "9caafcf082589ea02e240ec2ed8357dcfcce5e3cdf2fdc95b9d713a1ca469b07",
+      "bars_observed": 1,
+      "ambiguous": true
+    },
+    {
+      "plan_hash": "2c136088bf24ef47992785d90f70bf041619553f467747c4ada07f87f9cc54d2",
+      "result_hash": "c39ba4b8eb269bf0b4185ca9d0a2dae17cd1aa5602ddc9b674d75877c5814e47",
+      "observed_population_hash": "4677ca6c61918ec187b739cd5a6e7117f2c36af1fadf7f53e9cbed2e8ad74bf1",
+      "bars_observed": 1,
+      "ambiguous": false
+    },
+    {
+      "plan_hash": "ad3f350093fb728982cc2c94cb4ebbd23fccb80fa04a75d4dca30ec6b9364382",
+      "result_hash": "6399092e9a6332ec0e56279dabdb505427f8845ebce4eae3782785f8e8bca967",
+      "observed_population_hash": "7ba0f7bb877989e05bbf6c23a763b5969c2dea0dd51031d72587463a8486714a",
+      "bars_observed": 1,
+      "ambiguous": false
+    },
+    {
+      "plan_hash": "9118a0b266d3c75545a16060eaf1ff9ebfa35ca37beb3306fc8d998098af6aa1",
+      "result_hash": "6d25e373249aac584518355d5475a557078672c3103ca38e7763563ddc844af4",
+      "observed_population_hash": "9caafcf082589ea02e240ec2ed8357dcfcce5e3cdf2fdc95b9d713a1ca469b07",
+      "bars_observed": 1,
+      "ambiguous": true
+    },
+    {
+      "plan_hash": "a52f1676bcad532570719524855f2228dcc195fb7e5df5569774c0e5d089f605",
+      "result_hash": "cf4ab5c3ebe0dec8a8e4836fa6df00fab67fc7d11ee5b2f57756e114bf6607d8",
+      "observed_population_hash": "4677ca6c61918ec187b739cd5a6e7117f2c36af1fadf7f53e9cbed2e8ad74bf1",
+      "bars_observed": 1,
+      "ambiguous": false
+    },
+    {
+      "plan_hash": "bd3070acd594cbbe4bc24dc7436e423934a99a50f6d86e095e171bb6d584d9a1",
+      "result_hash": "348c2355391b1234b370693a562a47c5576d04dc5ff036ddd6dcdca6911fc500",
+      "observed_population_hash": "7ba0f7bb877989e05bbf6c23a763b5969c2dea0dd51031d72587463a8486714a",
+      "bars_observed": 1,
+      "ambiguous": false
+    }
+  ],
+  "browser": {
+    "assertions": 9,
+    "viewports": 2,
+    "page_errors": 0,
+    "screenshots": [
+      {
+        "sha256": "5c57057af31f0a0d085782f905c734d6996cfe05ed8c3f5c28f3c990e4daf121"
+      },
+      {
+        "sha256": "6c62b4c97b27b7000c1b2d3d2ebd799757c7dd64e35774010aac6f1aa0b3029d"
+      }
+    ]
+  }
+}

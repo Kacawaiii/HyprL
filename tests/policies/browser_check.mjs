@@ -13,7 +13,8 @@ mkdirSync(temporary, { recursive: true });
 process.env.TMPDIR = temporary;
 const require = createRequire(path.join(runtime, 'package.json'));
 const { chromium: playwright } = require('playwright-core');
-const chromium = require('@sparticuz/chromium');
+const chromiumModule = require('@sparticuz/chromium');
+const chromium = chromiumModule.default ?? chromiumModule;
 const browser = await playwright.launch({ args: chromium.args, executablePath: await chromium.executablePath(), headless: true });
 try {
   const context = await browser.newContext({ viewport: { width: 1365, height: 900 }, reducedMotion: 'reduce' });
@@ -36,7 +37,8 @@ try {
   await page.screenshot({ path: path.join(runtime, 'mobile.png'), fullPage: true });
   const width = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: innerWidth }));
   assert.ok(width.scroll <= width.width, JSON.stringify(width));
-  await page.getByRole('combobox').focus();
+  await page.getByRole('button', { name: 'Beginner', exact: true }).focus();
+  for (let step = 0; step < 3; step++) await page.keyboard.press('Tab');
   assert.equal(await page.getByRole('combobox').evaluate(el => el === document.activeElement), true);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ state: 'PASS', synthetic: true, assertions: 9, viewports: 2, browser: await browser.version(), page_errors: errors.length }));
