@@ -1,0 +1,2069 @@
+{
+  "definitions": {
+    "schema": "calibration-risk-definitions-v1",
+    "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+    "spec": {
+      "schema": "calibration-risk-policy-spec-v1",
+      "revision": 1,
+      "calibration": {
+        "method": "isotonic-pav-step-v1",
+        "event": "forward_return_gt_zero",
+        "fit_population": "walk-forward train only; realized and available labels strictly before validation",
+        "min_train": 100,
+        "min_class": 25,
+        "min_distinct_scores": 5,
+        "extrapolation": "clip to endpoint; right-continuous step between fitted scores",
+        "diagnostics": "held-out test only; ten equal-width bins; empty bins null",
+        "min_evaluation": 50,
+        "min_evaluation_class": 10,
+        "brier": "binary mean squared error; Murphy decomposition of bin-mean forecasts; raw Brier includes binning residual",
+        "real_fit": "WAITING_AUTHORIZATION"
+      },
+      "risk": {
+        "method": "fixed-entry-distance-v1",
+        "take_profit_fraction": "0.02",
+        "stop_loss_fraction": "0.01",
+        "optimized": false,
+        "precedence": "each valid strategy level overrides its policy fallback; strategy identity and method required",
+        "gap": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+        "missing_bars": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+        "intrabar": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+        "entry": "explicit paper entry fill; levels active from entry time; only fully subsequent OHLC bars",
+        "expiry": "close at last complete bar at stated horizon; future bars unavailable at read time stay pending",
+        "costs": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+        "modes": [
+          "PAPER",
+          "SHADOW"
+        ],
+        "reference_mutation": false
+      }
+    },
+    "read_only": true,
+    "real_calibration": "WAITING_AUTHORIZATION",
+    "frozen_references_modified": false
+  },
+  "view": {
+    "schema": "calibration-risk-report-view-v1",
+    "read_only": true,
+    "state": "AVAILABLE",
+    "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+    "identity": "51178d989ef13a5844b9fc8454813b56907d75938e7d55e79577b00c2e35448e",
+    "selection_hash": "51178d989ef13a5844b9fc8454813b56907d75938e7d55e79577b00c2e35448e",
+    "report": {
+      "schema": "calibration-risk-report-v1",
+      "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+      "synthetic": true,
+      "calibrations": [
+        {
+          "product": "BTC-USD",
+          "synthetic": true,
+          "model": {
+            "schema": "model-contract-v1",
+            "model_id": "synthetic-binary-score-v1",
+            "version": "1",
+            "inputs": {
+              "synthetic_score": "float [0,1]"
+            },
+            "outputs": {
+              "return": null,
+              "target_price": null,
+              "class": null,
+              "probabilities": {
+                "event": "forward_return_gt_zero",
+                "method": "synthetic-score-generator-v1",
+                "calibrated": false
+              },
+              "quantiles": null,
+              "scenarios": null
+            },
+            "horizons_seconds": [
+              14400
+            ],
+            "capabilities": [
+              "predict",
+              "infer"
+            ],
+            "limits": {
+              "max_rows": 10000
+            },
+            "implementation_version": "synthetic-score-generator-v1",
+            "synthetic": true
+          },
+          "model_contract_hash": "114aaaae05d3742a42b0f3ac6f6bd6fcb48d6be6217341d75a47a6365f92e59c",
+          "dataset_hash": "5527cf1d4133122eb594c2b06a362b3093649443dd3b8137ecffb42d6963da8c",
+          "walk_forward": {
+            "schema_version": "trading-lab.walk-forward.v1",
+            "min_train_rows": 300,
+            "validation_rows": 40,
+            "test_rows": 80,
+            "step_rows": 80,
+            "purge_rows": 4
+          },
+          "folds": [
+            {
+              "artifact": {
+                "schema": "probability-calibration-v1",
+                "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "method": "isotonic-pav-step-v1",
+                "event": "forward_return_gt_zero",
+                "fold_index": 0,
+                "fitted_at": "2026-06-13T12:00:00+00:00",
+                "validation_start": "2026-06-13T12:00:00+00:00",
+                "train": {
+                  "split": "train",
+                  "count": 296,
+                  "class_counts": [
+                    154,
+                    142
+                  ],
+                  "first": "2026-06-01T00:00:00+00:00",
+                  "last": "2026-06-13T07:00:00+00:00",
+                  "last_label_available_at": "2026-06-13T11:00:00+00:00",
+                  "population_hash": "f9fa7a0f0b4014a1482d325c0d414282ec6aef3d14202bc5a1587ceeccfa42c3"
+                },
+                "binding": {
+                  "product": "BTC-USD",
+                  "model_id": "synthetic-binary-score-v1",
+                  "artifact_hash": "4c91ae374879eef988d460e311d764079e5e4dca2dd612896d7414c35890746e",
+                  "horizon_seconds": 14400,
+                  "synthetic": true
+                },
+                "knots": [
+                  [
+                    0.05555555555555555,
+                    0.2222222222222222
+                  ],
+                  [
+                    0.1111111111111111,
+                    0.25
+                  ],
+                  [
+                    0.16666666666666666,
+                    0.25
+                  ],
+                  [
+                    0.2222222222222222,
+                    0.3148148148148148
+                  ],
+                  [
+                    0.2777777777777778,
+                    0.3148148148148148
+                  ],
+                  [
+                    0.3333333333333333,
+                    0.3148148148148148
+                  ],
+                  [
+                    0.3888888888888889,
+                    0.37142857142857144
+                  ],
+                  [
+                    0.4444444444444444,
+                    0.37142857142857144
+                  ],
+                  [
+                    0.5,
+                    0.5
+                  ],
+                  [
+                    0.5555555555555556,
+                    0.5
+                  ],
+                  [
+                    0.6111111111111112,
+                    0.6
+                  ],
+                  [
+                    0.6666666666666666,
+                    0.6
+                  ],
+                  [
+                    0.7222222222222222,
+                    0.6
+                  ],
+                  [
+                    0.7777777777777778,
+                    0.6
+                  ],
+                  [
+                    0.8333333333333334,
+                    0.6
+                  ],
+                  [
+                    0.8888888888888888,
+                    0.8823529411764706
+                  ],
+                  [
+                    0.9444444444444444,
+                    0.9411764705882353
+                  ]
+                ],
+                "synthetic": true
+              },
+              "calibration_hash": "09127750a0e8c3d3c9bd636cf434a20439b8e4d53aa5a8ba78422caf0c059e4e",
+              "test": {
+                "first": "2026-06-15T04:00:00+00:00",
+                "last": "2026-06-18T11:00:00+00:00",
+                "count": 80,
+                "population_hash": "dd118fcf19801d444c7fe93880008d61567a978ed41bc87bd734b61f7adfb707"
+              },
+              "raw": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 5,
+                    "mean_probability": 0.05555555555555556,
+                    "observed_frequency": 0.2
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 10,
+                    "mean_probability": 0.1388888888888889,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 10,
+                    "mean_probability": 0.25,
+                    "observed_frequency": 0.2
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 10,
+                    "mean_probability": 0.3611111111111111,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 5,
+                    "mean_probability": 0.4444444444444445,
+                    "observed_frequency": 0.6
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 10,
+                    "mean_probability": 0.5277777777777778,
+                    "observed_frequency": 0.8
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 10,
+                    "mean_probability": 0.638888888888889,
+                    "observed_frequency": 0.9
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 8,
+                    "mean_probability": 0.75,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 8,
+                    "mean_probability": 0.8611111111111112,
+                    "observed_frequency": 0.625
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 4,
+                    "mean_probability": 0.9444444444444444,
+                    "observed_frequency": 0.75
+                  }
+                ],
+                "brier": 0.2422067901234568,
+                "binned_brier": 0.24087577160493825,
+                "reliability": 0.045563271604938275,
+                "resolution": 0.05218750000000001,
+                "uncertainty": 0.2475,
+                "binning_residual": 0.0013310185185185508,
+                "state": "AVAILABLE"
+              },
+              "calibrated": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 15,
+                    "mean_probability": 0.24074074074074076,
+                    "observed_frequency": 0.3333333333333333
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 25,
+                    "mean_probability": 0.33746031746031746,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 10,
+                    "mean_probability": 0.5,
+                    "observed_frequency": 0.8
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 22,
+                    "mean_probability": 0.6,
+                    "observed_frequency": 0.7272727272727273
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 4,
+                    "mean_probability": 0.8823529411764706,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 4,
+                    "mean_probability": 0.9411764705882353,
+                    "observed_frequency": 0.75
+                  }
+                ],
+                "brier": 0.2363220807022882,
+                "binned_brier": 0.24075854139767747,
+                "reliability": 0.02767142018555624,
+                "resolution": 0.0344128787878788,
+                "uncertainty": 0.2475,
+                "binning_residual": -0.004436460695389277,
+                "state": "AVAILABLE"
+              },
+              "sample": {
+                "decision_at": "2026-06-18T11:00:00+00:00",
+                "raw_probability": 0.6666666666666666,
+                "calibrated_probability": 0.6,
+                "event": "forward_return_gt_zero",
+                "horizon_seconds": 14400,
+                "origin": "synthetic-binary-score-v1",
+                "method": "isotonic-pav-step-v1",
+                "calibration_hash": "09127750a0e8c3d3c9bd636cf434a20439b8e4d53aa5a8ba78422caf0c059e4e",
+                "artifact_hash": "4c91ae374879eef988d460e311d764079e5e4dca2dd612896d7414c35890746e",
+                "fold_index": 0,
+                "prediction_hash": "1a0d90b4d3ed0bb67d0003072c5f5fab96ba8109f6c427aafd488a3be1f5e04d"
+              }
+            },
+            {
+              "artifact": {
+                "schema": "probability-calibration-v1",
+                "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "method": "isotonic-pav-step-v1",
+                "event": "forward_return_gt_zero",
+                "fold_index": 1,
+                "fitted_at": "2026-06-16T20:00:00+00:00",
+                "validation_start": "2026-06-16T20:00:00+00:00",
+                "train": {
+                  "split": "train",
+                  "count": 376,
+                  "class_counts": [
+                    193,
+                    183
+                  ],
+                  "first": "2026-06-01T00:00:00+00:00",
+                  "last": "2026-06-16T15:00:00+00:00",
+                  "last_label_available_at": "2026-06-16T19:00:00+00:00",
+                  "population_hash": "a52ee1c69e75e0444c501c4d10f4d40cd66c8550e950d2e0e940980b5a2f137d"
+                },
+                "binding": {
+                  "product": "BTC-USD",
+                  "model_id": "synthetic-binary-score-v1",
+                  "artifact_hash": "4c91ae374879eef988d460e311d764079e5e4dca2dd612896d7414c35890746e",
+                  "horizon_seconds": 14400,
+                  "synthetic": true
+                },
+                "knots": [
+                  [
+                    0.05555555555555555,
+                    0.21739130434782608
+                  ],
+                  [
+                    0.1111111111111111,
+                    0.26666666666666666
+                  ],
+                  [
+                    0.16666666666666666,
+                    0.26666666666666666
+                  ],
+                  [
+                    0.2222222222222222,
+                    0.3181818181818182
+                  ],
+                  [
+                    0.2777777777777778,
+                    0.3409090909090909
+                  ],
+                  [
+                    0.3333333333333333,
+                    0.3409090909090909
+                  ],
+                  [
+                    0.3888888888888889,
+                    0.3409090909090909
+                  ],
+                  [
+                    0.4444444444444444,
+                    0.3409090909090909
+                  ],
+                  [
+                    0.5,
+                    0.5227272727272727
+                  ],
+                  [
+                    0.5555555555555556,
+                    0.5227272727272727
+                  ],
+                  [
+                    0.6111111111111112,
+                    0.6181818181818182
+                  ],
+                  [
+                    0.6666666666666666,
+                    0.6181818181818182
+                  ],
+                  [
+                    0.7222222222222222,
+                    0.6181818181818182
+                  ],
+                  [
+                    0.7777777777777778,
+                    0.6181818181818182
+                  ],
+                  [
+                    0.8333333333333334,
+                    0.6181818181818182
+                  ],
+                  [
+                    0.8888888888888888,
+                    0.8181818181818182
+                  ],
+                  [
+                    0.9444444444444444,
+                    0.9090909090909091
+                  ]
+                ],
+                "synthetic": true
+              },
+              "calibration_hash": "e608ba5e9b8184aa7c7e8f5575581b4eb4403977b1acaddd103b1c77a46d7b8d",
+              "test": {
+                "first": "2026-06-18T12:00:00+00:00",
+                "last": "2026-06-21T19:00:00+00:00",
+                "count": 80,
+                "population_hash": "ed32c6e1558f8d52d63bc7aff1108f0c9be86679f8064b37d2a3a21d17bb7bd4"
+              },
+              "raw": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 5,
+                    "mean_probability": 0.05555555555555556,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 10,
+                    "mean_probability": 0.1388888888888889,
+                    "observed_frequency": 0.2
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 10,
+                    "mean_probability": 0.25,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 10,
+                    "mean_probability": 0.3611111111111111,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 4,
+                    "mean_probability": 0.4444444444444444,
+                    "observed_frequency": 0.75
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 8,
+                    "mean_probability": 0.5277777777777778,
+                    "observed_frequency": 0.375
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 8,
+                    "mean_probability": 0.6388888888888888,
+                    "observed_frequency": 0.875
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 10,
+                    "mean_probability": 0.75,
+                    "observed_frequency": 0.6
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 10,
+                    "mean_probability": 0.861111111111111,
+                    "observed_frequency": 0.7
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 5,
+                    "mean_probability": 0.9444444444444444,
+                    "observed_frequency": 0.6
+                  }
+                ],
+                "brier": 0.24409722222222224,
+                "binned_brier": 0.24693287037037037,
+                "reliability": 0.03693287037037038,
+                "resolution": 0.039843750000000004,
+                "uncertainty": 0.24984375,
+                "binning_residual": -0.002835648148148129,
+                "state": "AVAILABLE"
+              },
+              "calibrated": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 15,
+                    "mean_probability": 0.2502415458937198,
+                    "observed_frequency": 0.26666666666666666
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 24,
+                    "mean_probability": 0.33617424242424243,
+                    "observed_frequency": 0.4583333333333333
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 8,
+                    "mean_probability": 0.5227272727272727,
+                    "observed_frequency": 0.375
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 23,
+                    "mean_probability": 0.6181818181818182,
+                    "observed_frequency": 0.6956521739130435
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 5,
+                    "mean_probability": 0.8181818181818181,
+                    "observed_frequency": 0.8
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 5,
+                    "mean_probability": 0.909090909090909,
+                    "observed_frequency": 0.6
+                  }
+                ],
+                "brier": 0.23452578191044315,
+                "binned_brier": 0.23487988256217804,
+                "reliability": 0.014426984011453385,
+                "resolution": 0.029390851449275366,
+                "uncertainty": 0.24984375,
+                "binning_residual": -0.00035410065173488436,
+                "state": "AVAILABLE"
+              },
+              "sample": {
+                "decision_at": "2026-06-21T19:00:00+00:00",
+                "raw_probability": 0.3888888888888889,
+                "calibrated_probability": 0.3409090909090909,
+                "event": "forward_return_gt_zero",
+                "horizon_seconds": 14400,
+                "origin": "synthetic-binary-score-v1",
+                "method": "isotonic-pav-step-v1",
+                "calibration_hash": "e608ba5e9b8184aa7c7e8f5575581b4eb4403977b1acaddd103b1c77a46d7b8d",
+                "artifact_hash": "4c91ae374879eef988d460e311d764079e5e4dca2dd612896d7414c35890746e",
+                "fold_index": 1,
+                "prediction_hash": "601802f010c822e704f91acce72993400e2f966b046f06a235850fa0202ce7fd"
+              }
+            }
+          ],
+          "raw": {
+            "method": "equal-width-reliability-murphy-v1",
+            "count": 160,
+            "bins": [
+              {
+                "lower": 0.0,
+                "upper": 0.1,
+                "count": 10,
+                "mean_probability": 0.05555555555555556,
+                "observed_frequency": 0.3
+              },
+              {
+                "lower": 0.1,
+                "upper": 0.2,
+                "count": 20,
+                "mean_probability": 0.1388888888888889,
+                "observed_frequency": 0.3
+              },
+              {
+                "lower": 0.2,
+                "upper": 0.3,
+                "count": 20,
+                "mean_probability": 0.25,
+                "observed_frequency": 0.3
+              },
+              {
+                "lower": 0.3,
+                "upper": 0.4,
+                "count": 20,
+                "mean_probability": 0.3611111111111111,
+                "observed_frequency": 0.45
+              },
+              {
+                "lower": 0.4,
+                "upper": 0.5,
+                "count": 9,
+                "mean_probability": 0.4444444444444444,
+                "observed_frequency": 0.6666666666666666
+              },
+              {
+                "lower": 0.5,
+                "upper": 0.6,
+                "count": 18,
+                "mean_probability": 0.5277777777777778,
+                "observed_frequency": 0.6111111111111112
+              },
+              {
+                "lower": 0.6,
+                "upper": 0.7,
+                "count": 18,
+                "mean_probability": 0.6388888888888888,
+                "observed_frequency": 0.8888888888888888
+              },
+              {
+                "lower": 0.7,
+                "upper": 0.8,
+                "count": 18,
+                "mean_probability": 0.75,
+                "observed_frequency": 0.5555555555555556
+              },
+              {
+                "lower": 0.8,
+                "upper": 0.9,
+                "count": 18,
+                "mean_probability": 0.8611111111111112,
+                "observed_frequency": 0.6666666666666666
+              },
+              {
+                "lower": 0.9,
+                "upper": 1.0,
+                "count": 9,
+                "mean_probability": 0.9444444444444444,
+                "observed_frequency": 0.6666666666666666
+              }
+            ],
+            "brier": 0.24315200617283952,
+            "binned_brier": 0.2439043209876543,
+            "reliability": 0.03171682098765432,
+            "resolution": 0.03683593749999999,
+            "uncertainty": 0.2490234375,
+            "binning_residual": -0.0007523148148147751,
+            "state": "AVAILABLE"
+          },
+          "calibrated": {
+            "method": "equal-width-reliability-murphy-v1",
+            "count": 160,
+            "bins": [
+              {
+                "lower": 0.0,
+                "upper": 0.1,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.1,
+                "upper": 0.2,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.2,
+                "upper": 0.3,
+                "count": 30,
+                "mean_probability": 0.2454911433172303,
+                "observed_frequency": 0.3
+              },
+              {
+                "lower": 0.3,
+                "upper": 0.4,
+                "count": 49,
+                "mean_probability": 0.33683040315693374,
+                "observed_frequency": 0.42857142857142855
+              },
+              {
+                "lower": 0.4,
+                "upper": 0.5,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.5,
+                "upper": 0.6,
+                "count": 18,
+                "mean_probability": 0.51010101010101,
+                "observed_frequency": 0.6111111111111112
+              },
+              {
+                "lower": 0.6,
+                "upper": 0.7,
+                "count": 45,
+                "mean_probability": 0.6092929292929293,
+                "observed_frequency": 0.7111111111111111
+              },
+              {
+                "lower": 0.7,
+                "upper": 0.8,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.8,
+                "upper": 0.9,
+                "count": 9,
+                "mean_probability": 0.8467023172905526,
+                "observed_frequency": 0.6666666666666666
+              },
+              {
+                "lower": 0.9,
+                "upper": 1.0,
+                "count": 9,
+                "mean_probability": 0.9233511586452763,
+                "observed_frequency": 0.6666666666666666
+              }
+            ],
+            "brier": 0.23542393130636566,
+            "binned_brier": 0.2366164253653349,
+            "reliability": 0.01272753647644602,
+            "resolution": 0.025134548611111116,
+            "uncertainty": 0.2490234375,
+            "binning_residual": -0.0011924940589692345,
+            "state": "AVAILABLE"
+          },
+          "sample": {
+            "decision_at": "2026-06-21T19:00:00+00:00",
+            "raw_probability": 0.3888888888888889,
+            "calibrated_probability": 0.3409090909090909,
+            "event": "forward_return_gt_zero",
+            "horizon_seconds": 14400,
+            "origin": "synthetic-binary-score-v1",
+            "method": "isotonic-pav-step-v1",
+            "calibration_hash": "e608ba5e9b8184aa7c7e8f5575581b4eb4403977b1acaddd103b1c77a46d7b8d",
+            "artifact_hash": "4c91ae374879eef988d460e311d764079e5e4dca2dd612896d7414c35890746e",
+            "fold_index": 1,
+            "prediction_hash": "601802f010c822e704f91acce72993400e2f966b046f06a235850fa0202ce7fd"
+          },
+          "interpretation": "synthetic test diagnostics; no real calibration or edge claim"
+        },
+        {
+          "product": "ETH-USD",
+          "synthetic": true,
+          "model": {
+            "schema": "model-contract-v1",
+            "model_id": "synthetic-binary-score-v1",
+            "version": "1",
+            "inputs": {
+              "synthetic_score": "float [0,1]"
+            },
+            "outputs": {
+              "return": null,
+              "target_price": null,
+              "class": null,
+              "probabilities": {
+                "event": "forward_return_gt_zero",
+                "method": "synthetic-score-generator-v1",
+                "calibrated": false
+              },
+              "quantiles": null,
+              "scenarios": null
+            },
+            "horizons_seconds": [
+              14400
+            ],
+            "capabilities": [
+              "predict",
+              "infer"
+            ],
+            "limits": {
+              "max_rows": 10000
+            },
+            "implementation_version": "synthetic-score-generator-v1",
+            "synthetic": true
+          },
+          "model_contract_hash": "114aaaae05d3742a42b0f3ac6f6bd6fcb48d6be6217341d75a47a6365f92e59c",
+          "dataset_hash": "c72ce604b1e4a873f481f4a377c60fefe9ed7597b144809084afc024bf4ff81e",
+          "walk_forward": {
+            "schema_version": "trading-lab.walk-forward.v1",
+            "min_train_rows": 300,
+            "validation_rows": 40,
+            "test_rows": 80,
+            "step_rows": 80,
+            "purge_rows": 4
+          },
+          "folds": [
+            {
+              "artifact": {
+                "schema": "probability-calibration-v1",
+                "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "method": "isotonic-pav-step-v1",
+                "event": "forward_return_gt_zero",
+                "fold_index": 0,
+                "fitted_at": "2026-06-13T12:00:00+00:00",
+                "validation_start": "2026-06-13T12:00:00+00:00",
+                "train": {
+                  "split": "train",
+                  "count": 296,
+                  "class_counts": [
+                    148,
+                    148
+                  ],
+                  "first": "2026-06-01T00:00:00+00:00",
+                  "last": "2026-06-13T07:00:00+00:00",
+                  "last_label_available_at": "2026-06-13T11:00:00+00:00",
+                  "population_hash": "14fb595f2eff9803f627f076eeaad82e2c6761716edc2d17ff7bc812907468cc"
+                },
+                "binding": {
+                  "product": "ETH-USD",
+                  "model_id": "synthetic-binary-score-v1",
+                  "artifact_hash": "faf008775f656d27965a2981e7f552d2e7ddf0e67634f85267fc5bd978bd3e05",
+                  "horizon_seconds": 14400,
+                  "synthetic": true
+                },
+                "knots": [
+                  [
+                    0.05555555555555555,
+                    0.2222222222222222
+                  ],
+                  [
+                    0.1111111111111111,
+                    0.2222222222222222
+                  ],
+                  [
+                    0.16666666666666666,
+                    0.2222222222222222
+                  ],
+                  [
+                    0.2222222222222222,
+                    0.2222222222222222
+                  ],
+                  [
+                    0.2777777777777778,
+                    0.4659090909090909
+                  ],
+                  [
+                    0.3333333333333333,
+                    0.4659090909090909
+                  ],
+                  [
+                    0.3888888888888889,
+                    0.4659090909090909
+                  ],
+                  [
+                    0.4444444444444444,
+                    0.4659090909090909
+                  ],
+                  [
+                    0.5,
+                    0.4659090909090909
+                  ],
+                  [
+                    0.5555555555555556,
+                    0.5882352941176471
+                  ],
+                  [
+                    0.6111111111111112,
+                    0.5882352941176471
+                  ],
+                  [
+                    0.6666666666666666,
+                    0.6470588235294118
+                  ],
+                  [
+                    0.7222222222222222,
+                    0.6764705882352942
+                  ],
+                  [
+                    0.7777777777777778,
+                    0.6764705882352942
+                  ],
+                  [
+                    0.8333333333333334,
+                    0.7254901960784313
+                  ],
+                  [
+                    0.8888888888888888,
+                    0.7254901960784313
+                  ],
+                  [
+                    0.9444444444444444,
+                    0.7254901960784313
+                  ]
+                ],
+                "synthetic": true
+              },
+              "calibration_hash": "4aaa2c45a169444dd3671423505e4d312dc15895fbf08f66a8db14152e832dfc",
+              "test": {
+                "first": "2026-06-15T04:00:00+00:00",
+                "last": "2026-06-18T11:00:00+00:00",
+                "count": 80,
+                "population_hash": "7a0639cc6ad3599587ed36fe593bf89e2a124d5f10c8d07541fd4608e5ccac54"
+              },
+              "raw": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 5,
+                    "mean_probability": 0.05555555555555556,
+                    "observed_frequency": 0.0
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 10,
+                    "mean_probability": 0.1388888888888889,
+                    "observed_frequency": 0.2
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 10,
+                    "mean_probability": 0.25,
+                    "observed_frequency": 0.3
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 10,
+                    "mean_probability": 0.3611111111111111,
+                    "observed_frequency": 0.7
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 5,
+                    "mean_probability": 0.4444444444444445,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 10,
+                    "mean_probability": 0.5277777777777778,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 10,
+                    "mean_probability": 0.638888888888889,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 8,
+                    "mean_probability": 0.75,
+                    "observed_frequency": 0.625
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 8,
+                    "mean_probability": 0.8611111111111112,
+                    "observed_frequency": 1.0
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 4,
+                    "mean_probability": 0.9444444444444444,
+                    "observed_frequency": 1.0
+                  }
+                ],
+                "brier": 0.18942901234567902,
+                "binned_brier": 0.19504243827160495,
+                "reliability": 0.021604938271604937,
+                "resolution": 0.07640625000000001,
+                "uncertainty": 0.24984375,
+                "binning_residual": -0.0056134259259259245,
+                "state": "AVAILABLE"
+              },
+              "calibrated": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 20,
+                    "mean_probability": 0.22222222222222224,
+                    "observed_frequency": 0.1
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 25,
+                    "mean_probability": 0.4659090909090909,
+                    "observed_frequency": 0.6
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 10,
+                    "mean_probability": 0.5882352941176471,
+                    "observed_frequency": 0.4
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 13,
+                    "mean_probability": 0.6651583710407241,
+                    "observed_frequency": 0.6153846153846154
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 12,
+                    "mean_probability": 0.7254901960784313,
+                    "observed_frequency": 1.0
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  }
+                ],
+                "brier": 0.19142667518137318,
+                "binned_brier": 0.19144996504030318,
+                "reliability": 0.025488426578764704,
+                "resolution": 0.08388221153846154,
+                "uncertainty": 0.24984375,
+                "binning_residual": -2.3289858929992358e-05,
+                "state": "AVAILABLE"
+              },
+              "sample": {
+                "decision_at": "2026-06-18T11:00:00+00:00",
+                "raw_probability": 0.6666666666666666,
+                "calibrated_probability": 0.6470588235294118,
+                "event": "forward_return_gt_zero",
+                "horizon_seconds": 14400,
+                "origin": "synthetic-binary-score-v1",
+                "method": "isotonic-pav-step-v1",
+                "calibration_hash": "4aaa2c45a169444dd3671423505e4d312dc15895fbf08f66a8db14152e832dfc",
+                "artifact_hash": "faf008775f656d27965a2981e7f552d2e7ddf0e67634f85267fc5bd978bd3e05",
+                "fold_index": 0,
+                "prediction_hash": "1c12faff375c8f8fe01145b95a019257833cc86ee86f61f8d4d1b85b51d8ea0a"
+              }
+            },
+            {
+              "artifact": {
+                "schema": "probability-calibration-v1",
+                "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "method": "isotonic-pav-step-v1",
+                "event": "forward_return_gt_zero",
+                "fold_index": 1,
+                "fitted_at": "2026-06-16T20:00:00+00:00",
+                "validation_start": "2026-06-16T20:00:00+00:00",
+                "train": {
+                  "split": "train",
+                  "count": 376,
+                  "class_counts": [
+                    184,
+                    192
+                  ],
+                  "first": "2026-06-01T00:00:00+00:00",
+                  "last": "2026-06-16T15:00:00+00:00",
+                  "last_label_available_at": "2026-06-16T19:00:00+00:00",
+                  "population_hash": "fb59d2b9ed05569a44e2c92110eda318afcfe79a26b63022cdbb401a51f4f7bd"
+                },
+                "binding": {
+                  "product": "ETH-USD",
+                  "model_id": "synthetic-binary-score-v1",
+                  "artifact_hash": "faf008775f656d27965a2981e7f552d2e7ddf0e67634f85267fc5bd978bd3e05",
+                  "horizon_seconds": 14400,
+                  "synthetic": true
+                },
+                "knots": [
+                  [
+                    0.05555555555555555,
+                    0.17391304347826086
+                  ],
+                  [
+                    0.1111111111111111,
+                    0.17391304347826086
+                  ],
+                  [
+                    0.16666666666666666,
+                    0.22727272727272727
+                  ],
+                  [
+                    0.2222222222222222,
+                    0.2727272727272727
+                  ],
+                  [
+                    0.2777777777777778,
+                    0.4909090909090909
+                  ],
+                  [
+                    0.3333333333333333,
+                    0.4909090909090909
+                  ],
+                  [
+                    0.3888888888888889,
+                    0.4909090909090909
+                  ],
+                  [
+                    0.4444444444444444,
+                    0.4909090909090909
+                  ],
+                  [
+                    0.5,
+                    0.4909090909090909
+                  ],
+                  [
+                    0.5555555555555556,
+                    0.5227272727272727
+                  ],
+                  [
+                    0.6111111111111112,
+                    0.5227272727272727
+                  ],
+                  [
+                    0.6666666666666666,
+                    0.6818181818181818
+                  ],
+                  [
+                    0.7222222222222222,
+                    0.6818181818181818
+                  ],
+                  [
+                    0.7777777777777778,
+                    0.6818181818181818
+                  ],
+                  [
+                    0.8333333333333334,
+                    0.7727272727272727
+                  ],
+                  [
+                    0.8888888888888888,
+                    0.7727272727272727
+                  ],
+                  [
+                    0.9444444444444444,
+                    0.7727272727272727
+                  ]
+                ],
+                "synthetic": true
+              },
+              "calibration_hash": "91acf256c2fc8cb12e314958084611599c29880e0e9fb36240103658de036f62",
+              "test": {
+                "first": "2026-06-18T12:00:00+00:00",
+                "last": "2026-06-21T19:00:00+00:00",
+                "count": 80,
+                "population_hash": "3ef1c22626cdbb7b479fbccb112d55a4698b48bec0484d2b8aef91c6f704099c"
+              },
+              "raw": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 5,
+                    "mean_probability": 0.05555555555555556,
+                    "observed_frequency": 0.2
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 10,
+                    "mean_probability": 0.1388888888888889,
+                    "observed_frequency": 0.3
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 10,
+                    "mean_probability": 0.25,
+                    "observed_frequency": 0.7
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 10,
+                    "mean_probability": 0.3611111111111111,
+                    "observed_frequency": 0.6
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 4,
+                    "mean_probability": 0.4444444444444444,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 8,
+                    "mean_probability": 0.5277777777777778,
+                    "observed_frequency": 0.625
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 8,
+                    "mean_probability": 0.6388888888888888,
+                    "observed_frequency": 0.625
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 10,
+                    "mean_probability": 0.75,
+                    "observed_frequency": 0.6
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 10,
+                    "mean_probability": 0.861111111111111,
+                    "observed_frequency": 1.0
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 5,
+                    "mean_probability": 0.9444444444444444,
+                    "observed_frequency": 0.6
+                  }
+                ],
+                "brier": 0.2482638888888889,
+                "binned_brier": 0.2476273148148148,
+                "reliability": 0.05075231481481481,
+                "resolution": 0.043125000000000004,
+                "uncertainty": 0.24,
+                "binning_residual": 0.0006365740740741088,
+                "state": "AVAILABLE"
+              },
+              "calibrated": {
+                "method": "equal-width-reliability-murphy-v1",
+                "count": 80,
+                "bins": [
+                  {
+                    "lower": 0.0,
+                    "upper": 0.1,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.1,
+                    "upper": 0.2,
+                    "count": 10,
+                    "mean_probability": 0.17391304347826086,
+                    "observed_frequency": 0.3
+                  },
+                  {
+                    "lower": 0.2,
+                    "upper": 0.3,
+                    "count": 10,
+                    "mean_probability": 0.25,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.3,
+                    "upper": 0.4,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.4,
+                    "upper": 0.5,
+                    "count": 23,
+                    "mean_probability": 0.4909090909090909,
+                    "observed_frequency": 0.5652173913043478
+                  },
+                  {
+                    "lower": 0.5,
+                    "upper": 0.6,
+                    "count": 8,
+                    "mean_probability": 0.5227272727272727,
+                    "observed_frequency": 0.5
+                  },
+                  {
+                    "lower": 0.6,
+                    "upper": 0.7,
+                    "count": 14,
+                    "mean_probability": 0.6818181818181818,
+                    "observed_frequency": 0.7142857142857143
+                  },
+                  {
+                    "lower": 0.7,
+                    "upper": 0.8,
+                    "count": 15,
+                    "mean_probability": 0.7727272727272727,
+                    "observed_frequency": 0.8666666666666667
+                  },
+                  {
+                    "lower": 0.8,
+                    "upper": 0.9,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  },
+                  {
+                    "lower": 0.9,
+                    "upper": 1.0,
+                    "count": 0,
+                    "mean_probability": null,
+                    "observed_frequency": null
+                  }
+                ],
+                "brier": 0.22217112437313502,
+                "binned_brier": 0.223811103711978,
+                "reliability": 0.013277977417982145,
+                "resolution": 0.02946687370600415,
+                "uncertainty": 0.24,
+                "binning_residual": -0.0016399793388429673,
+                "state": "AVAILABLE"
+              },
+              "sample": {
+                "decision_at": "2026-06-21T19:00:00+00:00",
+                "raw_probability": 0.3888888888888889,
+                "calibrated_probability": 0.4909090909090909,
+                "event": "forward_return_gt_zero",
+                "horizon_seconds": 14400,
+                "origin": "synthetic-binary-score-v1",
+                "method": "isotonic-pav-step-v1",
+                "calibration_hash": "91acf256c2fc8cb12e314958084611599c29880e0e9fb36240103658de036f62",
+                "artifact_hash": "faf008775f656d27965a2981e7f552d2e7ddf0e67634f85267fc5bd978bd3e05",
+                "fold_index": 1,
+                "prediction_hash": "4ccb95237901a2e9bb89cb29989764d0c5eb8e107bd936b3cb4027eeecf47ab0"
+              }
+            }
+          ],
+          "raw": {
+            "method": "equal-width-reliability-murphy-v1",
+            "count": 160,
+            "bins": [
+              {
+                "lower": 0.0,
+                "upper": 0.1,
+                "count": 10,
+                "mean_probability": 0.05555555555555556,
+                "observed_frequency": 0.1
+              },
+              {
+                "lower": 0.1,
+                "upper": 0.2,
+                "count": 20,
+                "mean_probability": 0.1388888888888889,
+                "observed_frequency": 0.25
+              },
+              {
+                "lower": 0.2,
+                "upper": 0.3,
+                "count": 20,
+                "mean_probability": 0.25,
+                "observed_frequency": 0.5
+              },
+              {
+                "lower": 0.3,
+                "upper": 0.4,
+                "count": 20,
+                "mean_probability": 0.3611111111111111,
+                "observed_frequency": 0.65
+              },
+              {
+                "lower": 0.4,
+                "upper": 0.5,
+                "count": 9,
+                "mean_probability": 0.4444444444444444,
+                "observed_frequency": 0.4444444444444444
+              },
+              {
+                "lower": 0.5,
+                "upper": 0.6,
+                "count": 18,
+                "mean_probability": 0.5277777777777778,
+                "observed_frequency": 0.5555555555555556
+              },
+              {
+                "lower": 0.6,
+                "upper": 0.7,
+                "count": 18,
+                "mean_probability": 0.6388888888888888,
+                "observed_frequency": 0.5555555555555556
+              },
+              {
+                "lower": 0.7,
+                "upper": 0.8,
+                "count": 18,
+                "mean_probability": 0.75,
+                "observed_frequency": 0.6111111111111112
+              },
+              {
+                "lower": 0.8,
+                "upper": 0.9,
+                "count": 18,
+                "mean_probability": 0.8611111111111112,
+                "observed_frequency": 1.0
+              },
+              {
+                "lower": 0.9,
+                "upper": 1.0,
+                "count": 9,
+                "mean_probability": 0.9444444444444444,
+                "observed_frequency": 0.7777777777777778
+              }
+            ],
+            "brier": 0.21884645061728394,
+            "binned_brier": 0.22133487654320988,
+            "reliability": 0.026682098765432094,
+            "resolution": 0.05218315972222223,
+            "uncertainty": 0.2468359375,
+            "binning_residual": -0.0024884259259259356,
+            "state": "AVAILABLE"
+          },
+          "calibrated": {
+            "method": "equal-width-reliability-murphy-v1",
+            "count": 160,
+            "bins": [
+              {
+                "lower": 0.0,
+                "upper": 0.1,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.1,
+                "upper": 0.2,
+                "count": 10,
+                "mean_probability": 0.17391304347826086,
+                "observed_frequency": 0.3
+              },
+              {
+                "lower": 0.2,
+                "upper": 0.3,
+                "count": 30,
+                "mean_probability": 0.23148148148148145,
+                "observed_frequency": 0.23333333333333334
+              },
+              {
+                "lower": 0.3,
+                "upper": 0.4,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.4,
+                "upper": 0.5,
+                "count": 48,
+                "mean_probability": 0.47788825757575754,
+                "observed_frequency": 0.5833333333333334
+              },
+              {
+                "lower": 0.5,
+                "upper": 0.6,
+                "count": 18,
+                "mean_probability": 0.5591206179441474,
+                "observed_frequency": 0.4444444444444444
+              },
+              {
+                "lower": 0.6,
+                "upper": 0.7,
+                "count": 27,
+                "mean_probability": 0.6737967914438502,
+                "observed_frequency": 0.6666666666666666
+              },
+              {
+                "lower": 0.7,
+                "upper": 0.8,
+                "count": 27,
+                "mean_probability": 0.7517330164388988,
+                "observed_frequency": 0.9259259259259259
+              },
+              {
+                "lower": 0.8,
+                "upper": 0.9,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              },
+              {
+                "lower": 0.9,
+                "upper": 1.0,
+                "count": 0,
+                "mean_probability": null,
+                "observed_frequency": null
+              }
+            ],
+            "brier": 0.20679889977725413,
+            "binned_brier": 0.20737348163066227,
+            "reliability": 0.01093829644547709,
+            "resolution": 0.05040075231481482,
+            "uncertainty": 0.2468359375,
+            "binning_residual": -0.0005745818534081404,
+            "state": "AVAILABLE"
+          },
+          "sample": {
+            "decision_at": "2026-06-21T19:00:00+00:00",
+            "raw_probability": 0.3888888888888889,
+            "calibrated_probability": 0.4909090909090909,
+            "event": "forward_return_gt_zero",
+            "horizon_seconds": 14400,
+            "origin": "synthetic-binary-score-v1",
+            "method": "isotonic-pav-step-v1",
+            "calibration_hash": "91acf256c2fc8cb12e314958084611599c29880e0e9fb36240103658de036f62",
+            "artifact_hash": "faf008775f656d27965a2981e7f552d2e7ddf0e67634f85267fc5bd978bd3e05",
+            "fold_index": 1,
+            "prediction_hash": "4ccb95237901a2e9bb89cb29989764d0c5eb8e107bd936b3cb4027eeecf47ab0"
+          },
+          "interpretation": "synthetic test diagnostics; no real calibration or edge claim"
+        }
+      ],
+      "simulations": [
+        {
+          "scenario": "both-levels-touched",
+          "schema": "paper-protection-simulation-v1",
+          "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+          "plan_hash": "fd2c45752c98ddbc3ce3da6d4ea7741277a2924c25c784ff8e62e7a3d27513ff",
+          "plan": {
+            "schema": "paper-protection-plan-v1",
+            "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+            "product": "BTC-USD",
+            "mode": "PAPER",
+            "side": "LONG",
+            "entry_at": "2026-06-21T23:00:00+00:00",
+            "entry_fill": "100",
+            "horizon_seconds": 14400,
+            "source_prediction_hash": "601802f010c822e704f91acce72993400e2f966b046f06a235850fa0202ce7fd",
+            "levels": {
+              "take_profit": {
+                "value": "103",
+                "source_hash": "ff6e838ceeb10bfe971f3b24024710ebf2226113441c5919edbefe14b3d2151e",
+                "method": "synthetic-target-v1",
+                "provided_at": "2026-06-21T23:00:00+00:00",
+                "origin": "STRATEGY"
+              },
+              "stop_loss": {
+                "value": "99.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              }
+            },
+            "synthetic": true
+          },
+          "synthetic": true,
+          "as_of": "2026-06-22T03:00:00+00:00",
+          "bar_seconds": 3600,
+          "cost_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+          "cost_method": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+          "gap_method": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+          "ambiguity_method": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+          "missing_bar_method": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+          "quantity": "1",
+          "ambiguous": true,
+          "exit": {
+            "reason": "STOP_TOUCH",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "99.00",
+            "fill_price": "98.950500",
+            "gross_pnl": "-1.00",
+            "fees": "0.1989505000",
+            "slippage_cost": "0.049500",
+            "net_pnl": "-1.2484505000",
+            "net_return": "-0.0124845050",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "target_first_sensitivity": {
+            "reason": "TARGET_FIRST_SENSITIVITY",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "103",
+            "fill_price": "102.9485",
+            "gross_pnl": "3",
+            "fees": "0.20294850",
+            "slippage_cost": "0.0515",
+            "net_pnl": "2.74555150",
+            "net_return": "0.027455515",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "bars_observed": 1,
+          "state": "CLOSED",
+          "observed_population_hash": "9caafcf082589ea02e240ec2ed8357dcfcce5e3cdf2fdc95b9d713a1ca469b07",
+          "result_hash": "dc372dd7b82b0da59eec3727cc181758c5b5fce093a62c8e1dfb2659d7df4d43"
+        },
+        {
+          "scenario": "adverse-gap",
+          "schema": "paper-protection-simulation-v1",
+          "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+          "plan_hash": "2c136088bf24ef47992785d90f70bf041619553f467747c4ada07f87f9cc54d2",
+          "plan": {
+            "schema": "paper-protection-plan-v1",
+            "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+            "product": "BTC-USD",
+            "mode": "PAPER",
+            "side": "LONG",
+            "entry_at": "2026-06-21T23:00:00+00:00",
+            "entry_fill": "100",
+            "horizon_seconds": 14400,
+            "source_prediction_hash": "601802f010c822e704f91acce72993400e2f966b046f06a235850fa0202ce7fd",
+            "levels": {
+              "take_profit": {
+                "value": "102.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              },
+              "stop_loss": {
+                "value": "99.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              }
+            },
+            "synthetic": true
+          },
+          "synthetic": true,
+          "as_of": "2026-06-22T03:00:00+00:00",
+          "bar_seconds": 3600,
+          "cost_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+          "cost_method": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+          "gap_method": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+          "ambiguity_method": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+          "missing_bar_method": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+          "quantity": "1",
+          "ambiguous": false,
+          "exit": {
+            "reason": "STOP_GAP",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "97",
+            "fill_price": "96.9515",
+            "gross_pnl": "-3",
+            "fees": "0.19695150",
+            "slippage_cost": "0.0485",
+            "net_pnl": "-3.24545150",
+            "net_return": "-0.032454515",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "target_first_sensitivity": null,
+          "bars_observed": 1,
+          "state": "CLOSED",
+          "observed_population_hash": "4677ca6c61918ec187b739cd5a6e7117f2c36af1fadf7f53e9cbed2e8ad74bf1",
+          "result_hash": "c39ba4b8eb269bf0b4185ca9d0a2dae17cd1aa5602ddc9b674d75877c5814e47"
+        },
+        {
+          "scenario": "favorable-short-gap",
+          "schema": "paper-protection-simulation-v1",
+          "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+          "plan_hash": "ad3f350093fb728982cc2c94cb4ebbd23fccb80fa04a75d4dca30ec6b9364382",
+          "plan": {
+            "schema": "paper-protection-plan-v1",
+            "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+            "product": "BTC-USD",
+            "mode": "PAPER",
+            "side": "SHORT",
+            "entry_at": "2026-06-21T23:00:00+00:00",
+            "entry_fill": "100",
+            "horizon_seconds": 14400,
+            "source_prediction_hash": "601802f010c822e704f91acce72993400e2f966b046f06a235850fa0202ce7fd",
+            "levels": {
+              "take_profit": {
+                "value": "98.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              },
+              "stop_loss": {
+                "value": "101.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              }
+            },
+            "synthetic": true
+          },
+          "synthetic": true,
+          "as_of": "2026-06-22T03:00:00+00:00",
+          "bar_seconds": 3600,
+          "cost_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+          "cost_method": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+          "gap_method": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+          "ambiguity_method": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+          "missing_bar_method": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+          "quantity": "1",
+          "ambiguous": false,
+          "exit": {
+            "reason": "TARGET_GAP",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "98.00",
+            "fill_price": "98.049000",
+            "gross_pnl": "2.00",
+            "fees": "0.1980490000",
+            "slippage_cost": "0.049000",
+            "net_pnl": "1.7529510000",
+            "net_return": "0.0175295100",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "target_first_sensitivity": null,
+          "bars_observed": 1,
+          "state": "CLOSED",
+          "observed_population_hash": "7ba0f7bb877989e05bbf6c23a763b5969c2dea0dd51031d72587463a8486714a",
+          "result_hash": "6399092e9a6332ec0e56279dabdb505427f8845ebce4eae3782785f8e8bca967"
+        },
+        {
+          "scenario": "both-levels-touched",
+          "schema": "paper-protection-simulation-v1",
+          "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+          "plan_hash": "9118a0b266d3c75545a16060eaf1ff9ebfa35ca37beb3306fc8d998098af6aa1",
+          "plan": {
+            "schema": "paper-protection-plan-v1",
+            "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+            "product": "ETH-USD",
+            "mode": "PAPER",
+            "side": "LONG",
+            "entry_at": "2026-06-21T23:00:00+00:00",
+            "entry_fill": "100",
+            "horizon_seconds": 14400,
+            "source_prediction_hash": "4ccb95237901a2e9bb89cb29989764d0c5eb8e107bd936b3cb4027eeecf47ab0",
+            "levels": {
+              "take_profit": {
+                "value": "103",
+                "source_hash": "ff6e838ceeb10bfe971f3b24024710ebf2226113441c5919edbefe14b3d2151e",
+                "method": "synthetic-target-v1",
+                "provided_at": "2026-06-21T23:00:00+00:00",
+                "origin": "STRATEGY"
+              },
+              "stop_loss": {
+                "value": "99.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              }
+            },
+            "synthetic": true
+          },
+          "synthetic": true,
+          "as_of": "2026-06-22T03:00:00+00:00",
+          "bar_seconds": 3600,
+          "cost_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+          "cost_method": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+          "gap_method": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+          "ambiguity_method": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+          "missing_bar_method": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+          "quantity": "1",
+          "ambiguous": true,
+          "exit": {
+            "reason": "STOP_TOUCH",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "99.00",
+            "fill_price": "98.950500",
+            "gross_pnl": "-1.00",
+            "fees": "0.1989505000",
+            "slippage_cost": "0.049500",
+            "net_pnl": "-1.2484505000",
+            "net_return": "-0.0124845050",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "target_first_sensitivity": {
+            "reason": "TARGET_FIRST_SENSITIVITY",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "103",
+            "fill_price": "102.9485",
+            "gross_pnl": "3",
+            "fees": "0.20294850",
+            "slippage_cost": "0.0515",
+            "net_pnl": "2.74555150",
+            "net_return": "0.027455515",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "bars_observed": 1,
+          "state": "CLOSED",
+          "observed_population_hash": "9caafcf082589ea02e240ec2ed8357dcfcce5e3cdf2fdc95b9d713a1ca469b07",
+          "result_hash": "6d25e373249aac584518355d5475a557078672c3103ca38e7763563ddc844af4"
+        },
+        {
+          "scenario": "adverse-gap",
+          "schema": "paper-protection-simulation-v1",
+          "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+          "plan_hash": "a52f1676bcad532570719524855f2228dcc195fb7e5df5569774c0e5d089f605",
+          "plan": {
+            "schema": "paper-protection-plan-v1",
+            "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+            "product": "ETH-USD",
+            "mode": "PAPER",
+            "side": "LONG",
+            "entry_at": "2026-06-21T23:00:00+00:00",
+            "entry_fill": "100",
+            "horizon_seconds": 14400,
+            "source_prediction_hash": "4ccb95237901a2e9bb89cb29989764d0c5eb8e107bd936b3cb4027eeecf47ab0",
+            "levels": {
+              "take_profit": {
+                "value": "102.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              },
+              "stop_loss": {
+                "value": "99.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              }
+            },
+            "synthetic": true
+          },
+          "synthetic": true,
+          "as_of": "2026-06-22T03:00:00+00:00",
+          "bar_seconds": 3600,
+          "cost_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+          "cost_method": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+          "gap_method": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+          "ambiguity_method": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+          "missing_bar_method": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+          "quantity": "1",
+          "ambiguous": false,
+          "exit": {
+            "reason": "STOP_GAP",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "97",
+            "fill_price": "96.9515",
+            "gross_pnl": "-3",
+            "fees": "0.19695150",
+            "slippage_cost": "0.0485",
+            "net_pnl": "-3.24545150",
+            "net_return": "-0.032454515",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "target_first_sensitivity": null,
+          "bars_observed": 1,
+          "state": "CLOSED",
+          "observed_population_hash": "4677ca6c61918ec187b739cd5a6e7117f2c36af1fadf7f53e9cbed2e8ad74bf1",
+          "result_hash": "cf4ab5c3ebe0dec8a8e4836fa6df00fab67fc7d11ee5b2f57756e114bf6607d8"
+        },
+        {
+          "scenario": "favorable-short-gap",
+          "schema": "paper-protection-simulation-v1",
+          "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+          "plan_hash": "bd3070acd594cbbe4bc24dc7436e423934a99a50f6d86e095e171bb6d584d9a1",
+          "plan": {
+            "schema": "paper-protection-plan-v1",
+            "policy_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+            "product": "ETH-USD",
+            "mode": "PAPER",
+            "side": "SHORT",
+            "entry_at": "2026-06-21T23:00:00+00:00",
+            "entry_fill": "100",
+            "horizon_seconds": 14400,
+            "source_prediction_hash": "4ccb95237901a2e9bb89cb29989764d0c5eb8e107bd936b3cb4027eeecf47ab0",
+            "levels": {
+              "take_profit": {
+                "value": "98.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              },
+              "stop_loss": {
+                "value": "101.00",
+                "origin": "POLICY",
+                "method": "fixed-entry-distance-v1",
+                "source_hash": "37066296ae63276c262c71d0dce657da1a60db1154b1736b1e0684f6c3f46e9f",
+                "provided_at": "2026-06-21T23:00:00+00:00"
+              }
+            },
+            "synthetic": true
+          },
+          "synthetic": true,
+          "as_of": "2026-06-22T03:00:00+00:00",
+          "bar_seconds": 3600,
+          "cost_hash": "99295b9ab5e9a4e16f4cdd05855071a792e115b35b22d3f952f052d1f97e93eb",
+          "cost_method": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+          "gap_method": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+          "ambiguity_method": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+          "missing_bar_method": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+          "quantity": "1",
+          "ambiguous": false,
+          "exit": {
+            "reason": "TARGET_GAP",
+            "bar_open_at": "2026-06-21T23:00:00+00:00",
+            "available_at": "2026-06-22T00:00:00+00:00",
+            "reference_price": "98.00",
+            "fill_price": "98.049000",
+            "gross_pnl": "2.00",
+            "fees": "0.1980490000",
+            "slippage_cost": "0.049000",
+            "net_pnl": "1.7529510000",
+            "net_return": "0.0175295100",
+            "clock_method": "OHLC crossing observed at bar close; exact intrabar time unknown"
+          },
+          "target_first_sensitivity": null,
+          "bars_observed": 1,
+          "state": "CLOSED",
+          "observed_population_hash": "7ba0f7bb877989e05bbf6c23a763b5969c2dea0dd51031d72587463a8486714a",
+          "result_hash": "348c2355391b1234b370693a562a47c5576d04dc5ff036ddd6dcdca6911fc500"
+        }
+      ],
+      "limitations": [
+        "Synthetic demonstration only; real calibration fitting awaits authorization.",
+        "No prediction intervals are provided.",
+        "Unit positions with fixed policy distances; no portfolio or optimized risk claim.",
+        "Exit prices are OHLC simulations; crossing time inside a bar is unknown.",
+        "Frozen models, risk, backtest and replay references are not modified."
+      ]
+    }
+  }
+}

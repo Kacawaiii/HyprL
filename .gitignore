@@ -190,3 +190,6 @@ var/
 
 # Synthetic real-shaped trader API responses for the cockpit Vitest suite (see tests/trader_agent/export_views.py)
 !apps/web/src/test/traderFixtures.json
+!docs/artifacts/calibration_risk_policy_spec_v1.json
+!docs/artifacts/calibration_risk_policy_v1_evidence.json
+!apps/web/src/test/policyFixtures.json

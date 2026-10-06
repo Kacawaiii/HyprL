@@ -1,0 +1,33 @@
+{
+  "schema": "calibration-risk-policy-spec-v1",
+  "revision": 1,
+  "calibration": {
+    "method": "isotonic-pav-step-v1",
+    "event": "forward_return_gt_zero",
+    "fit_population": "walk-forward train only; realized and available labels strictly before validation",
+    "min_train": 100,
+    "min_class": 25,
+    "min_distinct_scores": 5,
+    "extrapolation": "clip to endpoint; right-continuous step between fitted scores",
+    "diagnostics": "held-out test only; ten equal-width bins; empty bins null",
+    "min_evaluation": 50,
+    "min_evaluation_class": 10,
+    "brier": "binary mean squared error; Murphy decomposition of bin-mean forecasts; raw Brier includes binning residual",
+    "real_fit": "WAITING_AUTHORIZATION"
+  },
+  "risk": {
+    "method": "fixed-entry-distance-v1",
+    "take_profit_fraction": "0.02",
+    "stop_loss_fraction": "0.01",
+    "optimized": false,
+    "precedence": "each valid strategy level overrides its policy fallback; strategy identity and method required",
+    "gap": "opening through stop fills at open; opening through target fills at target (no favorable gap improvement)",
+    "missing_bars": "stop with NOT_OBSERVED at first missing interval; no PnL or later fill claim",
+    "intrabar": "if both levels touched, stop first; flag ambiguity and retain target-first sensitivity",
+    "entry": "explicit paper entry fill; levels active from entry time; only fully subsequent OHLC bars",
+    "expiry": "close at last complete bar at stated horizon; future bars unavailable at read time stay pending",
+    "costs": "reuse economic EXECUTION_SPEC_V1 fees and adverse slippage; unit quantity; no funding or borrow",
+    "modes": ["PAPER", "SHADOW"],
+    "reference_mutation": false
+  }
+}
