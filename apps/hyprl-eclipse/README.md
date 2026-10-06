@@ -6,19 +6,19 @@ Prototype visuel autonome : présentation, univers WebGL 3D en quatre chapitres 
 
 | Chapitre | Section | Ce qu'on voit | Interaction |
 | --- | --- | --- | --- |
-| 01 Monolithe | héro | plaine sombre, petit monolithe lointain, arête enneigée et pic à droite, collines dans la brume à gauche, soleil étoilé rasant, anneau planétaire géant ; les cartes de verre du héro (CSS3D) | le soleil glisse avec le curseur ; le scroll avance la caméra |
+| 01 Monolithe | héro | plaine sombre, petit monolithe lointain, arête enneigée adoucie et pic à droite, bancs de brume à plusieurs profondeurs dans les vallées, neige arrachée à la crête, rayons du soleil occultés par le relief, poussières fines, anneau planétaire géant ; les cartes de verre du héro (CSS3D) | le soleil glisse avec le curseur ; le scroll avance la caméra |
 | 02 Planète | Vision | la géante annelée du ciel du Monolithe, en croissant : nuages en bandes, limbe éclairé, ombre des anneaux sur la planète et de la planète sur les anneaux | le scroll rapproche la caméra du limbe ; le curseur tourne la vue |
 | 03 Singularité | Interlude | disque d'accrétion doré vu par la tranche comme une mer miroir, anneau lentille géant en filaments qui tournent (photon ring blanc, vague à gauche), reflet de l'anneau sous la mer, nuages dorés en volumes à cœurs sombres et bords lumineux, paillettes ponctuelles intégrées, étoiles déviées par la lentille, scintillement de chaleur, traînées de vitesse et étincelles, vaisseau en métal éclairé avec son reflet, halo anamorphique | le vaisseau suit le curseur ; le scroll agrandit l'ombre et accélère le flux |
-| 04 Prisme | Plateforme + Approche | verre brisé : éclats polygonaux irréguliers (triangles, lamelles, trapèzes) à biseaux brillants, paillettes de verre pilé, réfraction chromatique de l'orbe, de l'atmosphère et du sol rendus ; orbe à nébuleuse et liseré fin qui éclate vers la droite sous un trait de flare rose ; lignes de lumière fines ; grands éclats de premier plan flous et chromatiques ; parquet indigo sous un large éblouissement blanc | le curseur tourne le nuage d'éclats ; le scroll fait éclater l'orbe |
+| 04 Prisme | Plateforme + Approche | verre brisé : éclats polygonaux irréguliers (triangles, lamelles, trapèzes) à biseaux brillants, paillettes de verre pilé, réfraction chromatique de l'orbe, de l'atmosphère et du sol rendus ; orbe à nébuleuse et liseré fin qui éclate vers la droite sous un trait de flare rose ; lignes de lumière fines ; grands éclats de premier plan flous et chromatiques, flou de profondeur des fragments éloignés, reflets spéculaires mobiles, faisceaux diffus depuis l’orbe à travers le verre ; parquet indigo avec caustiques mouvantes et reflets étirés des éclats sous un large éblouissement blanc | le curseur tourne le nuage d'éclats ; le scroll fait éclater l'orbe |
 
-**Transitions, une par passage :** Monolithe → Planète, la caméra plonge vers la planète derrière un liseré de lumière ; Planète → Singularité, montée vers le haut, la planète tombe et le trou noir descend derrière une ligne d'horizon lumineuse ; Singularité → Prisme, l'écran se brise : l'image se fissure depuis un point d'impact puis part en éclats de verre 3D qui volent vers la caméra et révèlent le prisme (`lib/shatter.js`). Remonter la page rejoue chaque transition à l'envers.
+**Transitions, une par passage :** Monolithe → Planète, la caméra plonge vers la planète derrière un liseré de lumière ; Planète → Singularité, recul soudain du cadre planétaire avec flou radial et brève secousse, puis aspiration du décor en spirale par un vortex à rotation différentielle (1/r) ; sa lumière s’étire en arcs et rejoint l’anneau d’accrétion qui se matérialise avant la scène finale ; Singularité → Prisme, l'écran se brise : l'image se fissure depuis un point d'impact puis part en éclats de verre 3D qui volent vers la caméra et révèlent le prisme (`lib/shatter.js`). Remonter la page rejoue chaque transition à l'envers.
 
 ## Ouvrir
 
 Depuis ce dossier :
 
 ```bash
-python3 -m http.server 8093 --bind 0.0.0.0
+python3 -m http.server 8093 --bind 127.0.0.1
 ```
 
 Ouvrir `http://localhost:8093/` pour la présentation, ou `http://localhost:8093/studio.html` pour choisir un chapitre et exporter. Un serveur HTTP est nécessaire pour les modules JavaScript ; ne pas ouvrir le HTML via `file://`.
@@ -29,6 +29,7 @@ Sous Windows, extraire l'archive puis double-cliquer sur `START-WINDOWS.cmd` (Py
 
 - `scene.js` : le moteur. Prisme utilise une copie HDR du fond à demi-résolution, puis dessine le verre et les lumières : aucune image externe et aucune boucle de lecture/écriture du même framebuffer. Les autres chapitres gardent leur passe habituelle. Il gère le canvas fixe, le fondu entre chapitres selon le scroll, le post-traitement, la résolution adaptative, la pause et le mouvement réduit, et les exports.
 - `chapters/monolith.js`, `planet.js`, `singularity.js`, `prism.js` : un fichier par chapitre. Chaque objet est nommé et éditable.
+- Les paramètres facultatifs `transition.center` et `transition.radius` de Singularité alignent le vortex du post-traitement sur le trou noir, y compris en portrait ; les autres méthodes de chapitre restent identiques. Les volumes de brume et les faisceaux sont des approximations procédurales projetées, sans ray marching plein écran. Prisme utilise cinq échantillons d’ouverture sur ses petits éclats éloignés et des silhouettes douces au premier plan, en gardant le grand V net. Les reflets étirés et les empreintes de caustiques sont dessinés sans seconde scène de réflexion.
 - `lib/shatter.js` : l'écran qui se brise (fracture de Voronoï en plaques de verre épaisses : biseaux, réfraction, franges RVB ; un seul appel de dessin). `lib/cards.js` : les cartes du héro.
 - `lib/smooth-scroll.js` : le défilement amorti (molette, clavier, ancres), désactivé en mouvement réduit et sur écran tactile.
 - `lib/kit.js` : le bruit GLSL, les astéroïdes procéduraux, le champ d'étoiles et les copies portables pour le glTF.
@@ -41,7 +42,7 @@ Sous Windows, extraire l'archive puis double-cliquer sur `START-WINDOWS.cmd` (Py
 
 `createEclipseScene(container, labelContainer, { hero, stops, studio })` renvoie `setPalette`, `setPaused`, `setChapter`, `exportGLB`, `exportPNG`, `chapter` et `dispose`. Le paramètre `container` est le calque fixe plein écran, et `labelContainer` couvre le héro (textes des cartes en CSS3D). Le paramètre `stops` liste les sections portant `data-chapter` (`eclipse`, `monolith`, `prism`, `singularity`) et, en option, `data-dim` (de 0 à 1) pour assombrir la scène sous un texte. Une intégration React doit appeler `dispose()` au démontage.
 
-La scène demande WebGL 2. Elle se met en pause quand l'onglet est caché, respecte `prefers-reduced-motion` (image fixe, mais le scroll change toujours de chapitre) et baisse sa résolution toute seule si le GPU peine. Sur mobile, elle allège les astéroïdes, les éclats, les traînées et l'anticrénelage. Sans WebGL, chaque section reçoit un décor CSS.
+La scène demande WebGL 2. Elle se met en pause quand l'onglet est caché, respecte `prefers-reduced-motion` (image fixe et fondus simples entre chapitres, mais le scroll change toujours de chapitre) et baisse sa résolution toute seule si le GPU peine. Sur mobile, elle allège les astéroïdes, les éclats, les traînées et l'anticrénelage. Sans WebGL, chaque section reçoit un décor CSS.
 
 ## Périmètre
 
