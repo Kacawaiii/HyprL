@@ -77,7 +77,7 @@ async function journey(browser) {
   await next.click();
   await page.waitForURL(/\/lab\/experiments\?.*dataset=/);
   const launch = page.getByRole('button', { name: 'Launch experiment' });
-  await page.getByLabel('Model').selectOption('local-momentum-v1');
+  await page.getByRole('combobox', { name: /^Model/ }).selectOption('local-momentum-v1');
   await page.getByLabel('Chosen model').filter({ hasText: 'EXTERNAL ADAPTER' }).waitFor();
   await page.waitForFunction(() => {
     const button = [...document.querySelectorAll('button')].find((item) => item.textContent === 'Launch experiment');
