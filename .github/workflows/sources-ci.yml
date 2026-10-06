@@ -144,4 +144,5 @@ jobs:
             --research-root var/ci/research/registry > "$RUNNER_TEMP/server.log" 2>&1 &
           for _ in $(seq 60); do curl -sf -o /dev/null http://127.0.0.1:8796/api/v1/health && break; sleep 1; done
           LAB_URL=http://127.0.0.1:8796 NODE_PATH="$RUNNER_TEMP/pw/node_modules" node apps/web/e2e/lab-journey.cjs \
-            || { tail -n 40 "$RUNNER_TEMP/server.log"; exit 1; }
+            || { tail -n 40 "$RUNNER_TEMP/server.log"
+                 echo "::error title=lab-server::$(tail -n 6 "$RUNNER_TEMP/server.log" | tr '\n' ' ' | cut -c1-900)"; exit 1; }

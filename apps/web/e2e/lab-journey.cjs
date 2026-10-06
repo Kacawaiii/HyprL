@@ -212,6 +212,12 @@ async function narrow(browser) {
     console.log(JSON.stringify({ summary: `${results.length} checks passed` }));
   } catch (error) {
     console.log(JSON.stringify({ check: 'FAILED', ok: false, detail: String(error && error.stack || error) }));
+    if (process.env.GITHUB_ACTIONS) {
+      // Annotations are the part of a run readable without credentials; one line, no token in it.
+      const last = results.length > 0 ? results[results.length - 1].name : 'none';
+      const detail = String(error && error.message || error).replace(/\s+/g, ' ').slice(0, 900);
+      console.log(`::error title=lab-journey::after ${results.length} passed checks (last: ${last}): ${detail}`);
+    }
     process.exitCode = 1;
   } finally {
     await browser.close();
