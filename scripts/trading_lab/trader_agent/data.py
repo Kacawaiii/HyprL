@@ -144,15 +144,21 @@ def equity_calendar(year):
     return calendar
 
 
-def label_window(asset, day, horizon, crypto_assets):
+def label_window(asset, day, horizon, crypto_assets, entry_at="open"):
+    """Primary: enter at the session open, exit at the close of session n. Catch-up variant (entry_at="close"):
+    enter at the decision session's close, exit at the close n sessions later."""
     n = 1 if horizon == "1d" else 5
     if asset in crypto_assets:
+        if entry_at != "open":
+            raise TraderError("UNSUPPORTED_ENTRY")
         entry = instant(day + "T13:30:00Z")
         return entry, entry + timedelta(days=n)
     start = instant(day + "T00:00:00Z")
     sessions = equity_calendar(start.year).sessions_between(start, start + timedelta(days=20))
     if not sessions or sessions[0].session_date != day:
         raise TraderError("HOLIDAY")
+    if entry_at == "close":
+        return sessions[0].close_at, sessions[n].close_at
     return sessions[0].open_at, sessions[n - 1].close_at
 
 

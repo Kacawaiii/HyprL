@@ -49,7 +49,7 @@ def health(ledger):
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "label", "health", "status", "pause", "resume"))
+    parser.add_argument("action", choices=("run", "catchup", "label", "health", "status", "pause", "resume"))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
@@ -81,7 +81,9 @@ def main(argv=None):
         service = TraderService(ledger, data, runner, clock=clock,
                                 fomc=None if args.dry_run else args.fomc_store,
                                 edgar=None if args.dry_run else args.edgar_store)
-        if args.action == "run":
+        if args.action == "catchup":
+            result = service.run(catchup=True)
+        elif args.action == "run":
             result = service.run()
             if args.dry_run and result["status"] == "COMPLETE":
                 initial_labels = service.store.records("label")
