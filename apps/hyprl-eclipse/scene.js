@@ -69,9 +69,13 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   const rtOpts = { type: THREE.HalfFloatType, depthBuffer: true, samples: isMobile() ? 2 : 4 };
   const rtA = new THREE.WebGLRenderTarget(1, 1, rtOpts), rtB = new THREE.WebGLRenderTarget(1, 1, rtOpts);
   const small = { type: THREE.HalfFloatType, depthBuffer: false };
+  const rtGlass = new THREE.WebGLRenderTarget(1, 1, small);
   const rtS1 = new THREE.WebGLRenderTarget(1, 1, small), rtS2 = new THREE.WebGLRenderTarget(1, 1, small);
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), quadScene = new THREE.Scene();
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled = false; quadScene.add(quad);
+  // Optional glass capture: half-resolution HDR frame, allocated only when a chapter uses it.
+  const copyMat = new THREE.ShaderMaterial({ uniforms: { tIn: { value: null } }, vertexShader: VERT_SCREEN,
+    fragmentShader: 'varying vec2 vUv;uniform sampler2D tIn;void main(){gl_FragColor=texture2D(tIn,vUv);}', depthTest: false, depthWrite: false });
   const brightMat = new THREE.ShaderMaterial({ uniforms: { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 1 }, uTexel: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB;uniform vec2 uTexel;${TRANSITION}
       vec3 s(vec2 uv){if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,zoomA(uv)).rgb,texture2D(tB,zoomB(uv)).rgb,revealOf(uv));}
@@ -163,7 +167,19 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   function renderChapter(c, target, s, pr) {
     const scroll = hero ? Math.max(0, -hero.getBoundingClientRect().top) : 0;
     c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: s.local[c.name], scroll, viewH: H, pr });
-    renderer.setRenderTarget(target); renderer.render(c.scene, c.camera);
+    if (!c.refraction) { renderer.setRenderTarget(target); renderer.render(c.scene, c.camera); return; }
+    // Base layer → frame copy → glass → light overlays. The glass never samples its own render target.
+    const layers = c.camera.layers.mask;
+    c.camera.layers.set(0); renderer.setRenderTarget(target); renderer.render(c.scene, c.camera);
+    const gw = Math.max(1, target.width >> 1), gh = Math.max(1, target.height >> 1);
+    if (rtGlass.width !== gw || rtGlass.height !== gh) rtGlass.setSize(gw, gh);
+    quad.material = copyMat; copyMat.uniforms.tIn.value = target.texture;
+    renderer.setRenderTarget(rtGlass); renderer.render(quadScene, quadCam);
+    c.refraction.frame.value = rtGlass.texture; c.refraction.texel.value.set(1 / gw, 1 / gh);
+    renderer.setRenderTarget(target); renderer.autoClear = false;
+    c.camera.layers.set(1); renderer.render(c.scene, c.camera);
+    c.camera.layers.set(2); renderer.render(c.scene, c.camera);
+    renderer.autoClear = true; c.camera.layers.mask = layers;
   }
   let lastBlend = null;
   function render(dt = 0) {
@@ -251,7 +267,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
       disposed = true; cancelAnimationFrame(frame); resizeObserver.disconnect(); removeEventListener('scroll', onScroll); interaction.removeEventListener('pointermove', pointerMove);
       document.documentElement.removeEventListener('pointerleave', pointerLeave); media.removeEventListener('change', mediaChange);
       for (const c of chapters) c.scene.traverse(o => { o.geometry?.dispose(); if (o.material) for (const m of [].concat(o.material)) m.dispose(); });
-      shatter.dispose(); for (const t of [rtA, rtB, rtS1, rtS2]) t.dispose(); renderer.dispose(); renderer.domElement.remove(); cssRenderer.domElement.remove();
+      shatter.dispose(); copyMat.dispose(); for (const t of [rtA, rtB, rtS1, rtS2, rtGlass]) t.dispose(); renderer.dispose(); renderer.domElement.remove(); cssRenderer.domElement.remove();
     }
   };
 }
