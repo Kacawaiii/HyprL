@@ -119,7 +119,7 @@ describe('Beginner cockpit', () => {
     renderCockpit();
     const card = await screen.findByLabelText('Take profit and stop loss');
     expect(card).toHaveTextContent('Not provided');
-    expect(card).toHaveTextContent(/no versioned risk policy is registered/);
+    expect(card).toHaveTextContent(/no levels are attached to this frozen reference/);
   });
 
   it('shows TP/SL with origin, method and gap handling when the policy provides them', async () => {

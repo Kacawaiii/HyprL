@@ -1,4 +1,5 @@
 import type { SourceTimeline } from './types';
+import type { PolicyDefinitions, PolicyReport } from './policyTypes';
 import type {
   ComparisonReadiness, DatasetResult, ExperimentResult, HypothesisDetail, HypothesisRow, JobStatus,
   LabJobs, LabModels, LedgerRow, MonitoringView, ObservabilityHealth, PredictionView, ProposalCatalogue,
@@ -139,6 +140,8 @@ export interface CandleQuery {
 }
 
 export const apiClient = {
+  getPolicyDefinitions: (signal?: AbortSignal) => request<PolicyDefinitions>('/api/v1/policies/definitions', signal),
+  getPolicyReport: (signal?: AbortSignal) => request<PolicyReport>('/api/v1/policies/report', signal),
   /** The paper trader (read only, bounded). A dry-run runtime holds synthetic records; its scorecard needs `synthetic`. */
   getTraderToday: (date: string | undefined, signal?: AbortSignal) =>
     request<TraderToday>(`/api/v1/trader/today${query({ date })}`, signal),

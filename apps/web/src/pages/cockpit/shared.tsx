@@ -1,6 +1,7 @@
 import { CockpitChart } from '../../components/CockpitChart';
+import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../../components/States';
-import { fillsInPeriod } from '../../lib/cockpit';
+import { carrySelection, fillsInPeriod } from '../../lib/cockpit';
 import type { CockpitData } from './useCockpitData';
 
 export function ChartSection({ data }: { data: CockpitData }) {
@@ -35,6 +36,7 @@ export function ChartSection({ data }: { data: CockpitData }) {
 }
 
 export function ProtectionCard({ data }: { data: CockpitData }) {
+  const [params] = useSearchParams();
   const level = data.protection;
   return (
     <section className="card" aria-label="Take profit and stop loss">
@@ -54,11 +56,12 @@ export function ProtectionCard({ data }: { data: CockpitData }) {
           <p><strong>Not provided.</strong></p>
           <p className="metric-sub">
             Neither the signal contract nor the risk contract V1 defines take-profit or stop-loss levels, and no
-            versioned risk policy is registered. None is invented here. A future policy would be shown with its
-            origin, method and its treatment of gaps and intrabar ambiguity, separately from the frozen references.
+            levels are attached to this frozen reference. Separate policy evidence shows synthetic TP/SL
+            with their origin, method and treatment of gaps and intrabar ambiguity.
           </p>
         </>
       )}
+      <p><Link to={{ pathname: '/policies', search: carrySelection(params) }}>Calibration and TP/SL policy evidence →</Link></p>
     </section>
   );
 }

@@ -16,6 +16,7 @@ const NAV = [
   { to: '/markets', label: 'Markets', icon: '◪' },
   { to: '/signals', label: 'Signals', icon: '⌁' },
   { to: '/risk', label: 'Risk', icon: '⚖' },
+  { to: '/policies', label: 'Calibration / TP / SL', icon: '◇' },
   { to: '/paper', label: 'Paper', icon: '◐' },
   { to: '/backtests', label: 'Backtests', icon: '◷' },
   { to: '/portfolio', label: 'Portfolio', icon: '◈' },
