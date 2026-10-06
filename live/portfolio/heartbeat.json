@@ -1,7 +1,7 @@
 {
-  "ts": "2026-10-03T00:07:01.621538+00:00",
+  "ts": "2026-10-06T01:38:47.506375+00:00",
   "ok": true,
-  "equity": 107206.01,
+  "equity": 108169.72,
   "mode": "live",
   "orders": 2,
   "sent": 2,
@@ -14,10 +14,10 @@
   "account_mode": "long-short",
   "shorting_enabled": true,
   "momentum_targets": 29,
-  "trend_targets": 3,
+  "trend_targets": 5,
   "actual_positions": 32,
   "actual_trend_positions": 3,
   "open_orders_at_start": 0,
-  "reconciled_state": 0,
+  "reconciled_state": 1,
   "issues": []
 }
