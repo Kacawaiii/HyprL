@@ -499,3 +499,54 @@ def test_daily_context_is_stored_once_with_prediction_references(service):
     assert len(contexts) == 1
     inputs = list(rows(service.store,'inputs'))
     assert all(r['payload']['snapshot']['context_record_hash'] == contexts[0]['identity'] for r in inputs)
+
+
+def test_crash_between_label_and_execution_leaves_neither_and_resume_completes(service, clock, monkeypatch):
+    service.run()
+    clock.at += timedelta(days=9, hours=10)
+    original = ResearchStore._append
+
+    def crash_on_execution(self, db, kind, *args, **kwargs):
+        if kind == 'execution':
+            raise RuntimeError('simulated crash after the label insert')
+        return original(self, db, kind, *args, **kwargs)
+    monkeypatch.setattr(ResearchStore, '_append', crash_on_execution)
+    with pytest.raises(RuntimeError):
+        realize(service.store, service.ledger, service.data, at=clock())
+    # One transaction: the label of the crashed prediction was rolled back with its execution.
+    assert service.store.records('label') == [] and service.store.records('execution') == []
+    monkeypatch.setattr(ResearchStore, '_append', original)
+    result = realize(service.store, service.ledger, service.data, at=clock())
+    assert result['labels_added'] == 50 and result['executions_repaired'] == 0
+    assert len(service.store.records('execution')) == len(service.store.records('label')) == 50
+
+
+def test_a_labelled_prediction_missing_its_execution_is_repaired_once(service, clock, monkeypatch):
+    service.run()
+    clock.at += timedelta(days=9, hours=10)
+    # The old code: label written, then a crash before the execution (separate transactions).
+    monkeypatch.setattr(ResearchStore, 'append_label_and_execution', lambda self, label, execution: self.append_label(label))
+    realize(service.store, service.ledger, service.data, at=clock())
+    assert len(service.store.records('label')) == 50 and service.store.records('execution') == []
+    monkeypatch.undo()
+    repaired = realize(service.store, service.ledger, service.data, at=clock())
+    assert repaired['executions_repaired'] == 50 and repaired['labels_added'] == 0
+    executions = service.store.records('execution')
+    assert len(executions) == 50 and {r['payload']['state'] for r in executions} == {'FILLED', 'NO_FILL'}
+    assert realize(service.store, service.ledger, service.data, at=clock())['executions_repaired'] == 0
+    assert service.store.verify()['verified']
+
+
+def test_false_positive_rate_is_fp_over_actual_negatives():
+    from scripts.trading_lab.trader_agent.scoring import metrics
+
+    def sample(p, y):
+        return {'view': 'UP' if p > .5 else 'DOWN', 'p': p, 'y': y, 'climatology': .5, 'return': .01 if y else -.01,
+                'pnl': 0., 'session': '2026-10-06'}
+    card = metrics([sample(.6, 1), sample(.6, 1), sample(.6, 0), sample(.4, 0)], 4)
+    assert card['hit_rate'] == .75 and card['error_rate'] == .25
+    assert card['false_positive_rate'] == .5          # 1 FP among 2 actual negatives (the old formula said 0.25)
+    assert card['false_discovery_rate'] == 1 / 3
+    assert card['confusion'] == {'tp': 2, 'fp': 1, 'tn': 1, 'fn': 0}
+    no_negatives = metrics([sample(.6, 1), sample(.4, 1)], 2)
+    assert no_negatives['false_positive_rate'] is None and no_negatives['confusion']['fn'] == 1

@@ -98,10 +98,10 @@ function Scoring({ data }: { data: TraderData }) {
               <section className="card" aria-label="Kept versus rejected">
                 <h2 className="card-title">Reviewer: kept vs rejected accuracy</h2>
                 <table className="data" aria-label="Kept vs rejected">
-                  <thead><tr><th>Raw analyst views the reviewer…</th><th>Scored</th><th>Hit rate</th><th>False-positive rate</th><th>Pending</th></tr></thead>
+                  <thead><tr><th>Raw analyst views the reviewer…</th><th>Scored</th><th>Hit rate</th><th title="FP / (FP + TN): actual non-outperformers called UP">False-positive rate</th><th title="FP / (FP + TP): UP calls that were wrong">False-discovery rate</th><th>Pending</th></tr></thead>
                   <tbody>
                     {([['kept', kr.kept], ['downgraded', kr.downgraded], ['rejected', kr.rejected]] as const).map(([name, e]) => (
-                      <tr key={name}><td>{name}</td><td>{e ? e.non_abstained : 0}</td><td>{e ? pct(e.hit_rate, 1) : 'n/a'}</td><td>{e ? pct(e.false_positive_rate, 1) : 'n/a'}</td><td>{e ? e.pending : 0}</td></tr>
+                      <tr key={name}><td>{name}</td><td>{e ? e.non_abstained : 0}</td><td>{e ? pct(e.hit_rate, 1) : 'n/a'}</td><td>{e ? pct(e.false_positive_rate, 1) : 'n/a'}</td><td>{e ? pct(e.false_discovery_rate ?? null, 1) : 'n/a'}</td><td>{e ? e.pending : 0}</td></tr>
                     ))}
                   </tbody>
                 </table>

@@ -25,12 +25,42 @@ def rows(store, kind):
         after = page[-1]["sequence"]
 
 
+def shadow_execution(p, *, entry, available, recorded, cost, sources):
+    # An after-the-fact SHADOW observation, never a claimed broker execution.
+    weight = p.proposed_position["weight"]
+    return ExecutionObservation(observation_id=p.prediction_id + ":shadow-fill", prediction_id=p.prediction_id,
+        prediction_hash=p.identity, available_at=available, recorded_at=recorded,
+        state="FILLED" if weight else "NO_FILL",
+        executed_position={"weight": weight, "entry_at": entry, "mode": "SHADOW"},
+        costs={"roundtrip": cost if weight else 0},
+        proposal_gap={"method": "shadow_mark_at_recorded_open"}, errors=(),
+        provenance={"sources": sources, "method": "retrospective_shadow_fill_not_broker"})
+
+
+def repair_missing_executions(store):
+    """Idempotent recovery for stores written before label and execution became one transaction: a labelled
+    prediction whose shadow execution is missing gets it rebuilt from the label's own recorded evidence."""
+    executed = {r["payload"]["prediction_hash"] for r in rows(store, "execution")}
+    labels = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "label")}
+    repaired = 0
+    for row in rows(store, "prediction"):
+        label = labels.get(row["identity"])
+        if label is None or row["identity"] in executed:
+            continue
+        p = PredictionRecord.from_dict(row["payload"])
+        store.append_execution(shadow_execution(p, entry=iso(instant(p.signal["label_definition"]["entry_at"])), available=label["available_at"],
+            recorded=label["recorded_at"], cost=label["value"]["cost_roundtrip"], sources=label["provenance"]["sources"]))
+        repaired += 1
+    return repaired
+
+
 def realize(store, ledger, data, *, at=None):
     at = at or now()
     with ledger.owner():
         ledger.grant.check(at)
         if ledger.paused:
             return {"state": "PAUSED", "labels_added": 0}
+        repaired = repair_missing_executions(store)
         labeled = {r["payload"]["prediction_hash"] for r in rows(store, "label")}
         predictions = [p for p in rows(store, "prediction") if p["identity"] not in labeled]
         cache, realized, pending = {}, 0, 0
@@ -96,23 +126,17 @@ def realize(store, ledger, data, *, at=None):
                     realized_at=iso(exit_at), available_at=iso(available), recorded_at=iso(recorded),
                     target="trader_open_to_endpoint_v1", value=value, provenance={"sources": sources, "definition": dict(definition)},
                     version="1")
-                store.append_label(label)
-                # This is an after-the-fact SHADOW observation, never a claimed broker execution.
-                execution = ExecutionObservation(observation_id=p.prediction_id + ":shadow-fill", prediction_id=p.prediction_id,
-                    prediction_hash=p.identity, available_at=iso(available), recorded_at=iso(recorded),
-                    state="FILLED" if p.proposed_position['weight'] else 'NO_FILL',
-                    executed_position={"weight": p.proposed_position["weight"], "entry_at": iso(entry), "mode": "SHADOW"},
-                    costs={"roundtrip": cost if p.proposed_position['weight'] else 0},
-                    proposal_gap={"method": "shadow_mark_at_recorded_open"}, errors=(),
-                    provenance={"sources": sources, "method": "retrospective_shadow_fill_not_broker"})
-                store.append_execution(execution)
+                # Label and shadow execution are recorded in one transaction (both or neither).
+                store.append_label_and_execution(label, shadow_execution(p, entry=iso(entry), available=iso(available),
+                                                                         recorded=iso(recorded), cost=cost, sources=sources))
                 realized += 1
             except TraderError as error:
                 ledger.alert(error.code)
                 if error.code in {"BUDGET_EXHAUSTED", "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}:
-                    return {"state": "BLOCKED", "reason": error.code, "labels_added": realized, "pending": len(predictions) - realized}
+                    return {"state": "BLOCKED", "reason": error.code, "labels_added": realized, "pending": len(predictions) - realized,
+                            "executions_repaired": repaired}
                 pending += 1
-        return {"state": "COMPLETE", "labels_added": realized, "pending": pending}
+        return {"state": "COMPLETE", "labels_added": realized, "pending": pending, "executions_repaired": repaired}
 
 
 def correlation(x, y):
@@ -133,8 +157,14 @@ def metrics(samples, issued):
                      "mean_p": statistics.mean(s["p"] for s in bucket) if bucket else None,
                      "frequency": statistics.mean(s["y"] for s in bucket) if bucket else None})
     hit = statistics.mean((s["p"] > .5) == bool(s["y"]) for s in active) if n else None
+    # Positive = a view that the asset outperforms (p > 0.5); actual positive = it did (y = 1).
+    tp = sum(s["p"] > .5 and bool(s["y"]) for s in active); fp = sum(s["p"] > .5 and not s["y"] for s in active)
+    tn = sum(s["p"] < .5 and not s["y"] for s in active)
     return {"issued": issued, "realized": len(samples), "non_abstained": n, "pending": issued - len(samples),
-            "hit_rate": hit, "false_positive_rate": 1 - hit if n else None,
+            "hit_rate": hit, "error_rate": 1 - hit if n else None,
+            "false_positive_rate": fp / (fp + tn) if fp + tn else None,      # FP / actual negatives; none without negatives
+            "false_discovery_rate": fp / (fp + tp) if fp + tp else None,     # wrong share of the positive views
+            "confusion": {"tp": tp, "fp": fp, "tn": tn, "fn": sum(s["p"] < .5 and bool(s["y"]) for s in active)},
             "brier": statistics.mean((s["p"] - s["y"]) ** 2 for s in active) if n else None,
             "climatology_brier": statistics.mean((s["climatology"] - s["y"]) ** 2 for s in active) if n else None,
             "calibration_bins": bins, "ic": correlation([s["p"] for s in active], [s["return"] for s in active]),

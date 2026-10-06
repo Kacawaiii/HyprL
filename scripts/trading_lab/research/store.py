@@ -298,28 +298,51 @@ class ResearchStore:
             self._append(db, 'inputs', evidence.to_dict(), prediction.prediction_id, prediction.identity, evidence.recorded_at)
         return prediction.identity
 
+    def _check_label(self, db, label):
+        row = db.execute("SELECT * FROM records WHERE kind='prediction' AND identity=?", (label.prediction_hash,)).fetchone()
+        if row is None:
+            raise KeyError('prediction not issued')
+        item = self._decode(row)
+        prediction = PredictionRecord.from_dict(item['payload'])
+        enrich_prediction(prediction, (label,), as_of=label.recorded_at)
+        if label.recorded_at < item['recorded_at']:
+            raise ValueError('label arrival cannot precede issued prediction')
+        if label.target == 'forward_return':
+            number(label.value)
+        for old in db.execute("SELECT * FROM records WHERE kind='label' AND object_id=?", (label.label_id,)):
+            previous = self._decode(old)
+            if previous['payload']['prediction_hash'] != label.prediction_hash:
+                raise ValueError('label identity cannot bind another prediction')
+            if previous['payload']['version'] == label.version and previous['identity'] != label.identity:
+                raise ValueError('label version immutable; append a new correction version')
+            if previous['payload']['recorded_at'] > label.recorded_at:
+                raise ValueError('label arrival clock cannot go backwards')
+
     def append_label(self, label):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute("SELECT * FROM records WHERE kind='prediction' AND identity=?", (label.prediction_hash,)).fetchone()
-            if row is None:
-                raise KeyError('prediction not issued')
-            item = self._decode(row)
-            prediction = PredictionRecord.from_dict(item['payload'])
-            enrich_prediction(prediction, (label,), as_of=label.recorded_at)
-            if label.recorded_at < item['recorded_at']:
-                raise ValueError('label arrival cannot precede issued prediction')
-            if label.target == 'forward_return':
-                number(label.value)
-            for old in db.execute("SELECT * FROM records WHERE kind='label' AND object_id=?", (label.label_id,)):
-                previous = self._decode(old)
-                if previous['payload']['prediction_hash'] != label.prediction_hash:
-                    raise ValueError('label identity cannot bind another prediction')
-                if previous['payload']['version'] == label.version and previous['identity'] != label.identity:
-                    raise ValueError('label version immutable; append a new correction version')
-                if previous['payload']['recorded_at'] > label.recorded_at:
-                    raise ValueError('label arrival clock cannot go backwards')
+            self._check_label(db, label)
             return self._append(db, 'label', label.to_dict(), label.label_id, label.prediction_hash, label.recorded_at)
+
+    def append_label_and_execution(self, label, observation):
+        """A realized label and its execution observation in one transaction: both are recorded, or neither.
+        A crash between two separate appends would leave a labelled prediction without its execution evidence."""
+        if not isinstance(observation, CLASSES['execution']) or observation.prediction_hash != label.prediction_hash:
+            raise ValueError('execution does not bind the labelled decision')
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._check_label(db, label)
+            item = self._decode(db.execute("SELECT * FROM records WHERE kind='prediction' AND identity=?", (label.prediction_hash,)).fetchone())
+            prediction = PredictionRecord.from_dict(item['payload'])
+            if (observation.prediction_id != prediction.prediction_id or observation.available_at < prediction.decision_at
+                    or observation.recorded_at < item['recorded_at']):
+                raise ValueError('execution does not bind an issued decision')
+            old = db.execute("SELECT * FROM records WHERE kind='execution' AND object_id=?", (observation.observation_id,)).fetchone()
+            if old and self._decode(old)['identity'] != sha256_canonical(observation.to_dict()):
+                raise ValueError('observation identity immutable; use a new version or identifier')
+            identity = self._append(db, 'label', label.to_dict(), label.label_id, label.prediction_hash, label.recorded_at)
+            self._append(db, 'execution', observation.to_dict(), observation.observation_id, prediction.identity, observation.recorded_at)
+            return identity
 
     def append_execution(self, observation):
         item = self.get(observation.prediction_hash, kind='prediction')

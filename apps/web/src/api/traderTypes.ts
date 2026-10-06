@@ -77,7 +77,12 @@ export interface TraderLabels { schema: 'trader-labels-page-v1'; records: Array<
 export interface CalibrationBin { low: number; high: number; n: number; mean_p: number | null; frequency: number | null }
 export interface ScoreEntry {
   issued: number; realized: number; non_abstained: number; pending: number; hit_rate: number | null;
-  false_positive_rate: number | null; brier: number | null; climatology_brier: number | null;
+  /** FP / (FP + TN): share of actual non-outperformers called UP; null without actual negatives. */
+  false_positive_rate: number | null;
+  /** FP / (FP + TP): share of UP calls that were wrong. */
+  false_discovery_rate?: number | null; error_rate?: number | null;
+  confusion?: { tp: number; fp: number; tn: number; fn: number };
+  brier: number | null; climatology_brier: number | null;
   calibration_bins: CalibrationBin[]; ic: number | null; mean_unit_pnl_after_costs: number | null;
   abstention_rate: number | null; days: number; ties: number;
 }
