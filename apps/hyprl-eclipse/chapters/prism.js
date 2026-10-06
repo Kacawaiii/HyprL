@@ -42,7 +42,7 @@ function buildShards(specs) {
     const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length, cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
     q.copy(s.quat); const th = s.th / 2;
     const push = (x, y, z, nx, ny, nz, e) => {
-      v.set(x, y, z).applyQuaternion(q).add(s.center); n.set(nx, ny, nz).applyQuaternion(q);
+      v.set(x, y, z).applyQuaternion(q).add(s.center); n.set(nx, ny, nz).applyQuaternion(q).normalize();
       P.push(v.x, v.y, v.z); N.push(n.x, n.y, n.z); E.push(e); UV.push(x, y); C.push(s.center.x, s.center.y, s.center.z);
       D.push(s.dir.x, s.dir.y, s.dir.z); S.push(...s.spin); L.push(...s.look);
     };
