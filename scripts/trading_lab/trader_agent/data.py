@@ -15,6 +15,7 @@ from scripts.trading_lab.research_protection import crypto_interval, equity_inte
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.yahoo_chart_provider import adapt_chart_rows, chart_path, parse_chart_meta
 
+from .news_queries import news_query
 from .config import HOSTS, TraderError, instant, iso, now, strict_json
 
 
@@ -63,7 +64,14 @@ class PublicData:
         folder.mkdir(mode=0o700, exist_ok=True)
         digest = hashlib.sha256(raw).hexdigest()
         (folder / f"{seq}-{digest}.json").write_bytes(raw)
-        return strict_json(raw), {"url": url, "received_at": iso(received), "digest": digest, "dispatch": seq}
+        source = {"url": url, "received_at": iso(received), "digest": digest, "dispatch": seq}
+        try:
+            return strict_json(raw), source
+        except TraderError as error:
+            raise TraderError(error.code, digest) from None
+        except ValueError:
+            # Plain-text error pages (e.g. GDELT "The specified phrase is too short.") are not JSON.
+            raise TraderError("SOURCE_NOT_JSON", digest) from None
 
     def yahoo(self, asset, start, end):
         payload, source = self.fetch("yahoo_chart", chart_path(asset), {
@@ -252,13 +260,17 @@ def build_context(grant, data, *, at, fomc=None, edgar=None):
                 raise
             prices[asset] = {"asset": asset, "state": error.code}
             exclusions.append({"asset": asset, "reason": error.code})
+            if error.evidence:
+                exclusions[-1]["evidence_digest"] = error.evidence
     eligible = [a for a in grant.universe if prices[a]["state"] == "AVAILABLE"]
     if prices["SPY"]["state"] != "AVAILABLE" or not eligible:
         raise TraderError("MISSING_PRICES")
     for asset in eligible + ["macro", "politics", "trade"]:
-        query = {"macro": '(inflation OR "interest rates" OR employment)',
-                 "politics": '(election OR sanctions OR geopolitics)',
-                 "trade": '(tariff OR "trade agreement")'}.get(asset, f'"{asset}"')
+        try:
+            query = news_query(asset)
+        except TraderError as error:
+            headlines[asset] = {"state": error.code, "items": []}
+            continue
         try:
             digest, source = data.headlines(query, at)
             headlines[asset] = {"state": "AVAILABLE", "items": digest}
@@ -267,6 +279,8 @@ def build_context(grant, data, *, at, fomc=None, edgar=None):
             if error.code in {"BUDGET_EXHAUSTED", "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}:
                 raise
             headlines[asset] = {"state": error.code, "items": []}
+            if error.evidence:
+                headlines[asset]["evidence_digest"] = error.evidence
     # The decision clock is after every durable input acquisition. The price cut stays at run start.
     decision_at = max([at] + [instant(s["received_at"]) for s in sources])
     context = {"schema": "trader-context-v1", "session": at.date().isoformat(), "decision_time": iso(decision_at),

@@ -15,8 +15,9 @@ HOSTS = {"yahoo_chart": "query1.finance.yahoo.com",
 
 
 class TraderError(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, evidence=None):
         self.code = code
+        self.evidence = evidence
         super().__init__(code)
 
 
