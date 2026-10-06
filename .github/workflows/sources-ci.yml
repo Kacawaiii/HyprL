@@ -131,15 +131,17 @@ jobs:
           (cd apps/web && npm ci && npx vite build --outDir "$RUNNER_TEMP/web-dist" --emptyOutDir)
           mkdir -p "$RUNNER_TEMP/pw" && (cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null \
             && npm install playwright@1.56.0 && npx playwright install --with-deps chromium)
+      # The demo accepts a root beneath the checkout's ignored var/ only.
       - name: Synthetic research store for the monitoring page
-        run: python -m scripts.trading_lab.research.demo --root "$RUNNER_TEMP/research" --bars 120 > /dev/null
+        run: python -m scripts.trading_lab.research.demo --root var/ci/research --bars 120 > /dev/null
       - name: Lab journey in Chromium
         run: |
           HYPRL_MODEL_LAB_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(24))')"
           echo "::add-mask::$HYPRL_MODEL_LAB_TOKEN"
           export HYPRL_MODEL_LAB_TOKEN
           python -m scripts.trading_lab.app_api.server --host 127.0.0.1 --port 8796 \
-            --dist-root "$RUNNER_TEMP/web-dist" --model-lab-root "$RUNNER_TEMP/lab" \
-            --research-root "$RUNNER_TEMP/research/registry" > "$RUNNER_TEMP/server.log" 2>&1 &
+            --dist-root "$RUNNER_TEMP/web-dist" --model-lab-root var/ci/lab \
+            --research-root var/ci/research/registry > "$RUNNER_TEMP/server.log" 2>&1 &
           for _ in $(seq 60); do curl -sf -o /dev/null http://127.0.0.1:8796/api/v1/health && break; sleep 1; done
-          LAB_URL=http://127.0.0.1:8796 NODE_PATH="$RUNNER_TEMP/pw/node_modules" node apps/web/e2e/lab-journey.cjs
+          LAB_URL=http://127.0.0.1:8796 NODE_PATH="$RUNNER_TEMP/pw/node_modules" node apps/web/e2e/lab-journey.cjs \
+            || { tail -n 40 "$RUNNER_TEMP/server.log"; exit 1; }
