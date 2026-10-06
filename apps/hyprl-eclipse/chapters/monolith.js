@@ -59,11 +59,11 @@ export function createMonolithChapter({ isMobile }) {
         float rel=fbm3(vW.xz*.07)*.28+fbm3(vW.xz*.19+3.7)*.045*smoothstep(2.5,.6,px);
         vec2 erosionUv=vec2(vW.x*.13+vW.y*.024,vW.y*.021+vW.z*.006);
         float erosion=fbm3(erosionUv+vec2(fbm3(erosionUv*.4)*.6,0.));
-        rel+=uSnow*pow(1.-abs(erosion*2.-1.),3.)*1.7*smoothstep(14.,38.,vW.y);
+        rel+=uSnow*pow(1.-abs(erosion*2.-1.),3.)*.75*smoothstep(14.,38.,vW.y);
         vec3 n=bumpN(g,vW,rel*.65*smoothstep(6.,1.2,px));
         float ndl=dot(n,uLight);float lit=pow(clamp(ndl*1.35+.02,0.,1.),1.3);
         float snow=uSnow*smoothstep(.3,.62,g.y+(fbm(vW.xz*.25)-.5)*.35)*smoothstep(1.5,7.,vW.y);
-        snow*=mix(1.,.32+.68*smoothstep(.38,.64,erosion),smoothstep(14.,38.,vW.y));
+        snow*=mix(1.,.6+.4*smoothstep(.38,.64,erosion),smoothstep(14.,38.,vW.y));
         vec3 albedo=mix(vec3(uLow),vec3(.43,.45,.49),snow);
         vec3 col=albedo*(lit*1.15*uTint+.05)+vec3(.015)*max(-ndl,0.)*snow;
         vec3 v=vW-cameraPosition;float dist=length(v);vec3 hz=haze(v/dist);
