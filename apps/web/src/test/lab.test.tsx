@@ -1,8 +1,9 @@
 /**
  * The Lab views over real-shaped responses (captured from the synthetic demo).
  *
- * The recurring assertions are about what the page must not claim: no write is ever sent, an absent
- * output is "not provided", pending labels are not realized, an unmeasured service is not "healthy".
+ * The recurring assertions are about what the page must not claim: a write is sent only by an explicit
+ * control (build, launch, cancel, monitor) with the bearer token, an absent output is "not provided",
+ * pending labels are not realized, an unmeasured service is not "healthy".
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
@@ -41,12 +42,12 @@ function mock(overrides: Record<string, unknown> = {}) {
     const id = path?.match(/\/lab\/jobs\/([a-f0-9]{32})\/results$/)?.[1];
     if (id) {
       const job = (jobs as typeof lab.labJobs).jobs.find((item: { id: string }) => item.id === id);
+      if (job?.kind === 'monitoring') return reply(monitoringResult(job.subject));
       return reply(job?.kind === 'dataset' ? lab.datasetResult : lab.experimentResult);
     }
     if (path?.startsWith('/api/v1/observability/predictions/')) return reply(lab.predictionView);
     if (path?.startsWith('/api/v1/research/hypotheses/')) return reply(lab.hypothesisDetail);
-    void init;
-    const payload = routes[path ?? ''];
+    const payload = routes[init?.method === 'POST' ? `POST ${path}` : path ?? ''];
     if (payload instanceof Error) return Promise.reject(payload);
     if (payload && typeof payload === 'object' && '__status' in payload) {
       const failure = payload as { __status: number; error: string };
@@ -54,6 +55,32 @@ function mock(overrides: Record<string, unknown> = {}) {
     }
     return payload === undefined ? reply({ error: 'no such endpoint' }, 404) : reply(payload);
   });
+}
+
+/**
+ * A monitoring job's result. Constructed: its per-product view is the captured observability monitoring
+ * response; the envelope follows scripts/trading_lab/platform/lab_monitoring.py.
+ */
+function monitoringResult(subject: string) {
+  return {
+    state: 'COMPLETE', result_hash: '9'.repeat(64), error_code: null,
+    result: {
+      schema: 'lab-experiment-monitoring-v1', experiment_job_id: subject, experiment_hash: '8'.repeat(64),
+      model_id: 'local-momentum-v1', as_of: '2026-10-06T10:00:00Z', predictions: 80, reference_split: 'validation',
+      monitored_split: 'test', ledger: { verified: true, records: 400, head_hash: '7'.repeat(64) }, synthetic: true,
+      products: { 'BTC-USD': { reference_hash: '6'.repeat(64), monitoring_hash: '5'.repeat(64), view: lab.monitoring } },
+      limitations: ['synthetic prices and labels; establishes no real edge'],
+    },
+  };
+}
+
+function withMonitoringJob(state: string) {
+  const subject = lab.labJobs.jobs[0].id;
+  return {
+    ...lab.labJobs,
+    jobs: [...lab.labJobs.jobs, { ...lab.labJobs.jobs[0], id: 'd'.repeat(32), kind: 'monitoring', subject, state,
+      progress: state === 'COMPLETE' ? 1 : 0.5, result_hash: state === 'COMPLETE' ? '9'.repeat(64) : null }],
+  };
 }
 
 function open(path: string, overrides?: Record<string, unknown>) {
@@ -122,7 +149,10 @@ describe('models', () => {
     const frozen = screen.getByRole('article', { name: 'Model paper-ridge-v1' });
     expect(within(frozen).getByText(/FROZEN REFERENCE/)).toBeInTheDocument();
     expect(within(frozen).getByText('TRAIN: NO')).toBeInTheDocument();
-    expect(screen.getByText(/cannot register code/)).toBeInTheDocument();
+    expect(screen.getByText(/never uploads or imports code/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Adapter registration').textContent).toContain('register_entry_point');
+    expect(within(momentum).getByRole('link', { name: 'Use in an experiment' }).getAttribute('href')).toContain('model=local-momentum-v1');
+    expect(within(frozen).queryByRole('link', { name: 'Use in an experiment' })).not.toBeInTheDocument();
   });
 
   it('keeps the selected model when switching Beginner/Expert', async () => {
@@ -139,18 +169,54 @@ describe('models', () => {
 });
 
 describe('datasets', () => {
-  it('prepares a synthetic request without sending it, and refuses an illegal one', async () => {
+  it('sends nothing before the token and the click, and refuses an illegal configuration', async () => {
     const fetchMock = open('/lab/datasets');
     const command = await screen.findByLabelText('Prepared dataset command');
     expect(command.textContent).toContain('"synthetic":true');
     expect(command.textContent).toContain('$HYPRL_MODEL_LAB_TOKEN');
-    expect(screen.getByText(/not sent/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Build dataset' })).toBeDisabled();
+    expect(screen.getAllByTestId('waiting-authorization')[0]).toHaveTextContent('WAITING_AUTHORIZATION');
+    expect(screen.getByRole('radio', { name: /Real prices/ })).toBeDisabled();
+    await unlock();
     const bars = screen.getByLabelText(/Hourly bars/);
     await userEvent.clear(bars);
     await userEvent.type(bars, '5');
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Bars must be/);
+    expect(await screen.findByText(/Bars must be/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Build dataset' })).toBeDisabled();
     expect(screen.queryByLabelText('Prepared dataset command')).not.toBeInTheDocument();
     expect(calls(fetchMock).some((call) => call.init?.method === 'POST')).toBe(false);
+  });
+
+  it('builds a dataset with one authenticated POST of the chosen configuration', async () => {
+    const created = { job_id: 'c'.repeat(32), state: 'QUEUED', synthetic: true };
+    const fetchMock = open('/lab/datasets', { 'POST /api/v1/lab/datasets': created });
+    await unlock();
+    await userEvent.click(await screen.findByRole('button', { name: 'Build dataset' }));
+    expect(await screen.findByText(/queued in an isolated worker/)).toBeInTheDocument();
+    const posts = calls(fetchMock).filter((call) => call.init?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.url).toBe('/api/v1/lab/datasets');
+    expect(posts[0]!.init?.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+    const body = JSON.parse(String(posts[0]!.init?.body));
+    expect(body.synthetic).toBe(true);
+    expect(body.products).toEqual(['BTC-USD', 'ETH-USD']);
+    expect(body.horizon_seconds).toBe(14400);
+  });
+
+  it('explains a page the listener refuses', async () => {
+    open('/lab/datasets', { 'POST /api/v1/lab/datasets': { __status: 403, error: 'Model Lab accepts local clients and same-origin loopback pages only' } });
+    await unlock();
+    await userEvent.click(await screen.findByRole('button', { name: 'Build dataset' }));
+    expect(await screen.findByText(/served by the lab listener itself on a loopback address/)).toBeInTheDocument();
+  });
+
+  it('links a completed dataset to the experiment configuration', async () => {
+    open('/lab/datasets?mode=expert');
+    await unlock();
+    const next = await screen.findByRole('link', { name: /Next: configure an experiment/ });
+    expect(next.getAttribute('href')).toContain('/lab/experiments');
+    expect(next.getAttribute('href')).toContain('dataset=');
+    expect(next.getAttribute('href')).toContain('mode=expert');
   });
 
   it('shows admissible decisions and exclusions of a built dataset', async () => {
@@ -164,7 +230,7 @@ describe('datasets', () => {
 });
 
 describe('experiments', () => {
-  it('compares with baselines, keeps a negative result and never sends a write', async () => {
+  it('compares with baselines, keeps a negative result and sends no write by itself', async () => {
     const fetchMock = open('/lab/experiments');
     await unlock();
     expect(await screen.findAllByText('CRITERION NOT MET')).toHaveLength(2);
@@ -176,34 +242,78 @@ describe('experiments', () => {
     expect(calls(fetchMock).some((call) => call.init?.method === 'POST')).toBe(false);
   });
 
-  it('offers a cancel command, not a cancel button, for a running job', async () => {
-    const running = {
-      ...lab.labJobs,
-      jobs: [{ ...lab.labJobs.jobs[0], state: 'RUNNING', progress: 0.4, result_hash: null }, ...lab.labJobs.jobs.slice(1)],
-    };
-    const fetchMock = open('/lab/experiments', { '/api/v1/lab/jobs': running });
+  const running = {
+    ...lab.labJobs,
+    jobs: [{ ...lab.labJobs.jobs[0], state: 'RUNNING', progress: 0.4, result_hash: null }, ...lab.labJobs.jobs.slice(1)],
+  };
+
+  it('cancels a running job with one authenticated POST', async () => {
+    const id = running.jobs[0]!.id;
+    const fetchMock = open('/lab/experiments', {
+      '/api/v1/lab/jobs': running,
+      [`POST /api/v1/lab/jobs/${id}/cancel`]: { ...running.jobs[0], cancel_requested: true },
+    });
     await unlock();
-    const cancel = await screen.findByLabelText('Cancel command');
-    expect(cancel.textContent).toContain(`/api/v1/lab/jobs/${running.jobs[0].id}/cancel`);
-    expect(screen.queryByRole('button', { name: /^cancel/i })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('progressbar', { name: 'Job progress' }).every((bar) => bar.getAttribute('aria-valuenow') === '40' || bar.getAttribute('aria-valuenow') === '100')).toBe(true);
+    const cancel = await screen.findByRole('button', { name: 'Cancel this job' });
     expect(screen.getAllByRole('progressbar', { name: 'Job progress' }).some((bar) => bar.getAttribute('aria-valuenow') === '40')).toBe(true);
-    expect(screen.getByRole('table', { name: 'Job log' })).toBeInTheDocument();
+    expect(screen.getAllByRole('table', { name: 'Job log' }).length).toBeGreaterThan(0);
     expect(calls(fetchMock).some((call) => call.init?.method === 'POST')).toBe(false);
+    await userEvent.click(cancel);
+    expect(await screen.findByText(/Cancellation recorded/)).toBeInTheDocument();
+    const posts = calls(fetchMock).filter((call) => call.init?.method === 'POST');
+    expect(posts.map((call) => call.url)).toEqual([`/api/v1/lab/jobs/${id}/cancel`]);
+    expect(posts[0]!.init?.body).toBe('{}');
   });
 
   it('follows a running job by polling', async () => {
-    const running = {
-      ...lab.labJobs,
-      jobs: [{ ...lab.labJobs.jobs[0], state: 'RUNNING', progress: 0.4, result_hash: null }, ...lab.labJobs.jobs.slice(1)],
-    };
     const fetchMock = open('/lab/experiments', { '/api/v1/lab/jobs': running });
     await unlock();
-    await screen.findByLabelText('Cancel command');
+    await screen.findByRole('button', { name: 'Cancel this job' });
     const count = () => calls(fetchMock).filter((call) => call.url.endsWith('/api/v1/lab/jobs')).length;
     const before = count();
     await waitFor(() => expect(count()).toBeGreaterThan(before), { timeout: 4500 });
   }, 8000);
+
+  it('launches an experiment on the chosen dataset and model, and says real data waits for authorization', async () => {
+    const launched = { job_id: 'e'.repeat(32), state: 'QUEUED', synthetic: true, fingerprint: 'a'.repeat(64) };
+    const fetchMock = open('/lab/experiments?model=local-momentum-v1', { 'POST /api/v1/lab/experiments': launched });
+    await unlock();
+    await screen.findAllByText('CRITERION NOT MET');
+    expect(screen.getAllByTestId('waiting-authorization')[0]).toHaveTextContent('WAITING_AUTHORIZATION');
+    const button = await screen.findByRole('button', { name: 'Launch experiment' });
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByLabelText('Chosen model')).toHaveTextContent('EXTERNAL ADAPTER');
+    await userEvent.click(button);
+    expect(await screen.findByText(/recorded before any result/)).toBeInTheDocument();
+    const posts = calls(fetchMock).filter((call) => call.init?.method === 'POST');
+    expect(posts.map((call) => call.url)).toEqual(['/api/v1/lab/experiments']);
+    expect(JSON.parse(String(posts[0]!.init?.body))).toEqual({
+      dataset_hash: lab.datasetResult.result.dataset_hash, model_id: 'local-momentum-v1', embargo_seconds: 3600,
+    });
+  });
+
+  it('refuses an out-of-range embargo before sending', async () => {
+    const fetchMock = open('/lab/experiments');
+    await unlock();
+    const embargo = await screen.findByLabelText(/Embargo/);
+    await userEvent.clear(embargo);
+    await userEvent.type(embargo, '90000');
+    expect(await screen.findByText(/embargo from 0 to 86400 seconds/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Launch experiment' })).toBeDisabled();
+    expect(calls(fetchMock).some((call) => call.init?.method === 'POST')).toBe(false);
+  });
+
+  it('opens the monitoring of a completed experiment and lands on it', async () => {
+    const queued = { job_id: 'd'.repeat(32), state: 'QUEUED', synthetic: true, subject: lab.labJobs.jobs[0]!.id };
+    const fetchMock = open('/lab/experiments', { 'POST /api/v1/lab/monitoring': queued });
+    await unlock();
+    await screen.findAllByText('CRITERION NOT MET');
+    await userEvent.click(screen.getByRole('button', { name: 'Open the monitoring of these predictions' }));
+    expect(await screen.findByLabelText('Experiment monitoring')).toBeInTheDocument();
+    const post = calls(fetchMock).find((call) => call.init?.method === 'POST');
+    expect(post!.url).toBe('/api/v1/lab/monitoring');
+    expect(JSON.parse(String(post!.init?.body))).toEqual({ experiment_job_id: lab.labJobs.jobs[0]!.id });
+  });
 
   it('prepares a reproduction with the recorded dataset, model and embargo', async () => {
     open('/lab/experiments');
@@ -317,6 +427,25 @@ describe('monitoring', () => {
     expect(params.get('as_of')).toBeTruthy();
     expect(params.get('reference_hash')).toBe(lab.references.records[0].identity);
     expect(params.get('product')).toBe(lab.references.records[0].payload.selection.product);
+  });
+
+  it('shows the monitoring of a Model Lab experiment against its validation reference', async () => {
+    open(`/lab/monitoring?monitor=${'d'.repeat(32)}`, { '/api/v1/lab/jobs': withMonitoringJob('COMPLETE') });
+    await unlock();
+    const section = await screen.findByLabelText('Experiment monitoring');
+    expect(await within(section).findByText(/test split is monitored against a reference fixed on the validation split/)).toBeInTheDocument();
+    expect(within(section).getByText(/chain verified/)).toBeInTheDocument();
+    expect(within(section).getByText(/establishes no real edge/)).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'BTC-USD' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(section).getByLabelText('Diagnosis')).toBeInTheDocument();
+  });
+
+  it('follows a running monitoring job instead of concluding', async () => {
+    open('/lab/monitoring', { '/api/v1/lab/jobs': withMonitoringJob('RUNNING') });
+    await unlock();
+    const section = await screen.findByLabelText('Experiment monitoring');
+    expect(await within(section).findByRole('progressbar', { name: 'Job progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(within(section).queryByLabelText('Diagnosis')).not.toBeInTheDocument();
   });
 
   it('says so when no reference exists', async () => {

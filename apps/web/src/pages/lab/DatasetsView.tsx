@@ -1,16 +1,19 @@
-/** Dataset builder: choose products, period, target and horizon; see the admissible decisions and the exclusions of a built dataset. */
-import { useMemo, useState } from 'react';
+/** Dataset builder: choose products, period, target and horizon, build it in a worker, and see its admissible decisions and exclusions. */
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import type { DatasetManifest, JobStatus } from '../../api/labTypes';
 import { Badge, EmptyState, Hash } from '../../components/States';
 import {
-  DATASET_LIMITS, DEFAULT_DATASET_FORM, curlCommand, datasetRequest, formatCount, horizonLabel, validateDatasetForm,
+  DATASET_LIMITS, DEFAULT_DATASET_FORM, curlCommand, datasetRequest, formatCount, horizonLabel, isActive, validateDatasetForm,
 } from '../../lib/lab';
+import { carrySelection } from '../../lib/cockpit';
 import type { DatasetForm } from '../../lib/lab';
 import { useCockpit } from '../../state/useCockpit';
 import { useLabToken } from '../../state/labToken';
 import { useQuery } from '../../state/useQuery';
-import { LockedState, QueryBoundary, Synthetic } from './shared';
+import { useLabAction } from '../../state/useLabAction';
+import { ActionOutcome, JobProgress, LockedState, QueryBoundary, Synthetic, WaitingAuthorization } from './shared';
 
 function exclusionsByReason(manifest: DatasetManifest): [string, number][] {
   const counts = new Map<string, number>();
@@ -23,19 +26,34 @@ const REASON_TEXT: Record<string, string> = {
   LABEL_NOT_REALIZED_OR_GAP: 'The forward return was not yet realized at the end of the period, or a bar was missing.',
 };
 
-function Builder() {
+function Builder({ onCreated }: { onCreated: (jobId: string) => void }) {
+  const { token } = useLabToken();
+  const { selection } = useCockpit();
   const [form, setForm] = useState<DatasetForm>(DEFAULT_DATASET_FORM);
   const problems = useMemo(() => validateDatasetForm(form), [form]);
   const request = useMemo(() => datasetRequest(form), [form]);
+  const build = useLabAction((body: Record<string, unknown>) => apiClient.createLabDataset(token, body),
+    (data) => onCreated(data.job_id));
   const toggle = (product: string) => setForm((current) => ({
     ...current,
     products: current.products.includes(product)
       ? current.products.filter((item) => item !== product) : [...current.products, product],
   }));
+  const blocked = problems.length > 0 || !token || build.state.status === 'sending';
   return (
     <section className="card" aria-label="Dataset builder">
       <h2 className="card-title">Build a dataset <Synthetic /></h2>
-      <form className="lab-form" onSubmit={(event) => event.preventDefault()}>
+      <form className="lab-form" aria-label="Dataset configuration"
+        onSubmit={(event) => { event.preventDefault(); if (!blocked) void build.run(request); }}>
+        <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend className="lab-note">Data source</legend>
+          <label style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <input type="radio" name="source" checked readOnly /> Synthetic prices (labelled SYNTHETIC)
+          </label>
+          <label style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <input type="radio" name="source" disabled aria-describedby="real-data-state" /> Real prices: WAITING_AUTHORIZATION
+          </label>
+        </fieldset>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="lab-note">Products</legend>
           <div className="row">
@@ -65,22 +83,27 @@ function Builder() {
         <label>Target
           <input className="control" value="forward_return" readOnly aria-readonly="true" />
         </label>
+        <button className="control" type="submit" disabled={blocked}>
+          {build.state.status === 'sending' ? 'Building…' : 'Build dataset'}
+        </button>
       </form>
+      <div id="real-data-state"><WaitingAuthorization /></div>
       <p className="lab-note" style={{ marginTop: 8 }}>
-        Admissible decisions: a decision at T is kept only if every price it depends on was available by T and its
-        label ({horizonLabel(form.horizonHours * 3600)} forward return) is kept outside the inputs. Warm-up, gaps,
-        protected intervals and unresolved selected events are excluded with a reason, never filled. The registered
-        models support exactly 4 h; other horizons build a dataset but no model will accept it.
+        Period: {form.bars} hourly bars from {form.start.slice(0, 16)} UTC. Admissible decisions: a decision at T is kept only
+        if every price it depends on was available by T and its label ({horizonLabel(form.horizonHours * 3600)} forward return)
+        is kept outside the inputs. Warm-up, gaps, protected intervals and unresolved selected events are excluded with a
+        reason, never filled. The registered models support exactly 4 h; other horizons build a dataset but no model will accept it.
       </p>
-      {problems.length > 0 ? (
-        <ul role="alert" className="negative">{problems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
-      ) : (
-        <>
-          <p className="lab-note" style={{ margin: '12px 0 4px' }}>
-            Request prepared, <strong>not sent</strong>. The server refuses writes that come from a browser page, so run it from your terminal:
-          </p>
+      {problems.length > 0 && <ul role="alert" className="negative">{problems.map((problem) => <li key={problem}>{problem}</li>)}</ul>}
+      {!token && <p className="lab-note">Enter the operator token above to build.</p>}
+      <ActionOutcome state={build.state} done={(data) => (
+        <p>Dataset job <Hash value={data.job_id} chars={8} /> queued in an isolated worker. It is followed below.</p>
+      )} />
+      {problems.length === 0 && (
+        <details open={selection.mode === 'expert'}>
+          <summary>Equivalent terminal command (reproduction)</summary>
           <pre className="code-block" aria-label="Prepared dataset command">{curlCommand('/api/v1/lab/datasets', request)}</pre>
-        </>
+        </details>
       )}
     </section>
   );
@@ -143,10 +166,20 @@ function DatasetDetail({ job, token }: { job: JobStatus; token: string }) {
   );
 }
 
-function BuiltDatasets() {
+function BuiltDatasets({ created }: { created: string | null }) {
   const { token, version } = useLabToken();
+  const { params } = useCockpit();
   const [selected, setSelected] = useState<string | null>(null);
-  const jobs = useQuery(token ? `lab:jobs:${version}` : null, (signal) => apiClient.getLabJobs(token, signal), { staleMs: 5_000 });
+  const jobs = useQuery(token ? `lab:jobs:${version}` : null, (signal) => apiClient.getLabJobs(token, signal), { staleMs: 1_000 });
+  const cancel = useLabAction((id: string) => apiClient.cancelLabJob(token, id), () => jobs.refetch());
+  const anyActive = jobs.data?.jobs.some((job) => job.kind === 'dataset' && isActive(job)) ?? false;
+  const { refetch } = jobs;
+  useEffect(() => { if (created) refetch(); }, [created, refetch]);
+  useEffect(() => {
+    if (!anyActive) return undefined;
+    const timer = setInterval(refetch, 1_500);
+    return () => clearInterval(timer);
+  }, [anyActive, refetch]);
   if (!token) return <LockedState what="Built datasets" />;
   return (
     <section className="card" aria-label="Built datasets">
@@ -154,22 +187,43 @@ function BuiltDatasets() {
       <QueryBoundary query={jobs} label="Loading dataset jobs">
         {(data) => {
           const datasets = data.jobs.filter((job) => job.kind === 'dataset');
-          if (datasets.length === 0) return <EmptyState title="No dataset yet" detail="Run the prepared command above." />;
-          const active = datasets.find((job) => job.id === selected) ?? datasets.find((job) => job.state === 'COMPLETE');
+          if (datasets.length === 0) return <EmptyState title="No dataset yet" detail="Build one above." />;
+          const active = datasets.find((job) => job.id === (selected ?? created))
+            ?? datasets.find((job) => job.state === 'COMPLETE') ?? datasets[0];
           return (
             <div className="grid grid-2">
               <ul className="lab-list" aria-label="Dataset jobs">
                 {datasets.map((job) => (
                   <li key={job.id}>
                     <button className="row-button" aria-current={active?.id === job.id} onClick={() => setSelected(job.id)}>
-                      <Hash value={job.id} chars={8} /> <Badge tone={job.state === 'COMPLETE' ? 'ok' : 'warn'}>{job.state}</Badge>
+                      <Hash value={job.id} chars={8} /> <Badge tone={job.state === 'COMPLETE' ? 'ok' : isActive(job) ? 'warn' : 'off'}>{job.state}</Badge>
                     </button>
                   </li>
                 ))}
               </ul>
-              {active?.state === 'COMPLETE'
-                ? <DatasetDetail job={active} token={token} />
-                : <EmptyState title="Select a completed dataset" detail="Its manifest, exclusions and fingerprints appear here." />}
+              {active && active.state === 'COMPLETE' && (
+                <div className="stack">
+                  <DatasetDetail job={active} token={token} />
+                  <Link className="control" to={{ pathname: '/lab/experiments', search: withDataset(params, active.id) }}>
+                    Next: configure an experiment on this dataset
+                  </Link>
+                </div>
+              )}
+              {active && active.state !== 'COMPLETE' && (
+                <div className="stack" aria-label="Dataset job">
+                  <JobProgress job={active} />
+                  {isActive(active) && (
+                    <button className="control" onClick={() => void cancel.run(active.id)}
+                      disabled={cancel.state.status === 'sending' || active.cancel_requested}>
+                      {active.cancel_requested ? 'Cancellation requested' : 'Cancel this job'}
+                    </button>
+                  )}
+                  <ActionOutcome state={cancel.state} done={(status) => <p>Cancellation recorded: {status.state}.</p>} />
+                  {active.state === 'FAILED' && (
+                    <p role="alert" className="negative">The worker failed ({active.error_code ?? 'no code'}); nothing was published. Adjust the configuration and build again.</p>
+                  )}
+                </div>
+              )}
             </div>
           );
         }}
@@ -178,11 +232,19 @@ function BuiltDatasets() {
   );
 }
 
+/** The cockpit selection plus the dataset job the Experiments tab should preselect. */
+function withDataset(params: URLSearchParams, jobId: string): string {
+  const next = new URLSearchParams(carrySelection(params));
+  next.set('dataset', jobId);
+  return `?${next.toString()}`;
+}
+
 export function DatasetsView() {
+  const [created, setCreated] = useState<string | null>(null);
   return (
     <div className="stack">
-      <Builder />
-      <BuiltDatasets />
+      <Builder onCreated={setCreated} />
+      <BuiltDatasets created={created} />
     </div>
   );
 }

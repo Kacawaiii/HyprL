@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_DATASET_FORM, curlCommand, datasetRequest, edgeSentence, horizonLabel, isActive, outputCapabilities,
+  DEFAULT_DATASET_FORM, JOURNEY, curlCommand, modelFit, modelRole, datasetRequest, edgeSentence, horizonLabel, isActive, outputCapabilities,
   progressPercent, small, testComparison, validateDatasetForm, verdictSentence,
 } from '../lib/lab';
 import { lab } from './labFixtures';
@@ -92,5 +92,41 @@ describe('monitoring phrasing', () => {
     expect(small(Number.NaN)).toBe('not available');
     expect(small(0)).toBe('0');
     expect(small(0.0000123)).toMatch(/e-5$/);
+  });
+});
+
+describe('model fit and role', () => {
+  const models = lab.labModels.models as Array<{ contract: { model_id: string } }>;
+  const momentum = models.find((item) => item.contract.model_id === 'local-momentum-v1') as never;
+  const frozen = models.find((item) => item.contract.model_id === 'paper-ridge-v1') as never;
+  const manifest = { horizon_seconds: 14400, products: ['BTC-USD', 'ETH-USD'], target: 'forward_return' };
+
+  it('accepts a trainable model on a dataset its contract covers', () => {
+    expect(modelFit((momentum as { contract: never }).contract, manifest)).toEqual([]);
+  });
+  it('names every declared mismatch instead of sending a request bound to fail', () => {
+    const problems = modelFit((momentum as { contract: never }).contract, { ...manifest, horizon_seconds: 3600, products: ['SOL-USD'] });
+    expect(problems.join(' ')).toMatch(/supports 4 h; this dataset is 1 h/);
+    expect(problems.join(' ')).toMatch(/does not accept SOL-USD/);
+    expect(modelFit((frozen as { contract: never }).contract, manifest).join(' ')).toMatch(/does not declare TRAIN/);
+  });
+  it('tells a frozen reference from a local external adapter', () => {
+    expect(modelRole(frozen).label).toMatch(/FROZEN REFERENCE/);
+    expect(modelRole(momentum).label).toMatch(/EXTERNAL ADAPTER/);
+  });
+  it('orders the journey data, model, experiment, results, monitoring', () => {
+    expect(JOURNEY.map((step) => step.label)).toEqual(['Data', 'Model', 'Experiment', 'Results', 'Monitoring']);
+  });
+});
+
+describe('action errors', () => {
+  it('turns refusals into what to do, and a network failure into "nothing known queued"', async () => {
+    const { actionError } = await import('../state/useLabAction');
+    const { ApiError } = await import('../api/client');
+    expect(actionError(new ApiError('x', 401)).message).toMatch(/token was refused/);
+    expect(actionError(new ApiError('x', 403)).message).toMatch(/loopback/);
+    expect(actionError(new ApiError('only a completed experiment can be monitored', 409)).message)
+      .toBe('Refused (409): only a completed experiment can be monitored.');
+    expect(actionError(new TypeError('Failed to fetch')).message).toMatch(/Nothing is known to have been queued/);
   });
 });
