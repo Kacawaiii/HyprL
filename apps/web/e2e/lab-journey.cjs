@@ -112,11 +112,15 @@ async function journey(browser) {
   await shot(page, '3-monitoring');
   pass('monitoring job ran on the experiment predictions; diagnosis shown with limitations');
 
-  // Cancel: a long dataset job, cancelled from the page before it publishes.
+  // Cancel: with one worker, a second long dataset waits QUEUED behind the first, so a fast runner
+  // cannot finish it before the page shows its cancel control. It is cancelled before it publishes.
   await page.getByRole('link', { name: 'Datasets', exact: true }).click();
   await page.getByLabel(/Hourly bars/).fill('600');
   await page.getByRole('button', { name: 'Build dataset' }).click();
   await page.getByText(/queued in an isolated worker/).waitFor();
+  await page.getByLabel(/Seed/).fill('8');
+  await page.getByRole('button', { name: 'Build dataset' }).click();
+  await page.getByLabel('Dataset jobs').getByText('QUEUED').first().waitFor();
   await page.getByRole('button', { name: 'Cancel this job' }).click();
   await page.getByText(/Cancellation recorded/).waitFor();
   await page.getByLabel('Dataset jobs').getByText('CANCELLED').first().waitFor({ timeout: 60_000 });
@@ -212,6 +216,12 @@ async function narrow(browser) {
     console.log(JSON.stringify({ summary: `${results.length} checks passed` }));
   } catch (error) {
     console.log(JSON.stringify({ check: 'FAILED', ok: false, detail: String(error && error.stack || error) }));
+    if (process.env.GITHUB_ACTIONS) {
+      // Annotations are the part of a run readable without credentials; one line, no token in it.
+      const last = results.length > 0 ? results[results.length - 1].name : 'none';
+      const detail = String(error && error.message || error).replace(/\s+/g, ' ').slice(0, 900);
+      console.log(`::error title=lab-journey::after ${results.length} passed checks (last: ${last}): ${detail}`);
+    }
     process.exitCode = 1;
   } finally {
     await browser.close();
