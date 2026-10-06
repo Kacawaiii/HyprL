@@ -51,6 +51,38 @@ export interface JobStatus {
   error_code: string | null;
   limits: { wall_seconds: number; cpu_seconds: number; memory_mb: number; output_mb: number };
   logs: JobLog[];
+  /** Monitoring jobs only: the experiment job they monitor. */
+  subject?: string;
+}
+
+/** 202 answer of a dataset, experiment or monitoring submission. */
+export interface LabSubmitted {
+  job_id: string;
+  state: JobState;
+  synthetic: boolean;
+  subject?: string;
+  fingerprint?: string;
+}
+
+/** Result of a monitoring job: the experiment's test predictions against its validation reference. */
+export interface LabMonitoringResult {
+  state: JobState;
+  result_hash?: string;
+  error_code?: string | null;
+  result: {
+    schema: string;
+    experiment_job_id: string;
+    experiment_hash: string;
+    model_id: string;
+    as_of: string;
+    predictions: number;
+    reference_split: string;
+    monitored_split: string;
+    products: Record<string, { reference_hash: string; monitoring_hash: string; view: MonitoringView }>;
+    ledger: { verified: boolean; records: number; head_hash?: string };
+    synthetic: boolean;
+    limitations: string[];
+  } | null;
 }
 
 export interface LabJobs { jobs: JobStatus[]; worker_limit: number; synthetic_only: boolean }

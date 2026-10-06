@@ -92,7 +92,7 @@ private shadow database, preserving every previous run. This proves infrastructu
 
 `platform.jobs` persists IDs, state, progress, structured log codes, cancellation, resource budgets,
 errors and content-addressed artifacts in SQLite WAL/FULL. States are QUEUED, RUNNING, COMPLETE,
-FAILED, CANCELLED and BLOCKED. Only dataset and experiment workloads are dispatched.
+FAILED, CANCELLED and BLOCKED. Only dataset, experiment and experiment-monitoring workloads are dispatched.
 
 A root has one supervisor owner (`flock`), one spawned model worker and at most eight queued/running
 jobs. The worker has CPU, address-space and file-size limits, a wall-clock watchdog, no core dumps
@@ -131,7 +131,11 @@ python -m scripts.trading_lab.app_api.server --port 8790 --model-lab-root var/tr
 ```
 
 The lab requires a loopback listener. Every lab request needs `Authorization: Bearer ...`; tokens
-are never accepted in URLs. Browser Origin requests are refused. This is a single local operator
+are never accepted in URLs. A request carrying an `Origin` is admitted only from a page this same
+listener serves (`--dist-root`): `Host` must be `127.0.0.1`, `localhost` or `[::1]` with this
+listener's port (a DNS-rebound name is refused), `Origin` must be exactly `http://<Host>`, and
+`Sec-Fetch-Site`, when sent, must be `same-origin`. Any other Origin is refused (403) and no CORS
+grant is ever emitted for the lab, so a foreign page can neither write nor read an answer. This is a single local operator
 lab, not the separate multi-project B2B authorization surface. It does not change source/store
 permissions or the existing GET/HEAD endpoints. Unconfigured controls report unavailable.
 
@@ -141,7 +145,8 @@ permissions or the existing GET/HEAD endpoints. Unconfigured controls report una
 | POST | `/api/v1/lab/datasets` | `{"synthetic":true,"products":["BTC-USD","ETH-USD"],"start":"2026-06-01T00:00:00Z","bars":120,"target":"forward_return","horizon_seconds":14400,"seed":7}` → 202 with job ID |
 | GET/HEAD | `/api/v1/lab/datasets/{hash}` | manifest, exclusions and fingerprint; no source data export |
 | POST | `/api/v1/lab/experiments` | `{"dataset_hash":"...","model_id":"synthetic-ridge-v1","embargo_seconds":3600}` → 202, prepared manifest and job ID |
-| GET/HEAD | `/api/v1/lab/jobs` | bounded recent jobs, states and limits |
+| POST | `/api/v1/lab/monitoring` | `{"experiment_job_id":"<32 hex>"}` → 202; monitoring job of a COMPLETE experiment (409 otherwise) |
+| GET/HEAD | `/api/v1/lab/jobs` | bounded recent jobs, states and limits; a monitoring job lists its `subject` experiment |
 | GET/HEAD | `/api/v1/lab/jobs/{id}` | status, progress, structured logs and worker PID |
 | POST | `/api/v1/lab/jobs/{id}/cancel` | `{}` → current status and cancellation request |
 | GET/HEAD | `/api/v1/lab/jobs/{id}/results` | pending/terminal state or full synthetic result and hash |
@@ -154,7 +159,14 @@ invalid dataset configuration fails in its worker with a durable diagnostic. Sou
 return 405. Frozen real replay evidence remains available at the unchanged read-only
 `GET /api/v1/paper/replay` and its existing pages; Model Lab never refits or rewrites that evidence.
 
-Validation: `python -m pytest tests/model_lab -q` — **54 passed** locally. The suites cover hash mutations, causal price
+A monitoring job (`scripts/trading_lab/platform/lab_monitoring.py`) imports the experiment's exact
+predictions, snapshots and shadow chain into a private append-only ledger owned by the job (no
+refit), fixes a reference on the validation split and monitors the test split against it with the
+research monitor. Its result (`lab-experiment-monitoring-v1`) is synthetic and states that inference
+latency was not measured offline.
+
+Validation: `python -m pytest tests/model_lab -q` — **69 passed** locally (54 at first delivery;
+`test_browser_controls.py` adds the same-origin rule, DNS rebinding, the page journey and monitoring). The suites cover hash mutations, causal price
 dependencies, holdout-before-read checks, temporal leakage and embargo, train-only transforms,
 serialized inference without labels, frozen model identities, separate worker PIDs, resource
 failures, cancellation, restart, queue ownership and the authenticated HTTP flow.

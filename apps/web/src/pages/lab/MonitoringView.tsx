@@ -1,12 +1,14 @@
 /** Monitoring: data gaps, technical degradation, drift and performance drop are kept apart, and every edge claim names its sample and method. */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import type { MonitoringView as Monitoring, PerformanceBlock, ReferenceRow } from '../../api/labTypes';
 import { Badge, EmptyState, Hash } from '../../components/States';
-import { classificationExplanation, edgeSentence, formatCount, small } from '../../lib/lab';
+import { classificationExplanation, edgeSentence, formatCount, isActive, small } from '../../lib/lab';
 import { useCockpit } from '../../state/useCockpit';
+import { useLabToken } from '../../state/labToken';
 import { useQuery } from '../../state/useQuery';
-import { QueryBoundary, Synthetic } from './shared';
+import { JobProgress, LockedState, QueryBoundary, Synthetic } from './shared';
 
 const CATEGORIES = ['MISSING_DATA', 'TECHNICAL_DEGRADATION', 'DRIFT', 'PERFORMANCE_DROP'] as const;
 
@@ -159,6 +161,91 @@ function Selected({ reference, asOf, expert }: { reference: ReferenceRow; asOf: 
   );
 }
 
+/** One Model Lab experiment's own predictions: test split against a reference fixed on its validation split. */
+function ExperimentMonitoring({ expert }: { expert: boolean }) {
+  const { token, version } = useLabToken();
+  const [search, setSearch] = useSearchParams();
+  const jobs = useQuery(token ? `lab:jobs:${version}` : null, (signal) => apiClient.getLabJobs(token, signal), { staleMs: 1_000 });
+  const runs = (jobs.data?.jobs ?? []).filter((job) => job.kind === 'monitoring');
+  const chosen = runs.find((job) => job.id === search.get('monitor')) ?? runs.find((job) => job.state === 'COMPLETE') ?? runs[0];
+  const active = chosen !== undefined && isActive(chosen);
+  const { refetch } = jobs;
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = setInterval(refetch, 1_500);
+    return () => clearInterval(timer);
+  }, [active, refetch]);
+  const result = useQuery(chosen?.state === 'COMPLETE' ? `lab:monitoring:${version}:${chosen.id}` : null,
+    (signal) => apiClient.getLabMonitoringResult(token, chosen?.id ?? '', signal));
+  const [product, setProduct] = useState<string | null>(null);
+  if (!token) {
+    return (
+      <section className="card" aria-label="Experiment monitoring">
+        <h2 className="card-title">Experiment monitoring (Model Lab)</h2>
+        <LockedState what="The monitoring of a Model Lab experiment" />
+      </section>
+    );
+  }
+  return (
+    <section className="card stack" aria-label="Experiment monitoring">
+      <h2 className="card-title">Experiment monitoring (Model Lab) <Synthetic /></h2>
+      <QueryBoundary query={jobs} label="Loading monitoring jobs">
+        {() => {
+          if (!chosen) {
+            return <EmptyState title="No experiment monitored yet" detail="Open a completed experiment and choose “Open the monitoring of these predictions”." />;
+          }
+          return (
+            <>
+              <label>Monitoring run{' '}
+                <select className="control" value={chosen.id}
+                  onChange={(event) => setSearch((current) => { const next = new URLSearchParams(current); next.set('monitor', event.target.value); return next; })}>
+                  {runs.map((job) => <option key={job.id} value={job.id}>experiment {job.subject?.slice(0, 8) ?? '?'} · {job.state}</option>)}
+                </select>
+              </label>
+              {chosen.state !== 'COMPLETE' && <JobProgress job={chosen} expert={expert} />}
+              {chosen.state === 'FAILED' && <p role="alert" className="negative">Monitoring failed ({chosen.error_code ?? 'no code'}); nothing is concluded.</p>}
+              {chosen.state === 'COMPLETE' && (
+                <QueryBoundary query={result} label="Loading the experiment monitoring">
+                  {(data) => {
+                    const body = data.result;
+                    if (!body) return <EmptyState title="No monitoring result" />;
+                    const products = Object.keys(body.products);
+                    const current = product && body.products[product] ? product : products[0] ?? '';
+                    const entry = body.products[current];
+                    return (
+                      <div className="stack">
+                        <p>
+                          {body.model_id}: {formatCount(body.predictions)} predictions of experiment <Hash value={body.experiment_job_id} chars={8} /> imported
+                          {' '}without refit; the {body.monitored_split} split is monitored against a reference fixed on the {body.reference_split} split,
+                          as of {body.as_of.slice(0, 16).replace('T', ' ')} UTC. Ledger {body.ledger.verified ? 'chain verified' : 'CHAIN NOT VERIFIED'}.
+                        </p>
+                        <p className="lab-note">{body.limitations.join(' · ')}.</p>
+                        <div className="row" role="group" aria-label="Monitored product">
+                          {products.map((name) => (
+                            <button key={name} className="control" aria-pressed={name === current} onClick={() => setProduct(name)}>{name}</button>
+                          ))}
+                        </div>
+                        {expert && entry && (
+                          <dl>
+                            <div className="kv"><dt>Experiment hash</dt><dd><Hash value={body.experiment_hash} chars={20} /></dd></div>
+                            <div className="kv"><dt>Monitoring hash</dt><dd><Hash value={entry.monitoring_hash} chars={20} /></dd></div>
+                            <div className="kv"><dt>Ledger head</dt><dd><Hash value={body.ledger.head_hash ?? ''} chars={20} /></dd></div>
+                          </dl>
+                        )}
+                        {entry && <Panels data={entry.view} expert={expert} />}
+                      </div>
+                    );
+                  }}
+                </QueryBoundary>
+              )}
+            </>
+          );
+        }}
+      </QueryBoundary>
+    </section>
+  );
+}
+
 export function MonitoringView() {
   const { selection, update } = useCockpit();
   const [asOf, setAsOf] = useState(() => new Date().toISOString());
@@ -167,6 +254,8 @@ export function MonitoringView() {
   const health = useQuery('monitoring:health', (signal) => apiClient.getObservabilityHealth(signal));
   return (
     <div className="stack">
+      <ExperimentMonitoring expert={selection.mode === 'expert'} />
+      <h2 className="card-title">Observability store (demonstration ledger and authorized replay)</h2>
       <QueryBoundary query={health} label="Checking the observability store">
         {(data) => (
           <p className="lab-note">

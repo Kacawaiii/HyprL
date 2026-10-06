@@ -2,11 +2,11 @@
  * Model Lab presentation helpers.
  *
  * Nothing here decides anything: it phrases what the API already established (a frozen criterion's
- * verdict, an edge's sample and method) and composes the exact command an operator runs, because the
- * server refuses browser-originated writes. Optional model outputs stay "not provided".
+ * verdict, an edge's sample and method), composes the bodies the page sends to the lab listener and the
+ * equivalent terminal command for reproduction. Optional model outputs stay "not provided".
  */
 import type {
-  Classification, ExperimentResult, JobStatus, ModelContract, PerformanceBlock,
+  Classification, DatasetManifest, ExperimentResult, JobStatus, ModelContract, ModelDescriptor, PerformanceBlock,
 } from '../api/labTypes';
 
 /** The synthetic generator's own limits (docs/MODEL_LAB_V1.md): it prices exactly these two products. */
@@ -146,3 +146,35 @@ export function formatCount(sample: number): string {
 export function formatEpoch(seconds: number): string {
   return new Date(seconds * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
+
+/**
+ * Why a model cannot run on a dataset, from its declared contract only (empty when it can).
+ * The server re-checks everything when the experiment is prepared; this only avoids a request that is bound to fail.
+ */
+export function modelFit(contract: ModelContract, manifest: Pick<DatasetManifest, 'horizon_seconds' | 'products' | 'target'>): string[] {
+  const problems: string[] = [];
+  if (!contract.capabilities.includes('train')) problems.push(`${contract.model_id} does not declare TRAIN (frozen reference: it can only predict).`);
+  if (!contract.horizons_seconds.includes(manifest.horizon_seconds)) {
+    problems.push(`${contract.model_id} supports ${contract.horizons_seconds.map(horizonLabel).join(', ')}; this dataset is ${horizonLabel(manifest.horizon_seconds)}.`);
+  }
+  const missing = manifest.products.filter((product) => !contract.inputs.products.includes(product));
+  if (missing.length > 0) problems.push(`${contract.model_id} does not accept ${missing.join(', ')}.`);
+  if (contract.inputs.target !== manifest.target) problems.push(`${contract.model_id} predicts ${contract.inputs.target}, not ${manifest.target}.`);
+  return problems;
+}
+
+/** Internal model, local external adapter or frozen reference, from what the registry declares. */
+export function modelRole(model: ModelDescriptor): { label: string; tone: 'ok' | 'off' | 'warn' } {
+  if (model.contract.limits.shadow_only === true) return { label: 'FROZEN REFERENCE (paper)', tone: 'ok' };
+  if (model.registration.startsWith('external')) return { label: 'EXTERNAL ADAPTER (local, demonstration)', tone: 'warn' };
+  return { label: 'INTERNAL DEMONSTRATION', tone: 'warn' };
+}
+
+/** The Lab journey, in order. `tab` is the Lab route each step lives on. */
+export const JOURNEY = [
+  { tab: 'datasets', label: 'Data', detail: 'choose products, period, target and horizon; build a versioned dataset' },
+  { tab: 'models', label: 'Model', detail: 'select an internal model or a local external adapter by its declared capabilities' },
+  { tab: 'experiments', label: 'Experiment', detail: 'configure and launch a job; follow its progress and logs; cancel it' },
+  { tab: 'experiments', label: 'Results', detail: 'compare with the ZERO and TRAIN_MEAN baselines; artifacts, splits and hashes' },
+  { tab: 'monitoring', label: 'Monitoring', detail: 'open the monitoring of the experiment\'s own predictions' },
+] as const;

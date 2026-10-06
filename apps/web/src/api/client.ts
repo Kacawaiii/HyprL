@@ -2,7 +2,7 @@ import type { SourceTimeline } from './types';
 import type { PolicyDefinitions, PolicyReport } from './policyTypes';
 import type {
   ComparisonReadiness, DatasetResult, ExperimentResult, HypothesisDetail, HypothesisRow, JobStatus,
-  LabJobs, LabModels, LedgerRow, MonitoringView, ObservabilityHealth, PredictionView, ProposalCatalogue,
+  LabJobs, LabModels, LabMonitoringResult, LabSubmitted, LedgerRow, MonitoringView, ObservabilityHealth, PredictionView, ProposalCatalogue,
   ReferenceRow, ResearchPage, TrialRow,
 } from './labTypes';
 import type { SourcePageOptions } from '../state/useSourcePage';
@@ -83,7 +83,9 @@ export interface RunQuery {
   cursor?: string;
 }
 
-async function request<T>(path: string, signal?: AbortSignal, extra?: Record<string, string>): Promise<T> {
+async function request<T>(
+  path: string, signal?: AbortSignal, extra?: Record<string, string>, body?: Record<string, unknown>,
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
   if (signal) {
@@ -92,9 +94,15 @@ async function request<T>(path: string, signal?: AbortSignal, extra?: Record<str
   }
   const started = performance.now();
   try {
-    const response = await fetch(path, {
+    // The only writes are the Model Lab job controls; every other call is a GET.
+    const response = await fetch(path, body === undefined ? {
       signal: controller.signal,
       headers: { Accept: 'application/json', ...extra },
+    } : {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...extra },
+      body: JSON.stringify(body),
     });
     const text = await response.text();
     if (listeners.size > 0) {
@@ -350,8 +358,8 @@ export const apiClient = {
   getEdgarReplay: (asOf: string, horizon?: number, signal?: AbortSignal) =>
     request<EdgarReplay>(
       `/api/v1/sources/edgar/replay${query({ as_of: asOf, horizon })}`, signal),
-  /** Model Lab (operator token, read only from the browser: the server refuses any request carrying an
-   *  Origin, so a POST cannot be sent from a page -- creation and cancellation are command-line acts). */
+  /** Model Lab (operator token in a bearer header). The listener admits this page only from its own
+   *  loopback origin; the POSTs below are its synthetic job controls, nothing else writes. */
   getLabModels: (token: string, signal?: AbortSignal) =>
     request<LabModels>('/api/v1/lab/models', signal, bearer(token)),
   getLabJobs: (token: string, signal?: AbortSignal) =>
@@ -362,6 +370,16 @@ export const apiClient = {
     request<DatasetResult>(`/api/v1/lab/jobs/${encodeURIComponent(id)}/results`, signal, bearer(token)),
   getLabExperimentResult: (token: string, id: string, signal?: AbortSignal) =>
     request<ExperimentResult>(`/api/v1/lab/jobs/${encodeURIComponent(id)}/results`, signal, bearer(token)),
+  getLabMonitoringResult: (token: string, id: string, signal?: AbortSignal) =>
+    request<LabMonitoringResult>(`/api/v1/lab/jobs/${encodeURIComponent(id)}/results`, signal, bearer(token)),
+  createLabDataset: (token: string, body: Record<string, unknown>) =>
+    request<LabSubmitted>('/api/v1/lab/datasets', undefined, bearer(token), body),
+  createLabExperiment: (token: string, body: Record<string, unknown>) =>
+    request<LabSubmitted>('/api/v1/lab/experiments', undefined, bearer(token), body),
+  createLabMonitoring: (token: string, experimentJobId: string) =>
+    request<LabSubmitted>('/api/v1/lab/monitoring', undefined, bearer(token), { experiment_job_id: experimentJobId }),
+  cancelLabJob: (token: string, id: string) =>
+    request<JobStatus>(`/api/v1/lab/jobs/${encodeURIComponent(id)}/cancel`, undefined, bearer(token), {}),
   /** Research registry and observability: read-only, same posture as the other source views. */
   getResearchHypotheses: (options: { limit?: number; cursor?: string; asOf?: string } = {}, signal?: AbortSignal) =>
     request<ResearchPage<HypothesisRow>>(
