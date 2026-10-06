@@ -15,6 +15,27 @@ class LabApiError(AppApiError):
         self.status = status
 
 
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def same_loopback_origin(origin, host, port, fetch_site):
+    """True only for a page served by this very listener on a literal loopback name.
+
+    The Host must name loopback and this listener's port, so a DNS-rebound name
+    (Host evil.example) is refused even though its Origin would match its Host;
+    the Origin must be exactly that Host over http, and a browser's own
+    Sec-Fetch-Site, when sent, must say same-origin. The bearer token stays
+    required on top of this: the origin check only refuses foreign pages.
+    """
+    if not isinstance(origin, str) or not isinstance(host, str) or type(port) is not int:
+        return False
+    if fetch_site is not None and fetch_site != "same-origin":
+        return False
+    if host not in {name + ":" + str(port) for name in LOOPBACK_HOSTS}:
+        return False
+    return origin == "http://" + host
+
+
 class ModelLabApi:
     def __init__(self, root, *, token):
         if not isinstance(token, str) or len(token) < 32 or len(token) > 256 or not token.isascii():
@@ -26,10 +47,10 @@ class ModelLabApi:
     def close(self):
         self.runner.close()
 
-    def authorize(self, authorization, origin):
+    def authorize(self, authorization, origin, *, host=None, port=None, fetch_site=None):
         # Browser controls are same-origin only; no remote control CORS contract.
-        if origin:
-            raise LabApiError("Model Lab accepts local clients without Origin", 403)
+        if origin is not None and not same_loopback_origin(origin, host, port, fetch_site):
+            raise LabApiError("Model Lab accepts local clients and same-origin loopback pages only", 403)
         if not isinstance(authorization, str) or not authorization.isascii() or not hmac.compare_digest(authorization, "Bearer " + self._token):
             raise LabApiError("Model Lab requires operator authentication", 401)
 
@@ -76,6 +97,15 @@ class ModelLabApi:
                                                    ResourceLimits(**dict(prepared.budgets)))
                     return {"job_id": identifier, "state": "QUEUED", "synthetic": True,
                             "prepared": prepared.to_dict(), "fingerprint": prepared.identity}
+                if suffix == "/monitoring":
+                    if set(payload) != {"experiment_job_id"} or not isinstance(payload["experiment_job_id"], str) \
+                            or not re.fullmatch(r"[a-f0-9]{32}", payload["experiment_job_id"]):
+                        raise ValueError("monitoring accepts exactly one experiment_job_id")
+                    subject = self.store.status(payload["experiment_job_id"])
+                    if subject["kind"] != "experiment" or subject["state"] != "COMPLETE":
+                        raise LabApiError("only a completed experiment can be monitored", 409)
+                    identifier = self.store.submit("monitoring", {"experiment_job_id": subject["id"]})
+                    return {"job_id": identifier, "state": "QUEUED", "synthetic": True, "subject": subject["id"]}
                 if match := re.fullmatch(r"/jobs/([a-f0-9]{32})/cancel", suffix):
                     if payload:
                         raise ValueError("cancel request must be an empty object")

@@ -22,7 +22,7 @@ import uuid
 from scripts.trading_lab.sources.canonical import canonical_bytes, sha256_canonical
 
 TERMINAL = frozenset({"COMPLETE", "FAILED", "CANCELLED", "BLOCKED"})
-KINDS = frozenset({"dataset", "experiment"})
+KINDS = frozenset({"dataset", "experiment", "monitoring"})
 MAX_PAYLOAD_BYTES = 65536
 MAX_ARTIFACT_BYTES = 24 * 1024 * 1024
 
@@ -107,7 +107,10 @@ class JobStore:
             if row is None:
                 raise KeyError("unknown job")
             data = dict(row)
-            data.pop("payload")
+            payload = data.pop("payload")
+            if data["kind"] == "monitoring":
+                # The monitored experiment's job id; the only payload field, and not private.
+                data["subject"] = json.loads(payload)["experiment_job_id"]
             data["limits"] = json.loads(data.pop("limits_json"))
             data["cancel_requested"] = bool(data["cancel_requested"])
             data["logs"] = [dict(r) for r in db.execute(
@@ -243,8 +246,12 @@ def _worker(root, identifier, parent_pid):
             store.checkpoint(identifier, .01, "STARTED")
             with store.connect() as db:
                 raw = db.execute("SELECT kind,payload FROM jobs WHERE id=?", (identifier,)).fetchone()
-            from scripts.trading_lab.platform.experiments import execute_job
-            result = execute_job(store, identifier, raw[0], json.loads(raw[1]))
+            if raw[0] == "monitoring":
+                from scripts.trading_lab.platform.lab_monitoring import monitor_experiment
+                result = monitor_experiment(store, identifier, json.loads(raw[1]))
+            else:
+                from scripts.trading_lab.platform.experiments import execute_job
+                result = execute_job(store, identifier, raw[0], json.loads(raw[1]))
             store.checkpoint(identifier, .99, "RESULT_READY")
             result_hash = store.put_artifact("result", result)
             store.finish(identifier, "COMPLETE", result_hash=result_hash)

@@ -12,7 +12,8 @@ Three boundaries are deliberate:
 * **Explicit CORS origins.** A wildcard would let any page a browser happens to
   be visiting read this API.
 * **GET only by default.** An explicitly configured, authenticated loopback
-  Model Lab can POST synthetic job controls under /api/v1/lab only.
+  Model Lab can POST synthetic job controls under /api/v1/lab only, from a
+  local client or a page served by this same loopback origin.
 
 In production the same server also serves the built frontend, so the cockpit
 and its API share one origin and cross-origin rules stop applying to the app
@@ -522,7 +523,9 @@ class AppApiHandler(BaseHTTPRequestHandler):
         try:
             if self.lab is None:
                 raise LabApiError("Model Lab is not configured", 503)
-            self.lab.authorize(self.headers.get("Authorization"), self.headers.get("Origin"))
+            self.lab.authorize(self.headers.get("Authorization"), self.headers.get("Origin"),
+                               host=self.headers.get("Host"), port=self.server.server_address[1],
+                               fetch_site=self.headers.get("Sec-Fetch-Site"))
             query = parse_qs(parsed.query, keep_blank_values=True)
             payload = None
             if method == "POST":
