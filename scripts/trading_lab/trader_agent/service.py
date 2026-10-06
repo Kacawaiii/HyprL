@@ -1,4 +1,5 @@
 """Prospective run -> independent analysts -> reviewer -> immutable evidence."""
+from datetime import timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -14,9 +15,11 @@ from .portfolio import portfolios
 from .runners import HERE, prompt
 from .schemas import validate, validate_analyst, validate_reviewer
 
+# Operator-approved same-day recovery (2026-10-06): decided before the close, entered at the close, scored apart.
+CATCHUP_VARIANT = "catchup_close_entry_v1"
 VARIANTS = ["analyst_claude", "analyst_gpt", "reviewer_claude", "reviewer_gpt", "consensus",
             "reviewer_kept", "reviewer_rejected", "reviewer_downgraded", "always_up", "momentum20",
-            "random_seeded", "spy_relative_zero", "unhedged", "spy_hedged"]
+            "random_seeded", "spy_relative_zero", "unhedged", "spy_hedged", CATCHUP_VARIANT]
 ARTIFACT = Path(__file__).resolve().parents[3] / "docs/artifacts/trader_agent_preregistration_v1.json"
 
 
@@ -69,18 +72,24 @@ class TraderService:
         self.ledger, self.data, self.runner, self.clock = ledger, data, runner, clock
         self.fomc, self.edgar = fomc, edgar
         self.store = ResearchStore(ledger.root / "evidence")
+        self.entry_at = "open"
 
     def summary(self, run_id, status, at, **extra):
         payload = {"schema": "trader-run-v1", "run_id": run_id, "status": status, "at": iso(at),
                    "synthetic": self.data.synthetic, **extra}
-        self.store.append("replay-summary", payload, object_id=run_id + ":" + status, recorded_at=iso(at))
+        # RUNNING/COMPLETE happen once per run; failures and skips can repeat (e.g. a refused catch-up), each kept.
+        suffix = status if status in {"RUNNING", "COMPLETE"} else f"{status}:{iso(at)}"
+        self.store.append("replay-summary", payload, object_id=run_id + ":" + suffix, recorded_at=iso(at))
         return payload
 
-    def run(self):
+    def run(self, *, catchup=False):
+        """catchup=True: the operator-approved same-day recovery after a run that failed before any model call. It decides
+        before the close, enters at the close (CATCHUP_VARIANT) and is scored apart from the primary preregistered views."""
+        self.entry_at = "close" if catchup else "open"
         with self.ledger.owner():
             at = self.clock()
             day = at.date().isoformat()
-            run_id = "trader:" + day + (":synthetic" if self.data.synthetic else ":real")
+            run_id = "trader:" + day + (":synthetic" if self.data.synthetic else ":real") + (":catchup" if catchup else "")
             try:
                 self.ledger.grant.check(at)
                 if self.ledger.paused:
@@ -90,21 +99,35 @@ class TraderService:
                 session = calendar_session(day)
                 if not session:
                     return self.summary(run_id, "SKIPPED_HOLIDAY", at)
-                if at >= session.open_at:
+                if catchup:
+                    counts = self.ledger.counts()
+                    if counts.get("run", 0) < 1 or any(counts.get(k, 0) for k in ("analyst_claude", "analyst_gpt", "reviewer")):
+                        raise TraderError("CATCHUP_NOT_ALLOWED")   # only after a failed run that made no model call
+                    if at >= session.close_at - timedelta(minutes=80):
+                        raise TraderError("MISSED_DECISION_DEADLINE")
+                elif at >= session.open_at:
                     raise TraderError("MISSED_DECISION_DEADLINE")
-                self.runner.deadline = session.open_at
+                self.runner.deadline = session.close_at if catchup else session.open_at
                 prereg_hash = preregistration()
                 texts, hashes = skills()
-                self.ledger.reserve("run")
+                self.ledger.reserve("catchup_run" if catchup else "run")
                 self.summary(run_id, "RUNNING", at, preregistration_hash=prereg_hash, multiple_testing_variants=VARIANTS)
                 context, context_hash = build_context(self.ledger.grant, self.data, at=at, fomc=self.fomc, edgar=self.edgar)
+                if catchup:   # equities only (crypto has no session close); the analysts are told when positions enter and exit
+                    crypto_assets = self.ledger.grant.payload["universe"]["crypto"]
+                    context = {**context, "universe": [a for a in context["universe"] if a not in crypto_assets],
+                               "exclusions": context["exclusions"] + [{"asset": a, "reason": "CATCHUP_EQUITIES_ONLY"}
+                                                                      for a in context["universe"] if a in crypto_assets],
+                               "label_convention": {"variant": CATCHUP_VARIANT, "entry": "today's session close",
+                               "1d_exit": "close of the next session", "5d_exit": "close five sessions later"}}
+                    context_hash = sha256_canonical(context)
                 self.store.append('replay-summary', {'schema':'trader-context-evidence-v1', 'run_id':run_id,
                     'context_hash':context_hash, 'context':context}, object_id=run_id + ':context',
                     recorded_at=context['decision_time'])
                 if context["exclusions"]:
                     self.ledger.alert("PARTIAL_CONTEXT")
                 context_at = instant(context["decision_time"])
-                entry_deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'])[0]
+                entry_deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
                                      for a in context['universe'])
                 self.runner.deadline = entry_deadline
                 analysts = {}
@@ -155,7 +178,7 @@ class TraderService:
             raise TraderError('CONTEXT_BINDING_INVALID')
         context_record_hash = context_evidence[0]['identity']
         for view in decision["views"]:
-            entry, exit_at = label_window(view["asset"], decision["session"], view["horizon"], crypto)
+            entry, exit_at = label_window(view["asset"], decision["session"], view["horizon"], crypto, self.entry_at)
             at = instant(decision["decision_at"])
             if instant(recorded) >= entry:
                 raise TraderError("MISSED_RECORDING_DEADLINE")
@@ -186,7 +209,8 @@ class TraderService:
                 outputs={"return": None, "target_price": None, "class": view["view"], "probabilities": {"outperform": probability},
                          "quantiles": None, "scenarios": None}, signal={"view": view, "session": decision["session"],
                     "label_definition": {"entry_at": iso(entry), "exit_at": iso(exit_at), "horizon": view["horizon"],
-                                         "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"]},
+                                         "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"],
+                                         **({"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close" else {})},
                     "models": decision["models"], "skill_hashes": decision["skill_hashes"], "run_id": decision["run_id"]},
                 risk={"mode": "PAPER_SHADOW_ONLY", "verdict": view["verdict"]},
                 proposed_position={"weight": proposals[view['analyst']][view["horizon"]]["unhedged"].get(view["asset"], 0)

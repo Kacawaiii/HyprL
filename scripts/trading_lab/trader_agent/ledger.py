@@ -53,6 +53,8 @@ class Ledger:
         p = self.grant.payload
         if kind == "run":
             maximum = p["budgets"]["max_runs_per_day"]
+        elif kind == "catchup_run":
+            maximum = 1   # one operator-approved recovery per day; the service admits it only after a model-less failure
         elif kind in p["external_models"]:
             m = p["external_models"][kind]
             maximum = m["calls_per_day"] + m["retries_per_day"]

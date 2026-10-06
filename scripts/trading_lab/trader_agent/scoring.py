@@ -100,12 +100,13 @@ def realize(store, ledger, data, *, at=None):
                             cache[asset] = data.yahoo(asset, first, at)
                         bars, source = cache[asset]
                         sources.append(source)
-                        opening = [b for b in bars if b["bar_open_at"] == entry]
+                        close_entry = definition.get("entry_price") == "close"
+                        opening = [b for b in bars if (b["bar_open_at"].date() == entry.date() if close_entry else b["bar_open_at"] == entry)]
                         closing = [b for b in bars if b["bar_open_at"].date() == exit_at.date()]
                         session = calendar_session(exit_at.date().isoformat())
                         if len(opening) != 1 or len(closing) != 1 or session.close_at != exit_at:
                             raise TraderError("MISSING_LABEL_PRICES")
-                        first, last = float(opening[0]["open"]), float(closing[0]["close"])
+                        first, last = float(opening[0]["close" if close_entry else "open"]), float(closing[0]["close"])
                         if first <= 0 or last <= 0 or not math.isfinite(first + last):
                             raise TraderError("INVALID_LABEL_PRICE")
                         prices[asset] = (first, last)
@@ -191,8 +192,12 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             groups.append("reviewer_" + {"KEEP": "kept", "REJECT": "rejected", "DOWNGRADE": "downgraded"}[view["verdict"]])
         targets = ["raw"] if population == "crypto" else ["raw", "SPY_relative"]
         baselines = inputs[row["identity"]]["baselines"] if view["analyst"] == "consensus" else {}
+        variant = definition.get("variant")
+        if variant:   # e.g. the catch-up run: scored apart, never pooled with the primary preregistered views
+            groups = [f"{variant}:{g}" for g in groups]
+            baselines = {f"{variant}:{k}": v for k, v in baselines.items()}
         if view["analyst"] in {'reviewer_claude','reviewer_gpt','consensus'}:
-            cohort_views[(p["signal"]["session"], horizon, view['analyst'])].append((view, labels.get(row["identity"])))
+            cohort_views[(p["signal"]["session"] + (f":{variant}" if variant else ""), horizon, view['analyst'])].append((view, labels.get(row["identity"])))
         for target in targets:
             keys = [f"{g}/{population}/{horizon}/{target}" for g in groups]
             keys += [f"{g}/{population}/{horizon}/{target}" for g in baselines]

@@ -557,3 +557,31 @@ def test_confusion_counts_sum_to_non_abstained_at_the_threshold():
     sample = {'view': 'DOWN', 'p': .5, 'y': 1, 'climatology': .5, 'return': .01, 'pnl': 0., 'session': '2026-10-06'}
     card = metrics([sample, dict(sample, y=0)], 2)
     assert sum(card['confusion'].values()) == card['non_abstained'] == 2
+
+
+def test_catchup_after_a_modelless_failure_enters_at_the_close_and_is_scored_apart(service, clock):
+    from scripts.trading_lab.trader_agent.service import CATCHUP_VARIANT
+    # Not allowed before any failed run, nor once a model has been called.
+    clock.at = instant('2026-10-06T15:00:00Z')
+    assert service.run(catchup=True)['error'] == 'CATCHUP_NOT_ALLOWED'
+    service.ledger.reserve('run')                       # the morning run consumed, no model call (the GDELT crash)
+    result = service.run(catchup=True)
+    assert result['status'] == 'COMPLETE' and result['run_id'].endswith(':catchup')
+    assert {v['asset'] for v in result['decision']['views']} == {'AAPL', 'MSFT', 'XLK'}   # equities only
+    issued = list(rows(service.store, 'prediction'))
+    definition = issued[0]['payload']['signal']['label_definition']
+    assert definition['variant'] == CATCHUP_VARIANT and definition['entry_price'] == 'close'
+    assert definition['entry_at'].startswith('2026-10-06T20:00:00')                    # today's close (EDT)
+    assert service.run(catchup=True)['error'] in {'BUDGET_EXHAUSTED', 'CATCHUP_NOT_ALLOWED'}   # once per day
+    clock.at += timedelta(days=9)
+    labelled = realize(service.store, service.ledger, service.data, at=clock())
+    assert labelled['labels_added'] == len(issued) and labelled['pending'] == 0
+    scores = scorecard(service.store, synthetic=True)['scores']
+    assert any(k.startswith(CATCHUP_VARIANT + ':consensus/') for k in scores)
+    assert not any(k.startswith('consensus/') for k in scores)                           # never pooled with primary
+
+
+def test_catchup_refused_too_close_to_the_close(service, clock):
+    service.ledger.reserve('run')
+    clock.at = instant('2026-10-06T19:00:00Z')                                          # less than 80 min to the close
+    assert service.run(catchup=True)['error'] == 'MISSED_DECISION_DEADLINE'
