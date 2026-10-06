@@ -550,3 +550,10 @@ def test_false_positive_rate_is_fp_over_actual_negatives():
     assert card['confusion'] == {'tp': 2, 'fp': 1, 'tn': 1, 'fn': 0}
     no_negatives = metrics([sample(.6, 1), sample(.4, 1)], 2)
     assert no_negatives['false_positive_rate'] is None and no_negatives['confusion']['fn'] == 1
+
+
+def test_confusion_counts_sum_to_non_abstained_at_the_threshold():
+    from scripts.trading_lab.trader_agent.scoring import metrics
+    sample = {'view': 'DOWN', 'p': .5, 'y': 1, 'climatology': .5, 'return': .01, 'pnl': 0., 'session': '2026-10-06'}
+    card = metrics([sample, dict(sample, y=0)], 2)
+    assert sum(card['confusion'].values()) == card['non_abstained'] == 2

@@ -157,14 +157,14 @@ def metrics(samples, issued):
                      "mean_p": statistics.mean(s["p"] for s in bucket) if bucket else None,
                      "frequency": statistics.mean(s["y"] for s in bucket) if bucket else None})
     hit = statistics.mean((s["p"] > .5) == bool(s["y"]) for s in active) if n else None
-    # Positive = a view that the asset outperforms (p > 0.5); actual positive = it did (y = 1).
+    # Positive = a view that the asset outperforms (p > 0.5; p == 0.5 counts negative, as in hit_rate, so the four counts sum to non_abstained); actual positive = it did (y = 1).
     tp = sum(s["p"] > .5 and bool(s["y"]) for s in active); fp = sum(s["p"] > .5 and not s["y"] for s in active)
-    tn = sum(s["p"] < .5 and not s["y"] for s in active)
+    tn = sum(s["p"] <= .5 and not s["y"] for s in active)
     return {"issued": issued, "realized": len(samples), "non_abstained": n, "pending": issued - len(samples),
             "hit_rate": hit, "error_rate": 1 - hit if n else None,
             "false_positive_rate": fp / (fp + tn) if fp + tn else None,      # FP / actual negatives; none without negatives
             "false_discovery_rate": fp / (fp + tp) if fp + tp else None,     # wrong share of the positive views
-            "confusion": {"tp": tp, "fp": fp, "tn": tn, "fn": sum(s["p"] < .5 and bool(s["y"]) for s in active)},
+            "confusion": {"tp": tp, "fp": fp, "tn": tn, "fn": sum(s["p"] <= .5 and bool(s["y"]) for s in active)},
             "brier": statistics.mean((s["p"] - s["y"]) ** 2 for s in active) if n else None,
             "climatology_brier": statistics.mean((s["climatology"] - s["y"]) ** 2 for s in active) if n else None,
             "calibration_bins": bins, "ic": correlation([s["p"] for s in active], [s["return"] for s in active]),
