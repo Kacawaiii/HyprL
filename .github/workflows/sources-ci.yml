@@ -102,3 +102,44 @@ jobs:
       - run: npx vitest run
       - name: Build to a temporary directory
         run: npx vite build --outDir "$RUNNER_TEMP/web-dist" --emptyOutDir
+
+  # The Lab journey in a real headless Chromium: the built cockpit served by an authenticated
+  # loopback lab listener running real synthetic worker jobs (dataset, experiment, cancel,
+  # monitoring), plus refusals, keyboard and a 390 px viewport. The token is generated per run.
+  lab-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pandas numpy requests cryptography scikit-learn xgboost joblib \
+            pandas_market_calendars==5.4.0 jsonschema==4.26.0
+          (cd apps/web && npm ci && npx vite build --outDir "$RUNNER_TEMP/web-dist" --emptyOutDir)
+          mkdir -p "$RUNNER_TEMP/pw" && (cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null \
+            && npm install playwright@1.56.0 && npx playwright install --with-deps chromium)
+      - name: Synthetic research store for the monitoring page
+        run: python -m scripts.trading_lab.research.demo --root "$RUNNER_TEMP/research" --bars 120 > /dev/null
+      - name: Lab journey in Chromium
+        run: |
+          HYPRL_MODEL_LAB_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          echo "::add-mask::$HYPRL_MODEL_LAB_TOKEN"
+          export HYPRL_MODEL_LAB_TOKEN
+          python -m scripts.trading_lab.app_api.server --host 127.0.0.1 --port 8796 \
+            --dist-root "$RUNNER_TEMP/web-dist" --model-lab-root "$RUNNER_TEMP/lab" \
+            --research-root "$RUNNER_TEMP/research/registry" > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 60); do curl -sf -o /dev/null http://127.0.0.1:8796/api/v1/health && break; sleep 1; done
+          LAB_URL=http://127.0.0.1:8796 NODE_PATH="$RUNNER_TEMP/pw/node_modules" node apps/web/e2e/lab-journey.cjs
