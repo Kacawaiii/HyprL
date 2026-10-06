@@ -224,5 +224,5 @@ export function createSingularityChapter({ isMobile }) {
     g.add(s);
     return g;
   }
-  return { name: 'singularity', scene, camera, resize, update, setPalette, exportGroup, post: { ca: 0, bloom: .95, exposure: 1.08, sat: 1.03, flare: .35 } };
+  return { name: 'singularity', scene, camera, transition: { center: state.center, radius: backdrop.uniforms.uRs }, resize, update, setPalette, exportGroup, post: { ca: 0, bloom: .95, exposure: 1.08, sat: 1.03, flare: .35 } };
 }
