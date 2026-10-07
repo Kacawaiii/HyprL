@@ -15,7 +15,10 @@ from .portfolio import portfolios
 from .runners import HERE, prompt
 from .schemas import validate, validate_analyst, validate_reviewer
 
-# Operator-approved same-day recovery (2026-10-06): decided before the close, entered at the close, scored apart.
+# Operator-approved same-day recovery (2026-10-06), extended 2026-10-07 ~12:45Z:
+# "on peut pas reprendre le run mtn on perd trop" authorizes recovery after FAILED even if models were called.
+# Every dispatch retains its daily role/aggregate limits; exhausted analysts are MISSING in a degraded catch-up.
+# Decide before close minus 80 minutes, enter at the close, score apart.
 CATCHUP_VARIANT = "catchup_close_entry_v1"
 VARIANTS = ["analyst_claude", "analyst_gpt", "reviewer_claude", "reviewer_gpt", "consensus",
             "reviewer_kept", "reviewer_rejected", "reviewer_downgraded", "always_up", "momentum20",
@@ -42,6 +45,7 @@ def skills():
 
 # Never degrade on these: they are the run's own limits, not a model failing. Everything else an analyst raises
 # (MODEL_FAILED, TAINTED_RUN, SCHEMA_INVALID, SKIPPED_QUOTA, MODEL_TIMEOUT, invalid output...) leaves that analyst MISSING.
+# The authorized catch-up handles exhausted analyst roles separately; aggregate and reviewer limits still fail closed.
 NEVER_DEGRADE = {"BUDGET_EXHAUSTED", "PAUSED", "MISSED_DECISION_DEADLINE", "MISSED_DECISION_DEADLINE_OR_PAUSED",
                  "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}
 ROLES = ("analyst_claude", "analyst_gpt")
@@ -95,9 +99,29 @@ class TraderService:
         self.store.append("replay-summary", payload, object_id=run_id + ":" + suffix, recorded_at=iso(at))
         return payload
 
+    def role_exhausted(self, role, counts):
+        model = self.ledger.grant.payload['external_models'][role]
+        return counts.get(role, 0) >= model['calls_per_day'] + model['retries_per_day']
+
+    def catchup_missing(self, daily_run_id):
+        counts = self.ledger.counts()
+        statuses = {r['payload'].get('status') for r in self.store.records('replay-summary')
+                    if r['payload'].get('schema') == 'trader-run-v1'
+                    and r['payload'].get('run_id') == daily_run_id}
+        if counts.get('run', 0) < 1 or 'FAILED' not in statuses or statuses & {'COMPLETE', 'DEGRADED'}:
+            raise TraderError('CATCHUP_NOT_ALLOWED')
+        missing = {role: 'BUDGET_EXHAUSTED' for role in ROLES if self.role_exhausted(role, counts)}
+        remaining = self.ledger.grant.payload['budgets']['max_llm_calls_per_day'] - sum(
+            counts.get(role, 0) for role in (*ROLES, 'reviewer'))
+        # Need at least one valid analyst and a reviewer; retries still reserve against the same immutable bank.
+        if (counts.get('catchup_run', 0) or len(missing) == len(ROLES)
+                or self.role_exhausted('reviewer', counts) or remaining < len(ROLES) - len(missing) + 1):
+            raise TraderError('BUDGET_EXHAUSTED')
+        return missing
+
     def run(self, *, catchup=False):
-        """catchup=True: the operator-approved same-day recovery after a run that failed before any model call. It decides
-        before the close, enters at the close (CATCHUP_VARIANT) and is scored apart from the primary preregistered views."""
+        """catchup=True: recover a FAILED daily run within the unchanged daily model budgets. Exhausted analysts stay
+        MISSING; decide before close minus 80 minutes, enter at the close, and score CATCHUP_VARIANT separately."""
         self.entry_at = "close" if catchup else "open"
         with self.ledger.owner():
             at = self.clock()
@@ -112,15 +136,14 @@ class TraderService:
                 session = calendar_session(day)
                 if not session:
                     return self.summary(run_id, "SKIPPED_HOLIDAY", at)
+                degraded = {}
                 if catchup:
-                    counts = self.ledger.counts()
-                    if counts.get("run", 0) < 1 or any(counts.get(k, 0) for k in ("analyst_claude", "analyst_gpt", "reviewer")):
-                        raise TraderError("CATCHUP_NOT_ALLOWED")   # only after a failed run that made no model call
+                    degraded = self.catchup_missing(run_id.removesuffix(':catchup'))
                     if at >= session.close_at - timedelta(minutes=80):
                         raise TraderError("MISSED_DECISION_DEADLINE")
                 elif at >= session.open_at:
                     raise TraderError("MISSED_DECISION_DEADLINE")
-                self.runner.deadline = session.close_at if catchup else session.open_at
+                self.runner.deadline = session.close_at - timedelta(minutes=80) if catchup else session.open_at
                 prereg_hash = preregistration()
                 texts, hashes = skills()
                 self.ledger.reserve("catchup_run" if catchup else "run")
@@ -142,16 +165,20 @@ class TraderService:
                 context_at = instant(context["decision_time"])
                 entry_deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
                                      for a in context['universe'])
-                self.runner.deadline = entry_deadline
-                analysts, degraded, last = {}, {}, None
+                self.runner.deadline = min(self.runner.deadline, entry_deadline)
+                analysts, last = {}, None
                 # Neither prompt contains the other analyst's output. Serial to bound host memory.
                 for role in ROLES:
                     self.before_call(session)
+                    if role in degraded:
+                        continue   # no CLI/version request or reservation for an exhausted catch-up analyst
                     try:
                         analysts[role] = self.runner.infer(role, prompt(context, texts["TRADER_SKILL.md"]),
                             validator=lambda output: validate_analyst(output, context["universe"], context_at))
                     except TraderError as error:
-                        if error.code in NEVER_DEGRADE:
+                        exhausted_catchup_role = (catchup and error.code == 'BUDGET_EXHAUSTED'
+                                                  and self.role_exhausted(role, self.ledger.counts()))
+                        if error.code in NEVER_DEGRADE and not exhausted_catchup_role:
                             raise
                         degraded[role], last = error.code, error
                 if not analysts:
@@ -160,7 +187,7 @@ class TraderService:
                 reviewer = self.runner.infer("reviewer", prompt(context, texts["REVIEWER_SKILL.md"], analysts=analysts),
                     validator=lambda output: validate_reviewer(output, analysts))
                 decision_at = self.clock()
-                if decision_at >= entry_deadline:
+                if decision_at >= self.runner.deadline:
                     raise TraderError("MISSED_DECISION_DEADLINE")
                 decision = {"schema": "trader-decision-v1", "run_id": run_id, "session": day,
                     "decision_at": iso(decision_at), "context_hash": context_hash,

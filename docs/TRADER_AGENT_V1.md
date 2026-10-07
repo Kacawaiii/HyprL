@@ -10,7 +10,7 @@ Daily reservations are durable SQLite FULL transactions, shared across restarts 
 failed requests, retries and interrupted runs consume their reservations. One owner lock covers
 run/label jobs. Production CLI invocations share one user-level budget bank and owner lock, so changing
 the runtime path cannot reset budgets or create another owner. Dry-run budgets remain isolated.
-Every started experiment registers all 14 variants, including failed experiments.
+Every started experiment registers all 15 variants, including the separate catch-up and failed experiments.
 Completed model/version/skill configurations are counted separately by hash.
 The GDELT spacing clock is durable. Redirects and unapproved transport paths are refused.
 
@@ -26,8 +26,9 @@ needed to complete the minimum sample; expiration never silently extends the exp
 ## Preregistration
 
 The authoritative artifact is [trader_agent_preregistration_v1.json](artifacts/trader_agent_preregistration_v1.json),
-revision 1, canonical SHA-256 `d8f6468c3460794ad950cf87757da1544ee216b1efcbc6c7f736cf0d66e6665f`.
-It is registered before the first prospective inference. Its hash and the unchanged method-file hashes
+revision 3, canonical SHA-256 `74d5cc35b6045ce2e616c4d9ee8ca5a2feccda1654694f242c2f62b66fcd88be`.
+The original registration preceded the first prospective inference; revision 3 precedes the authorized catch-up.
+Its hash and the unchanged method-file hashes
 are recorded in every decision and input-evidence record. A changed method or artifact fails the binding.
 
 Primary hypothesis: reviewer-kept consensus 5d equity/ETF SPY-relative views have hit rate above 50%
@@ -138,6 +139,31 @@ status is `DEGRADED`, not `COMPLETE`. The missing analyst's views (and its revie
 `MISSING` with the error code; they are never predicted or scored. Consensus abstains for every asset (it needs both
 analysts), so a degraded day adds no non-abstained primary sample. Budget, pause, deadline and authorization errors,
 a reviewer failure, and both analysts failing still fail the run.
+
+## Operator-approved same-day catch-up (preregistration revision 3)
+
+On 2026-10-07 at approximately 12:45Z, after the daily run failed despite model calls, the operator approved
+recovering today's session: "on peut pas reprendre le run mtn on perd trop". This extends the 2026-10-06
+catch-up rule: `catchup` may follow a recorded **FAILED** daily run even when analysts or the reviewer were
+called. A run reservation alone, an unfinished RUNNING run, SKIPPED_QUOTA, or a COMPLETE/DEGRADED daily
+run does not qualify. A later refused primary attempt cannot make a successful day eligible.
+
+Every call uses the existing durable per-role `calls_per_day + retries_per_day` and aggregate
+`max_llm_calls_per_day` limits. No reservation is refunded, no authorization or budget is increased.
+Before context collection, catch-up requires at least one available analyst, an available reviewer, and
+enough aggregate calls for each remaining analyst plus the reviewer. Retries remain subject to those limits.
+An exhausted analyst is not dispatched and is recorded **MISSING** with `BUDGET_EXHAUSTED`, together with
+its reviewed twin. The run uses the existing **DEGRADED** mode: reviewer sees only available outputs,
+consensus is **ABSTAIN**, and missing outputs are never predicted, labelled or scored. Reviewer/aggregate
+budget failures, pause, expiry, missed deadlines, or no valid analyst still fail closed.
+
+Catch-up is once per day, equities/ETFs only. Its final decision must finish **before the session close
+minus 80 minutes** (18:40Z on 2026-10-07); context collection and every model call retain that deadline.
+Entry is at that session's close; 1d exits at the next session close and 5d at the close five sessions later.
+All forecasts, baselines and cohorts use `catchup_close_entry_v1` and are scored apart. They never enter
+the primary consensus population or its minimum sample. Existing evidence retains its original hashes.
+Invoke the `catchup` CLI action with the production run's arguments through the authorized transient user
+unit; it is not a primary `run` retry and is never started by the daily timer.
 
 ## Operator commands and private files
 

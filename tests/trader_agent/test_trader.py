@@ -561,10 +561,11 @@ def test_confusion_counts_sum_to_non_abstained_at_the_threshold():
 
 def test_catchup_after_a_modelless_failure_enters_at_the_close_and_is_scored_apart(service, clock):
     from scripts.trading_lab.trader_agent.service import CATCHUP_VARIANT
-    # Not allowed before any failed run, nor once a model has been called.
+    # A reservation alone is not proof of a failed daily run.
     clock.at = instant('2026-10-06T15:00:00Z')
     assert service.run(catchup=True)['error'] == 'CATCHUP_NOT_ALLOWED'
     service.ledger.reserve('run')                       # the morning run consumed, no model call (the GDELT crash)
+    failed_daily_run(service, clock)
     result = service.run(catchup=True)
     assert result['status'] == 'COMPLETE' and result['run_id'].endswith(':catchup')
     assert {v['asset'] for v in result['decision']['views']} == {'AAPL', 'MSFT', 'XLK'}   # equities only
@@ -583,15 +584,181 @@ def test_catchup_after_a_modelless_failure_enters_at_the_close_and_is_scored_apa
 
 def test_catchup_refused_too_close_to_the_close(service, clock):
     service.ledger.reserve('run')
+    failed_daily_run(service, clock)
     clock.at = instant('2026-10-06T19:00:00Z')                                          # less than 80 min to the close
     assert service.run(catchup=True)['error'] == 'MISSED_DECISION_DEADLINE'
 
 
-def test_catchup_refused_once_any_model_was_called(service, clock):
-    clock.at = instant('2026-10-06T15:00:00Z')
+def failed_daily_run(service, clock, status='FAILED'):
+    run_id = 'trader:' + clock().date().isoformat() + ':synthetic'
+    service.summary(run_id, status, clock(), error='MODEL_FAILED')
+
+
+def test_catchup_after_a_failed_run_with_model_calls_uses_remaining_budgets(service, clock):
     service.ledger.reserve('run')
-    service.ledger.reserve('analyst_claude')                                            # a model call was made: no recovery
+    service.ledger.reserve('analyst_claude')
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T15:00:00Z')
+    result = service.run(catchup=True)
+    assert result['status'] == 'COMPLETE'
+    assert result['budget_counts']['analyst_claude'] == 2
+    assert result['budget_counts']['analyst_gpt'] == 1
+    assert result['budget_counts']['reviewer'] == 1
+
+
+@pytest.mark.parametrize('missing', ['analyst_claude', 'analyst_gpt'])
+def test_catchup_exhausted_analyst_is_missing_without_dispatch_and_scored_apart(service, clock, missing):
+    from scripts.trading_lab.trader_agent.service import CATCHUP_VARIANT
+    present = 'analyst_claude' if missing == 'analyst_gpt' else 'analyst_gpt'
+    service.ledger.reserve('run')
+    service.ledger.reserve(present)
+    service.ledger.reserve(missing)
+    service.ledger.reserve(missing)
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T15:00:00Z')
+    calls, original = [], service.runner.once
+    def capture(role, text):
+        calls.append(role)
+        if role == 'reviewer':
+            analysts = json.loads(text.split('\nINDEPENDENT_ANALYST_DATA:\n')[1])
+            assert set(analysts) == {present}
+        return original(role, text)
+    service.runner.once = capture
+    result = service.run(catchup=True)
+    assert calls == [present, 'reviewer']
+    assert result['status'] == 'DEGRADED' and result['degraded'] == {missing: 'BUDGET_EXHAUSTED'}
+    views = result['decision']['views']
+    absent = [v for v in views if v['verdict'] == 'MISSING']
+    assert len(absent) == 12 and {v['analyst'] for v in absent} == {missing, 'reviewer_' + missing.split('_')[-1]}
+    assert all(v['error'] == 'BUDGET_EXHAUSTED' and v['raw_view'] is None for v in absent)
+    assert all(v['view'] == 'ABSTAIN' for v in views if v['analyst'] == 'consensus')
+    assert {v['asset'] for v in views} == {'AAPL', 'MSFT', 'XLK'}
+    counts = result['budget_counts']
+    assert counts[missing] == counts[present] == 2 and counts['reviewer'] == 1
+    assert sum(counts[r] for r in ('analyst_claude', 'analyst_gpt', 'reviewer')) == 5
+    predictions = service.store.records('prediction')
+    assert len(predictions) == 18
+    assert all(p['payload']['signal']['label_definition']['variant'] == CATCHUP_VARIANT for p in predictions)
+    before = service.ledger.counts()
+    assert service.run(catchup=True)['error'] == 'BUDGET_EXHAUSTED'
+    assert service.ledger.counts() == before
+    clock.at += timedelta(days=9)
+    assert realize(service.store, service.ledger, service.data, at=clock())['labels_added'] == 18
+    scores = scorecard(service.store, synthetic=True)['scores']
+    assert scores and all(k.startswith(CATCHUP_VARIANT + ':') for k in scores)
+    assert not any(missing in k or ('reviewer_' + missing.split('_')[-1]) in k for k in scores)
+
+
+@pytest.mark.parametrize('status', [None, 'RUNNING', 'COMPLETE', 'DEGRADED', 'SKIPPED_QUOTA'])
+def test_catchup_requires_a_failed_daily_run_and_refuses_success_even_after_later_failure(service, clock, status):
+    service.ledger.reserve('run')
+    if status:
+        failed_daily_run(service, clock, status)
+    if status in {'COMPLETE', 'DEGRADED'}:
+        clock.at += timedelta(seconds=1)
+        failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T15:00:00Z')
+    before = service.ledger.counts()
     assert service.run(catchup=True)['error'] == 'CATCHUP_NOT_ALLOWED'
+    assert service.ledger.counts() == before
+
+
+@pytest.mark.parametrize('used', [
+    ('analyst_claude', 'analyst_claude', 'analyst_gpt', 'analyst_gpt'),
+    ('reviewer', 'reviewer'),
+    ('analyst_claude', 'reviewer', 'reviewer'),
+    ('analyst_claude', 'analyst_gpt', 'analyst_gpt', 'reviewer'),
+])
+def test_catchup_refuses_unavailable_analysts_reviewer_or_aggregate_budget(service, clock, used):
+    # Last case leaves only one aggregate call, but needs the remaining analyst plus reviewer (two).
+    if used == ('analyst_claude', 'analyst_gpt', 'analyst_gpt', 'reviewer'):
+        service.ledger.grant.payload['budgets']['max_llm_calls_per_day'] = 5
+    service.ledger.reserve('run')
+    for role in used:
+        service.ledger.reserve(role)
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T15:00:00Z')
+    before = service.ledger.counts()
+    assert service.run(catchup=True)['error'] == 'BUDGET_EXHAUSTED'
+    assert service.ledger.counts() == before
+    assert not service.store.records('prediction')
+
+
+def test_catchup_analyst_that_exhausts_its_last_retry_can_still_be_missing(service, clock):
+    service.ledger.reserve('run')
+    service.ledger.reserve('analyst_gpt')
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T15:00:00Z')
+    service.runner = FailOne(service.ledger, 'analyst_gpt', 'SCHEMA_INVALID', clock=clock)
+    result = service.run(catchup=True)
+    assert result['status'] == 'DEGRADED' and result['degraded'] == {'analyst_gpt': 'BUDGET_EXHAUSTED'}
+    assert result['budget_counts']['analyst_gpt'] == 2
+    assert result['budget_counts']['reviewer'] == 1
+
+
+@pytest.mark.parametrize('reason', ['previous_day', 'other_population', 'catchup_only'])
+def test_catchup_failure_must_belong_to_todays_primary_run(service, clock, reason):
+    service.ledger.reserve('run')
+    run_id = {'previous_day': 'trader:2026-10-05:synthetic',
+              'other_population': 'trader:2026-10-06:real',
+              'catchup_only': 'trader:2026-10-06:synthetic:catchup'}[reason]
+    service.summary(run_id, 'FAILED', clock(), error='MODEL_FAILED')
+    clock.at = instant('2026-10-06T15:00:00Z')
+    assert service.run(catchup=True)['error'] == 'CATCHUP_NOT_ALLOWED'
+    assert service.ledger.counts() == {'run': 1}
+
+
+@pytest.mark.parametrize('reason', ['paused', 'expired', 'reviewer_failure'])
+def test_catchup_budget_exception_never_overrides_pause_expiry_or_reviewer_failure(service, clock, reason):
+    service.ledger.reserve('run')
+    service.ledger.reserve('analyst_gpt')
+    service.ledger.reserve('analyst_gpt')
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T15:00:00Z')
+    if reason == 'paused':
+        (service.ledger.root / 'PAUSED').touch()
+    elif reason == 'expired':
+        service.ledger.grant.payload['not_after'] = '2026-10-06T15:00:00Z'
+    else:
+        service.runner = FailOne(service.ledger, 'reviewer', 'MODEL_FAILED', clock=clock)
+    result = service.run(catchup=True)
+    assert result['status'] == ('PAUSED' if reason == 'paused' else 'FAILED')
+    assert not service.store.records('prediction')
+    assert service.ledger.counts()['analyst_gpt'] == 2
+
+
+@pytest.mark.parametrize('stage', ['context', 'analyst', 'reviewer'])
+def test_catchup_decision_must_finish_before_close_minus_80_minutes(service, clock, stage):
+    service.ledger.reserve('run')
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T18:30:00Z')
+    if stage == 'context':
+        original = service.data.headlines
+        def slow_context(*args):
+            output = original(*args)
+            clock.at = instant('2026-10-06T18:40:00Z')
+            return output
+        service.data.headlines = slow_context
+    else:
+        original = service.runner.once
+        def slow_model(role, text):
+            output = original(role, text)
+            if role == ('reviewer' if stage == 'reviewer' else 'analyst_claude'):
+                clock.at = instant('2026-10-06T18:40:00Z')
+            return output
+        service.runner.once = slow_model
+    result = service.run(catchup=True)
+    assert result['status'] == 'FAILED'
+    assert result['error'] in {'MISSED_DECISION_DEADLINE', 'MISSED_DECISION_DEADLINE_OR_PAUSED'}
+    assert not service.store.records('prediction')
+
+
+def test_catchup_refused_at_exact_close_minus_80_minutes(service, clock):
+    service.ledger.reserve('run')
+    failed_daily_run(service, clock)
+    clock.at = instant('2026-10-06T18:40:00Z')
+    assert service.run(catchup=True)['error'] == 'MISSED_DECISION_DEADLINE'
+    assert service.ledger.counts() == {'run': 1}
 
 
 def test_close_entry_window_is_strictly_after_the_decision_and_equities_only():
@@ -696,5 +863,8 @@ def test_reviewer_failure_after_a_degraded_analyst_is_a_failed_run(service):
 def test_degraded_run_counts_as_the_daily_run_for_health_and_the_preregistration_registers_it(service):
     from scripts.trading_lab.trader_agent.service import preregistration
     artifact = json.loads((Path(__file__).resolve().parents[2] / 'docs/artifacts/trader_agent_preregistration_v1.json').read_text())
-    assert artifact['revision'] == 2 and 'DEGRADED' in artifact['degraded_continuation']['run_status']
+    assert artifact['revision'] == 3 and 'DEGRADED' in artifact['degraded_continuation']['run_status']
+    from scripts.trading_lab.trader_agent.service import CATCHUP_VARIANT, VARIANTS
+    assert artifact['variants'] == VARIANTS and CATCHUP_VARIANT in artifact['variants']
+    assert artifact['catchup']['failed_daily_run_required'] is True
     assert preregistration() == artifact['canonical_sha256']

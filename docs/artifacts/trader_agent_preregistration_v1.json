@@ -1,6 +1,6 @@
 {
   "schema": "trader-agent-preregistration-v1",
-  "revision": 2,
+  "revision": 3,
   "registered_on": "2026-10-05",
   "mode": "PAPER_SHADOW_ONLY",
   "primary": {
@@ -81,7 +81,8 @@
     "random_seeded",
     "spy_relative_zero",
     "unhedged",
-    "spy_hedged"
+    "spy_hedged",
+    "catchup_close_entry_v1"
   ],
   "not_evidence": [
     "synthetic demos",
@@ -100,7 +101,7 @@
     "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
     "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
   },
-  "revision_note": "Revision 2 (2026-10-07), before any decision was recorded: adds degraded_continuation after the first real run lost its day because one analyst failed. No primary rule, label, portfolio or threshold changed.",
+  "revision_note": "Revision 3 (2026-10-07), before the catch-up decision: records the operator extension approved ~12:45Z after today's FAILED run. Recovery may follow model calls within unchanged role and aggregate budgets; exhausted analysts are MISSING. catchup_close_entry_v1 remains separate from the primary sample. Revision 2 introduced degraded continuation; primary rules, labels, portfolio thresholds and existing evidence are unchanged.",
   "degraded_continuation": {
     "run_status": "DEGRADED (not COMPLETE) when exactly one analyst yields no valid output after its retries",
     "triggers": [
@@ -112,7 +113,7 @@
       "any invalid-output code of that analyst"
     ],
     "never_degrades": [
-      "BUDGET_EXHAUSTED",
+      "BUDGET_EXHAUSTED (except an exhausted analyst role during an authorized catch-up; aggregate/reviewer budget failures still fail)",
       "PAUSED",
       "MISSED_DECISION_DEADLINE",
       "AUTHORIZATION_EXPIRED_OR_NOT_STARTED",
@@ -126,5 +127,28 @@
     "reviewer": "sees only the analyst output that exists",
     "variants": "no new scored variant"
   },
-  "canonical_sha256": "1179b2cfbf1cadf7212d355af497775813920c27ddadd24e1833353406129c30"
+  "catchup": {
+    "variant": "catchup_close_entry_v1",
+    "operator_approval": "2026-10-07 ~12:45Z: \"on peut pas reprendre le run mtn on perd trop\"; extends the 2026-10-06 same-day recovery rule after a FAILED daily run even when models were called",
+    "failed_daily_run_required": true,
+    "refusals": [
+      "no recorded FAILED daily run",
+      "daily run COMPLETE or DEGRADED, even if a later refused attempt is FAILED",
+      "no analyst budget remaining",
+      "reviewer budget exhausted",
+      "insufficient aggregate budget for remaining analysts plus reviewer",
+      "catch-up already reserved today",
+      "pause or expired authorization",
+      "decision at or after session close minus 80 minutes"
+    ],
+    "budgets": "same durable per-role calls_per_day + retries_per_day and max_llm_calls_per_day bank; failed calls are never refunded; catchup_run is capped at one per day",
+    "missing_analyst": "an exhausted analyst is not dispatched; its views and reviewed twin are MISSING with BUDGET_EXHAUSTED; run DEGRADED, reviewer sees only present outputs, consensus ABSTAIN; MISSING is never predicted, labelled or scored",
+    "decision": "must finish before session close minus 80 minutes; orchestration and runner deadlines enforce this margin",
+    "entry": "same session close",
+    "equity_1d_exit": "next session close",
+    "equity_5d_exit": "close five sessions after entry",
+    "population": "authorized unprotected equities and ETFs only; no crypto",
+    "scores": "all catch-up groups, baselines and cohorts are separate; never pooled into the primary variant or its minimum sample"
+  },
+  "canonical_sha256": "74d5cc35b6045ce2e616c4d9ee8ca5a2feccda1654694f242c2f62b66fcd88be"
 }
