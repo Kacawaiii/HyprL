@@ -1,6 +1,6 @@
 {
   "schema": "trader-agent-preregistration-v1",
-  "revision": 3,
+  "revision": 4,
   "registered_on": "2026-10-05",
   "mode": "PAPER_SHADOW_ONLY",
   "primary": {
@@ -82,7 +82,9 @@
     "spy_relative_zero",
     "unhedged",
     "spy_hedged",
-    "catchup_close_entry_v1"
+    "catchup_close_entry_v1",
+    "alpaca_open_entry_v1",
+    "alpaca_after_hours_v1"
   ],
   "not_evidence": [
     "synthetic demos",
@@ -101,7 +103,7 @@
     "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
     "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
   },
-  "revision_note": "Revision 3 (2026-10-07), before the catch-up decision: records the operator extension approved ~12:45Z after today's FAILED run. Recovery may follow model calls within unchanged role and aggregate budgets; exhausted analysts are MISSING. catchup_close_entry_v1 remains separate from the primary sample. Revision 2 introduced degraded continuation; primary rules, labels, portfolio thresholds and existing evidence are unchanged.",
+  "revision_note": "Revision 4 (2026-10-07), before any paper order: retains revision 3 catch-up repair and registers separate Alpaca execution variants with their frozen execution spec. Primary shadow hypothesis, labels and portfolio stay revision 2 rules.",
   "degraded_continuation": {
     "run_status": "DEGRADED (not COMPLETE) when exactly one analyst yields no valid output after its retries",
     "triggers": [
@@ -150,5 +152,13 @@
     "population": "authorized unprotected equities and ETFs only; no crypto",
     "scores": "all catch-up groups, baselines and cohorts are separate; never pooled into the primary variant or its minimum sample"
   },
-  "canonical_sha256": "74d5cc35b6045ce2e616c4d9ee8ca5a2feccda1654694f242c2f62b66fcd88be"
+  "paper_execution": {
+    "spec_sha256": "c07ae3243d0b130c4ba9972158a2081ac3ff7fa5f280879a003915b98af5b386",
+    "variants": [
+      "alpaca_open_entry_v1",
+      "alpaca_after_hours_v1"
+    ],
+    "confirmatory": false
+  },
+  "canonical_sha256": "bf234bbad501b4a636e841e5cdacf4f23244b0d8c42f534ded351883d54763b9"
 }

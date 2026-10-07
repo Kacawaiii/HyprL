@@ -13,6 +13,7 @@ class Ledger:
         self.root = private_root(root)
         self.budget_root = private_root(budget_root) if budget_root else self.root
         self.grant, self.clock = grant, clock
+        self.budget_day = None
         self.path = self.budget_root / "dispatch.sqlite"
         with self.connect() as db:
             db.executescript("""
@@ -49,7 +50,7 @@ class Ledger:
         if self.paused:
             raise TraderError('PAUSED')
         at = self.clock()
-        day = at.date().isoformat()
+        day = self.budget_day or at.date().isoformat()
         p = self.grant.payload
         if kind == "run":
             maximum = p["budgets"]["max_runs_per_day"]
@@ -65,7 +66,7 @@ class Ledger:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             at = self.clock()
-            day = at.date().isoformat()
+            day = self.budget_day or at.date().isoformat()
             self.grant.check(at)
             count = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind=?", (day, kind)).fetchone()[0]
             if count >= maximum:
@@ -92,7 +93,7 @@ class Ledger:
     def counts(self, day=None):
         with self.connect() as db:
             return dict(db.execute("SELECT kind,count(*) FROM dispatch WHERE day=? GROUP BY kind",
-                                   (day or self.clock().date().isoformat(),)))
+                                   (day or self.budget_day or self.clock().date().isoformat(),)))
 
     def alert(self, code, *, role=None):
         payload = {"schema": "trader-alert-v1", "at": iso(self.clock()), "code": code, "role": role}

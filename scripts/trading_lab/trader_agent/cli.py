@@ -49,15 +49,41 @@ def health(ledger):
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "catchup", "label", "health", "status", "pause", "resume"))
+    parser.add_argument("action", choices=("run", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume",
+                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
     parser.add_argument("--edgar-store")
+    parser.add_argument('--paper-authorization')
+    parser.add_argument('--paper-account', choices=('ia_actions', 'ia_crypto'))
+    parser.add_argument('--paper-quotes')
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--synthetic-time", default="2026-10-06T12:00:00Z")
     args = parser.parse_args(argv)
     grant = Authorization.load(args.authorization)
+    if args.action.startswith('paper-'):
+        from .alpaca_paper import PaperAuthorization, PaperExecutor, PaperLedger, PrivateQuotes
+        if not args.paper_authorization:
+            parser.error('--paper-authorization is required for paper actions')
+        runtime = private_root(args.runtime)
+        paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+        # One production event/budget bank across CLI runtime paths; cannot reset order caps or peak equity.
+        paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
+        evidence = ResearchStore(runtime / 'evidence', read_only=True)
+        executor = PaperExecutor(paper, evidence, quotes=PrivateQuotes(args.paper_quotes),
+                                 pause_paths=(runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED'))
+        if args.action == 'paper-report':
+            from .paper_reporting import benchmarks
+            result = executor.report(benchmarks(paper, runtime, grant))
+            temp = runtime / 'paper-report.tmp'
+            temp.write_text(json.dumps(result, indent=2) + '\n')
+            temp.replace(runtime / 'paper-report.json')
+        else:
+            result = executor.run(args.action.removeprefix('paper-'), dry_run=args.dry_run,
+                                  accounts=[args.paper_account] if args.paper_account else None)
+        print(json.dumps(result, indent=2))
+        return 1 if result.get('state') == 'BLOCKED' else 0
     clock = Clock(instant(args.synthetic_time)) if args.dry_run else now
     runtime = private_root(args.runtime)
     if args.dry_run:
@@ -81,8 +107,8 @@ def main(argv=None):
         service = TraderService(ledger, data, runner, clock=clock,
                                 fomc=None if args.dry_run else args.fomc_store,
                                 edgar=None if args.dry_run else args.edgar_store)
-        if args.action == "catchup":
-            result = service.run(catchup=True)
+        if args.action in {"catchup", 'catchup-after-hours'}:
+            result = service.run(catchup=True, after_hours=args.action == 'catchup-after-hours')
         elif args.action == "run":
             result = service.run()
             if args.dry_run and result["status"] in {"COMPLETE", "DEGRADED"}:

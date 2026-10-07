@@ -20,9 +20,11 @@ from .schemas import validate, validate_analyst, validate_reviewer
 # Every dispatch retains its daily role/aggregate limits; exhausted analysts are MISSING in a degraded catch-up.
 # Decide before close minus 80 minutes, enter at the close, score apart.
 CATCHUP_VARIANT = "catchup_close_entry_v1"
+AFTER_HOURS_VARIANT = 'alpaca_after_hours_v1'
 VARIANTS = ["analyst_claude", "analyst_gpt", "reviewer_claude", "reviewer_gpt", "consensus",
             "reviewer_kept", "reviewer_rejected", "reviewer_downgraded", "always_up", "momentum20",
-            "random_seeded", "spy_relative_zero", "unhedged", "spy_hedged", CATCHUP_VARIANT]
+            "random_seeded", "spy_relative_zero", "unhedged", "spy_hedged", CATCHUP_VARIANT,
+            'alpaca_open_entry_v1', AFTER_HOURS_VARIANT]
 ARTIFACT = Path(__file__).resolve().parents[3] / "docs/artifacts/trader_agent_preregistration_v1.json"
 
 
@@ -119,13 +121,19 @@ class TraderService:
             raise TraderError('BUDGET_EXHAUSTED')
         return missing
 
-    def run(self, *, catchup=False):
+    def run(self, *, catchup=False, after_hours=False):
         """catchup=True: recover a FAILED daily run within the unchanged daily model budgets. Exhausted analysts stay
         MISSING; decide before close minus 80 minutes, enter at the close, and score CATCHUP_VARIANT separately."""
-        self.entry_at = "close" if catchup else "open"
+        if after_hours and not catchup:
+            raise TraderError('AFTER_HOURS_REQUIRES_CATCHUP')
+        self.entry_at = 'after_hours' if after_hours else "close" if catchup else "open"
         with self.ledger.owner():
             at = self.clock()
-            day = at.date().isoformat()
+            from zoneinfo import ZoneInfo
+            day = (at.astimezone(ZoneInfo('America/New_York')) if after_hours else at).date().isoformat()
+            previous_budget_day = self.ledger.budget_day
+            if after_hours:
+                self.ledger.budget_day = day
             run_id = "trader:" + day + (":synthetic" if self.data.synthetic else ":real") + (":catchup" if catchup else "")
             try:
                 self.ledger.grant.check(at)
@@ -139,11 +147,13 @@ class TraderService:
                 degraded = {}
                 if catchup:
                     degraded = self.catchup_missing(run_id.removesuffix(':catchup'))
-                    if at >= session.close_at - timedelta(minutes=80):
+                    from .alpaca_paper import after_hours_cutoff
+                    cutoff = after_hours_cutoff(session) if after_hours else session.close_at - timedelta(minutes=80)
+                    if (after_hours and at < session.close_at) or at >= cutoff - (timedelta(minutes=80) if after_hours else timedelta()):
                         raise TraderError("MISSED_DECISION_DEADLINE")
                 elif at >= session.open_at:
                     raise TraderError("MISSED_DECISION_DEADLINE")
-                self.runner.deadline = session.close_at - timedelta(minutes=80) if catchup else session.open_at
+                self.runner.deadline = cutoff if catchup else session.open_at
                 prereg_hash = preregistration()
                 texts, hashes = skills()
                 self.ledger.reserve("catchup_run" if catchup else "run")
@@ -154,7 +164,8 @@ class TraderService:
                     context = {**context, "universe": [a for a in context["universe"] if a not in crypto_assets],
                                "exclusions": context["exclusions"] + [{"asset": a, "reason": "CATCHUP_EQUITIES_ONLY"}
                                                                       for a in context["universe"] if a in crypto_assets],
-                               "label_convention": {"variant": CATCHUP_VARIANT, "entry": "today's session close",
+                               "label_convention": {"variant": AFTER_HOURS_VARIANT if after_hours else CATCHUP_VARIANT,
+                               "entry": "actual after-hours paper fill; unfilled is not traded" if after_hours else "today's session close",
                                "1d_exit": "close of the next session", "5d_exit": "close five sessions later"}}
                     context_hash = sha256_canonical(context)
                 self.store.append('replay-summary', {'schema':'trader-context-evidence-v1', 'run_id':run_id,
@@ -163,7 +174,7 @@ class TraderService:
                 if context["exclusions"]:
                     self.ledger.alert("PARTIAL_CONTEXT")
                 context_at = instant(context["decision_time"])
-                entry_deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
+                entry_deadline = cutoff if after_hours else min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
                                      for a in context['universe'])
                 self.runner.deadline = min(self.runner.deadline, entry_deadline)
                 analysts, last = {}, None
@@ -215,6 +226,8 @@ class TraderService:
                 self.ledger.alert("UNEXPECTED_FAILURE")
                 self.summary(run_id, "FAILED", self.clock(), error="UNEXPECTED_FAILURE")
                 raise
+            finally:
+                self.ledger.budget_day = previous_budget_day
 
     def before_call(self, session):
         self.ledger.grant.check(self.clock())
@@ -232,9 +245,15 @@ class TraderService:
         for view in decision["views"]:
             if view["verdict"] == "MISSING":
                 continue   # a failed analyst has no forecast: it stays visible in the decision, never predicted or scored
-            entry, exit_at = label_window(view["asset"], decision["session"], view["horizon"], crypto, self.entry_at)
+            entry, exit_at = label_window(view["asset"], decision["session"], view["horizon"], crypto,
+                                          'close' if self.entry_at == 'after_hours' else self.entry_at)
             at = instant(decision["decision_at"])
-            if instant(recorded) >= entry:
+            if self.entry_at == 'after_hours':
+                from .alpaca_paper import after_hours_cutoff
+                entry = at
+                if instant(recorded) >= after_hours_cutoff(calendar_session(decision['session'])):
+                    raise TraderError('MISSED_RECORDING_DEADLINE')
+            elif instant(recorded) >= entry:
                 raise TraderError("MISSED_RECORDING_DEADLINE")
             identity = sha256_canonical({"run": decision["run_id"], "analyst": view["analyst"],
                                         "asset": view["asset"], "horizon": view["horizon"]})
@@ -264,7 +283,8 @@ class TraderService:
                          "quantiles": None, "scenarios": None}, signal={"view": view, "session": decision["session"],
                     "label_definition": {"entry_at": iso(entry), "exit_at": iso(exit_at), "horizon": view["horizon"],
                                          "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"],
-                                         **({"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close" else {})},
+                                         **({"entry_price": "alpaca_actual_fill", "variant": AFTER_HOURS_VARIANT} if self.entry_at == 'after_hours'
+                                            else {"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close" else {})},
                     "models": decision["models"], "skill_hashes": decision["skill_hashes"], "run_id": decision["run_id"]},
                 risk={"mode": "PAPER_SHADOW_ONLY", "verdict": view["verdict"]},
                 proposed_position={"weight": proposals[view['analyst']][view["horizon"]]["unhedged"].get(view["asset"], 0)

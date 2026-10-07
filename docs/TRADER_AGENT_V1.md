@@ -1,5 +1,9 @@
 # HyprL prospective trader v1
 
+The separate [Alpaca paper executor](TRADER_ALPACA_PAPER_V1.md) extends this
+shadow workflow only under its own paper-account grant. The parent grant's
+source/model budgets and protected populations still bind the research runs.
+
 This is an operator-authorized PAPER/SHADOW experiment. The first real inference is reserved for
 the **2026-10-06 12:00Z user timer**, before the US open. No broker, real order, exchange key,
 model training, holdout use, or new Federal Reserve/SEC capture is implemented.
@@ -10,7 +14,7 @@ Daily reservations are durable SQLite FULL transactions, shared across restarts 
 failed requests, retries and interrupted runs consume their reservations. One owner lock covers
 run/label jobs. Production CLI invocations share one user-level budget bank and owner lock, so changing
 the runtime path cannot reset budgets or create another owner. Dry-run budgets remain isolated.
-Every started experiment registers all 15 variants, including the separate catch-up and failed experiments.
+Every started experiment registers all 17 variants, including the separate catch-up, paper execution variants and failed experiments.
 Completed model/version/skill configurations are counted separately by hash.
 The GDELT spacing clock is durable. Redirects and unapproved transport paths are refused.
 

@@ -67,6 +67,10 @@ def realize(store, ledger, data, *, at=None):
         for row in predictions:
             p = PredictionRecord.from_dict(row["payload"])
             definition = p.signal["label_definition"]
+            if definition.get('entry_price') == 'alpaca_actual_fill':
+                # Broker outcomes use actual fills and remain in the paper execution journal.
+                pending += 1
+                continue
             entry, exit_at = instant(definition["entry_at"]), instant(definition["exit_at"])
             # A Coinbase anchor's open is observable only once its one-minute candle arrives.
             crypto = p.product in ledger.grant.payload["universe"]["crypto"]

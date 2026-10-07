@@ -20,7 +20,7 @@ def unit_quote(value):
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=None):
+def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=None, paper_authorization=None, paper_quotes=None):
     unit_quote(repo)  # Validate path; WorkingDirectory takes an unquoted whole path value.
     output = {}
     for action, calendar in CALENDARS.items():
@@ -43,6 +43,38 @@ def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=
             "[Unit]\nDescription=HyprL paper trader " + action + " schedule\n"
             "[Timer]\nOnCalendar=" + calendar + "\nAccuracySec=1s\nRandomizedDelaySec=0\nPersistent=false\n"
             "[Install]\nWantedBy=timers.target\n")
+    if paper_authorization:
+        from .paper_spec import execution_spec
+        execution_spec()
+        def command(action, account=None):
+            argv = [python, '-m', 'scripts.trading_lab.trader_agent.cli', 'paper-' + action,
+                    '--authorization', authorization, '--paper-authorization', paper_authorization, '--runtime', runtime]
+            if account:
+                argv.extend(('--paper-account', account))
+            if paper_quotes:
+                argv.extend(('--paper-quotes', paper_quotes))
+            return ' '.join(unit_quote(a) for a in argv)
+        for action, follow in (('run', 'execute'), ('label', 'report')):
+            name = f'hyprl-trader-{action}.service'
+            hook = 'ExecStartPost=' if action == 'run' else 'ExecStopPost='
+            output[name] = output[name].replace('UMask=0077\n', hook + command(follow) + '\nUMask=0077\n')
+        for account, calendars in (
+                ('ia_actions', ['Mon..Fri *-*-* 15:40:00 America/New_York', 'Mon..Fri *-*-* 12:40:00 America/New_York',
+                                'Mon..Fri *-*-* 19:30:00 America/New_York']),
+                ('ia_crypto', ['*-*-* *:30:00 UTC'])):
+            stem = 'hyprl-trader-paper-exit-' + account.replace('_', '-')
+            output[stem + '.service'] = (
+                '[Unit]\nDescription=HyprL paper exits ' + account + '\n'
+                '[Service]\nType=oneshot\nWorkingDirectory=' + str(repo) + '\n'
+                'ExecStart=' + command('exit', account) + '\n'
+                'UMask=0077\nNice=10\nMemoryMax=300M\nCPUQuota=50%\nNoNewPrivileges=yes\n'
+                'TimeoutStartSec=10min\nTimeoutStopSec=20s\nKillMode=control-group\n'
+                'StandardOutput=append:' + str(runtime / (stem + '.log')) + '\n'
+                'StandardError=append:' + str(runtime / (stem + '.error.log')) + '\n')
+            output[stem + '.timer'] = (
+                '[Unit]\nDescription=HyprL paper exit schedule ' + account + '\n[Timer]\n' +
+                ''.join('OnCalendar=' + c + '\n' for c in calendars) +
+                'AccuracySec=1s\nRandomizedDelaySec=0\nPersistent=false\n[Install]\nWantedBy=timers.target\n')
     return output
 
 
@@ -54,15 +86,22 @@ def main(argv=None):
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
     parser.add_argument("--edgar-store")
+    parser.add_argument('--paper-authorization')
+    parser.add_argument('--paper-quotes')
     parser.add_argument("--install", action="store_true")
     args = parser.parse_args(argv)
-    Authorization.load(args.authorization).check(now())
+    grant = Authorization.load(args.authorization)
+    grant.check(now())
+    if args.paper_authorization:
+        from .alpaca_paper import PaperAuthorization
+        PaperAuthorization.load(args.paper_authorization, grant).check(now())
     preregistration()
     skills()
     root = private_root(args.runtime)
     repo = Path(__file__).resolve().parents[3]
     units = render(repo, sys.executable, Path(args.authorization).resolve(), root,
-                   fomc=args.fomc_store, edgar=args.edgar_store, path=os.environ["PATH"])
+                   fomc=args.fomc_store, edgar=args.edgar_store, path=os.environ["PATH"],
+                   paper_authorization=args.paper_authorization, paper_quotes=args.paper_quotes)
     if not args.install:
         for name, body in units.items():
             print(name + "\n" + body)
@@ -75,7 +114,7 @@ def main(argv=None):
         (target / name).write_text(body)
     subprocess.run(['systemd-analyze', '--user', 'verify', *[str(target / name) for name in units]], check=True)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", "--now", *[f"hyprl-trader-{a}.timer" for a in CALENDARS]], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", *[n for n in units if n.endswith('.timer')]], check=True)
     subprocess.run(["systemctl", "--user", "list-timers", "hyprl-trader-*", "--no-pager"], check=True)
 
 
