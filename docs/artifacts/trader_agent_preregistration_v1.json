@@ -1,6 +1,6 @@
 {
   "schema": "trader-agent-preregistration-v1",
-  "revision": 1,
+  "revision": 2,
   "registered_on": "2026-10-05",
   "mode": "PAPER_SHADOW_ONLY",
   "primary": {
@@ -100,5 +100,31 @@
     "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
     "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
   },
-  "canonical_sha256": "d8f6468c3460794ad950cf87757da1544ee216b1efcbc6c7f736cf0d66e6665f"
+  "revision_note": "Revision 2 (2026-10-07), before any decision was recorded: adds degraded_continuation after the first real run lost its day because one analyst failed. No primary rule, label, portfolio or threshold changed.",
+  "degraded_continuation": {
+    "run_status": "DEGRADED (not COMPLETE) when exactly one analyst yields no valid output after its retries",
+    "triggers": [
+      "MODEL_FAILED",
+      "TAINTED_RUN",
+      "SCHEMA_INVALID",
+      "SKIPPED_QUOTA",
+      "MODEL_TIMEOUT",
+      "any invalid-output code of that analyst"
+    ],
+    "never_degrades": [
+      "BUDGET_EXHAUSTED",
+      "PAUSED",
+      "MISSED_DECISION_DEADLINE",
+      "AUTHORIZATION_EXPIRED_OR_NOT_STARTED",
+      "reviewer failure",
+      "both analysts failing"
+    ],
+    "missing_analyst": "its views and its reviewed twin are recorded as verdict MISSING with the error code; never predicted, labelled or scored",
+    "consensus": "ABSTAIN for every asset and horizon that day (needs both analysts); counts as abstention, no position",
+    "scores": "the present analyst, its reviewed twin and the reviewer verdicts are scored exactly as in a COMPLETE run",
+    "primary_sample": "a DEGRADED day contributes only abstained consensus asset-days to the primary variant; it never adds non-abstained primary samples",
+    "reviewer": "sees only the analyst output that exists",
+    "variants": "no new scored variant"
+  },
+  "canonical_sha256": "1179b2cfbf1cadf7212d355af497775813920c27ddadd24e1833353406129c30"
 }

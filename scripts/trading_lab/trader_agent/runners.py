@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 from .config import TraderError, now, strict_json
-from .schemas import HERE, SCHEMAS, validate
+from .schemas import GPT_SCHEMAS, HERE, SCHEMAS, validate
 
 QUOTA = ("rate_limit", "rate limit", "quota", "usage limit", "usage_limit", "limit reached", "hit your limit",
          "out of extra usage", "insufficient_quota", "too many requests", "429")
@@ -23,7 +23,7 @@ def command(role, grant):
                 "--disable", "shell_tool", "--disable", "code_mode_host", "--disable", "multi_agent",
                 "--disable", "apps", "--disable", "plugins", "--disable", "hooks", "--disable", "browser_use",
                 "--disable", "computer_use", "--disable", "image_generation", "--disable", "skill_search",
-                "--enable", "skip_host_skill_discovery", "--output-schema", str(HERE / "schemas" / (schema + ".json")),
+                "--enable", "skip_host_skill_discovery", "--output-schema", str(HERE / "schemas" / (schema + ".gpt.json")),
                 "--json", "-"]
     return ["claude", "-p", "--model", grant.payload["external_models"][role]["model"],
             "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",

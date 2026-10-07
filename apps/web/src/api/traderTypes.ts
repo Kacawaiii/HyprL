@@ -1,7 +1,7 @@
 /** Shapes served by /api/v1/trader/* (scripts/trading_lab/app_api/trader.py). Optional model outputs are null, never invented. */
 
 export type ViewDirection = 'UP' | 'DOWN' | 'ABSTAIN';
-export type Verdict = 'KEEP' | 'DOWNGRADE' | 'REJECT' | 'ABSTAIN';
+export type Verdict = 'KEEP' | 'DOWNGRADE' | 'REJECT' | 'ABSTAIN' | 'MISSING';
 export type Horizon = '1d' | '5d';
 
 export interface Catalyst { url: string; published_at: string; fact: string }
@@ -20,7 +20,7 @@ export interface Review {
 /** `analyst` is analyst_claude | analyst_gpt (raw), reviewer_claude | reviewer_gpt (after review) or consensus. */
 export interface DecisionView {
   analyst: string; asset: string; horizon: Horizon; view: ViewDirection; p_outperform: number;
-  verdict: Verdict; raw_view: RawView | null; review: Review | null;
+  verdict: Verdict; raw_view: RawView | null; review: Review | null; /** Only on MISSING views of a degraded run. */ error?: string;
 }
 
 export interface Chained<T> { sequence: number; identity: string; recorded_at: string; chain_hash: string; payload: T }

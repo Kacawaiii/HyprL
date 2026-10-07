@@ -1,0 +1,108 @@
+{
+  "type": "object",
+  "properties": {
+    "regime": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 6
+    },
+    "views": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "horizon": {
+            "enum": [
+              "1d",
+              "5d"
+            ]
+          },
+          "view": {
+            "enum": [
+              "UP",
+              "DOWN",
+              "ABSTAIN"
+            ]
+          },
+          "p_outperform": {
+            "type": "number",
+            "minimum": 0.2,
+            "maximum": 0.8
+          },
+          "confidence_reason": {
+            "type": "string"
+          },
+          "catalysts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "published_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "fact": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url",
+                "published_at",
+                "fact"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 10
+          },
+          "priced_in_assessment": {
+            "type": "string"
+          },
+          "second_order": {
+            "type": "string"
+          },
+          "counter_thesis": {
+            "type": "string"
+          },
+          "falsifier": {
+            "type": "string"
+          },
+          "event_risk": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10
+          }
+        },
+        "required": [
+          "asset",
+          "horizon",
+          "view",
+          "p_outperform",
+          "confidence_reason",
+          "catalysts",
+          "priced_in_assessment",
+          "second_order",
+          "counter_thesis",
+          "falsifier",
+          "event_risk"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "regime",
+    "views"
+  ],
+  "additionalProperties": false
+}

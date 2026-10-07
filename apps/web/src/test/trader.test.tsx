@@ -221,6 +221,7 @@ describe('trader derivations', () => {
     expect(runState([])).toBe('none');
     expect(runState(['RUNNING'])).toBe('running');
     expect(runState(['RUNNING', 'COMPLETE'])).toBe('complete');
+    expect(runState(['RUNNING', 'DEGRADED'])).toBe('degraded');
     expect(runState(['SKIPPED_HOLIDAY'])).toBe('skipped');
     expect(runState(['RUNNING', 'FAILED'])).toBe('failed');
     expect(runState(['PAUSED'])).toBe('paused');

@@ -26,7 +26,7 @@ export function TraderPage() {
   const onProduct = (product: string | null) => update({ product });
   const date = requested ?? new Date().toISOString().slice(0, 10);
   const data = useTraderData(date);
-  const run = [...(data.today.data?.runs ?? [])].reverse().find((r) => r.payload.status === 'COMPLETE')?.payload ?? null;
+  const run = [...(data.today.data?.runs ?? [])].reverse().find((r) => r.payload.status === 'COMPLETE' || r.payload.status === 'DEGRADED')?.payload ?? null;
   const state = runState((data.today.data?.runs ?? []).map((r) => r.payload.status));
   const assets = assetsOf(run?.decision?.views ?? []);
   const known = Object.keys(data.series.data?.series ?? {}).filter((a) => assets.length === 0 || assets.includes(a));

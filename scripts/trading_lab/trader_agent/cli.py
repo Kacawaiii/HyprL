@@ -27,7 +27,7 @@ def health(ledger):
         session = calendar_session(at.date().isoformat())
         started = at >= instant('2026-10-06T12:00:00Z')
         state = "PAUSED" if ledger.paused else "HEALTHY"
-        if not ledger.paused and started and session and at >= session.open_at and not any(r["status"] == "COMPLETE" for r in today):
+        if not ledger.paused and started and session and at >= session.open_at and not any(r["status"] in {"COMPLETE", "DEGRADED"} for r in today):
             state = "MISSING_DAILY_RUN"
         if not ledger.paused and any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today):
             state = "FAILED_DAILY_RUN"
@@ -85,7 +85,7 @@ def main(argv=None):
             result = service.run(catchup=True)
         elif args.action == "run":
             result = service.run()
-            if args.dry_run and result["status"] == "COMPLETE":
+            if args.dry_run and result["status"] in {"COMPLETE", "DEGRADED"}:
                 initial_labels = service.store.records("label")
                 # Advance to after every 5d endpoint: all are future at issue time.
                 clock.at += timedelta(days=9, hours=10)

@@ -32,7 +32,7 @@ function SideBySide({ run, asset }: { run: RunSummary; asset: string }) {
                     <div className="kv"><dt>Counter-thesis</dt><dd>{v.raw_view?.counter_thesis ?? 'not provided'}</dd></div>
                     <div className="kv"><dt>Falsifier</dt><dd>{v.raw_view?.falsifier ?? 'not provided'}</dd></div>
                     <div className="kv"><dt>Second-order</dt><dd>{v.raw_view?.second_order ?? 'not provided'}</dd></div>
-                    <div className="kv"><dt>Reviewer</dt><dd>{v.review ? `${v.review.verdict} · ${v.review.reason_code}${v.review.adjusted_p !== null ? ` · p→${pct(v.review.adjusted_p)}` : ''} — ${v.review.note}` : 'not reviewed'}</dd></div>
+                    <div className="kv"><dt>Reviewer</dt><dd>{v.verdict === 'MISSING' ? `MISSING — ${v.error ?? 'no output'}` : v.review ? `${v.review.verdict} · ${v.review.reason_code}${v.review.adjusted_p !== null ? ` · p→${pct(v.review.adjusted_p)}` : ''} — ${v.review.note}` : 'not reviewed'}</dd></div>
                   </dl>
                   <ul className="metric-sub" aria-label="Sources" style={{ margin: '6px 0 0', paddingLeft: 16 }}>
                     {(v.raw_view?.catalysts ?? []).length === 0 && <li>No cited source.</li>}

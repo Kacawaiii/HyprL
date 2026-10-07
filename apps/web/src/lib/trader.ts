@@ -132,11 +132,12 @@ export function assetChart(asset: string, series: SeriesPoint[], rows: LedgerRow
   return { asset, line, decisions, outcomes };
 }
 
-export type RunState = 'none' | 'running' | 'complete' | 'skipped' | 'failed' | 'paused' | 'not_started';
+export type RunState = 'none' | 'running' | 'complete' | 'degraded' | 'skipped' | 'failed' | 'paused' | 'not_started';
 
 export function runState(statuses: string[]): RunState {
   if (statuses.length === 0) return 'none';
   if (statuses.includes('COMPLETE')) return 'complete';
+  if (statuses.includes('DEGRADED')) return 'degraded';
   const last = statuses[statuses.length - 1] ?? '';
   if (last === 'RUNNING') return 'running';
   if (last === 'PAUSED') return 'paused';
@@ -149,6 +150,7 @@ export const RUN_STATE_TEXT: Record<RunState, { title: string; detail: string }>
   none: { title: 'No run yet for this day', detail: 'The trader runs once per US trading day at 12:00 UTC. Nothing is shown until a run completes; no value is filled in.' },
   running: { title: 'Run in progress or interrupted', detail: 'A run started but no decision was recorded. A run that never completes issues no predictions.' },
   complete: { title: 'Run complete', detail: '' },
+  degraded: { title: 'Run degraded', detail: 'One analyst produced no valid output. Its views are marked MISSING with the error code, the consensus abstains for every asset, and the other analyst and the reviewer are scored as usual.' },
   skipped: { title: 'Run skipped', detail: 'The run was skipped on purpose (a market holiday or an exhausted quota). No predictions exist for this day.' },
   failed: { title: 'Run failed', detail: 'The run did not produce a valid decision (see run health for the reason). Failures are never retried into a prediction.' },
   paused: { title: 'Trader paused', detail: 'An operator paused the trader. No run happens until it is resumed.' },

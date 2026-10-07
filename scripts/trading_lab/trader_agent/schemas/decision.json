@@ -170,7 +170,8 @@
               "KEEP",
               "DOWNGRADE",
               "REJECT",
-              "ABSTAIN"
+              "ABSTAIN",
+              "MISSING"
             ]
           },
           "raw_view": {
@@ -349,6 +350,10 @@
                 "type": "null"
               }
             ]
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 64
           }
         },
         "required": [

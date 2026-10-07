@@ -249,7 +249,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
     registered = sorted({v for r in attempts for v in r.get('multiple_testing_variants', [])})
     configurations = sorted({sha256_canonical({'models':r['payload']['decision']['models'],
         'skills':r['payload']['decision']['skill_hashes'], 'preregistration':r['payload']['decision']['preregistration_hash']})
-        for r in rows(store, 'replay-summary') if r['payload'].get('status') == 'COMPLETE'
+        for r in rows(store, 'replay-summary') if r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}
         and r['payload'].get('synthetic') == synthetic})
     card = {"schema": "trader-scorecard-v1", "synthetic": synthetic, "scores": scores,
             "hypothesis_state": "EXPLORATORY_MINIMUM_MET_REQUIRES_REGISTERED_WEEKLY_BLOCK_TEST" if minimum else "PENDING_MINIMUM_SAMPLE",

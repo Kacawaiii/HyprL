@@ -17,7 +17,7 @@ from scripts.trading_lab.trader_agent.ledger import Ledger
 from scripts.trading_lab.trader_agent.portfolio import portfolios, roundtrip_cost, weights
 from scripts.trading_lab.trader_agent.runners import ModelRunner, command, parse_claude, parse_gpt, prompt, tainted
 from scripts.trading_lab.trader_agent.schedule import render
-from scripts.trading_lab.trader_agent.schemas import HERE, SCHEMAS, validate_analyst, validate_reviewer
+from scripts.trading_lab.trader_agent.schemas import GPT_SCHEMAS, HERE, SCHEMAS, validate_analyst, validate_reviewer
 from scripts.trading_lab.trader_agent.scoring import realize, rows, scorecard, weekly_report
 from scripts.trading_lab.trader_agent.service import preregistration, skills, views_with_review
 from scripts.trading_lab.trader_agent.synthetic import SyntheticData, SyntheticRunner
@@ -600,3 +600,101 @@ def test_close_entry_window_is_strictly_after_the_decision_and_equities_only():
     assert entry.isoformat().startswith('2026-10-06T20:00:00') and exit_1d.isoformat().startswith('2026-10-07T20:00:00')
     with pytest.raises(TraderError, match='UNSUPPORTED_ENTRY'):
         label_window('BTC-USD', '2026-10-06', '1d', ['BTC-USD'], 'close')
+
+
+def test_gpt_schema_passes_openai_strict_mode_and_local_validator_keeps_uri_checks():
+    from scripts.trading_lab.trader_agent.schemas import for_openai_strict, openai_strict_problems
+    for name, schema in GPT_SCHEMAS.items():
+        assert openai_strict_problems(schema) == [], name
+        assert json.loads((HERE / 'schemas' / (name + '.gpt.json')).read_text()) == schema
+    url = GPT_SCHEMAS['analyst']['properties']['views']['items']['properties']['catalysts']['items']['properties']['url']
+    assert url == {'type': 'string'}   # the incident: 'format: uri' was rejected with invalid_json_schema
+    assert openai_strict_problems(SCHEMAS['analyst'])   # the full schema is NOT strict-compatible: it must stay local
+    assert for_openai_strict(SCHEMAS['analyst']) == GPT_SCHEMAS['analyst']
+    assert openai_strict_problems({'type': 'object', 'properties': {'a': {'type': 'string', 'format': 'uri'}},
+                                   'required': [], 'additionalProperties': True})
+
+
+def test_codex_receives_the_strict_schema_and_claude_the_full_one(ledger):
+    gpt = command('analyst_gpt', ledger.grant)
+    assert gpt[gpt.index('--output-schema') + 1].endswith('analyst.gpt.json')
+    assert json.loads(Path(gpt[gpt.index('--output-schema') + 1]).read_text()) == GPT_SCHEMAS['analyst']
+    claude = command('analyst_claude', ledger.grant)
+    assert json.loads(claude[claude.index('--json-schema') + 1]) == SCHEMAS['analyst']
+
+
+def test_local_validator_still_rejects_non_https_catalyst_even_though_gpt_schema_has_no_uri_format(service):
+    context, _ = build_context(service.ledger.grant, service.data, at=service.clock())
+    text, _ = skills()
+    output = service.runner.once('analyst_claude', prompt(context, text['TRADER_SKILL.md']))
+    output['views'][0]['catalysts'][0]['url'] = 'http://example.invalid/x'
+    with pytest.raises(TraderError, match='UNSAFE_SOURCE_URL'):
+        validate_analyst(output, context['universe'], service.clock())
+
+
+class FailOne(SyntheticRunner):
+    def __init__(self, ledger, role, code, **kw):
+        super().__init__(ledger, **kw)
+        self.failing, self.code = role, code
+
+    def once(self, role, text):
+        if role == self.failing:
+            self.ledger.reserve(role)
+            raise TraderError(self.code)
+        return super().once(role, text)
+
+
+@pytest.mark.parametrize('failing', ['analyst_gpt', 'analyst_claude'])
+@pytest.mark.parametrize('code', ['MODEL_FAILED', 'TAINTED_RUN', 'SCHEMA_INVALID', 'SKIPPED_QUOTA'])
+def test_one_failed_analyst_degrades_the_run_instead_of_losing_the_day(service, failing, code):
+    service.runner = FailOne(service.ledger, failing, code, clock=service.clock)
+    result = service.run()
+    assert result['status'] == 'DEGRADED' and result['degraded'] == {failing: code}
+    views = result['decision']['views']
+    other = 'analyst_claude' if failing == 'analyst_gpt' else 'analyst_gpt'
+    suffix = lambda role: 'reviewer_' + role.split('_')[-1]
+    missing = [v for v in views if v['verdict'] == 'MISSING']
+    assert {v['analyst'] for v in missing} == {failing, suffix(failing)}
+    assert all(v['error'] == code and v['view'] == 'ABSTAIN' and v['raw_view'] is None and v['review'] is None for v in missing)
+    assert len(missing) == 2 * len([v for v in views if v['analyst'] == other])
+    consensus = [v for v in views if v['analyst'] == 'consensus']
+    assert consensus and all(v['view'] == 'ABSTAIN' and v['p_outperform'] == .5 and v['verdict'] == 'ABSTAIN' for v in consensus)
+    assert {v['analyst'] for v in views if v['verdict'] == 'KEEP'} == {other, suffix(other)}
+    assert len(consensus) == len([v for v in views if v['analyst'] == other])
+    predicted = {r['payload']['model_id'] for r in service.store.records('prediction')}
+    assert predicted == {'trader:' + other, 'trader:' + suffix(other), 'trader:consensus'}
+    assert service.runner.metadata[other]['model'] and result['decision']['models'][failing]['cli_version'] == 'NOT_RUN'
+    assert service.ledger.counts()['reviewer'] == 1
+    assert scorecard(service.store, synthetic=True)['scores']
+
+
+def test_both_analysts_failing_is_still_a_failed_run_and_the_reviewer_is_never_called(service):
+    class Broken(SyntheticRunner):
+        def once(self, role, text):
+            self.ledger.reserve(role)
+            raise TraderError('MODEL_FAILED')
+    service.runner = Broken(service.ledger, clock=service.clock)
+    result = service.run()
+    assert result['status'] == 'FAILED' and result['error'] == 'MODEL_FAILED'
+    assert 'reviewer' not in service.ledger.counts() and not service.store.records('prediction')
+
+
+@pytest.mark.parametrize('code', ['BUDGET_EXHAUSTED', 'PAUSED', 'MISSED_DECISION_DEADLINE', 'AUTHORIZATION_EXPIRED_OR_NOT_STARTED'])
+def test_budget_pause_deadline_and_authorization_errors_never_degrade(service, code):
+    service.runner = FailOne(service.ledger, 'analyst_gpt', code, clock=service.clock)
+    assert service.run()['status'] == 'FAILED'
+    assert not service.store.records('prediction')
+
+
+def test_reviewer_failure_after_a_degraded_analyst_is_a_failed_run(service):
+    service.runner = FailOne(service.ledger, 'analyst_gpt', 'MODEL_FAILED', clock=service.clock)
+    original = service.runner.once
+    service.runner.once = lambda role, text: (_ for _ in ()).throw(TraderError('MODEL_FAILED')) if role == 'reviewer' else original(role, text)
+    assert service.run()['status'] == 'FAILED'
+
+
+def test_degraded_run_counts_as_the_daily_run_for_health_and_the_preregistration_registers_it(service):
+    from scripts.trading_lab.trader_agent.service import preregistration
+    artifact = json.loads((Path(__file__).resolve().parents[2] / 'docs/artifacts/trader_agent_preregistration_v1.json').read_text())
+    assert artifact['revision'] == 2 and 'DEGRADED' in artifact['degraded_continuation']['run_status']
+    assert preregistration() == artifact['canonical_sha256']

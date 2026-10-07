@@ -40,7 +40,14 @@ def skills():
     return texts, hashes
 
 
-def views_with_review(analysts, reviewer):
+# Never degrade on these: they are the run's own limits, not a model failing. Everything else an analyst raises
+# (MODEL_FAILED, TAINTED_RUN, SCHEMA_INVALID, SKIPPED_QUOTA, MODEL_TIMEOUT, invalid output...) leaves that analyst MISSING.
+NEVER_DEGRADE = {"BUDGET_EXHAUSTED", "PAUSED", "MISSED_DECISION_DEADLINE", "MISSED_DECISION_DEADLINE_OR_PAUSED",
+                 "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}
+ROLES = ("analyst_claude", "analyst_gpt")
+
+
+def views_with_review(analysts, reviewer, degraded=None):
     reviews = {(r["analyst"], r["asset"], r["horizon"]): r for r in reviewer["verdicts"]}
     output, kept = [], {}
     for analyst, result in analysts.items():
@@ -58,6 +65,12 @@ def views_with_review(analysts, reviewer):
                     reviewed["view"] = "ABSTAIN"
             output.append(reviewed)
             kept.setdefault((v["asset"], v["horizon"]), []).append(reviewed)
+    for role, code in (degraded or {}).items():
+        # The missing analyst and its reviewed twin: recorded as MISSING (never predicted, never scored) with the error code.
+        for (asset, horizon) in kept:
+            for name in (role, "reviewer_" + role.split("_")[-1]):
+                output.append({"asset": asset, "horizon": horizon, "analyst": name, "view": "ABSTAIN", "p_outperform": .5,
+                               "verdict": "MISSING", "raw_view": None, "review": None, "error": code})
     for (asset, horizon), pair in kept.items():
         agrees = len(pair) == 2 and pair[0]["view"] == pair[1]["view"] and pair[0]["view"] != "ABSTAIN"
         p = min((r["p_outperform"] for r in pair), key=lambda p: abs(p - .5)) if agrees else .5
@@ -78,7 +91,7 @@ class TraderService:
         payload = {"schema": "trader-run-v1", "run_id": run_id, "status": status, "at": iso(at),
                    "synthetic": self.data.synthetic, **extra}
         # RUNNING/COMPLETE happen once per run; failures and skips can repeat (e.g. a refused catch-up), each kept.
-        suffix = status if status in {"RUNNING", "COMPLETE"} else f"{status}:{iso(at)}"
+        suffix = status if status in {"RUNNING", "COMPLETE", "DEGRADED"} else f"{status}:{iso(at)}"
         self.store.append("replay-summary", payload, object_id=run_id + ":" + suffix, recorded_at=iso(at))
         return payload
 
@@ -130,12 +143,19 @@ class TraderService:
                 entry_deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
                                      for a in context['universe'])
                 self.runner.deadline = entry_deadline
-                analysts = {}
+                analysts, degraded, last = {}, {}, None
                 # Neither prompt contains the other analyst's output. Serial to bound host memory.
-                for role in ("analyst_claude", "analyst_gpt"):
+                for role in ROLES:
                     self.before_call(session)
-                    analysts[role] = self.runner.infer(role, prompt(context, texts["TRADER_SKILL.md"]),
-                        validator=lambda output: validate_analyst(output, context["universe"], context_at))
+                    try:
+                        analysts[role] = self.runner.infer(role, prompt(context, texts["TRADER_SKILL.md"]),
+                            validator=lambda output: validate_analyst(output, context["universe"], context_at))
+                    except TraderError as error:
+                        if error.code in NEVER_DEGRADE:
+                            raise
+                        degraded[role], last = error.code, error
+                if not analysts:
+                    raise last   # both analysts failed: nothing to review, the run fails as before
                 self.before_call(session)
                 reviewer = self.runner.infer("reviewer", prompt(context, texts["REVIEWER_SKILL.md"], analysts=analysts),
                     validator=lambda output: validate_reviewer(output, analysts))
@@ -145,11 +165,16 @@ class TraderService:
                 decision = {"schema": "trader-decision-v1", "run_id": run_id, "session": day,
                     "decision_at": iso(decision_at), "context_hash": context_hash,
                     "authorization_hash": self.ledger.grant.identity, "preregistration_hash": prereg_hash,
-                    "skill_hashes": hashes, "models": self.runner.metadata, "synthetic": self.data.synthetic,
-                    "views": views_with_review(analysts, reviewer)}
+                    "skill_hashes": hashes, "synthetic": self.data.synthetic,
+                    "models": {**{role: {"model": self.ledger.grant.gpt_model if role == "analyst_gpt" else
+                                        self.ledger.grant.payload["external_models"][role]["model"],
+                                        "cli_version": "NOT_RUN", "reported_version": "NOT_RUN"} for role in degraded},
+                               **self.runner.metadata},
+                    "views": views_with_review(analysts, reviewer, degraded)}
                 validate("decision", decision)
                 self.record(decision, context)
-                return self.summary(run_id, "COMPLETE", decision_at, decision=decision,
+                return self.summary(run_id, "DEGRADED" if degraded else "COMPLETE", decision_at, decision=decision,
+                    **({"degraded": degraded} if degraded else {}),
                     portfolios=portfolios(decision["views"]), exclusions=context["exclusions"],
                     reviewed_analyst_portfolios={a:portfolios(decision['views'],analyst=a)
                                                 for a in ('reviewer_claude','reviewer_gpt')},
@@ -178,6 +203,8 @@ class TraderService:
             raise TraderError('CONTEXT_BINDING_INVALID')
         context_record_hash = context_evidence[0]['identity']
         for view in decision["views"]:
+            if view["verdict"] == "MISSING":
+                continue   # a failed analyst has no forecast: it stays visible in the decision, never predicted or scored
             entry, exit_at = label_window(view["asset"], decision["session"], view["horizon"], crypto, self.entry_at)
             at = instant(decision["decision_at"])
             if instant(recorded) >= entry:

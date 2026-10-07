@@ -1,0 +1,77 @@
+{
+  "type": "object",
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "analyst": {
+            "enum": [
+              "analyst_claude",
+              "analyst_gpt"
+            ]
+          },
+          "asset": {
+            "type": "string"
+          },
+          "horizon": {
+            "enum": [
+              "1d",
+              "5d"
+            ]
+          },
+          "verdict": {
+            "enum": [
+              "KEEP",
+              "DOWNGRADE",
+              "REJECT"
+            ]
+          },
+          "reason_code": {
+            "enum": [
+              "supported",
+              "unsupported",
+              "priced_in",
+              "generic",
+              "counter_evidence",
+              "overconfidence",
+              "disagreement",
+              "abstained"
+            ]
+          },
+          "adjusted_p": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.2,
+                "maximum": 0.8
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "analyst",
+          "asset",
+          "horizon",
+          "verdict",
+          "reason_code",
+          "adjusted_p",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 200
+    }
+  },
+  "required": [
+    "verdicts"
+  ],
+  "additionalProperties": false
+}

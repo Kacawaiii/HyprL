@@ -123,6 +123,22 @@ diagnostics because the probability estimates outperformance. Baselines: always-
 20-session momentum sign, identity-seeded random direction, SPY-relative zero (0.50, abstains).
 Friday's label job writes the weekly report and, if eligible, the single primary look.
 
+## Strict schema for GPT and degraded continuation (preregistration revision 2)
+
+The first real run (2026-10-07) failed because Codex `--output-schema` goes through OpenAI strict structured
+outputs, which rejected `"format": "uri"` (`invalid_json_schema`). GPT now receives `schemas/analyst.gpt.json` /
+`reviewer.gpt.json`, derived from the full schemas by `for_openai_strict` (unsupported keywords such as `uri` formats
+and `maxLength` dropped; every object closed, every property required). The local validators keep the full schemas,
+including the https and published-before-decision checks. `openai_strict_problems` is an offline compatibility check,
+tested; it is not a proof of what the live API accepts.
+
+If exactly one analyst yields no valid output after its retries (MODEL_FAILED, TAINTED_RUN, SCHEMA_INVALID,
+SKIPPED_QUOTA, MODEL_TIMEOUT, invalid output), the run continues with the other analyst and the reviewer and its
+status is `DEGRADED`, not `COMPLETE`. The missing analyst's views (and its reviewed twin) are recorded as verdict
+`MISSING` with the error code; they are never predicted or scored. Consensus abstains for every asset (it needs both
+analysts), so a degraded day adds no non-abstained primary sample. Budget, pause, deadline and authorization errors,
+a reviewer failure, and both analysts failing still fail the run.
+
 ## Operator commands and private files
 
 Set `TRADER_AUTH`, `TRADER_RUNTIME`, `FOMC_ARCHIVE` and `EDGAR_ARCHIVE` to operator-owned private paths
