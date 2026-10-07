@@ -13,8 +13,8 @@ export const CHAPTERS = ['monolith', 'planet', 'singularity', 'prism'];
 const TRANSITION_KIND = { 'monolith>planet': 0, 'planet>singularity': 1, 'singularity>prism': 2 };
 
 /**
- * HYPRL universe: four procedural 3D chapters behind the page, joined on scroll by a zoom into the planet,
- * a gravitational recoil/vortex and a shattering screen, composited with chromatic aberration, bloom, vignette and grain.
+ * HYPRL universe: four procedural 3D chapters behind the page, joined on scroll by an atmospheric pullback,
+ * a receding planet / hyperspace arrival and a shattering screen, composited with chromatic aberration, bloom, vignette and grain.
  * No textures, no network.
  *
  * container       fixed full-viewport element for the WebGL canvas
@@ -44,61 +44,34 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   const byName = Object.fromEntries(chapters.map((c, i) => [c.name, i]));
   const shatter = createShatter({ isMobile });
 
-  // ── Chapter transition, shared by the bloom and final passes ──
-  // The camera flies into chapter A while B settles from a slight zoom, revealed from the centre by an
-  // expanding, ragged ring of light (an eclipse limb opening onto the next scene).
-  const TRANSITION = /* glsl */`uniform float uMix,uTime,uAspect,uHoleRadius;uniform vec3 uGravityTint;uniform vec2 uHoleCenter;uniform int uKind;
+  // Camera travel belongs to each chapter. These passes only blend their full frames through haze,
+  // add radial star streaks / a flash, and retain the existing shatter's incoming zoom.
+  const TRANSITION = /* glsl */`uniform float uMix,uTime,uAspect;uniform vec3 uTravelTint;uniform vec2 uTravelOrigin;uniform int uKind;
     float tHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     float tNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
       return mix(mix(tHash(i),tHash(i+vec2(1,0)),f.x),mix(tHash(i+vec2(0,1)),tHash(i+vec2(1,1)),f.x),f.y);}
-    // Recoil first, then differential 1/r rotation and radial contraction into the hole.
-    vec2 vortexCenter(){return mix(vec2(.5,.5),uHoleCenter,smoothstep(.45,.92,uMix));}
-    float recoilScale(){return exp(-smoothstep(0.,.22,uMix)*1.12-smoothstep(.28,.8,uMix)*2.8);}
-    vec2 zoomA(vec2 uv){if(uKind<0)return uv;
-      if(uKind==1){vec2 asp=vec2(uAspect,1.);vec2 p=(uv-vortexCenter())*asp;
-        float shake=smoothstep(0.,.015,uMix)*(1.-smoothstep(.07,.24,uMix))*.012;
-        p+=vec2(sin(uMix*93.),sin(uMix*137.))*shake;
-        float r=length(p),spin=smoothstep(.22,.72,uMix)*.55/(r+.028);
-        float a=atan(p.y,p.x)+spin;return vec2(cos(a),sin(a))*r/recoilScale()/asp+.5;}
-      return (uv-.5)/(1.+.35*uMix*uMix)+.5;}
-    vec2 zoomB(vec2 uv){if(uKind<0||uKind==1)return uv;float k=1.-uMix;
-      if(uKind==2)return (uv-.5)/(1.+.12*k*k)+.5;return (uv-.5)/(1.+.24*k*k)+.5;}
-    vec3 frameA(sampler2D tex,vec2 uv){vec2 q=zoomA(uv);
-      float edge=min(min(q.x,1.-q.x),min(q.y,1.-q.y));
-      return texture2D(tex,clamp(q,0.,1.)).rgb*smoothstep(0.,.07,edge);}
-    vec3 gravity(sampler2D texA,sampler2D texB,vec2 uv){
-      vec2 asp=vec2(uAspect,1.),p=(uv-vortexCenter())*asp;float r=length(p);
-      float pull=smoothstep(.22,.72,uMix),speed=sin(3.14159*smoothstep(0.,.24,uMix));
-      vec3 a=vec3(0.);float smear=.2*speed+.035*pull;
-      // Outside the contracted frame no source sample contributes; avoid five inverse warps there.
-      if(r<recoilScale()*length(asp)*.7+.02)for(int i=0;i<5;i++){float k=float(i)/4.-.5;float angle=k*.12*pull/(r+.03);mat2 R=mat2(cos(angle),-sin(angle),sin(angle),cos(angle));
-        a+=frameA(texA,vortexCenter()+R*p*(1.+k*smear)/asp);}
-      a*=.2*(1.-smoothstep(.64,.85,uMix));
-      float blackR=mix(.012,uHoleRadius,smoothstep(.53,.95,uMix));
-      a*=smoothstep(blackR*.72,blackR*.96,r);
-      float ring=smoothstep(.3,.73,uMix),settle=smoothstep(.64,1.,uMix);
-      vec3 b=texture2D(texB,uv).rgb;
-      float radius=mix(.06,uHoleRadius,smoothstep(.34,.88,uMix));
-      // A procedural photon rim grows from the wound-up light; the final scene enters at its real UVs.
-      // Sampling a scaled target rectangle would expose its cropped top edge during ring growth.
-      float winding=r-radius+.002*sin(atan(p.y,p.x)*6.+pull*18.);
-      float photon=exp(-pow(winding/.0035,2.));
-      float fil=.3+.7*pow(.5+.5*sin((r-radius)*760.+atan(p.y,p.x)*4.+pull*9.),3.);
-      float approaching=.45+.65*smoothstep(-.5,.8,-p.x/(r+.001));
-      vec3 forming=(mix(uGravityTint,vec3(1.),.55)*photon*2.8+uGravityTint*exp(-abs(winding)*50.)*fil*.5)*approaching+b*.5*smoothstep(.64,.86,uMix);
-      float annulus=exp(-pow((r-radius)/(.02+.14*ring),2.));
-      vec3 col=a+forming*annulus*ring*(1.-settle);
-      col=mix(col,b,settle);
-      // Receding light stretches into luminous, differential spiral arcs before joining the disc.
-      float ang=atan(p.y,p.x),phase=ang+pull*.55/(r+.028);
-      float arcs=pow(.5+.5*sin(phase*3.+r*40.),16.)*exp(-pow((r-radius*.85)/(.025+.12*pull),2.));
-      col+=uGravityTint*arcs*sin(3.14159*pull)*.24;
-      return col;}
-    float ringEdge(){return mix(-.25,1.45,uMix);}
-    float ringDist(vec2 uv){vec2 p=(uv-.5)*vec2(uAspect,1.);float r=length(p)/(.5*length(vec2(uAspect,1.)));
-      vec2 d=p/(length(p)+1e-4);return r+(tNoise(d*1.6+uTime*.1)-.5)*.07+(tNoise(uv*9.+uTime*.05)-.5)*.02;}
-    float reveal(float r){float e=ringEdge();return uMix>.999?1.:1.-smoothstep(e-.09,e+.008,r);}
-    float revealOf(vec2 uv){if(uKind<0)return uMix;if(uKind==2)return 1.;return reveal(ringDist(uv));}`;
+    vec2 zoomB(vec2 uv){float k=1.-uMix;return uKind==2?(uv-.5)/(1.+.12*k*k)+.5:uv;}
+    float blendWeight(){if(uKind<0)return uMix;if(uKind==2)return 1.;
+      return uKind==0?smoothstep(.40,.64,uMix):smoothstep(.48,.65,uMix);}
+    float streak(vec2 p,float stretch){float r=length(p),a=atan(p.y,p.x)*56.;float lane=floor(a);
+      float seed=tHash(vec2(lane,13.));float jitter=.15+.7*tHash(vec2(lane,7.));
+      float d=abs(fract(a)-jitter)*r/56.;
+      float phase=fract(log(r+.035)*1.7-smoothstep(0.,1.,uMix)*6.+seed*9.);
+      float tail=smoothstep(1.-stretch,1.-stretch*.18,phase)*(1.-smoothstep(.97,1.,phase));
+      return exp(-pow(d/.00085,2.))*tail*step(.79,seed)*smoothstep(.04,.15,r);}
+    vec3 travelLight(vec2 uv){vec2 p=(uv-.5)*vec2(uAspect,1.);
+      if(uKind==0){float cover=smoothstep(.16,.43,uMix)*(1.-smoothstep(.53,.78,uMix));
+        float cloud=tNoise(p*2.7+vec2(0.,uMix*1.7))*.7+tNoise(p*5.1-vec2(uMix,.0))*.3;
+        return mix(vec3(.64,.70,.77),vec3(1.12,1.15,1.17),smoothstep(.12,.86,cloud))*cover*1.25;}
+      if(uKind==1){float speed=smoothstep(.10,.43,uMix)*(1.-smoothstep(.58,.96,uMix));
+        float stretch=.08+.78*speed;
+        vec2 stream=(uv-uTravelOrigin)*vec2(uAspect,1.);
+        vec3 lines=vec3(streak(stream*1.006,stretch),streak(stream,stretch),streak(stream*.994,stretch));
+        float flash=exp(-pow((uMix-.54)/.038,2.));
+        float point=exp(-dot(p,p)*4000.)*smoothstep(.32,.48,uMix)*(1.-smoothstep(.54,.62,uMix));
+        return lines*mix(vec3(.65,.78,1.),uTravelTint,.25)*speed*.85+vec3(1.,.85,.66)*(flash*.85+point*3.);}
+      return vec3(0.);}
+    float hazeTransmission(){return uKind==0?1.-smoothstep(.16,.43,uMix)*(1.-smoothstep(.53,.78,uMix)):1.;}`;
 
   // ── Post-processing chain (all hand-written, three core only) ──
   const rtOpts = { type: THREE.HalfFloatType, depthBuffer: true, samples: isMobile() ? 2 : 4 };
@@ -111,38 +84,30 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   // Optional glass capture: half-resolution HDR frame, allocated only when a chapter uses it.
   const copyMat = new THREE.ShaderMaterial({ uniforms: { tIn: { value: null } }, vertexShader: VERT_SCREEN,
     fragmentShader: 'varying vec2 vUv;uniform sampler2D tIn;void main(){gl_FragColor=texture2D(tIn,vUv);}', depthTest: false, depthWrite: false });
-  const brightMat = new THREE.ShaderMaterial({ uniforms: { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 1 }, uHoleCenter: { value: new THREE.Vector2(.64,.47) }, uHoleRadius: { value: .48 }, uGravityTint: { value: new THREE.Color() }, uTexel: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
+  const brightMat = new THREE.ShaderMaterial({ uniforms: { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 1 }, uTravelTint: { value: new THREE.Color() }, uTravelOrigin: { value: new THREE.Vector2(.5,.5) }, uTexel: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB;uniform vec2 uTexel;${TRANSITION}
-      vec3 s(vec2 uv){if(uKind==1&&uMix>.001)return gravity(tA,tB,uv);if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,zoomA(uv)).rgb,texture2D(tB,zoomB(uv)).rgb,revealOf(uv));}
+      vec3 s(vec2 uv){if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,uv).rgb,texture2D(tB,zoomB(uv)).rgb,blendWeight())*hazeTransmission()+(uKind==0?vec3(0.):travelLight(uv));}
       void main(){vec3 c=(s(vUv+uTexel*vec2(-1,-1))+s(vUv+uTexel*vec2(1,-1))+s(vUv+uTexel*vec2(-1,1))+s(vUv+uTexel*vec2(1,1)))*.25;
         float l=dot(c,vec3(.2126,.7152,.0722));gl_FragColor=vec4(c*smoothstep(.35,1.2,l),1.);}` });
   const blurMat = new THREE.ShaderMaterial({ uniforms: { tIn: { value: null }, uDir: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tIn;uniform vec2 uDir;
       void main(){vec3 c=texture2D(tIn,vUv).rgb*.227;c+=(texture2D(tIn,vUv+uDir*1.385).rgb+texture2D(tIn,vUv-uDir*1.385).rgb)*.316;c+=(texture2D(tIn,vUv+uDir*3.23).rgb+texture2D(tIn,vUv-uDir*3.23).rgb)*.07;gl_FragColor=vec4(c,1.);}` });
   const finalMat = new THREE.ShaderMaterial({
-    uniforms: { tA: { value: null }, tB: { value: null }, tBloom: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uCAa: { value: 0 }, uCAb: { value: 0 }, uBloom: { value: 1 }, uExpo: { value: 1 }, uDim: { value: 0 }, uVig: { value: .85 }, uSat: { value: 1 }, uTime: { value: 0 }, uAspect: { value: 1 }, uHoleCenter: { value: new THREE.Vector2(.64,.47) }, uHoleRadius: { value: .48 }, uGravityTint: { value: new THREE.Color() }, uAccent: { value: new THREE.Color() }, uFlare: { value: 0 }, uFlareTint: { value: new THREE.Color(1, 1, 1) }, uRes: { value: new THREE.Vector2() } },
+    uniforms: { tA: { value: null }, tB: { value: null }, tBloom: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uCAa: { value: 0 }, uCAb: { value: 0 }, uBloom: { value: 1 }, uExpo: { value: 1 }, uDim: { value: 0 }, uVig: { value: .85 }, uSat: { value: 1 }, uTime: { value: 0 }, uAspect: { value: 1 }, uTravelTint: { value: new THREE.Color() }, uTravelOrigin: { value: new THREE.Vector2(.5,.5) }, uAccent: { value: new THREE.Color() }, uFlare: { value: 0 }, uFlareTint: { value: new THREE.Color(1, 1, 1) }, uRes: { value: new THREE.Vector2() } },
     vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB,tBloom;uniform float uCAa,uCAb,uBloom,uExpo,uDim,uSat,uVig,uFlare;uniform vec2 uRes;uniform vec3 uAccent,uFlareTint;${TRANSITION}
       vec3 ca(sampler2D t,vec2 uv,float s){vec2 d=(uv-.5)*s;return vec3(texture2D(t,uv+d).r,texture2D(t,uv).g,texture2D(t,uv-d).b);}
-      vec3 rblur(sampler2D t,vec2 uv,float s){vec3 c=vec3(0.);vec2 d=(uv-.5)*s;for(int i=0;i<7;i++)c+=texture2D(t,uv-d*(float(i)/6.)).rgb;return c/7.;}
       vec3 aces(vec3 x){return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.);}
       float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
-      void main(){vec3 col;float seam=0.;
+      void main(){vec3 col;
         if(uMix<.001)col=ca(tA,vUv,uCAa);
         else if(uKind==2)col=ca(tB,zoomB(vUv),uCAb);   // shatter: B underneath, A's shards were drawn over it
-        else{vec2 ua=zoomA(vUv),ub=zoomB(vUv);float pulse=sin(3.14159*uMix);
-          if(uKind<0)col=mix(ca(tA,vUv,uCAa),ca(tB,vUv,uCAb),uMix);
-          else if(uKind==1)col=gravity(tA,tB,vUv);
-          else{vec3 a=mix(ca(tA,ua,uCAa),rblur(tA,ua,.09*uMix),smoothstep(0.,.35,uMix))*(1.-.4*uMix);
-            vec3 b=mix(ca(tB,ub,uCAb),rblur(tB,ub,.07*(1.-uMix)),smoothstep(0.,.35,1.-uMix))*(.65+.35*uMix);
-            float r=ringDist(vUv),e=ringEdge();col=mix(a,b,reveal(r));
-            seam=(exp(-pow((r-e)/.009,2.))*.75+exp(-pow((r-e)/.04,2.))*.16)*pulse;}}
+        else col=mix(ca(tA,vUv,uCAa),ca(tB,vUv,uCAb),blendWeight())*hazeTransmission()+travelLight(vUv);
         col+=texture2D(tBloom,vUv).rgb*uBloom;
         // Anamorphic flare: the brightest points smeared into a thin horizontal streak (chapters that ask for it).
         if(uFlare>.001){vec3 fl=vec3(0.);for(int i=1;i<=10;i++){float o=float(i*i)*.0032;fl+=(texture2D(tBloom,vUv+vec2(o,0.)).rgb+texture2D(tBloom,vUv-vec2(o,0.)).rgb)*exp(-float(i)*.3);}
           float fl2=dot(fl,vec3(.3,.5,.2))*.12;col+=uFlareTint*fl2*fl2*uFlare;}
         col*=uExpo;col=mix(vec3(dot(col,vec3(.2126,.7152,.0722))),col,uSat);
-        col+=mix(vec3(1.),uAccent,.45)*seam;
         vec2 p=vUv-.5;col*=1.-dot(p,p)*uVig;col*=1.-uDim;
         col=aces(col);col=pow(col,vec3(1./2.2));
         col+=(h(vUv*uRes+fract(uTime*7.))-.5)*.022;
@@ -181,7 +146,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   function blendAt(f, local) {
     const i0 = Math.min(Math.floor(f), stops.length - 1), i1 = Math.min(i0 + 1, stops.length - 1), t = f - i0;
     const dimOf = el => parseFloat(el.dataset.dim || 0);
-    return { a: byName[stops[i0].dataset.chapter] ?? 0, b: byName[stops[i1].dataset.chapter] ?? 0, t, dim: dimOf(stops[i0]) * (1 - t) + dimOf(stops[i1]) * t, local };
+    return { a: byName[stops[i0].dataset.chapter] ?? 0, b: byName[stops[i1].dataset.chapter] ?? 0, t, stopB: i1, dim: dimOf(stops[i0]) * (1 - t) + dimOf(stops[i1]) * t, local };
   }
   // The scene glides towards the page position instead of jumping with each wheel notch, anchor or key.
   // Paused or reduced motion (dt = 0): it snaps, so a still frame always matches the page.
@@ -197,9 +162,20 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     return blendAt(glide.f, { ...glide.local });
   }
 
-  function renderChapter(c, target, s, pr) {
+  // Freeze the approved framing at the two edges of the transition. Otherwise the chapter's local
+  // forward dolly would fight the backward travel, especially at the ends and on reverse scrolling.
+  function travelLocal(c, s, role) {
+    const rects = stops.filter(el => el.dataset.chapter === c.name).map(el => el.getBoundingClientRect());
+    if (!rects.length) return s.local[c.name];
+    const vh = innerHeight, delta = stops[s.stopB].getBoundingClientRect().top - vh * (role === 'out' ? .9 : .2);
+    return THREE.MathUtils.clamp((vh - rects[0].top + delta) / (rects.at(-1).bottom - rects[0].top + vh), 0, 1);
+  }
+  const warmed = new Set();
+  function renderChapter(c, target, s, pr, transition = null, visible = true) {
     const scroll = hero ? Math.max(0, -hero.getBoundingClientRect().top) : 0;
-    c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: s.local[c.name], scroll, viewH: H, pr });
+    c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: transition ? travelLocal(c, s, transition.role) : s.local[c.name], transition, scroll, viewH: H, pr });
+    if (!visible && warmed.has(c)) return;
+    warmed.add(c);
     if (!c.refraction) { renderer.setRenderTarget(target); renderer.render(c.scene, c.camera); return; }
     // Base layer → frame copy → glass → light overlays. The glass never samples its own render target.
     const layers = c.camera.layers.mask;
@@ -220,10 +196,17 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     const s = readScroll(dt); s.dt = dt; lastBlend = s;
     const A = chapters[s.a], B = chapters[s.b], mixT = s.a === s.b ? 0 : s.t;
     const kind = media.matches && mixT > .001 ? -1 : mixT > .001 ? TRANSITION_KIND[`${A.name}>${B.name}`] ?? TRANSITION_KIND[`${B.name}>${A.name}`] ?? 0 : 0;
-    renderChapter(A, rtA, s, PR); if (mixT > .001) renderChapter(B, rtB, s, PR);
+    const travel = !media.matches && mixT > .001 && kind < 2;
+    const opaqueHaze = travel && kind === 0 && mixT >= .43 && mixT <= .53;
+    renderChapter(A, rtA, s, PR, travel ? { role: 'out', progress: mixT, kind } : null, !opaqueHaze && (!travel || mixT < (kind === 0 ? .64 : .65)));
+    if (mixT > .001) renderChapter(B, rtB, s, PR, travel ? { role: 'in', progress: mixT, kind } : null, !opaqueHaze && (!travel || mixT > (kind === 0 ? .40 : .48)));
     if (kind === 2) { renderer.setRenderTarget(rtB); renderer.autoClear = false; renderer.clearDepth(); shatter.render(renderer, rtA.texture, mixT, elapsed); renderer.autoClear = true; }
     brightMat.uniforms.uKind.value = finalMat.uniforms.uKind.value = kind;
-    if(kind===1){for(const m of [brightMat,finalMat]){m.uniforms.uHoleCenter.value.copy(B.transition.center);m.uniforms.uHoleRadius.value=B.transition.radius.value;}}
+    if (kind === 1) for (const m of [brightMat, finalMat]) {
+      const origin = B.transition?.arrivalCenter;
+      m.uniforms.uTravelOrigin.value.set(origin?.x ?? .5, origin?.y ?? .5);
+    }
+
     const pa = A.post, pb = mixT > .001 ? B.post : A.post, lerp = (x, y) => x + (y - x) * mixT;
     quad.material = brightMat; Object.assign(brightMat.uniforms.tA, { value: rtA.texture }); brightMat.uniforms.tB.value = rtB.texture; brightMat.uniforms.uMix.value = kind === 2 ? 1 : mixT; brightMat.uniforms.uTime.value = elapsed;
     renderer.setRenderTarget(rtS1); renderer.render(quadScene, quadCam);
@@ -240,11 +223,8 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     const heroWeight = s.a === 0 ? 1 - mixT : (s.b === 0 ? mixT : 0);
     if (labelContainer) {
       const style = cssRenderer.domElement.style;
-      style.visibility = heroOn ? 'visible' : 'hidden'; style.opacity = smooth(.55, 1, heroWeight).toFixed(3);  // gone before the limb reaches them
-      // The card texts follow the transition zoom of the WebGL frame (about the viewport centre).
-      const zoom = mixT < .001 ? 1 : s.a === 0 ? 1 + .35 * mixT * mixT : 1 + .24 * (1 - mixT) ** 2;
-      if (zoom === 1) style.transform = '';
-      else { const heroScroll = hero ? Math.max(0, -hero.getBoundingClientRect().top) : 0; style.transformOrigin = `${W / 2}px ${heroScroll + H / 2}px`; style.transform = `scale(${zoom.toFixed(4)})`; }
+      style.visibility = heroOn ? 'visible' : 'hidden'; style.opacity = smooth(travel ? .82 : .55, 1, heroWeight).toFixed(3);
+      style.transform = '';
       if (heroOn) cssRenderer.render(chapters[0].labels, chapters[0].labelCamera);
     }
     dirty = false;
@@ -272,7 +252,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   }
   function setPaused(value) { paused = Boolean(value); if (paused) { pointer.set(0, 0); smoothPointer.set(0, 0); } previous = performance.now(); dirty = true; }
   const gold = new THREE.Color('#dac09a'), ice = new THREE.Color('#a0c9e8');
-  function setPalette(value) { palette = value === 'ice' ? 'ice' : 'gold'; const color = palette === 'ice' ? ice : gold; for (const c of chapters) c.setPalette(color, palette); finalMat.uniforms.uAccent.value.copy(color);brightMat.uniforms.uGravityTint.value.copy(color);finalMat.uniforms.uGravityTint.value.copy(color); document.documentElement.style.setProperty('--accent', `#${color.getHexString()}`); dirty = true; }
+  function setPalette(value) { palette = value === 'ice' ? 'ice' : 'gold'; const color = palette === 'ice' ? ice : gold; for (const c of chapters) c.setPalette(color, palette); finalMat.uniforms.uAccent.value.copy(color);brightMat.uniforms.uTravelTint.value.copy(color);finalMat.uniforms.uTravelTint.value.copy(color); document.documentElement.style.setProperty('--accent', `#${color.getHexString()}`); dirty = true; }
   function setChapter(name) { forced = name == null ? null : (typeof name === 'number' ? name : byName[name] ?? 0); dirty = true; }
   function mediaChange() { setPaused(media.matches); container.dispatchEvent(new CustomEvent('motionchange', { detail: { paused } })); }
   media.addEventListener('change', mediaChange);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { NOISE, VERT_SCREEN, glow, rng, portable } from '../lib/kit.js';
+import { NOISE, VERT_SCREEN, glow, rng, portable, smooth } from '../lib/kit.js';
 
 /**
  * Chapitre 03 — Singularité (référence : trou noir doré, disque vu par la tranche, vaisseau).
@@ -16,12 +16,12 @@ export function createSingularityChapter({ isMobile }) {
   const camera = new THREE.PerspectiveCamera(40, 1, .1, 400); camera.position.set(0, 0, 10);
   const gold = new THREE.Color('#ffc45a'), hot = new THREE.Color('#fff1d6');
   const state = { aspect: 1, center: new THREE.Vector2(.64, .47), horizon: .47, ship: new THREE.Vector3(), shipTarget: new THREE.Vector3(), roll: 0 };
-  const shipUv = new THREE.Vector2(.7, .5);
+  const shipUv = new THREE.Vector2(.7, .5), arrivalOrigin = new THREE.Vector2(.5, .5);
 
   const backdrop = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uC: { value: state.center }, uH: { value: .47 }, uRs: { value: .4 }, uGold: { value: gold }, uHot: { value: hot }, uFlow: { value: 0 }, uShip: { value: shipUv }, uMotion: { value: 1 } },
+    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uC: { value: state.center }, uH: { value: .47 }, uRs: { value: .4 }, uGold: { value: gold }, uHot: { value: hot }, uFlow: { value: 0 }, uShip: { value: shipUv }, uMotion: { value: 1 }, uPixelSize: { value: 1 / 900 }, uArrival: { value: 1 }, uArrivalCenter: { value: new THREE.Vector2(.5,.5) } },
     vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false,
-    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect,uH,uRs,uFlow,uMotion;uniform vec2 uC,uShip;uniform vec3 uGold,uHot;
+    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect,uH,uRs,uFlow,uMotion,uArrival,uPixelSize;uniform vec2 uC,uShip,uArrivalCenter;uniform vec3 uGold,uHot;
       // Subpixel emitters embedded in the dust, jittered within cells rather than a visible dot grid.
       vec3 glitter(vec2 uv,float density,float light,float scale){vec2 q=uv*scale,g=floor(q);
         float h=hash12(g+7.3);vec2 jitter=vec2(hash12(g+3.7),hash12(g+9.1))*.7+.15;
@@ -52,7 +52,8 @@ export function createSingularityChapter({ isMobile }) {
         float left=smoothstep(-.35,1.,-cos(a)),s=max(sin(a),0.);
         float wave=left*left*exp(-s*7.);
         float w=.06+.17*left*left+.28*wave;
-        float inner=exp(-pow((r-uRs*.944)/.0013,2.))*(.4+1.2*left);
+        float innerWidth=uArrival<1.?max(.0013,uPixelSize/uArrival*.7):.0013;
+        float inner=exp(-pow((r-uRs*.944)/innerWidth,2.))*(uArrival<1.?sqrt(.0013/innerWidth):1.)*(.4+1.2*left);
         float rr=(r-uRs)/w;if(rr<-.05)return uHot*inner;
         float t=uTime*uMotion;
         // filaments: concentric, streaked along the angle (motion blur), drifting around the ring
@@ -61,14 +62,17 @@ export function createSingularityChapter({ isMobile }) {
         float fil=pow(f1,4.)*2.2+pow(f2,6.)*2.2+f3*f3*.3;
         float env=smoothstep(-.04,.04,rr)*exp(-rr*(2.-1.*wave))*smoothstep(1.4,.5,rr);
         float lum=env*(.03+fil)*(.45+1.2*left+.9*wave);
-        float photon=exp(-pow((r-uRs)/.0022,2.))*(.7+2.2*left)+exp(-pow((r-uRs*1.01)/.012,2.))*(.05+.35*left);
+        // Only during arrival: integrate subpixel highlights instead of letting the tiny ring blink.
+        float width=uArrival<1.?max(.0022,uPixelSize/uArrival*.7):.0022;
+        float coverage=uArrival<1.?sqrt(.0022/width):1.;
+        float photon=exp(-pow((r-uRs)/width,2.))*coverage*(.7+2.2*left)+exp(-pow((r-uRs*1.01)/.012,2.))*(.05+.35*left);
         vec3 c=mix(uGold*1.65,uHot*2.,clamp(exp(-rr*5.)*.25+pow(fil*.35,2.),0.,.8))*lum+mix(uGold,uHot,.85)*photon+uHot*inner;
         return c;}
       // star field with gravitational lensing: an image at p shows the source at p(1 - rE^2/r^2)
       vec3 stars(vec2 p){float r=length(p);if(r<uRs*1.01)return vec3(0.);vec2 b=p*(1.-uRs*uRs*1.3/(r*r));
         vec2 g=floor(b*300.),f=fract(b*300.)-.5;float h=hash12(g);float tw=.6+.4*sin(uTime*2.+h*60.);
         float s=step(.991,h)*smoothstep(.45,.05,length(f))*tw;return vec3(.95,.88,.75)*s*(.4+1.6*step(.9993,h));}
-      void main(){vec2 asp=vec2(uAspect,1.);vec2 p=(vUv-uC)*asp;float y=vUv.y-uH;float t=uTime*uMotion;
+      void main(){vec2 uv=vUv;if(uArrival<1.)uv=uC+(vUv-uArrivalCenter)/uArrival;vec2 asp=vec2(uAspect,1.);vec2 p=(uv-uC)*asp;float y=uv.y-uH;float t=uTime*uMotion;
         vec3 col=vec3(.0025,.002,.0016);
         float r=length(p),a=atan(p.y,p.x);
         float leftX=smoothstep(.15,-.75,p.x);
@@ -86,10 +90,10 @@ export function createSingularityChapter({ isMobile }) {
           float scale=uRs/.476;vec4 plumeCloud=billows(p,vec2(-.69,.25)*scale,vec2(.26,.25)*scale,.09*scale,31.);
           float mask=plumeCloud.a*smoothstep(.03,.14,y);
           col=mix(col,plumeCloud.rgb,mask);
-          col+=uGold*dust*.035+glitter(vUv*asp,mask*smoothstep(.4,.64,d2),lit*1.8,640.);
+          col+=uGold*dust*.035+glitter(uv*asp,mask*smoothstep(.4,.64,d2),lit*1.8,640.);
         }else{
           // the sea: mirror of the ring, rippled, with banks of gold dust coming at the camera
-          float d=-y;float z=.05/(d+.004);vec2 w=vec2((vUv.x-uC.x)*uAspect*z,z*.4+t*uFlow);
+          float d=-y;float z=.05/(d+.004);vec2 w=vec2((uv.x-uC.x)*uAspect*z,z*.4+t*uFlow);
           float c1=fbm(w*7.),c2=fbm(w*19.+c1*2.4),c3=fbm(w*19.+c1*2.4+vec2(.08,-.05));
           float edgeLit=clamp((c2-c3)*9.+.5,0.,1.);
           float lightL=smoothstep(.35,-.7,p.x);
@@ -103,21 +107,29 @@ export function createSingularityChapter({ isMobile }) {
           float scale=uRs/.476;vec4 bankCloud=billows(p,vec2(-.72,-.35)*scale,vec2(.65,.31)*scale,.145*scale,13.);
           float bank=bankCloud.a*smoothstep(.06,.18,d);col=mix(col,bankCloud.rgb,bank);cov=max(cov,bank);
           float clustered=fbm3(p*25.+13.);
-          col+=glitter(vUv*asp,bank*smoothstep(.46,.68,clustered),.7+lightL*1.8,700.);
-          col+=glitter(vUv*asp+2.1,cov*smoothstep(.35,.7,c2),.5+lightL,410.);
+          col+=glitter(uv*asp,bank*smoothstep(.46,.68,clustered),.7+lightL*1.8,700.);
+          col+=glitter(uv*asp+2.1,cov*smoothstep(.35,.7,c2),.5+lightL,410.);
           col+=uGold*exp(-d*22.)*(.03+.15*lightL);
           // engine light and ship mirrored on the water, stretched vertically
-          vec2 e=(vUv-vec2(uShip.x+.012,uH-(uShip.y-uH)-.01))*asp;col+=vec3(.45,.65,1.)*exp(-abs(e.x)*90.)*exp(-abs(e.y)*30.)*.35*smoothstep(0.,.02,d);
+          vec2 e=(uv-vec2(uShip.x+.012,uH-(uShip.y-uH)-.01))*asp;col+=vec3(.45,.65,1.)*exp(-abs(e.x)*90.)*exp(-abs(e.y)*30.)*.35*smoothstep(0.,.02,d);
           // speed streaks out of the vanishing point
-          vec2 v=(vUv-vec2(uC.x-.03,uH))*asp;float rd=length(v),th=atan(v.y,v.x);float bin=floor(th*110.);
+          vec2 v=(uv-vec2(uC.x-.03,uH))*asp;float rd=length(v),th=atan(v.y,v.x);float bin=floor(th*110.);
           float lane=step(.55,hash12(vec2(bin,3.)));float dash=smoothstep(.55,1.,fract(log(rd+.02)*1.3-t*(1.6+uFlow*8.)+hash12(vec2(bin,9.))));
           float thin=smoothstep(.55,0.,abs(fract(th*110.)-.5)*2.*rd*110.);
           col+=mix(uGold,uHot,.75)*lane*dash*thin*smoothstep(.05,.45,rd)*1.1;
         }
         // the edge-on disc on the horizon: white-hot seam, brightest on the left where the wave lands
-        float seam=exp(-abs(y)*420.)*(.35+1.4*leftX)+exp(-abs(y)*60.)*(.06+.4*leftX);
-        col+=mix(uGold,uHot,.7)*seam*smoothstep(1.,.0,(vUv.x-uC.x)*uAspect*.9);
-        col*=1.-smoothstep(.6,1.2,length((vUv-.5)*asp))*.55;
+        float seamWidth=uArrival<1.?max(1./420.,uPixelSize/uArrival*.7):1./420.;
+        float seamCoverage=uArrival<1.?sqrt((1./420.)/seamWidth):1.;
+        float seam=(uArrival<1.?exp(-abs(y)/seamWidth)*seamCoverage:exp(-abs(y)*420.))*(.35+1.4*leftX)+exp(-abs(y)*60.)*(.06+.4*leftX);
+        col+=mix(uGold,uHot,.7)*seam*smoothstep(1.,.0,(uv.x-uC.x)*uAspect*.9);
+        col*=1.-smoothstep(.6,1.2,length((uv-.5)*asp))*.55;
+        // Project the analytical lens, plume and sea inside the chapter, never a cropped render texture.
+        // A distant sea has a soft physical extent; the surrounding star sky stays full-frame.
+        if(uArrival<1.){float extent=mix(exp(-dot(p,p)*.9),1.,smoothstep(.3,1.,uArrival));
+        vec2 skyP=(vUv-.5)*asp;
+        vec3 farSky=vec3(.0025,.002,.0016)+stars(skyP+vec2(2.,1.))* .45;
+        col=mix(farSky,col,extent);}
         gl_FragColor=vec4(col,1.);}`
   });
   const sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), backdrop); sky.frustumCulled = false; sky.renderOrder = -10; sky.name = 'Singularity'; scene.add(sky);
@@ -182,11 +194,11 @@ export function createSingularityChapter({ isMobile }) {
 
   function resize(w, h) {
     camera.aspect = w / h; camera.fov = w / h < 1 ? 60 : 40; camera.updateProjectionMatrix(); state.aspect = w / h;
-    backdrop.uniforms.uAspect.value = state.aspect; backdrop.uniforms.uH.value = state.horizon = .47;
+    backdrop.uniforms.uAspect.value = state.aspect; backdrop.uniforms.uPixelSize.value = 1 / h; backdrop.uniforms.uH.value = state.horizon = .47;
     const s = state.aspect < 1 ? .28 : .27; ship.scale.setScalar(s); mirror.scale.set(s, -s, s);
   }
   const fwd = new THREE.Vector3(), tmp = new THREE.Vector3(), xAxis = new THREE.Vector3(1, 0, 0), horizonPoint = new THREE.Vector3();
-  function update({ time, pointer, motion, local, dt }) {
+  function update({ time, pointer, motion, local, dt, transition }) {
     const lp = local ?? .4, mobile = state.aspect < 1;
     // Portrait keeps the reference's large arc: the circle centre moves beyond the right edge.
     // Scroll pushes in: the shadow grows, the sea flows faster.
@@ -194,7 +206,18 @@ export function createSingularityChapter({ isMobile }) {
     // Camera drift: a slow float on top of the pointer.
     const driftX = Math.sin(time * .13) * .006 * motion, driftY = Math.sin(time * .17 + 1) * .004 * motion;
     state.center.set((mobile ? 1.27 : .64) - pointer.x * .01 * motion + driftX, .47 + pointer.y * .008 * motion + driftY);
+    const arrive = transition?.role === 'in' ? smooth(.54, 1, transition.progress) : 1;
+    const scale = Math.exp(Math.log(.025) * (1 - arrive));
+    backdrop.uniforms.uArrival.value = scale;
+    backdrop.uniforms.uArrivalCenter.value.lerpVectors(arrivalOrigin,state.center,smooth(.08, 1, scale));
     camera.position.set(pointer.x * .25 * motion + Math.sin(time * .13) * .08 * motion, -pointer.y * .15 * motion + Math.sin(time * .17 + 1) * .05 * motion, 10); camera.position.y += .8; camera.lookAt(camera.position.x * .5, .8, 0); camera.updateMatrixWorld();
+    if (transition?.role === 'in') {
+      camera.position.z = 10 / scale;
+      camera.lookAt(camera.position.x * .5, .8, 0); camera.updateMatrixWorld();
+    }
+    const horizon = transition?.role === 'in' ? backdrop.uniforms.uArrivalCenter.value.y + scale * (state.horizon - state.center.y) : state.horizon;
+    sparkMaterial.opacity = smooth(.35, 1, scale);
+    sparkLines.visible = sparkMaterial.opacity > 0;
     for (let i = 0; i < sparkN; i++) {
       const s = sparks[i]; s.z += s.v * (dt || 0) * motion; if (s.z > 8) s.z -= 68;
       const len = .14 + s.v * .025; sp.set([s.x, s.y, s.z, s.x * (1 - len * .02), s.y * (1 - len * .02), s.z - len], i * 6);
@@ -208,12 +231,13 @@ export function createSingularityChapter({ isMobile }) {
     state.roll += (THREE.MathUtils.clamp(-(state.ship.x - prevX) * 8 - pointer.x * .3 * motion, -.5, .5) - state.roll) * .08;
     ship.rotateX(state.roll - .2);
     // The sea plane at the ship's depth: where the horizon line crosses it. Mirror the ship about it.
-    horizonPoint.set(0, state.horizon * 2 - 1, .5).unproject(camera).sub(camera.position);
+    horizonPoint.set(0, horizon * 2 - 1, .5).unproject(camera).sub(camera.position);
     const seaY = camera.position.y + horizonPoint.y * (camera.position.z - state.ship.z) / -horizonPoint.z;
     ship.position.set(state.ship.x, seaY + .22 + state.ship.y, state.ship.z);
     mirror.position.set(ship.position.x, 2 * seaY - ship.position.y, ship.position.z); mirror.quaternion.copy(ship.quaternion);
     mirror.quaternion.set(-mirror.quaternion.x, mirror.quaternion.y, -mirror.quaternion.z, mirror.quaternion.w);
     tmp.set(-1.1, 0, 0).applyMatrix4(ship.matrixWorld.compose(ship.position, ship.quaternion, ship.scale)).project(camera); shipUv.set(tmp.x * .5 + .5, tmp.y * .5 + .5);
+    if (transition?.role === 'in') shipUv.sub(backdrop.uniforms.uArrivalCenter.value).divideScalar(scale).add(state.center);
     exhaustMaterial.uniforms.uPulse.value = nozzleMaterial.uniforms.uPulse.value = .85 + .15 * Math.sin(time * 30 * motion);
   }
   function setPalette(color, name) { gold.set(name === 'ice' ? '#8fc6ff' : '#ffc45a'); hot.set(name === 'ice' ? '#eef6ff' : '#fff1d6'); sparkMaterial.color.copy(gold); }
@@ -224,5 +248,5 @@ export function createSingularityChapter({ isMobile }) {
     g.add(s);
     return g;
   }
-  return { name: 'singularity', scene, camera, transition: { center: state.center, radius: backdrop.uniforms.uRs }, resize, update, setPalette, exportGroup, post: { ca: 0, bloom: .95, exposure: 1.08, sat: 1.03, flare: .35 } };
+  return { name: 'singularity', scene, camera, transition: { center: state.center, radius: backdrop.uniforms.uRs, arrivalCenter: backdrop.uniforms.uArrivalCenter.value }, resize, update, setPalette, exportGroup, post: { ca: 0, bloom: .95, exposure: 1.08, sat: 1.03, flare: .35 } };
 }

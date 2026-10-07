@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { NOISE, VERT_SCREEN, glow, starField, portable } from '../lib/kit.js';
+import { NOISE, VERT_SCREEN, glow, starField, portable, smooth } from '../lib/kit.js';
 
 /**
  * Chapitre 02 — Planète. Same art direction as the Monolith: monochrome, cold greys, one low star on the left.
@@ -18,15 +18,15 @@ export function createPlanetChapter({ isMobile }) {
 
   // Space: near-black, a faint cold haze, the star at the left edge with a soft cross.
   const skyMaterial = new THREE.ShaderMaterial({
-    uniforms: { uAspect: { value: 1 }, uSun: { value: state.sun }, uTint: { value: tint.clone() }, uTime: { value: 0 } },
+    uniforms: { uAspect: { value: 1 }, uSun: { value: state.sun }, uTint: { value: tint.clone() }, uTime: { value: 0 }, uTravel: { value: 0 } },
     vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false,
-    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uAspect,uTime;uniform vec2 uSun;uniform vec3 uTint;
+    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uAspect,uTime,uTravel;uniform vec2 uSun;uniform vec3 uTint;
       void main(){vec2 asp=vec2(uAspect,1.);vec3 col=mix(vec3(.004,.0045,.0055),vec3(.012,.013,.016),smoothstep(1.,0.,vUv.y));
         float n=fbm(vUv*asp*1.6+vec2(uTime*.004,0.));col+=vec3(.02,.021,.025)*n*n*smoothstep(.9,.1,length((vUv-vec2(.25,.6))*asp));
         vec2 d=(vUv-uSun)*asp;float r=length(d);
         col+=uTint*(exp(-r*3.)*.06+exp(-r*9.)*.22)+vec3(1.)*exp(-r*r*9000.)*4.;
         col+=uTint*(exp(-abs(d.y)*240.)*exp(-abs(d.x)*9.)*.5+exp(-abs(d.x)*260.)*exp(-abs(d.y)*14.)*.35);
-        gl_FragColor=vec4(col,1.);}`
+        col=mix(col,vec3(.003,.004,.006),uTravel);gl_FragColor=vec4(col,1.);}`
   });
   const sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), skyMaterial); sky.frustumCulled = false; sky.renderOrder = -10; sky.name = 'Space'; scene.add(sky);
   const stars = starField({ count: isMobile() ? 220 : 520, spread: [900, 520], depth: [-400, -700], seed: 61, color: '#c9ced8', size: [1.1, 2.6] });
@@ -83,17 +83,37 @@ export function createPlanetChapter({ isMobile }) {
   const ring = new THREE.Mesh(new THREE.RingGeometry(ringIn, ringOut, 360, 8), ringMaterial); ring.name = 'Rings';
   ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), ringNormal); scene.add(ring);
 
-  const target = new THREE.Vector3(), offset = new THREE.Vector3();
+  const target = new THREE.Vector3(), offset = new THREE.Vector3(), direction = new THREE.Vector3(), limb = new THREE.Vector3();
   function resize(w, h) {
     camera.aspect = w / h; camera.fov = w / h < 1 ? 56 : 34; camera.updateProjectionMatrix(); state.aspect = w / h;
     skyMaterial.uniforms.uAspect.value = state.aspect; state.sun.set(state.aspect < 1 ? .1 : .06, .8);
   }
-  function update({ time, pointer, motion, local }) {
+  function update({ time, pointer, motion, local, transition }) {
     // Push in from the whole planet (lower right, room for the copy above) to its lit limb and the rings.
     const lp = local ?? .4, k = lp * lp * (3 - 2 * lp), dist = 92 - 58 * k;
     offset.set(.32 + pointer.x * .05 * motion, .1 - pointer.y * .04 * motion, 1).normalize().multiplyScalar(dist);
     camera.position.copy(offset);
     target.set(-R * (1.35 - .55 * k) * (state.aspect < 1 ? .4 : 1), R * (1.05 - .3 * k), 0);
+    skyMaterial.uniforms.uTravel.value = 0; stars.material.uniforms.uFade.value = .5;
+    if (transition?.role === 'in') {
+      // Dolly away from a tangent point just inside the illuminated atmosphere, with fixed view direction.
+      // Both position and target travel together: no image-space zoom or change of FOV.
+      direction.copy(camera.position).sub(target).normalize();
+      limb.set(-direction.z, .08, direction.x).normalize().multiplyScalar(R * 1.025).addScaledVector(direction, 2.2);
+      const retreat = smooth(.44, 1, transition.progress);
+      camera.position.lerpVectors(limb, offset, retreat);
+      target.copy(camera.position).addScaledVector(direction, -100);
+    } else if (transition?.role === 'out') {
+      const t = transition.progress;
+      target.multiplyScalar(1 - smooth(0, .36, t));
+      direction.copy(offset).sub(target).normalize();
+      const retreat = Math.exp(7.6 * Math.pow(smooth(0, .60, t), 1.5)) - 1;
+      camera.position.addScaledVector(direction, dist * retreat);
+      skyMaterial.uniforms.uTravel.value = smooth(0, .3, t);
+      stars.material.uniforms.uFade.value = .5 * (1 - smooth(.05, .3, t));
+    }
+    const far = transition?.role === 'out' ? 250000 : 2000;
+    if (camera.far !== far) { camera.far = far; camera.updateProjectionMatrix(); }
     camera.lookAt(target);
     planet.rotation.y = time * .004;
     planetMaterial.uniforms.uTime.value = time; skyMaterial.uniforms.uTime.value = time;

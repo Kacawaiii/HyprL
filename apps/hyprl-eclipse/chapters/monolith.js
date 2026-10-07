@@ -189,16 +189,25 @@ export function createMonolithChapter({ isMobile }) {
     const cx = .1 * state.aspect + .02, cy = ((cx - A.x) ** 2 - (cx - B.x) ** 2 + A.y ** 2 - B.y ** 2) / (2 * (A.y - B.y));
     state.arcC.set(cx, cy); state.arcR = Math.hypot(B.x - cx, B.y - cy); skyMaterial.uniforms.uArcR.value = state.arcR; skyMaterial.uniforms.uArcEnd.value = B.x;
   }
-  function update({ time, pointer, motion, local, pr }) {
+  function update({ time, pointer, motion, local, pr, transition }) {
     const dolly = local ?? .5, z = 16 - dolly * 7;
     camera.position.set(pointer.x * .5 * motion, 1.7 - pointer.y * .15 * motion, z);
-    camera.lookAt(camera.position.x * .2, camera.position.y + Math.tan(PITCH) * 100, z - 100);
+    let pitch = PITCH;
+    if (transition?.role === 'out') {
+      const t = transition.progress, travel = Math.min(t / .56, 1);
+      const lift = travel * travel * (3 - 2 * travel);
+      camera.position.z += lift * 650;
+      camera.position.y += lift * 180;
+      const tilt = Math.min(t / .52, 1);
+      pitch -= (1 - (1 - tilt) ** 1.6) * THREE.MathUtils.degToRad(18);
+    }
+    camera.lookAt(camera.position.x * .2, camera.position.y + Math.tan(pitch) * 100, camera.position.z - 100);
     camera.updateMatrixWorld();
     // The sun slides a little along the horizon with the pointer; the land is lit from where it is drawn.
     state.sun.set((state.aspect < 1 ? .14 : .07) + (pointer.x * .5 + .5) * .05 * motion, state.horizon + .2);
     sunDir.copy(tmp.set(state.sun.x * 2 - 1, state.sun.y * 2 - 1, .5).unproject(camera).sub(camera.position)).normalize();
     landLight.set(sunDir.x * 2.2, .14, -.12).normalize();
-    skyMaterial.uniforms.uShift.value.set(-pointer.x * .004 * motion, pointer.y * .003 * motion);
+    skyMaterial.uniforms.uShift.value.set(-pointer.x * .004 * motion, pointer.y * .003 * motion + (pitch - PITCH) * 1.1);
     skyMaterial.uniforms.uTime.value = time;
     lands.forEach(l=>{l.material.uniforms.uTime.value=time;});rayMaterial.uniforms.uTime.value=time;snowMaterial.uniforms.uTime.value=time;
     mists.forEach((m, i) => { m.material.uniforms.uTime.value = time; m.position.x = m.userData.anchorX + Math.sin(time * .02 + i) * 6; });
