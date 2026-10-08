@@ -227,6 +227,10 @@ def test_cli_restrictions_schema_and_empty_directory(ledger, monkeypatch):
         assert flag in args
     assert args[args.index('--sandbox') + 1] == 'read-only'
     assert '--disable' in args and 'shell_tool' in args
+    enabled = [args[i + 1] for i, value in enumerate(args) if value == '--enable']
+    disabled = [args[i + 1] for i, value in enumerate(args) if value == '--disable']
+    # The web tool router needs the host even with shell execution disabled.
+    assert 'code_mode_host' in enabled and 'code_mode_host' not in disabled
     for role in ('analyst_claude', 'reviewer'):
         cmd = command(role, ledger.grant)
         assert cmd[cmd.index('--tools') + 1] == 'WebSearch,WebFetch'
@@ -273,6 +277,16 @@ def test_successful_forecast_mentions_trade_quota_without_being_usage_quota(ledg
             self.out.flush()
     monkeypatch.setattr('subprocess.Popen', Process)
     assert ModelRunner(ledger, clock=ledger.clock).once('analyst_gpt', 'synthetic')['views'] == []
+
+
+def test_gpt_tool_host_failure_cannot_be_accepted_as_a_successful_abstention():
+    events = [
+        {'type': 'item.completed', 'item': {'type': 'error', 'message': 'Code Mode is unavailable in synthetic test'}},
+        {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': '{"regime":[],"views":[]}'}},
+        {'type': 'turn.completed'},
+    ]
+    with pytest.raises(TraderError, match='MODEL_WEB_UNAVAILABLE'):
+        parse_gpt('\n'.join(json.dumps(e) for e in events))
 
 
 def test_schemas_pinned_skills_and_preregistration():

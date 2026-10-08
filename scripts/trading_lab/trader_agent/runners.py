@@ -20,9 +20,10 @@ def command(role, grant):
         # Installed 0.160.0 requires the global --search BEFORE exec.
         return ["codex", "--search", "exec", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
                 "--ephemeral", "--skip-git-repo-check", "--model", grant.gpt_model,
-                "--disable", "shell_tool", "--disable", "code_mode_host", "--disable", "multi_agent",
+                "--disable", "shell_tool", "--enable", "code_mode_host", "--disable", "multi_agent",
                 "--disable", "apps", "--disable", "plugins", "--disable", "hooks", "--disable", "browser_use",
                 "--disable", "computer_use", "--disable", "image_generation", "--disable", "skill_search",
+                "--disable", "view_image", "--disable", "sleep_tool", "--disable", "tool_suggest",
                 "--enable", "skip_host_skill_discovery", "--output-schema", str(HERE / "schemas" / (schema + ".gpt.json")),
                 "--json", "-"]
     return ["claude", "-p", "--model", grant.payload["external_models"][role]["model"],
@@ -58,6 +59,9 @@ def parse_gpt(raw):
         raise TraderError('MODEL_JSON_INVALID')
     if any(tainted(e) for e in events):
         raise TraderError("TAINTED_RUN")
+    if any(web_unavailable(json.dumps(e)) for e in events if
+           e.get('type') == 'error' or e.get('item', {}).get('type') == 'error'):
+        raise TraderError('MODEL_WEB_UNAVAILABLE')
     messages = [e["item"]["text"] for e in events if e.get("type") == "item.completed"
                 and e.get("item", {}).get("type") == "agent_message"]
     if not messages or any(e.get("type") in {"error", "turn.failed"} for e in events):
@@ -66,6 +70,12 @@ def parse_gpt(raw):
         return strict_json(messages[-1])
     except (ValueError, TypeError):
         raise TraderError("MODEL_JSON_INVALID") from None
+
+
+def web_unavailable(message):
+    return any(marker in message.lower() for marker in
+               ('code mode is unavailable', 'code-mode host is disabled', 'failed to start code-mode host',
+                'code-mode host is unavailable'))
 
 
 def parse_claude(raw):
@@ -151,6 +161,8 @@ class ModelRunner:
                     emitted = []
                 if any(tainted(e) for e in emitted):
                     raise TraderError('TAINTED_RUN')
+                if role == 'analyst_gpt' and web_unavailable(errors):
+                    raise TraderError('MODEL_WEB_UNAVAILABLE')
                 error_text = errors
                 for event in emitted:
                     if not isinstance(event, dict):
