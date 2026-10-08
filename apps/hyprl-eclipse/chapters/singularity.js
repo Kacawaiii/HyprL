@@ -225,10 +225,12 @@ export function createSingularityChapter({ isMobile }) {
     sparkGeo.attributes.position.needsUpdate = true;
     // Ship: right of the centre, just above the sea, heading into the scene; the pointer steers it.
     state.shipTarget.set((mobile ? .8 : 1.45) + pointer.x * 1.2 * motion + Math.sin(time * .4) * .12 * motion, .02 - pointer.y * .25 * motion + Math.sin(time * .9) * .04 * motion, 1.5);
-    const prevX = state.ship.x; state.ship.lerp(state.shipTarget, state.ship.lengthSq() ? .06 : 1);
+    const damping = motion && dt > 0 ? 1 - Math.exp(-dt * 9) : 1;
+    state.ship.lerp(state.shipTarget, state.ship.lengthSq() ? damping : 1);
     fwd.set(-.45, .045, -1).normalize();
     ship.quaternion.setFromUnitVectors(xAxis, fwd);
-    state.roll += (THREE.MathUtils.clamp(-(state.ship.x - prevX) * 8 - pointer.x * .3 * motion, -.5, .5) - state.roll) * .08;
+    const rollTarget = THREE.MathUtils.clamp(-pointer.x * .3 * motion, -.5, .5);
+    state.roll += (rollTarget - state.roll) * damping;
     ship.rotateX(state.roll - .2);
     // The sea plane at the ship's depth: where the horizon line crosses it. Mirror the ship about it.
     horizonPoint.set(0, horizon * 2 - 1, .5).unproject(camera).sub(camera.position);
@@ -248,5 +250,5 @@ export function createSingularityChapter({ isMobile }) {
     g.add(s);
     return g;
   }
-  return { name: 'singularity', scene, camera, transition: { center: state.center, radius: backdrop.uniforms.uRs, arrivalCenter: backdrop.uniforms.uArrivalCenter.value }, resize, update, setPalette, exportGroup, post: { ca: 0, bloom: .95, exposure: 1.08, sat: 1.03, flare: .35 } };
+  return { name: 'singularity', scene, camera, transition: { center: state.center, radius: backdrop.uniforms.uRs, arrivalCenter: backdrop.uniforms.uArrivalCenter.value }, resize, update, setPalette, exportGroup, post: { ca: 0, bloom: .95, threshold: .6, exposure: 1.08, sat: 1.03, flare: .35 } };
 }

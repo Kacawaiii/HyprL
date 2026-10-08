@@ -162,13 +162,17 @@ export function createPrismChapter({ isMobile }) {
         gl_Position.xy+=aDof.xy*defocus*2./uResolution*gl_Position.w;vDofWeight=aDof.z;}`,
     fragmentShader: NOISE + PRISM_BG + /* glsl */`varying float vDofWeight;uniform float uTime;uniform sampler2D tFrame;uniform vec2 uFrameTexel;varying vec3 vW;varying vec3 vN;varying float vEdge;varying vec2 vUv;varying vec3 vLook;varying vec4 vClip;
       void main(){vec3 n=normalize(vN);vec3 v=normalize(cameraPosition-vW);if(dot(n,v)<0.)n=-n;
-        float c=dot(n,v),fres=pow(1.-c,3.);float side=step(1.5,vEdge),bevel=smoothstep(.965,.998,vEdge)*(1.-side);
+        float c=clamp(dot(n,v),0.,1.),fres=.0426+.9574*pow(1.-c,5.);float side=step(1.5,vEdge),bevel=smoothstep(.965,.998,vEdge)*(1.-side);
         // Refraction of the actual rendered base layer, split per channel; capture excludes glass and light overlays.
-        vec2 suv=vClip.xy/vClip.w*.5+.5;vec2 off=(mat3(viewMatrix)*n).xy*.07;
-        float dispersion=.009+.018*bevel+.008*side;vec2 fringe=normalize(off+vec2(.002,.001))*dispersion;
+        vec2 suv=vClip.xy/vClip.w*.5+.5;
+        // Dielectric glass: IOR 1.52, a longer optical path at grazing angles, indigo absorption.
+        vec3 bent=refract(-v,n,1./1.52);float path=.22/max(c,.18);
+        vec2 off=(mat3(viewMatrix)*(bent+v)).xy*(.035+.025*path);
+        float dispersion=.0016+.0045*bevel+.0025*side;vec2 fringe=normalize(off+vec2(.002,.001))*dispersion;
         vec2 sampleUv=clamp(suv-off,uFrameTexel,1.-uFrameTexel);
         vec3 refr=vec3(texture2D(tFrame,clamp(sampleUv+fringe,uFrameTexel,1.-uFrameTexel)).r,
           texture2D(tFrame,sampleUv).g,texture2D(tFrame,clamp(sampleUv-fringe,uFrameTexel,1.-uFrameTexel)).b);
+        refr*=exp(-vec3(.12,.18,.055)*path);
         vec3 lav=vec3(.84,.8,1.);float B=vLook.x;
         // broad sheen across the face, frosted cloud and crushed-glass sparkle inside
         float sheen=pow(max(dot(reflect(-v,n),normalize(vec3(-.35,-.5,.8))),0.),2.)+pow(max(dot(reflect(-v,n),normalize(vec3(.4,.6,.7))),0.),6.)*.6;
@@ -179,20 +183,20 @@ export function createPrismChapter({ isMobile }) {
         float along=clamp(vUv.y/max(vLook.z,.01)+.5,0.,1.);along=fract(vLook.y*7.)>.5?along:1.-along;
         float hot=clamp(smoothstep(.2,1.,along)*.75+sheen*.5+grad*.2,0.,1.)*(.25+.9*frost);vec3 body=mix(uViolet*.45,lav,hot)*(.35+.65*frost)*B*B*(.18+.95*hot);
         vec3 film=.5+.5*cos(6.2831*(c*1.6+vLook.y+vec3(0.,.33,.67)));
-        vec3 col=mix(refr*vec3(.7,.6,1.)*.8,refr*1.25,B)+body*1.45+lav*sparkle*(.1+4.2*B*B)*(.3+.7*hot)*(1.-side);
+        vec3 col=refr*(.78+.22*B)*(1.-fres*.5)+body*.92+lav*sparkle*(.1+4.2*B*B)*(.3+.7*hot)*(1.-side);
         float edgePower=B*B*mix(.12,1.,smoothstep(.5,.75,B));
-        col+=(vec3(1.)*1.6+film*.4)*bevel*(.006+.52*edgePower)+(lav*1.3+film*.5)*side*(.004+.7*edgePower);
+        col+=(vec3(1.)*1.6+film*.4)*bevel*(.006+.30*edgePower)+(lav*1.3+film*.5)*side*(.004+.48*edgePower);
         float crushed=fbm3(vUv*13.+vLook.y*23.);
         float caustic=pow(frost,3.)*3.+pow(abs(sin(vUv.x*6.+vnoise(vUv*4.+vLook.y*19.)*6.+vUv.y*3.)),28.)*.22;
-        col*=.45+1.05*crushed;
-        col+=mix(lav,film,.28)*caustic*B*B*(.1+hot*.8);
+        col*=.78+.38*crushed;
+        col+=mix(lav,film,.28)*caustic*B*B*(.08+hot*.55);
         vec3 light=normalize(vec3(-.4+sin(uTime*.17)*.12,.6,.7));
         float edgeGlint=pow(max(dot(reflect(-light,n),v),0.),36.);
         float movingGlint=pow(max(dot(reflect(normalize(vW-vec3(-1.,4.,-4.)),n),v),0.),64.);
         col+=vec3(1.,.92,1.)*movingGlint*(.08+B*B*2.2);
         col+=lav*edgeGlint*side*(.05+B*B*2.);
         col+=mix(lav,film,.3)*fres*(.1+.6*B);
-        gl_FragColor=vec4(col,mix(.6+.3*hot*B,.95,max(bevel,side))*vDofWeight);}`,
+        gl_FragColor=vec4(col,mix(.50+.3*hot*B,.93,max(bevel,side))*vDofWeight);}`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide
   });
 
@@ -212,7 +216,7 @@ export function createPrismChapter({ isMobile }) {
   const kinds = ['tri', 'sliver', 'trap', 'penta'];
   for (let i = 0; i < fragN; i++) {
     const dir = new THREE.Vector3(.35 + r() * 1.1, (r() - .45) * .9, (r() - .5) * .8).normalize(), d0 = 1.05 + r() * 1.4, size = .06 + Math.pow(r(), 3) * .3;
-    fragSpecs.push({ blur:true, kind: kinds[i % 4], seed: 100 + i, w: size * (.3 + r() * .6), h: size * (1 + r()), th: .02 + size * .05,
+    fragSpecs.push({ blur:!isMobile(), kind: kinds[i % 4], seed: 100 + i, w: size * (.3 + r() * .6), h: size * (1 + r()), th: .02 + size * .05,
       center: dir.clone().multiplyScalar(d0), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(r() * 6, r() * 6, r() * 6)),
       dir: dir.clone().multiplyScalar(1.5 + r() * 3.5), spin: [r() - .5, r() - .5, r() - .5, (r() - .5) * .8], look: [.55 + r() * .45, r(), size * 2] });
   }
@@ -242,7 +246,7 @@ export function createPrismChapter({ isMobile }) {
       const H = screenH(z), x = state.mobile ? .5 + (sx - .5) * .8 : sx;
       const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt * .35, tilt, THREE.MathUtils.degToRad(ang - 90)));
       const center = at(state.mobile && i === 3 ? .76 : x, sy, z);
-      specs.push({ blur:i===7||i===8, kind, seed: 500 + i, w: wid * H, h: len * H, th: .05 + wid * H * .06, center, quat,
+      specs.push({ blur:!state.mobile&&(i===7||i===8), kind, seed: 500 + i, w: wid * H, h: len * H, th: .05 + wid * H * .06, center, quat,
         dir: new THREE.Vector3(center.x * .04, center.y * .03, .2), spin: [rr() - .5, rr() - .5, rr() * .3, (rr() - .5) * .04], look: [bright, rr(), len * H] });
     });
     heroSpecs.push(...specs.slice(0,4));
@@ -309,7 +313,7 @@ export function createPrismChapter({ isMobile }) {
         return 1.-smoothstep(-blur,blur,sd);}
       vec3 nearShard(vec2 p,vec2 size,float angle,float blur,float power){
         size.x*=min(1.,uAspect/.85);
-        vec2 split=vec2(blur*.9,blur*.25);
+        vec2 split=vec2(blur*.55,blur*.18);
         float blue=shard(p+split,size,angle,blur),red=shard(p-split,size,angle,blur),core=shard(p,size,angle,blur*1.2);
         return (vec3(0.,.65,1.)*blue+vec3(1.,.04,.22)*red+vec3(1.)*core*.4)*power;}
       void main(){vec2 p=(vUv+uPointer*vec2(-.018,.012)*uMotion)*vec2(uAspect,1.);float drift=sin(uTime*.18)*.009*uMotion;vec3 col=vec3(0.);
@@ -322,7 +326,7 @@ export function createPrismChapter({ isMobile }) {
   const foreground = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), foregroundMaterial);
   foreground.name = 'DefocusedForegroundGlass'; foreground.layers.set(2); foreground.frustumCulled = false; foreground.renderOrder = 11; scene.add(foreground);
 
-  const tmp = new THREE.Vector3();
+  const tmp = new THREE.Vector3(), beamAxis = new THREE.Vector3(), beamCenter = new THREE.Vector3(), beamNormal = new THREE.Vector3(), beamScreen = new THREE.Vector3(), beamRay = new THREE.Vector3(), beamHit = new THREE.Vector3(), beamRotation = new THREE.Quaternion();
   function resize(w, h) {
     camera.aspect = w / h; camera.updateProjectionMatrix(); state.aspect = w / h; state.mobile = w < 600;
     common.uAspect.value = state.aspect;shardMaterial.uniforms.uResolution.value.set(w,h); overlayMaterial.uniforms.uRes.value.set(w, h);
@@ -338,13 +342,18 @@ export function createPrismChapter({ isMobile }) {
     camera.position.set(pointer.x * .5 * motion + Math.sin(time * .11) * .1 * motion, (-pointer.y * .35+Math.sin(time*.09)*.07) * motion, 12 - lp01 * 1.2); camera.lookAt(pointer.x * .2 * motion, 0, 0);
     camera.updateMatrixWorld();
     tmp.copy(orbPos).project(camera);orbUv.set(tmp.x*.5+.5,tmp.y*.5+.5);
-    heroSpecs.forEach((s,i)=>{const ax=new THREE.Vector3(...s.spin.slice(0,3)).normalize();
-      const q=new THREE.Quaternion().setFromAxisAngle(ax,s.spin[3]*(time*motion+state.explode*3.));
-      const center=s.center.clone().addScaledVector(s.dir,state.explode),n=new THREE.Vector3(0,0,1).applyQuaternion(s.quat).applyQuaternion(q);
-      const screen=center.clone().project(camera);const power=.5+Math.pow(Math.abs(n.dot(orbPos.clone().sub(center).normalize())),3.);
-      beamEnds[i].set(screen.x*.5+.5,screen.y*.5+.5,0,power);
-      const ray=center.clone().sub(orbPos).normalize();ray.y=-Math.max(.35,Math.abs(ray.y)*1.8+.3);ray.z-=.65;ray.normalize();const t=(-4.6-center.y)/(ray.y||.001);const hit=center.clone().addScaledVector(ray,Math.max(0,t));
-      caustics[i].set(hit.x,hit.z,Math.atan2(n.x,n.z),power);});
+    heroSpecs.forEach((s,i)=>{
+      beamAxis.set(s.spin[0],s.spin[1],s.spin[2]).normalize();
+      beamRotation.setFromAxisAngle(beamAxis,s.spin[3]*(time*motion+state.explode*3.));
+      beamCenter.copy(s.center).addScaledVector(s.dir,state.explode);
+      beamNormal.set(0,0,1).applyQuaternion(s.quat).applyQuaternion(beamRotation);
+      beamScreen.copy(beamCenter).project(camera);beamRay.copy(orbPos).sub(beamCenter).normalize();
+      const power=.5+Math.pow(Math.abs(beamNormal.dot(beamRay)),3.);
+      beamEnds[i].set(beamScreen.x*.5+.5,beamScreen.y*.5+.5,0,power);
+      beamRay.copy(beamCenter).sub(orbPos).normalize();beamRay.y=-Math.max(.35,Math.abs(beamRay.y)*1.8+.3);beamRay.z-=.65;beamRay.normalize();
+      const t=(-4.6-beamCenter.y)/(beamRay.y||.001);beamHit.copy(beamCenter).addScaledVector(beamRay,Math.max(0,t));
+      caustics[i].set(beamHit.x,beamHit.z,Math.atan2(beamNormal.x,beamNormal.z),power);
+    });
     beamEnds[4].set(.10+pointer.x*.018*motion,.85-pointer.y*.012*motion+Math.sin(time*.18)*.009*motion,0,.9);beamEnds[5].set(.47+pointer.x*.018*motion,1.01-pointer.y*.012*motion-Math.sin(time*.18)*.009*motion,0,.8);
     air.rotation.y=time*.004*motion;air.material.uniforms.uTime.value=time;air.material.uniforms.uMotion.value=motion;air.material.uniforms.uPR.value=pr??1;
     debris.material.uniforms.uTime.value=time;debris.material.uniforms.uMotion.value=motion;debris.material.uniforms.uPR.value=pr??1;
@@ -374,5 +383,5 @@ export function createPrismChapter({ isMobile }) {
     if (piecesMesh) g.add(lean(piecesMesh)); g.add(lean(frags));
     return g;
   }
-  return { name: 'prism', scene, camera, refraction: { frame: shardMaterial.uniforms.tFrame, texel: shardMaterial.uniforms.uFrameTexel }, resize, update, setPalette, exportGroup, post: { ca: .006, bloom: 1.15, exposure: .85, sat: 1.15, vignette: 1.7, flare: .32, flareTint: new THREE.Color('#ff9ae6') } };
+  return { name: 'prism', scene, camera, refraction: { frame: shardMaterial.uniforms.tFrame, texel: shardMaterial.uniforms.uFrameTexel }, resize, update, setPalette, exportGroup, post: { ca: .0028, bloom: 1.05, threshold: .72, exposure: .85, sat: 1.15, vignette: 1.7, flare: .32, flareTint: new THREE.Color('#ff9ae6') } };
 }

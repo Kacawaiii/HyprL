@@ -135,7 +135,7 @@ export function createMonolithChapter({ isMobile }) {
     transparent: true, depthWrite: false
   });
   const mists = [];
-  for (const [i,z,y,w,h,d,x=0] of [[0,-380,13,850,55,.65],[1,-205,8,620,44,.7],[2,-130,5,400,25,.5],[3,-75,1.5,190,9,.24],[4,-212,20,150,52,.72,132]]) {
+  for (const [i,z,y,w,h,d,x=0] of [[0,-380,13,850,55,.65],[1,-205,8,620,44,.7],[2,-130,5,400,25,.5],[3,-75,1.5,190,9,.24],[4,-212,20,150,52,.84,132]]) {
     const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mistMaterial.clone());
     m.material.uniforms.uSeed.value=i*3.7;m.material.uniforms.uDensity.value=d;
     m.name=`VolumetricMist_${i}`;m.position.set(x,y,z);m.userData.anchorX=x;m.renderOrder=4+i;scene.add(m);mists.push(m);
@@ -157,7 +157,7 @@ export function createMonolithChapter({ isMobile }) {
       void main(){float n=fbm3(vec2(vUv.x*8.-uTime*.12,vUv.y*4.));
         float ribbon=exp(-pow((vUv.y-.36-.12*sin(vUv.x*9.)-vUv.x*.13)/(.06+.15*vUv.x),2.));
         float a=ribbon*pow(n,2.)*2.*smoothstep(0.,.12,vUv.x)*smoothstep(1.,.38,vUv.x);
-        gl_FragColor=vec4(mix(vec3(.27,.3,.36),uTint*.65,.3),a*.28);}`,
+        gl_FragColor=vec4(mix(vec3(.27,.3,.36),uTint*.65,.3),a*.33);}`,
     transparent:true,depthWrite:false});
   const spindrift=[];
   for(const x of [55,78,116]){const m=new THREE.Mesh(new THREE.PlaneGeometry(37,14),snowMaterial);m.name='CrestSpindrift';m.position.set(x+12,crestH(x)*.87-3,crestZ(x)+3);m.renderOrder=8;scene.add(m);spindrift.push(m);}

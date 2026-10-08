@@ -54,7 +54,7 @@ export function createShatter({ isMobile }) {
   geometry.setAttribute('aSideN', new THREE.Float32BufferAttribute(sideN, 2));
 
   const material = new THREE.ShaderMaterial({
-    uniforms: { tFrame: { value: null }, uT: { value: 0 }, uTime: { value: 0 }, uHalf: { value: new THREE.Vector2(1, 1) }, uImpact: { value: impact } },
+    uniforms: { tFrame: { value: null }, uT: { value: 0 }, uHalf: { value: new THREE.Vector2(1, 1) }, uImpact: { value: impact } },
     vertexShader: /* glsl */`attribute vec2 aScreen,aCenter,aSideN;attribute float aEdge;attribute vec4 aRand;
       uniform float uT;uniform vec2 uHalf,uImpact;varying vec2 vScreen;varying float vEdge,vCrack,vFade,vFacing;varying vec3 vN;
       mat3 rot(vec3 a,float t){a=normalize(a);float c=cos(t),s=sin(t),k=1.-c;
@@ -70,19 +70,19 @@ export function createShatter({ isMobile }) {
         vec3 move=vec3(out2*p*p*(2.+aRand.z*3.),p*(4.+aRand.w*7.))+vec3(0.,-p*p*2.5,0.);
         vN=R*(aEdge>1.5?vec3(aSideN,0.):vec3(0.,0.,1.));vFacing=abs((R*vec3(0.,0.,1.)).z);vFade=1.-smoothstep(.72,1.,p);
         gl_Position=projectionMatrix*modelViewMatrix*vec4(c+local+move,1.);}`,
-    fragmentShader: /* glsl */`uniform sampler2D tFrame;uniform float uT,uTime;varying vec2 vScreen;varying float vEdge,vCrack,vFade,vFacing;varying vec3 vN;
+    fragmentShader: /* glsl */`uniform sampler2D tFrame;uniform float uT;varying vec2 vScreen;varying float vEdge,vCrack,vFade,vFacing;varying vec3 vN;
       float sh(vec2 p){return fract(sin(dot(p,vec2(41.3,289.1)))*43758.5453);}
       void main(){vec3 n=normalize(vN);float side=step(1.5,vEdge),face=1.-side;
-        float rim=(smoothstep(.95,1.,vEdge)+smoothstep(.82,1.,vEdge)*.3)*face;
+        float rim=(1.-smoothstep(0.,max(fwidth(vEdge)*1.2,.004),1.-vEdge))*face;
         // refraction: the frame seen through tilted glass, the channels split toward the broken edges
-        vec2 off=n.xy*.012*(1.-vFacing*.6)*vCrack;float split=(.002+rim*.006)*vCrack;
+        vec2 off=n.xy*.009*(1.-vFacing*.6)*vCrack;float split=(.0009+rim*.0025)*vCrack;
         vec3 col=vec3(texture2D(tFrame,vScreen+off+vec2(split,0.)).r,texture2D(tFrame,vScreen+off).g,texture2D(tFrame,vScreen+off-vec2(split,0.)).b);
-        vec3 lav=vec3(.86,.82,1.);vec3 prism=.5+.5*cos(6.2831*(vScreen.x*1.7+vScreen.y+uTime*.05+vec3(0.,.33,.67)));
+        vec3 lav=vec3(.86,.82,1.);vec3 prism=.5+.5*cos(6.2831*(vScreen.x*1.7+vScreen.y+uT*.25+vec3(0.,.33,.67)));
         float lit=.6+.4*vFacing;float fres=pow(1.-vFacing,2.);
         float glint=pow(max(dot(n,normalize(vec3(-.4,.6,.7))),0.),24.);
         float spark=step(.995,sh(floor(vScreen*vec2(420.,260.))))*vCrack*face*(1.-vFacing*.5);
-        col=col*lit+(lav*1.3*rim+prism*rim*.45)*vCrack+lav*fres*.35*vCrack+vec3(1.)*glint*.9*(1.-vFacing)+lav*spark*1.5;
-        col=mix(col,(lav*.45+prism*.3)*(.4+.9*glint+.6*fres)+texture2D(tFrame,vScreen).rgb*.7,side);
+        col=col*lit+(lav*.58*rim+prism*rim*.28)*vCrack+lav*fres*.22*vCrack+vec3(1.)*glint*.9*(1.-vFacing)+lav*spark*.8;
+        col=mix(col,(lav*.3+prism*.2)*(.4+1.3*glint+.8*fres)+texture2D(tFrame,vScreen).rgb*.7,side);
         gl_FragColor=vec4(col,vFade);}`,
     side: THREE.DoubleSide, transparent: true, depthTest: true, depthWrite: true
   });
@@ -93,8 +93,8 @@ export function createShatter({ isMobile }) {
     const halfH = 10 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     material.uniforms.uHalf.value.set(halfH * camera.aspect, halfH);
   }
-  function render(renderer, texture, t, time) {
-    material.uniforms.tFrame.value = texture; material.uniforms.uT.value = t; material.uniforms.uTime.value = time;
+  function render(renderer, texture, t) {
+    material.uniforms.tFrame.value = texture; material.uniforms.uT.value = t;
     renderer.render(scene, camera);
   }
   function dispose() { geometry.dispose(); material.dispose(); }
