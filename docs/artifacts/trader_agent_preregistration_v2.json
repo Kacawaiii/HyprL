@@ -1,0 +1,187 @@
+{
+  "schema": "trader-agent-preregistration-v2",
+  "revision": 5,
+  "registered_on": "2026-10-08",
+  "mode": "PAPER_SHADOW_ONLY",
+  "primary": {
+    "population": "unprotected authorized equities and ETFs",
+    "variant": "reviewer-kept consensus",
+    "horizon": "5d",
+    "target": "open(D) to close(D+4), raw asset return minus SPY same window",
+    "hypothesis": "hit rate > 0.50 and Brier < causal prequential climatology"
+  },
+  "minimum": {
+    "trading_days": 60,
+    "non_abstained_asset_days": 1500
+  },
+  "decision_rule": {
+    "look": "one confirmatory look at first weekly close after minimum sample; interim looks exploratory",
+    "hit_test": "one-sided weekly-block bootstrap lower 95% confidence bound > 0.50",
+    "brier_test": "weekly-block bootstrap upper 95% confidence bound of paired Brier minus prequential climatology < 0",
+    "resampling": "10000 draws, seed 20261006; preserve asset cross-section and overlapping horizons by resampling whole calendar weeks",
+    "multiplicity": "primary intersection rule; all other variants exploratory; count every attempted variant; no alpha claim from secondary looks"
+  },
+  "exclusions": [
+    "protected products/windows (including price warmup and label endpoint)",
+    "holidays",
+    "missing/stale/gapped or invalid prices",
+    "invalid/schema-inconsistent or tainted model output",
+    "quota/budget/timeout/expired grant",
+    "decisions or recording after entry",
+    "unavailable target prices remain pending; never impute",
+    "benchmark instruments never predicted"
+  ],
+  "labels": {
+    "equity_1d": "open(D) to close(D)",
+    "equity_5d": "open(D) to close(D+4) using pinned XNYS sessions",
+    "equity_secondary": "raw returns",
+    "equity_primary": "asset raw return minus SPY raw return",
+    "crypto": "13:30Z(D) to 13:30Z(D+1 or D+5); exact Coinbase one-minute candle open, available after candle arrives",
+    "ties": "return > 0 is UP, zero is not UP; report tie counts",
+    "pending": "future labels append separately, immutable original PredictionRecord"
+  },
+  "portfolio": {
+    "directional_probability": "UP uses p_outperform; DOWN uses 1-p_outperform; require directional probability >= 0.55",
+    "weights": "signed p_outperform - 0.50, proportional with 10% name cap and <=100% gross",
+    "consensus": "both reviewed analysts agree; use probability closest to 0.50; disagreements abstain",
+    "downgrade": "only pulls original p toward 0.50",
+    "variants": [
+      "1d unhedged",
+      "1d SPY net-exposure hedge",
+      "5d unhedged",
+      "5d SPY net-exposure hedge"
+    ],
+    "cohorts": "1d and 5d are separate portfolios; allocate 1/5 capital to each 5d daily cohort; SPY hedge also obeys gross and 10% cap",
+    "capital": "from private authorization",
+    "costs_per_side_bps": {
+      "equity_commission_slippage": 5,
+      "equity_half_spread_assumed": 2.5,
+      "crypto": 10
+    },
+    "spread": "fixed preregistered paper assumption, not observed bid/ask; modeled net P&L"
+  },
+  "baselines": [
+    "always_up",
+    "20 completed session momentum sign",
+    "random seeded by prediction identity",
+    "SPY_relative_zero p=0.50 abstains"
+  ],
+  "climatology": "past already observed consensus asset/horizon/population outcomes at decision time; initial 0.50; no future fitted probability",
+  "variants": [
+    "analyst_claude",
+    "analyst_gpt",
+    "reviewer_claude",
+    "reviewer_gpt",
+    "consensus",
+    "reviewer_kept",
+    "reviewer_rejected",
+    "reviewer_downgraded",
+    "always_up",
+    "momentum20",
+    "random_seeded",
+    "spy_relative_zero",
+    "unhedged",
+    "spy_hedged",
+    "catchup_close_entry_v1",
+    "alpaca_open_entry_v1",
+    "alpaca_after_hours_v1",
+    "alpaca_open_entry_v2",
+    "alpaca_after_hours_v2"
+  ],
+  "not_evidence": [
+    "synthetic demos",
+    "interim looks",
+    "LLM backtests of pre-cutoff outcomes (memorization)",
+    "unrealized labels",
+    "a failed or blocked check",
+    "unmeasured calibration claims"
+  ],
+  "calendar": {
+    "provider": "pandas_market_calendars",
+    "version": "5.4.0",
+    "name": "XNYS"
+  },
+  "skill_hashes": {
+    "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
+    "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
+  },
+  "revision_note": "Revision 5 before first use: execution spec v2 registers the operator-approved equity reviewed analyst union; crypto replaces protected BTC/ETH with the versioned unprotected amendment. Consensus primary shadow hypothesis and scoring stay unchanged. Former momentum account 2EQN is claude_book GET-only and removed from all AI baselines. Applies only to decisions from 2026-10-09; 2026-10-08 replay is dry-run evidence only.",
+  "degraded_continuation": {
+    "run_status": "DEGRADED (not COMPLETE) when exactly one analyst yields no valid output after its retries",
+    "triggers": [
+      "MODEL_FAILED",
+      "TAINTED_RUN",
+      "SCHEMA_INVALID",
+      "SKIPPED_QUOTA",
+      "MODEL_TIMEOUT",
+      "any invalid-output code of that analyst"
+    ],
+    "never_degrades": [
+      "BUDGET_EXHAUSTED (except an exhausted analyst role during an authorized catch-up; aggregate/reviewer budget failures still fail)",
+      "PAUSED",
+      "MISSED_DECISION_DEADLINE",
+      "AUTHORIZATION_EXPIRED_OR_NOT_STARTED",
+      "reviewer failure",
+      "both analysts failing"
+    ],
+    "missing_analyst": "its views and its reviewed twin are recorded as verdict MISSING with the error code; never predicted, labelled or scored",
+    "consensus": "ABSTAIN for every asset and horizon that day (needs both analysts); counts as abstention, no position",
+    "scores": "the present analyst, its reviewed twin and the reviewer verdicts are scored exactly as in a COMPLETE run",
+    "primary_sample": "a DEGRADED day contributes only abstained consensus asset-days to the primary variant; it never adds non-abstained primary samples",
+    "reviewer": "sees only the analyst output that exists",
+    "variants": "no new scored variant"
+  },
+  "catchup": {
+    "variant": "catchup_close_entry_v1",
+    "operator_approval": "2026-10-07 ~12:45Z: \"on peut pas reprendre le run mtn on perd trop\"; extends the 2026-10-06 same-day recovery rule after a FAILED daily run even when models were called",
+    "failed_daily_run_required": true,
+    "refusals": [
+      "no recorded FAILED daily run",
+      "daily run COMPLETE or DEGRADED, even if a later refused attempt is FAILED",
+      "no analyst budget remaining",
+      "reviewer budget exhausted",
+      "insufficient aggregate budget for remaining analysts plus reviewer",
+      "catch-up already reserved today",
+      "pause or expired authorization",
+      "decision at or after session close minus 80 minutes"
+    ],
+    "budgets": "same durable per-role calls_per_day + retries_per_day and max_llm_calls_per_day bank; failed calls are never refunded; catchup_run is capped at one per day",
+    "missing_analyst": "an exhausted analyst is not dispatched; its views and reviewed twin are MISSING with BUDGET_EXHAUSTED; run DEGRADED, reviewer sees only present outputs, consensus ABSTAIN; MISSING is never predicted, labelled or scored",
+    "decision": "must finish before session close minus 80 minutes; orchestration and runner deadlines enforce this margin",
+    "entry": "same session close",
+    "equity_1d_exit": "next session close",
+    "equity_5d_exit": "close five sessions after entry",
+    "population": "authorized unprotected equities and ETFs only; no crypto",
+    "scores": "all catch-up groups, baselines and cohorts are separate; never pooled into the primary variant or its minimum sample"
+  },
+  "paper_execution": {
+    "spec_sha256": "cc18ef9d4cf18ba33e47b4d9c6a17fa3ad82842891613168873b6a12372ff88b",
+    "operator_decision_hash": "0caee3e1145b4cc401cccaface8ca7ecc928c6337c335ab23cc1695a3677e7a9",
+    "variants": [
+      "alpaca_open_entry_v1",
+      "alpaca_after_hours_v1",
+      "alpaca_open_entry_v2",
+      "alpaca_after_hours_v2"
+    ],
+    "confirmatory": false
+  },
+  "effective_from": "2026-10-09T00:00:00Z",
+  "previous_preregistration_hash": "bf234bbad501b4a636e841e5cdacf4f23244b0d8c42f534ded351883d54763b9",
+  "crypto_universe": {
+    "amendment_hash": "2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7",
+    "products": [
+      "SOL-USD",
+      "AVAX-USD",
+      "LINK-USD",
+      "DOGE-USD",
+      "LTC-USD"
+    ],
+    "excluded": [
+      "BTC-USD",
+      "ETH-USD"
+    ],
+    "confirmatory": false,
+    "request_budget_per_day": 40
+  },
+  "canonical_sha256": "3ae8bf1ba47ddd9a1aead3fabbc1444cdd05b3f9949f004c8aea500c62ed8ce7"
+}

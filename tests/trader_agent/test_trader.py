@@ -878,8 +878,8 @@ def test_reviewer_failure_after_a_degraded_analyst_is_a_failed_run(service):
 
 def test_degraded_run_counts_as_the_daily_run_for_health_and_the_preregistration_registers_it(service):
     from scripts.trading_lab.trader_agent.service import preregistration
-    artifact = json.loads((Path(__file__).resolve().parents[2] / 'docs/artifacts/trader_agent_preregistration_v1.json').read_text())
-    assert artifact['revision'] == 4 and 'DEGRADED' in artifact['degraded_continuation']['run_status']
+    artifact = json.loads((Path(__file__).resolve().parents[2] / 'docs/artifacts/trader_agent_preregistration_v2.json').read_text())
+    assert artifact['revision'] == 5 and 'DEGRADED' in artifact['degraded_continuation']['run_status']
     from scripts.trading_lab.trader_agent.service import CATCHUP_VARIANT, VARIANTS
     assert artifact['variants'] == VARIANTS and CATCHUP_VARIANT in artifact['variants']
     assert artifact['catchup']['failed_daily_run_required'] is True

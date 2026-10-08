@@ -23,7 +23,7 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 
 from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import calendar_session, label_window, protected
-from .paper_spec import SPEC_HASH, execution_spec
+from .paper_spec import SPEC_HASH, PREVIOUS_SPEC_HASH, OPERATOR_DECISION_HASH, execution_spec
 from .scoring import rows
 
 PAPER_URL = 'https://paper-api.alpaca.markets'
@@ -50,7 +50,9 @@ def symbol(asset):
 
 
 def broker_symbol(value):
-    return {'BTCUSD': 'BTC/USD', 'ETHUSD': 'ETH/USD'}.get(value, value)
+    if isinstance(value, str) and '/' not in value and value.endswith('USD'):
+        return value[:-3] + '/USD'
+    return value
 
 
 def allocated_quantities(intent, observation):
@@ -59,7 +61,8 @@ def allocated_quantities(intent, observation):
     filled = decimal(observation.get('filled_qty', 0))
     fraction = filled / total if total else D(1) if observation.get('status') == 'internal' else D(0)
     values = [decimal(lot['qty']) * fraction for lot in intent['lots']]
-    unit = D('.00000001') if '/USD' in intent['order']['symbol'] else D(1)
+    crypto_unit = D('.000000001') if intent.get('spec_hash') == SPEC_HASH else D('.00000001')
+    unit = crypto_unit if '/USD' in intent['order']['symbol'] else D(1)
     rounded = [v.quantize(unit, rounding=ROUND_DOWN) for v in values]
     signed_total = sum((decimal(l['qty']) for l in intent['lots']), D(0))
     if abs(signed_total) != total:
@@ -214,11 +217,69 @@ class PaperLedger:
         self.root, self.grant, self.clock = private_root(root), grant, clock
         self.store = ResearchStore(self.root / 'paper-evidence')
         bindings = self.events(event='binding')
-        if bindings and any(e['spec_hash'] != SPEC_HASH or e['grant_hash'] != grant.identity for e in bindings):
+        execution_spec()
+        self.store.verify()
+        self.validate_bindings(bindings)
+        target = self.binding_target()
+        if bindings and any(bindings[-1].get(k) != v for k, v in target.items()):
             raise TraderError('PAPER_LEDGER_BINDING_MISMATCH')
         if not bindings:
-            execution_spec()
-            self.append('binding', None, grant_hash=grant.identity, spec_hash=SPEC_HASH)
+            self.append('binding', None, **target)
+
+    def binding_target(self):
+        from .service import preregistration
+        parent = self.grant.parent
+        return {'grant_hash': self.grant.identity, 'spec_hash': SPEC_HASH,
+                'base_grant_hash': parent.base_identity or parent.identity,
+                'effective_grant_hash': parent.identity, 'crypto_amendment_hash': parent.amendment_identity,
+                'preregistration_hash': preregistration(), 'operator_decision_hash': OPERATOR_DECISION_HASH}
+
+    @staticmethod
+    def validate_bindings(bindings):
+        for previous, current in zip(bindings, bindings[1:]):
+            if (current.get('previous_binding_hash') != sha256_canonical(previous)
+                    or current.get('previous_spec_hash') != previous['spec_hash']
+                    or current.get('previous_grant_hash') != previous['grant_hash']
+                    or current.get('operator_decision_hash') != OPERATOR_DECISION_HASH):
+                raise TraderError('PAPER_LEDGER_BINDING_MISMATCH')
+
+    @classmethod
+    def rebind(cls, root, grant, decision_path, *, clock=now, client_factory=PaperClient):
+        decision = strict_json(Path(decision_path).read_text())
+        if sha256_canonical(decision) != OPERATOR_DECISION_HASH or instant(decision['decided_at']) > clock():
+            raise TraderError('PAPER_REBIND_OPERATOR_DECISION_REFUSED')
+        grant.check(clock())
+        execution_spec()
+        ledger = cls.__new__(cls)
+        ledger.root, ledger.grant, ledger.clock = private_root(root), grant, clock
+        ledger.store = ResearchStore(ledger.root / 'paper-evidence')
+        with ledger.owner():
+            ledger.store.verify()
+            bindings = ledger.events(event='binding')
+            ledger.validate_bindings(bindings)
+            if not bindings or bindings[-1]['grant_hash'] != grant.identity or bindings[-1]['spec_hash'] not in {PREVIOUS_SPEC_HASH, SPEC_HASH}:
+                raise TraderError('PAPER_REBIND_PRIOR_BINDING_REFUSED')
+            target = ledger.binding_target()
+            if all(bindings[-1].get(k) == v for k, v in target.items()):
+                return ledger
+            # Decision expressly says no open lots at approval. It cannot cover later risk.
+            for name in ('ia_actions', 'ia_crypto'):
+                intents, observed, lots = ledger.projection(name)
+                if any(decimal(l['qty']) for l in lots.values()):
+                    raise TraderError('PAPER_REBIND_OPEN_LOTS')
+                if any(observed.get(k, {}).get('status') not in TERMINAL for k in intents):
+                    raise TraderError('PAPER_REBIND_PENDING_INTENTS')
+                client = client_factory(grant, name, clock=clock)
+                client.start()  # verify the account suffix before relying on emptiness
+                positions = client.request('GET', '/v2/positions')
+                orders = client.request('GET', '/v2/orders', params={'status': 'open', 'limit': 500})
+                if not isinstance(positions, list) or not isinstance(orders, list) or positions or orders:
+                    raise TraderError('PAPER_REBIND_BROKER_NOT_EMPTY')
+            previous = bindings[-1]
+            ledger.append('binding', None, **target, previous_binding_hash=sha256_canonical(previous),
+                          previous_spec_hash=previous['spec_hash'], previous_grant_hash=previous['grant_hash'],
+                          reason='OPERATOR_APPROVED_EMPTY_LEDGER_REBIND')
+        return ledger
 
     @contextmanager
     def owner(self):
@@ -337,9 +398,10 @@ class PrivateQuotes:
 class PaperExecutor:
     def __init__(self, ledger, research, *, client_factory=PaperClient, quotes=None, clock=now, pause_paths=()):
         self.ledger, self.grant, self.research = ledger, ledger.grant, research
-        self.clock, self.client_factory = clock, client_factory
+        self.clock, self.dispatch_clock, self.client_factory = clock, clock, client_factory
         from .alpaca_data import QuoteFeed
         self.quotes = quotes or QuoteFeed(self.grant, clock=clock)
+        self.replay_prior_registration = False
         self.pause_paths = [self.ledger.root / 'PAPER_PAUSED', self.ledger.root / 'PAUSED', *map(Path, pause_paths)]
         execution_spec()
 
@@ -394,7 +456,7 @@ class PaperExecutor:
             self.ledger.append('trade_outcome', name, **data)
 
     def start(self, name):
-        client = self.client_factory(self.grant, name, clock=self.clock)
+        client = self.client_factory(self.grant, name, clock=self.dispatch_clock)
         try:
             account = client.start()
             equity = decimal(account['equity'])
@@ -453,7 +515,7 @@ class PaperExecutor:
                 self.ledger.halt(name, error.code)
             raise
 
-    def eligible_predictions(self):
+    def eligible_predictions(self, name):
         day = self.clock().date().isoformat()
         summaries = [r['payload'] for r in rows(self.research, 'replay-summary')
                      if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
@@ -468,16 +530,40 @@ class PaperExecutor:
         if (run.get('tainted') or decision.get('tainted') or 'TAINTED_RUN' in run.get('degraded', {}).values()
                 or not reviewer or reviewer.get('cli_version') == 'NOT_RUN'):
             return []
-        views = {(v['asset'], v['horizon']): v for v in decision.get('views', []) if v['analyst'] == 'consensus'}
+        if name == 'ia_actions':
+            groups = {}
+            for view in decision.get('views', []):
+                if view['analyst'] in {'analyst_claude', 'analyst_gpt'}:
+                    groups.setdefault((view['asset'], view['horizon']), []).append(view)
+            views = {}
+            for key, pair in groups.items():
+                if len(pair) > 2 or len({v['analyst'] for v in pair}) != len(pair):
+                    raise TraderError('PAPER_ANALYST_BINDING_MISMATCH')
+                # Conflict is on issued directions, even if a reviewer rejected one.
+                if {v['view'] for v in pair} >= {'UP', 'DOWN'}:
+                    continue
+                kept = [v for v in pair if v['verdict'] == 'KEEP' and v['view'] in {'UP', 'DOWN'}]
+                if kept:
+                    # One lot per asset/horizon; agreeing KEEP views use the conservative probability.
+                    views[key] = min(kept, key=lambda v: (abs(decimal(v['p_outperform']) - D('.5')), v['analyst']))
+        else:
+            views = {(v['asset'], v['horizon']): v for v in decision.get('views', []) if v['analyst'] == 'consensus'}
         predictions = []
         for row in rows(self.research, 'prediction'):
             p = row['payload']
             view, definition = p['signal']['view'], p['signal']['label_definition']
-            if p['synthetic'] or p['signal']['run_id'] != run['run_id'] or view['analyst'] != 'consensus':
+            from .service import preregistration
+            if not self.replay_prior_registration and (p['artifact_hash'] != preregistration() or
+                    instant(p['decision_at']) < instant(execution_spec()['effective_from'])):
                 continue
-            if views.get((p['product'], definition['horizon'])) != view:
-                raise TraderError('PAPER_CONSENSUS_BINDING_MISMATCH')
-            if (view['view'] not in {'UP', 'DOWN'} or view['verdict'] not in {'KEEP', 'DOWNGRADE'}
+            if p['synthetic'] or p['signal']['run_id'] != run['run_id'] or view['analyst'] not in ({'analyst_claude', 'analyst_gpt'} if name == 'ia_actions' else {'consensus'}):
+                continue
+            selected = views.get((p['product'], definition['horizon']))
+            if selected is None or selected['analyst'] != view['analyst']:
+                continue
+            if selected != view:
+                raise TraderError('PAPER_ANALYST_BINDING_MISMATCH')
+            if (view['view'] not in {'UP', 'DOWN'} or view['verdict'] not in ({'KEEP'} if name == 'ia_actions' else {'KEEP', 'DOWNGRADE'})
                     or p['risk'].get('tainted') or definition.get('variant') == 'catchup_close_entry_v1'):
                 continue
             if definition.get('variant') not in {None, 'alpaca_after_hours_v1'}:
@@ -519,7 +605,7 @@ class PaperExecutor:
             short += max(-weight, D(0))
             weights[lot['symbol']] = weights.get(lot['symbol'], D(0)) + abs(weight)
         candidates = []
-        for row, evidence in self.eligible_predictions():
+        for row, evidence in self.eligible_predictions(name):
             p = row['payload']
             if p['product'] not in self.grant.assets(name):
                 continue
@@ -529,7 +615,8 @@ class PaperExecutor:
             probability = decimal(v['p_outperform'])
             direction = 1 if v['view'] == 'UP' else -1
             directional = probability if direction > 0 else 1 - probability
-            if directional < D('.55') or directional > D('.80') or (name == 'ia_crypto' and direction < 0):
+            if (directional <= D('.5') or directional > D('.80')
+                    or (name == 'ia_crypto' and (directional < D('.55') or direction < 0))):
                 continue
             lot_id = sha256_canonical({'run_id': p['signal']['run_id'], 'asset': p['product'], 'horizon': definition['horizon']})
             if lot_id in seen:
@@ -548,7 +635,8 @@ class PaperExecutor:
                                'session': p['signal'].get('session', instant(p['decision_at']).astimezone(NY).date().isoformat()),
                                'horizon': definition['horizon'], 'exit_at': definition['exit_at'], 'entry_at': definition['entry_at'],
                                'prediction_hash': row['identity'], 'reference_price': str(price), 'weight': weight,
-                               'direction': direction, 'variant': definition.get('variant', 'alpaca_open_entry_v1')})
+                               'direction': direction, 'variant': ('alpaca_after_hours_v2' if definition.get('variant') else 'alpaca_open_entry_v2')
+                               if name == 'ia_actions' else definition.get('variant', 'alpaca_open_entry_v1')})
         candidates.sort(key=lambda l: (l['asset'], l['horizon']))
         total = sum((l['weight'] for l in candidates), D(0))
         short_total = sum((l['weight'] for l in candidates if l['direction'] < 0), D(0))
@@ -579,7 +667,7 @@ class PaperExecutor:
             run = group[0]['run_id'] if purpose == 'entry' else ':'.join(sorted(l['lot_id'] for l in group))
             key = sha256_canonical({'run_id': run, 'symbol': asset, 'purpose': purpose})[:40]
             side = 'buy' if net >= 0 else 'sell'
-            after = purpose == 'entry' and any(l['variant'] == 'alpaca_after_hours_v1' for l in group)
+            after = purpose == 'entry' and any(l['variant'] in {'alpaca_after_hours_v1', 'alpaca_after_hours_v2'} for l in group)
             session = calendar_session(group[0]['session'] if after else at.astimezone(NY).date().isoformat())
             q = self.quotes.get(asset, at) if after else None
             terms = order_terms(name, purpose, at, session, after_hours=after,
@@ -772,11 +860,27 @@ class PaperExecutor:
             self.submit(client, name, plan, dry_run=dry_run)
         return status
 
-    def run(self, action, *, dry_run=False, accounts=None):
+    def run(self, action, *, dry_run=False, accounts=None, replay_at=None):
+        if replay_at is not None and (not dry_run or action != 'execute'):
+            raise TraderError('PAPER_REPLAY_REQUIRES_DRY_RUN')
+        original_clock = self.clock
+        try:
+            if replay_at is not None:
+                self.clock = lambda: instant(replay_at)
+                self.replay_prior_registration = True
+            result = self._run(action, dry_run=dry_run, accounts=accounts)
+            if replay_at is not None:
+                result.update(replay_at=replay_at, observed_at=iso(original_clock()), no_order=True)
+            return result
+        finally:
+            self.clock = original_clock
+            self.replay_prior_registration = False
+
+    def _run(self, action, *, dry_run=False, accounts=None):
         if action not in {'status', 'execute', 'exit'}:
             raise TraderError('PAPER_UNKNOWN_ACTION')
         with self.ledger.owner():
-            self.grant.check(self.clock())
+            self.grant.check(self.dispatch_clock())
             self.research.verify()
             self.ledger.store.verify()
             result = {'schema': 'alpaca-paper-' + action + '-v1', 'at': iso(self.clock()), 'dry_run': dry_run, 'accounts': [], 'state': 'COMPLETE'}
@@ -797,19 +901,13 @@ class PaperExecutor:
             if action == 'status':
                 try:
                     _, momentum, positions = self.start('momentum')
-                    result['momentum'] = {'account_suffix': self.grant.payload['accounts']['momentum']['account_suffix'],
+                    result['claude_book'] = {'account_suffix': self.grant.payload['accounts']['momentum']['account_suffix'],
                                           'equity': str(decimal(momentum['equity'])), 'last_equity': str(decimal(momentum['last_equity'])),
-                                          'position_count': len(positions), 'mode': 'GET_ONLY'}
+                                          'position_count': len(positions), 'mode': 'GET_ONLY', 'included_in_ai': False, 'baseline': False}
                 except TraderError as error:
-                    self.ledger.append('alert', 'momentum', code=error.code)
-                    result['momentum'] = {'state': 'BLOCKED', 'reason': error.code}
+                    self.ledger.append('alert', 'momentum', code=error.code, display_account='claude_book')
+                    result['claude_book'] = {'state': 'BLOCKED', 'reason': error.code}
                     result['state'] = 'BLOCKED'
-            elif action == 'execute' and not dry_run and not self.ledger.events('momentum', 'benchmark'):
-                try:
-                    _, momentum, _ = self.start('momentum')
-                    self.ledger.append('benchmark', 'momentum', equity=str(decimal(momentum['equity'])))
-                except TraderError as error:
-                    self.ledger.append('alert', 'momentum', code=error.code)
             return result
 
     def report(self, benchmarks=None):
@@ -825,17 +923,10 @@ class PaperExecutor:
         outcomes = self.ledger.events(event='trade_outcome')
         latest = {(e['client_id'], e['lot_id']): e for e in outcomes}
         result['execution_outcomes'] = list(latest.values())
-        history = self.ledger.events('momentum', 'benchmark')
-        if 'equity' in result.get('momentum', {}):
-            base = history[0]['equity'] if history else result['momentum']['equity']
-            result['momentum']['return_since_paper_start'] = str(decimal(result['momentum']['equity']) / decimal(base) - 1)
-            result['momentum']['base_at'] = history[0]['at'] if history else result['at']
-            self.ledger.append('benchmark', 'momentum', equity=result['momentum']['equity'])
         result['limitations'] = ['After-hours paper fills in thin liquidity are optimistic.',
                                 'Crypto market entry follows the decision; its label uses the fixed 13:30Z anchor.',
                                 'Auction gaps and marked price changes can exceed reserved weights; entries stop if marked caps are breached.']
         returns = {s: b.get('return_since_paper_start') for s, b in result['benchmarks'].items()}
-        returns['momentum'] = result.get('momentum', {}).get('return_since_paper_start')
         result['versus'] = {a['account']: {s: str(decimal(a['return_since_paper_start']) - decimal(value)) if value is not None else None
                            for s, value in returns.items()} for a in accounts}
         result['versus']['complet'] = {s: str(decimal(result['complet']['return_since_paper_start']) - decimal(value))

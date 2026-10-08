@@ -2,7 +2,7 @@
 company and theme names are used instead, quoted only when they have several words, topics are OR groups in parentheses."""
 from .config import TraderError
 
-NEWS_QUERY_VERSION = "gdelt-queries-v1"
+NEWS_QUERY_VERSION = "gdelt-queries-v2"
 
 QUERIES = {
     "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "Nvidia", "AMZN": "Amazon", "GOOGL": "Alphabet", "META": '"Meta Platforms"',
@@ -13,6 +13,8 @@ QUERIES = {
     "XLK": '"technology sector"', "XLF": '"financial sector"', "XLE": '"energy sector"',
     "XLI": '"industrial sector"', "XLV": '"healthcare sector"',
     "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum",
+    "SOL-USD": "Solana", "AVAX-USD": '"Avalanche crypto"', "LINK-USD": "Chainlink",
+    "DOGE-USD": "Dogecoin", "LTC-USD": "Litecoin",
     "macro": '(inflation OR "interest rates" OR employment)',
     "politics": '(election OR sanctions OR geopolitics)',
     "trade": '(tariff OR "trade agreement")',

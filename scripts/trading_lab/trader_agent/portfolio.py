@@ -1,6 +1,8 @@
 """Independent shadow cohorts; no order or broker interface."""
 import math
 
+from .config import CRYPTO_PRODUCTS
+
 
 def weights(views):
     eligible = {v["asset"]: v["p_outperform"] - .5 for v in views if v["view"] != "ABSTAIN"
@@ -31,7 +33,7 @@ def portfolios(views, *, analyst='consensus'):
     for horizon in ("1d", "5d"):
         base = weights([v for v in views if v["analyst"] == analyst and v["horizon"] == horizon])
         # SPY hedge neutralizes net equity exposure, not estimated beta; crypto stays separate.
-        hedge = -sum(w for a, w in base.items() if a not in {"BTC-USD", "ETH-USD"})
+        hedge = -sum(w for a, w in base.items() if a not in CRYPTO_PRODUCTS)
         hedged = {**base, "SPY": hedge} if hedge else dict(base)
         gross = sum(abs(w) for w in hedged.values())
         # Hedge is a separately reported benchmark leg. It also respects the 10% name cap.
@@ -45,7 +47,7 @@ def portfolios(views, *, analyst='consensus'):
 
 
 def roundtrip_cost(asset, *, half_spread_bps=None):
-    if asset in {"BTC-USD", "ETH-USD"}:
+    if asset in CRYPTO_PRODUCTS:
         return .002  # 10 bp each side
     if half_spread_bps is None:
         return None

@@ -1,4 +1,5 @@
 """Operator grants are private, explicit and rechecked at dispatch time."""
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -7,6 +8,10 @@ import re
 
 from scripts.trading_lab.sources.canonical import sha256_canonical
 
+AMENDMENT_NAME = 'trader-agent-crypto-amendment-v1.json'
+AMENDMENT_HASH = '2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7'
+AMENDED_CRYPTO = ('SOL-USD', 'AVAX-USD', 'LINK-USD', 'DOGE-USD', 'LTC-USD')
+CRYPTO_PRODUCTS = frozenset({'BTC-USD', 'ETH-USD', *AMENDED_CRYPTO})
 UTC = timezone.utc
 ROLES = ("analyst_claude", "analyst_gpt", "reviewer")
 HOSTS = {"yahoo_chart": "query1.finance.yahoo.com",
@@ -53,13 +58,44 @@ def strict_json(text):
 class Authorization:
     payload: dict
     identity: str
+    base_identity: str | None = None
+    amendment_identity: str | None = None
+    amendment: dict | None = None
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, *, amendment_path=None):
         payload = strict_json(Path(path).read_text())
         grant = cls(payload, sha256_canonical(payload))
         grant.validate()
-        return grant
+        explicit_amendment = amendment_path is not None
+        amendment_path = Path(amendment_path) if amendment_path else Path(path).parent / AMENDMENT_NAME
+        if not amendment_path.exists():
+            if explicit_amendment:
+                raise TraderError('CRYPTO_AMENDMENT_UNAVAILABLE')
+            return grant
+        amendment = strict_json(amendment_path.read_text())
+        body = {k: v for k, v in amendment.items() if k != 'canonical_sha256'}
+        if amendment.get('canonical_sha256') != AMENDMENT_HASH or sha256_canonical(body) != AMENDMENT_HASH:
+            raise TraderError('CRYPTO_AMENDMENT_HASH_MISMATCH')
+        if (body.get('base_grant_hash') != grant.identity or body.get('extends') != 'trader-agent-v1'
+                or body.get('crypto') != list(AMENDED_CRYPTO) or body.get('excluded') != ['BTC-USD', 'ETH-USD']
+                or body.get('coinbase_max_requests_per_day') != 40
+                or instant(body['not_after']) > instant(payload['not_after'])):
+            raise TraderError('CRYPTO_AMENDMENT_BINDING_MISMATCH')
+        from scripts.trading_lab.research_protection import protection_table
+        from scripts.trading_lab.protected_holdout import PROTECTED_WINDOW_V1
+        table = protection_table()
+        if (sha256_canonical(table) != body['protection_table_hash'] or
+                any(a in table or PROTECTED_WINDOW_V1.protects_product(a) for a in body['crypto'])):
+            raise TraderError('CRYPTO_AMENDMENT_PROTECTED')
+        effective = deepcopy(payload)
+        effective['universe']['crypto'] = body['crypto']
+        effective['data_sources']['coinbase_exchange_public']['max_requests_per_day'] = 40
+        identity = sha256_canonical({'base_grant_hash': grant.identity, 'amendment_hash': AMENDMENT_HASH,
+                                     'effective_payload': effective})
+        amended = cls(effective, identity, grant.identity, AMENDMENT_HASH, amendment)
+        amended.validate()
+        return amended
 
     def validate(self):
         p = self.payload
@@ -94,7 +130,8 @@ class Authorization:
             raise TraderError("INVALID_UNIVERSE")
         if any(not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,15}", x) for x in all_assets):
             raise TraderError("INVALID_SYMBOL")
-        if not set(p["universe"]["crypto"]) <= {"BTC-USD", "ETH-USD"}:
+        if not (set(p["universe"]["crypto"]) <= {"BTC-USD", "ETH-USD"} if self.amendment_identity is None else
+                self.amendment_identity == AMENDMENT_HASH and p["universe"]["crypto"] == list(AMENDED_CRYPTO)):
             raise TraderError("UNAUTHORIZED_CRYPTO")
         if "SPY" not in p["universe"]["benchmarks_not_predicted"]:
             raise TraderError("MISSING_BENCHMARK")
@@ -109,6 +146,9 @@ class Authorization:
     def check(self, at):
         if not instant(self.payload["granted_at"]) <= at < instant(self.payload["not_after"]):
             raise TraderError("AUTHORIZATION_EXPIRED_OR_NOT_STARTED")
+
+        if self.amendment and not instant(self.amendment['granted_at']) <= at < instant(self.amendment['not_after']):
+            raise TraderError('CRYPTO_AMENDMENT_EXPIRED_OR_NOT_STARTED')
 
     @property
     def gpt_model(self):

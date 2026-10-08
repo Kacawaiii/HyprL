@@ -10,7 +10,7 @@ from scripts.trading_lab.platform.contracts import LabelRecord, PredictionRecord
 from scripts.trading_lab.research.contracts import ExecutionObservation
 from scripts.trading_lab.sources.canonical import sha256_canonical
 
-from .config import TraderError, instant, iso, now
+from .config import CRYPTO_PRODUCTS, TraderError, instant, iso, now
 from .data import calendar_session, protected
 from .portfolio import portfolios, roundtrip_cost
 
@@ -73,7 +73,7 @@ def realize(store, ledger, data, *, at=None):
                 continue
             entry, exit_at = instant(definition["entry_at"]), instant(definition["exit_at"])
             # A Coinbase anchor's open is observable only once its one-minute candle arrives.
-            crypto = p.product in ledger.grant.payload["universe"]["crypto"]
+            crypto = p.product in CRYPTO_PRODUCTS
             if exit_at + (timedelta(minutes=1) if crypto else timedelta()) > at:
                 pending += 1
                 continue
@@ -189,7 +189,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
     for row in predictions:
         p = row["payload"]
         view, definition = p["signal"]["view"], p["signal"]["label_definition"]
-        population = "crypto" if p["product"] in {"BTC-USD", "ETH-USD"} else "equity_etf"
+        population = "crypto" if p["product"] in CRYPTO_PRODUCTS else "equity_etf"
         horizon = definition["horizon"]
         groups = [view["analyst"]]
         if view["analyst"].startswith("analyst_"):

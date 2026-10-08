@@ -62,7 +62,7 @@ def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume",
-                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status'))
+                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
@@ -70,6 +70,8 @@ def main(argv=None):
     parser.add_argument('--paper-authorization')
     parser.add_argument('--paper-account', choices=('ia_actions', 'ia_crypto'))
     parser.add_argument('--paper-quotes')
+    parser.add_argument('--operator-decision')
+    parser.add_argument('--paper-replay-at')
     parser.add_argument('--data-authorization')
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--synthetic-time", default="2026-10-06T12:00:00Z")
@@ -79,6 +81,17 @@ def main(argv=None):
         if not args.paper_authorization:
             parser.error('--paper-authorization is required for paper actions')
         runtime = private_root(args.runtime)
+        if args.paper_replay_at and (args.action != 'paper-execute' or not args.dry_run):
+            parser.error('--paper-replay-at requires paper-execute --dry-run')
+        if args.action == 'paper-rebind':
+            if not args.operator_decision:
+                parser.error('--operator-decision is required for paper-rebind')
+            from .alpaca_paper import PaperAuthorization, PaperLedger
+            paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+            rebound = PaperLedger.rebind(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant,
+                                        args.operator_decision)
+            print(json.dumps({'state': 'REBOUND', 'binding': rebound.events(event='binding')[-1]}, indent=2))
+            return 0
         executor = paper_executor(args, grant, runtime)
         if args.action == 'paper-report':
             from .paper_reporting import benchmarks
@@ -88,7 +101,7 @@ def main(argv=None):
             temp.replace(runtime / 'paper-report.json')
         else:
             result = executor.run(args.action.removeprefix('paper-'), dry_run=args.dry_run,
-                                  accounts=[args.paper_account] if args.paper_account else None)
+                                  accounts=[args.paper_account] if args.paper_account else None, replay_at=args.paper_replay_at)
         print(json.dumps(result, indent=2))
         return 1 if result.get('state') == 'BLOCKED' else 0
     clock = Clock(instant(args.synthetic_time)) if args.dry_run else now

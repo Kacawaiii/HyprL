@@ -101,8 +101,9 @@ def test_recorded_primary_decision_without_success_summary_never_recovers(servic
 def test_successful_recovery_resolves_current_health_and_keeps_failure_history(service, clock):
     from scripts.trading_lab.trader_agent.cli import health
     service.data.synthetic = False
+    clock.at = instant('2026-10-09T12:00:00Z')
     fail_primary(service)
-    clock.at = instant('2026-10-06T14:00:00Z')
+    clock.at = instant('2026-10-09T14:00:00Z')
     assert health(service.ledger)['state'] == 'FAILED_DAILY_RUN'
     assert recover(service)['status'] == 'COMPLETE'
     assert health(service.ledger)['state'] == 'HEALTHY'

@@ -15,6 +15,7 @@ from scripts.trading_lab.trader_agent.config import TraderError, instant, iso
 from scripts.trading_lab.trader_agent.data import calendar_session, label_window
 from scripts.trading_lab.trader_agent.paper_spec import SPEC_HASH, execution_spec
 from scripts.trading_lab.trader_agent.schedule import render
+from scripts.trading_lab.trader_agent.service import PREREG_HASH
 
 
 class MockBroker:
@@ -24,6 +25,7 @@ class MockBroker:
                                'last_equity': '100000', 'status': 'ACTIVE', 'shorting_enabled': True, 'trading_blocked': False}
                          for name, cfg in grant.payload['accounts'].items()}
         self.crash = False
+        self.crypto_fill = True
 
     def fill(self, name, key, fraction=1):
         order = self.orders[(name, key)]
@@ -65,7 +67,7 @@ class MockBroker:
             result = {**body, 'id': 'synthetic-broker-' + key, 'status': 'accepted', 'filled_qty': '0',
                       'filled_avg_price': None, 'filled_at': None}
             self.orders[(name, key)] = result
-            if body['time_in_force'] == 'gtc':
+            if body['time_in_force'] == 'gtc' and self.crypto_fill:
                 self.fill(name, key)
             if self.crash:
                 self.crash = False
@@ -79,7 +81,7 @@ class MockBroker:
 
 @pytest.fixture
 def environment(tmp_path, grant, clock, monkeypatch):
-    clock.at = instant('2026-10-08T12:00:00Z')
+    clock.at = instant('2026-10-09T12:00:00Z')
     monkeypatch.setenv('HOME', str(tmp_path))
     # No holdout prices are read. Synthetic broker tests model an authorized, unprotected universe.
     monkeypatch.setattr(paper, 'protected', lambda *a: None)
@@ -105,7 +107,7 @@ def environment(tmp_path, grant, clock, monkeypatch):
 
 
 def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', probability=.80,
-          status='COMPLETE', verdict='KEEP', tainted=False, reviewer=True, variant=None):
+          status='COMPLETE', verdict='KEEP', tainted=False, reviewer=True, variant=None, peer_direction=None, peer_verdict=None, artifact_hash=PREREG_HASH):
     at = executor.clock()
     day, run_id = at.date().isoformat(), 'synthetic-test:' + iso(at)
     views = []
@@ -113,22 +115,31 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
         for horizon in horizons:
             view = {'asset': asset, 'horizon': horizon, 'analyst': 'consensus', 'view': direction,
                     'p_outperform': probability, 'verdict': verdict}
+            if peer_direction and peer_direction != direction:
+                view.update(view='ABSTAIN', p_outperform=.5, verdict='ABSTAIN')
             views.append(view)
-            entry, exit_at = label_window(asset, day, horizon, ['BTC-USD', 'ETH-USD'], 'close' if variant else 'open')
+            raw = [{**view, 'analyst': role, 'view': direction if role == 'analyst_claude' else peer_direction or direction,
+                    'verdict': verdict if role == 'analyst_claude' else peer_verdict or verdict,
+                    'p_outperform': .5 if role == 'analyst_gpt' and peer_direction == 'ABSTAIN' else
+                                      1 - probability if role == 'analyst_gpt' and peer_direction == 'DOWN' else probability}
+                   for role in ('analyst_claude', 'analyst_gpt')]
+            views.extend(raw)
+            entry, exit_at = label_window(asset, day, horizon, executor.grant.parent.payload['universe']['crypto'], 'close' if variant else 'open')
             definition = {'entry_at': iso(entry), 'exit_at': iso(exit_at), 'horizon': horizon}
             if variant:
                 definition['variant'] = variant
-            identity = sha256_canonical({'run': run_id, 'asset': asset, 'horizon': horizon})
-            p = PredictionRecord(prediction_id=identity, model_id='trader:consensus', model_contract_hash='a' * 64,
-                artifact_hash='b' * 64, product=asset, decision_at=iso(at), horizon_seconds=100,
-                snapshot_hash=sha256_canonical({'price': {'recent_closes': [100]}}), features_hash=sha256_canonical([]), event_ids=(),
-                outputs={'return': None, 'target_price': None, 'class': direction, 'probabilities': {'outperform': probability},
-                         'quantiles': None, 'scenarios': None},
-                signal={'run_id': run_id, 'session': day, 'view': view, 'label_definition': definition}, risk={'tainted': tainted}, synthetic=False)
-            evidence = PredictionEvidence(prediction_id=identity, prediction_hash=p.identity, recorded_at=iso(at),
-                features=(), snapshot={'price': {'recent_closes': [100]}}, baselines={}, input_quality={'state': 'AVAILABLE'},
-                split='SYNTHETIC_HTTP_TEST', provenance={'method': 'synthetic'})
-            executor.research.issue(p, evidence)
+            for selected in [view, *raw]:
+                identity = sha256_canonical({'run': run_id, 'asset': asset, 'horizon': horizon, 'analyst': selected['analyst']})
+                p = PredictionRecord(prediction_id=identity, model_id='trader:' + selected['analyst'], model_contract_hash='a' * 64,
+                    artifact_hash=artifact_hash, product=asset, decision_at=iso(at), horizon_seconds=100,
+                    snapshot_hash=sha256_canonical({'price': {'recent_closes': [100]}}), features_hash=sha256_canonical([]), event_ids=(),
+                    outputs={'return': None, 'target_price': None, 'class': selected['view'], 'probabilities': {'outperform': selected['p_outperform']},
+                             'quantiles': None, 'scenarios': None},
+                    signal={'run_id': run_id, 'session': day, 'view': selected, 'label_definition': definition}, risk={'tainted': tainted}, synthetic=False)
+                evidence = PredictionEvidence(prediction_id=identity, prediction_hash=p.identity, recorded_at=iso(at),
+                    features=(), snapshot={'price': {'recent_closes': [100]}}, baselines={}, input_quality={'state': 'AVAILABLE'},
+                    split='SYNTHETIC_HTTP_TEST', provenance={'method': 'synthetic'})
+                executor.research.issue(p, evidence)
     executor.research.append('replay-summary', {'schema': 'trader-run-v1', 'run_id': run_id, 'at': iso(at),
         'status': status, 'synthetic': False, 'tainted': tainted,
         'decision': {'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
@@ -165,7 +176,7 @@ def test_account_suffix_mismatch_refuses_and_alerts(environment):
 
 @pytest.mark.parametrize('options', [dict(direction='ABSTAIN', verdict='ABSTAIN'), dict(verdict='MISSING'),
     dict(verdict='REJECT'), dict(tainted=True), dict(status='FAILED'), dict(reviewer=False),
-    dict(variant='catchup_close_entry_v1'), dict(probability=.54)])
+    dict(variant='catchup_close_entry_v1')])
 def test_ineligible_views_produce_no_order(environment, options):
     executor, broker, _, _ = environment
     issue(executor, **options)
@@ -264,7 +275,7 @@ def test_partial_fill_projection_and_due_cls_delta(environment):
     assert sum(paper.decimal(l['qty']) for l in executor.ledger.projection('ia_actions')[2].values()) == paper.D('21')
     assert all(paper.decimal(l['qty']) == paper.decimal(l['qty']).quantize(paper.D(1)) for l in executor.ledger.projection('ia_actions')[2].values())
     broker.fill('ia_actions', intent['client_id'])
-    clock.at = instant('2026-10-08T19:40:00Z')
+    clock.at = instant('2026-10-09T19:40:00Z')
     result = executor.run('exit', accounts=['ia_actions'])
     assert result['state'] == 'COMPLETE'
     exit_order = broker.posts()[-1][3]
@@ -304,7 +315,7 @@ def test_no_mutation_today_even_kill_switch(environment):
 
 
 @pytest.mark.parametrize('day,open_at,cls_at,cutoff', [
-    ('2026-10-08', '13:30', '19:40', '23:30'), ('2026-11-02', '14:30', '20:40', '00:30')])
+    ('2026-10-09', '13:30', '19:40', '23:30'), ('2026-11-02', '14:30', '20:40', '00:30')])
 def test_auction_and_after_hours_dst(day, open_at, cls_at, cutoff):
     session = calendar_session(day)
     assert iso(session.open_at)[11:16] == open_at
@@ -323,8 +334,8 @@ def test_early_close_cls_uses_calendar():
 
 @pytest.mark.parametrize('side', ['buy', 'sell'])
 def test_after_hours_limit_spread_and_cutoff(side):
-    session = calendar_session('2026-10-08')
-    at = instant('2026-10-08T22:00:00Z')
+    session = calendar_session('2026-10-09')
+    at = instant('2026-10-09T22:00:00Z')
     terms = paper.order_terms('ia_actions', 'entry', at, session, after_hours=True, bid='99.95', ask='100.05', side=side)
     assert terms['type'] == 'limit' and terms['extended_hours'] is True and terms['time_in_force'] == 'day'
     with pytest.raises(TraderError, match='PAPER_SPREAD_CAP'):
@@ -335,7 +346,7 @@ def test_after_hours_limit_spread_and_cutoff(side):
 
 def test_after_hours_requires_fresh_private_quote_and_no_other_http_host(environment, tmp_path):
     executor, broker, _, clock = environment
-    clock.at = instant('2026-10-08T20:10:00Z')
+    clock.at = instant('2026-10-09T20:10:00Z')
     issue(executor, variant='alpaca_after_hours_v1')
     assert executor.run('execute')['accounts'][0]['reason'] == 'PAPER_QUOTE_UNAVAILABLE'
     path = tmp_path / 'synthetic-quotes.json'
@@ -355,7 +366,7 @@ def test_report_complet_sums_two_accounts_and_momentum_is_get_only(environment):
     broker.accounts['ia_crypto']['equity'] = '99000'
     result = executor.report()
     assert result['complet']['equity'] == '200000' and result['complet']['pnl'] == '0'
-    assert result['momentum']['mode'] == 'GET_ONLY'
+    assert result['claude_book']['mode'] == 'GET_ONLY'
     assert all(c[1] == 'GET' for c in broker.calls if c[0] == 'momentum')
     assert not broker.posts()
     assert executor.ledger.store.verify()['verified']
@@ -374,7 +385,7 @@ def test_schedule_chains_execute_report_and_uses_dst_and_crypto_anchor(tmp_path)
 
 def test_registered_execution_spec_and_private_store_binding(environment):
     executor, _, grant, clock = environment
-    assert execution_spec()['revision'] == 1 and len(SPEC_HASH) == 64
+    assert execution_spec()['revision'] == 2 and len(SPEC_HASH) == 64
     assert executor.ledger.events(event='binding')[0]['spec_hash'] == SPEC_HASH
     grant = paper.PaperAuthorization({**grant.payload}, 'e' * 64, grant.parent)
     with pytest.raises(TraderError, match='PAPER_LEDGER_BINDING_MISMATCH'):
@@ -390,7 +401,7 @@ def test_close_order_budget_reserved_before_entries(environment):
     assert len(result['accounts'][0]['budget_skipped_symbols']) == 6
     for (name, key) in list(broker.orders):
         broker.fill(name, key)
-    clock.at = instant('2026-10-08T19:40:00Z')
+    clock.at = instant('2026-10-09T19:40:00Z')
     assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 40
 
@@ -403,7 +414,7 @@ def test_stale_unsubmitted_intent_never_reschedules_next_open(environment):
         executor.run('execute', accounts=['ia_actions'])
     # Model an unacknowledged dispatch that never reached the broker.
     broker.orders.clear()
-    clock.at = instant('2026-10-08T13:29:00Z')
+    clock.at = instant('2026-10-09T13:29:00Z')
     result = executor.run('execute', accounts=['ia_actions'])
     assert result['accounts'][0]['reason'] == 'PAPER_OPG_CUTOFF'
     assert len(broker.posts()) == 1
@@ -505,13 +516,13 @@ def test_pause_and_expiry_block_transport_mutations(environment):
 
 def test_after_hours_unfilled_is_canceled_at_cutoff_and_scored_not_traded(environment, tmp_path):
     executor, broker, _, clock = environment
-    clock.at = instant('2026-10-08T20:10:00Z')
+    clock.at = instant('2026-10-09T20:10:00Z')
     issue(executor, variant='alpaca_after_hours_v1')
     path = tmp_path / 'quotes.json'
     path.write_text(json.dumps({'quotes': {'AAPL': {'bid': '99.95', 'ask': '100.05', 'at': iso(clock())}}}))
     executor.quotes = paper.PrivateQuotes(path)
     executor.run('execute', accounts=['ia_actions'])
-    clock.at = instant('2026-10-08T23:30:00Z')
+    clock.at = instant('2026-10-09T23:30:00Z')
     assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert any(c[1] == 'DELETE' for c in broker.calls)
     assert len(broker.posts()) == 1
@@ -523,17 +534,17 @@ def test_public_benchmarks_use_first_execution_open_and_protected_btc_remains_pe
     from scripts.trading_lab.trader_agent import paper_reporting
     executor, _, _, clock = environment
     executor.run('status')
-    clock.at = instant('2026-10-08T21:30:00Z')
+    clock.at = instant('2026-10-09T21:30:00Z')
     monkeypatch.setattr(paper_reporting, 'protected', lambda asset, *a: asset == 'BTC-USD')
     class Quotes:
         def yahoo(self, asset, start, end):
-            assert start.date().isoformat() == '2026-10-07'
-            return [{'bar_open_at': calendar_session('2026-10-08').open_at, 'open': 100, 'close': 105}], {'digest': 'a' * 64}
+            assert start.date().isoformat() == '2026-10-08'
+            return [{'bar_open_at': calendar_session('2026-10-09').open_at, 'open': 100, 'close': 105}], {'digest': 'a' * 64}
         def crypto(self, *a, **kw):
             pytest.fail('protected BTC must not be fetched')
     values = paper_reporting.benchmarks(executor.ledger, tmp_path / 'runtime', executor.grant.parent, data=Quotes())
     assert values['SPY']['return_since_paper_start'] == '0.05'
-    assert values['SPY']['base_at'] == '2026-10-08T13:30:00Z'
+    assert values['SPY']['base_at'] == '2026-10-09T13:30:00Z'
     assert values['BTC']['state'] == 'PENDING' and values['BTC']['reason'] == 'PROTECTED_BENCHMARK'
     report = executor.report(values)
     assert report['versus']['complet']['SPY'] == '-0.05' and report['versus']['complet']['BTC'] is None
@@ -541,10 +552,47 @@ def test_public_benchmarks_use_first_execution_open_and_protected_btc_remains_pe
 
 def test_no_entry_when_label_exit_is_after_grant_expiry(environment):
     executor, broker, _, clock = environment
-    executor.grant.payload['not_after'] = '2026-10-09T00:00:00Z'
+    executor.grant.payload['not_after'] = '2026-10-10T00:00:00Z'
     issue(executor, assets=('AAPL', 'BTC-USD'))
     result = executor.run('execute')
     assert result['state'] == 'COMPLETE'
     assert len(broker.posts()) == 1
     assert broker.posts()[0][0] == 'ia_actions' and broker.posts()[0][3]['qty'] == '36'
     assert all(l['horizon'] == '1d' for l in executor.ledger.events('ia_actions', 'intent')[0]['lots'])
+
+
+@pytest.mark.parametrize('peer, verdict, expected', [
+    ('ABSTAIN', 'KEEP', ['AAPL']), ('ABSTAIN', 'DOWNGRADE', []),
+    ('DOWN', 'KEEP', []), ('UP', 'KEEP', ['AAPL'])])
+def test_reviewed_union_plans_kept_view_and_refuses_downgrade_or_raw_conflict(environment, peer, verdict, expected):
+    executor, broker, _, _ = environment
+    issue(executor, horizons=('1d',), verdict=verdict, peer_direction=peer)
+    result = executor.run('execute', dry_run=True, accounts=['ia_actions'])
+    assert result['state'] == 'COMPLETE'
+    assert [o['symbol'] for o in result['accounts'][0]['planned_orders']] == expected
+    assert not broker.posts()
+
+
+def test_explicit_rebind_refuses_old_store_until_operator_approved_and_preserves_history(environment, tmp_path, monkeypatch):
+    from scripts.trading_lab.trader_agent.paper_spec import PREVIOUS_SPEC_HASH
+    executor, broker, grant, clock = environment
+    root = tmp_path / 'old-paper'
+    store = ResearchStore(root / 'paper-evidence')
+    payload = {'schema': 'alpaca-paper-event-v1', 'event_id': 'synthetic-binding', 'event': 'binding',
+               'at': iso(clock()), 'account': None, 'account_suffix': None,
+               'grant_hash': grant.identity, 'spec_hash': PREVIOUS_SPEC_HASH}
+    store.append('replay-summary', payload, object_id='synthetic-binding', recorded_at=iso(clock()))
+    with pytest.raises(TraderError, match='PAPER_LEDGER_BINDING_MISMATCH'):
+        paper.PaperLedger(root, grant, clock=clock)
+    decision = {'schema': 'synthetic-operator-decision', 'decided_at': iso(clock()), 'constraints': 'no open lots'}
+    path = tmp_path / 'operator.json'
+    path.write_text(json.dumps(decision))
+    monkeypatch.setattr(paper, 'OPERATOR_DECISION_HASH', sha256_canonical(decision))
+    factory = lambda g, name, **kw: paper.PaperClient(g, name, transport=broker.transport(name), **kw)
+    rebound = paper.PaperLedger.rebind(root, grant, path, clock=clock, client_factory=factory)
+    assert rebound.store.verify()['verified']
+    assert rebound.events(event='binding')[0] == payload
+    assert rebound.events(event='binding')[-1]['previous_spec_hash'] == PREVIOUS_SPEC_HASH
+    assert rebound.events(event='binding')[-1]['spec_hash'] == SPEC_HASH
+    assert all(c[1] == 'GET' for c in broker.calls)
+    paper.PaperLedger(root, grant, clock=clock)

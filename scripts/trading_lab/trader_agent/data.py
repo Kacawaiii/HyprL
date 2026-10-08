@@ -9,12 +9,12 @@ import time
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
-from scripts.trading_lab.coinbase_candles import adapt_coinbase_candles
 from scripts.trading_lab.equity_calendar import USEquityRegularCalendar
 from scripts.trading_lab.research_protection import crypto_interval, equity_interval
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.yahoo_chart_provider import adapt_chart_rows, chart_path, parse_chart_meta
 
+from .coinbase import candles, daily_closes
 from .news_queries import news_query
 from .config import HOSTS, TraderError, instant, iso, now, strict_json
 
@@ -89,29 +89,11 @@ class PublicData:
         payload, source = self.fetch("coinbase_exchange_public", f"/products/{asset}/candles", {
             "start": iso(start), "end": iso(end), "granularity": 60 if minute else 86400})
         if minute:
-            # Preserve Coinbase's six-field native shape; open at the exact anchor, never interpolate.
-            if not isinstance(payload, list) or len(payload) > 300:
-                raise TraderError("CRYPTO_SHAPE_INVALID")
-            matches = [r for r in payload if isinstance(r, list) and len(r) == 6 and r[0] == int(start.timestamp())]
+            matches = [r for r in candles(payload) if r['bar_open_at'] == start]
             if len(matches) != 1:
-                raise TraderError("MISSING_ANCHOR_PRICE")
-            row = matches[0]
-            if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in row):
-                raise TraderError("CRYPTO_SHAPE_INVALID")
-            if not 0 < row[1] <= row[3] <= row[2] or not row[1] <= row[4] <= row[2] or row[5] < 0:
-                raise TraderError("CRYPTO_SHAPE_INVALID")
-            return float(row[3]), source
-        if not isinstance(payload, list) or any(not isinstance(r, list) or len(r) != 6 for r in payload):
-            raise TraderError('CRYPTO_SHAPE_INVALID')
-        for row in payload:
-            if isinstance(row[0], bool) or not isinstance(row[0], (int, float)) or not math.isfinite(row[0]):
-                raise TraderError('CRYPTO_SHAPE_INVALID')
-        # Coinbase may include a forming current-day candle. Preserve the raw response privately;
-        # pass only completed native-shape rows to the proven completed-bar adapter.
-        completed = [r for r in payload if datetime.fromtimestamp(r[0], tz=timezone.utc) + timedelta(days=1) <= end]
-        rows = adapt_coinbase_candles(json.dumps(completed).encode(), product_id=asset, timeframe="1d",
-                                     available_at=source["received_at"], ingested_at=source["received_at"])
-        return [{"bar_open_at": instant(r["bar_open_at"]), "close": float(r["close"])} for r in rows], source
+                raise TraderError('MISSING_ANCHOR_PRICE')
+            return matches[0]['open'], source
+        return daily_closes(payload, min(end, instant(source['received_at']))), source
 
     def headlines(self, query, before):
         payload, source = self.fetch("gdelt_doc_api", "/api/v2/doc/doc", {

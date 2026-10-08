@@ -25,14 +25,16 @@ AFTER_HOURS_VARIANT = 'alpaca_after_hours_v1'
 VARIANTS = ["analyst_claude", "analyst_gpt", "reviewer_claude", "reviewer_gpt", "consensus",
             "reviewer_kept", "reviewer_rejected", "reviewer_downgraded", "always_up", "momentum20",
             "random_seeded", "spy_relative_zero", "unhedged", "spy_hedged", CATCHUP_VARIANT,
-            'alpaca_open_entry_v1', AFTER_HOURS_VARIANT]
-ARTIFACT = Path(__file__).resolve().parents[3] / "docs/artifacts/trader_agent_preregistration_v1.json"
+            'alpaca_open_entry_v1', AFTER_HOURS_VARIANT, 'alpaca_open_entry_v2', 'alpaca_after_hours_v2']
+ARTIFACT = Path(__file__).resolve().parents[3] / "docs/artifacts/trader_agent_preregistration_v2.json"
+
+PREREG_HASH = '3ae8bf1ba47ddd9a1aead3fabbc1444cdd05b3f9949f004c8aea500c62ed8ce7'
 
 
 def preregistration():
     artifact = json.loads(ARTIFACT.read_text())
     expected = artifact.pop("canonical_sha256")
-    if sha256_canonical(artifact) != expected:
+    if expected != PREREG_HASH or sha256_canonical(artifact) != expected:
         raise TraderError("PREREGISTRATION_HASH_MISMATCH")
     return expected
 
@@ -141,6 +143,8 @@ class TraderService:
             run_id = "trader:" + day + (":synthetic" if self.data.synthetic else ":real") + (":catchup" if catchup else "")
             try:
                 self.ledger.grant.check(at)
+                if not self.data.synthetic and at < instant(json.loads(ARTIFACT.read_text())['effective_from']):
+                    return self.summary(run_id, 'NOT_STARTED', at)
                 if self.ledger.paused:
                     return self.summary(run_id, "PAUSED", at)
                 if not self.data.synthetic and at < instant("2026-10-06T12:00:00Z"):

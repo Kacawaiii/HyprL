@@ -2,10 +2,10 @@
 from datetime import timedelta
 import json
 
-from scripts.trading_lab.coinbase_candles import adapt_coinbase_candles
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.yahoo_chart_provider import adapt_chart_rows
 
+from .coinbase import daily_closes
 from .config import instant, iso
 from .data import equity_calendar
 from .runners import ModelRunner
@@ -57,9 +57,7 @@ class SyntheticData:
             payload.append([int(opening.timestamp()), 99, 103, 100, close, 20])
             opening += timedelta(days=1)
         source = self.source("coinbase_exchange_public", payload)
-        rows = adapt_coinbase_candles(json.dumps(payload).encode(), product_id=asset, timeframe="1d",
-            available_at=source["received_at"], ingested_at=source["received_at"])
-        return [{"bar_open_at": instant(r["bar_open_at"]), "close": float(r["close"])} for r in rows], source
+        return daily_closes(payload, end), source
 
     def headlines(self, query, before):
         payload = {"articles": [{"url": "https://example.invalid/synthetic-news", "title": "Synthetic catalyst",

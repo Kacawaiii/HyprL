@@ -1,0 +1,61 @@
+{
+  "schema": "trader-crypto-universe-amendment-v1",
+  "revision": 1,
+  "authorization": "trader-agent-crypto-amendment-v1",
+  "extends": "trader-agent-v1",
+  "base_grant_hash": "f2c2449426f3fcdfc67429189f710a79cf1bd35178042ccaa9c5b9f507afedcc",
+  "operator_decision_hash": "0caee3e1145b4cc401cccaface8ca7ecc928c6337c335ab23cc1695a3677e7a9",
+  "granted_at": "2026-10-08T14:40:00Z",
+  "effective_from": "2026-10-09T00:00:00Z",
+  "not_after": "2026-11-05T00:00:00Z",
+  "crypto": [
+    "SOL-USD",
+    "AVAX-USD",
+    "LINK-USD",
+    "DOGE-USD",
+    "LTC-USD"
+  ],
+  "excluded": [
+    "BTC-USD",
+    "ETH-USD"
+  ],
+  "coinbase_max_requests_per_day": 40,
+  "budget_reason": "5 feature calls + 35 label calls on Monday: 7 distinct minute anchors per asset for weekend 1d/5d maturities; cache shared across analyst and consensus predictions. No allowance for missed jobs or retries; excess remains pending.",
+  "selection": "Operator candidate list only; active and tradable USD pair on Alpaca paper; Coinbase public daily and exact-minute candle; 20 completed daily candles with mean close*volume >= 5000000 USD; absent from all protection contracts. Other pairs are outside this scoped amendment.",
+  "protection_table_hash": "97b2cea6ab819d8cb75b70df9cc4bddd78b4777f1b5142a23825d72f2fb10a5d",
+  "evidence": {
+    "SOL-USD": {
+      "alpaca_asset_digest": "d317ab69879d8f103fc1f8d6c2ae0cf48ff784c2eb66e0528986a10fbf673187",
+      "daily_digest": "ba4a43fc186c85411b07433d941f976de70d5903b1d23864663acf15974cca7e",
+      "completed_daily_candles": 20,
+      "minute_digest": "fa53c4366f79c35866732cee8459b4a56441022c80a5713cd929ef4a68b1f896"
+    },
+    "AVAX-USD": {
+      "alpaca_asset_digest": "2a31be306678eec6b696a6e31a5c491145dda1af9379fee8d810de8ff6ac072a",
+      "daily_digest": "16680604475a38ac75a22c8adae5886b2ed844f3417094fa5f5fba7056e0d279",
+      "completed_daily_candles": 20,
+      "minute_digest": "3bdfbc17d067b10e85f1438df31467ed9a82d93a44a106b4e51dc2f77e6ffad5"
+    },
+    "LINK-USD": {
+      "alpaca_asset_digest": "4d9c14e11633f7005b2abeba03f9f2366ccb26645f143534cadcd5bf7645a5d1",
+      "daily_digest": "b15330ff480742fdc62007a51c4bbcd9749301d7cf2daa8ec795d0e04544cd12",
+      "completed_daily_candles": 20,
+      "minute_digest": "f3202aeff5761b41a4d865b0a1116d3a8c976b5ef26cbfb9e5cb373fe42d88db"
+    },
+    "DOGE-USD": {
+      "alpaca_asset_digest": "24609d4a719572ee209d38b9ba6da6fe7f7e4159fbde10034f44980ef10a839c",
+      "daily_digest": "bc5a102973f651aaaf686f31beb88295908b3b00cbddb04cbec46080873798a9",
+      "completed_daily_candles": 20,
+      "minute_digest": "896e174efd5ef660130ba4c08767805c857bea553025f545a53f0dcfd82a2721"
+    },
+    "LTC-USD": {
+      "alpaca_asset_digest": "f34d486454c95f8d1de21bbc437d5d3204bc42b00e862792d9270f7e6abe6a01",
+      "daily_digest": "cd89d42aab8f8b6e240d0dc787222651ee0e422a72e0aa0e9ec524b95070d4e7",
+      "completed_daily_candles": 20,
+      "minute_digest": "9b7274733e2c461700a42ebced9c1c8ed15e840dbbc6729fcc44ff7c111979c2"
+    }
+  },
+  "alpaca_assets_digest": "52f955890f883072d486db0f586bcce7a989e3837d984964530f71098d5bbda3",
+  "alpaca_asset_count": 73,
+  "canonical_sha256": "2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7"
+}
