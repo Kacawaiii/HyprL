@@ -1,5 +1,9 @@
 # Alpaca paper execution v1
 
+This records the original execution version. Current policy is documented in
+[execution v2](TRADER_ALPACA_EXECUTION_V2.md); account 2EQN is now the separate
+GET-only `claude_book` and is no longer an AI benchmark.
+
 This exploratory executor uses the separate `trader-alpaca-paper-v1` grant. It
 executes reviewed consensus stock and sector ETF views on `ia_actions`, and
 long-or-flat crypto views on `ia_crypto`. `complet` sums their equity and P&L

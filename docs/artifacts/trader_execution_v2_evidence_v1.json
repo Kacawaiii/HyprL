@@ -1,0 +1,144 @@
+{
+  "schema": "trader-execution-v2-evidence-v1",
+  "base_sha": "9fcaae22b5c99c2d5c2cea801c618127a38a3069",
+  "operator_decision_hash": "0caee3e1145b4cc401cccaface8ca7ecc928c6337c335ab23cc1695a3677e7a9",
+  "discovery_authorization_hash": "d845255c048e06461e93a9d4a1bebf934a7f43e0d79104e58dd951107cb56540",
+  "readonly_authorization_hash": "4e3f7853edeb1cb75fd373e78b2095c373480682d2dbe011365022f2f28731ca",
+  "alpaca_asset_count": 73,
+  "alpaca_assets_digest": "52f955890f883072d486db0f586bcce7a989e3837d984964530f71098d5bbda3",
+  "discovery_requests": {
+    "https://paper-api.alpaca.markets": 3,
+    "https://api.exchange.coinbase.com": 10
+  },
+  "kept_crypto": [
+    "SOL-USD",
+    "AVAX-USD",
+    "LINK-USD",
+    "DOGE-USD",
+    "LTC-USD"
+  ],
+  "dropped_crypto": {
+    "SHIB/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BTC/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "PAXG/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ADA/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SKY/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BCH/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "AVAX/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SUSHI/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "UNI/BTC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SHIB/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "USDC/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LTC/BTC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BAT/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BONK/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BTC/USD": "PROTECTED_BTC_ETH",
+    "DOGE/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "DOT/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ETH/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ETH/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "GRT/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LDO/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LINK/BTC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LINK/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "XTZ/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "YFI/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "YFI/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LTC/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "RENDER/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SHIB/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SUSHI/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "UNI/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "PEPE/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "HYPE/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ONDO/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SOL/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "WIF/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "DOGE/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ARB/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "CRV/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "USDT/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LINK/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "POL/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "TRUMP/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "USDG/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "FIL/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "AAVE/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "YFI/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BTC/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "AAVE/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "XRP/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "USDT/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "UNI/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SUSHI/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BAT/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "AVAX/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "XTZ/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "SOL/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BCH/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "CRV/USD": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "DOT/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "LTC/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "UNI/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "GRT/USDC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ETH/USD": "PROTECTED_BTC_ETH",
+    "BCH/BTC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "BCH/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "AAVE/USDT": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE",
+    "ETH/BTC": "OUTSIDE_SCOPED_CANDIDATE_USD_UNIVERSE"
+  },
+  "protection_table_hash": "97b2cea6ab819d8cb75b70df9cc4bddd78b4777f1b5142a23825d72f2fb10a5d",
+  "protection_audit": "Compiled crypto and equity contracts plus persisted comparison-protocol registrations agree; no additional candidate protection in the active private trader or paper journal. No holdout price rows read; frozen FOMC/EDGAR stores left unchanged.",
+  "replay": {
+    "session": "2026-10-08",
+    "run_record_hash": "751ebde80216c1c00581c3c80fd0bee2e3419a80cb4d2f5af27c24c7fa67b108",
+    "prediction_population": "6 reviewer KEEP analyst views; consensus ABSTAIN",
+    "planned_symbols": [
+      "CVX",
+      "XLE",
+      "XOM"
+    ],
+    "planned_orders": 3,
+    "order_mutations": 0,
+    "order_intents": 0,
+    "no_crypto_orders": true,
+    "private_result_digest": "b761b48080d389a572636593d344eaccf371a8cd2a56f0fb6ce6dfc48b8c2f88"
+  },
+  "account_suffixes": {
+    "ia_actions": "GAHT",
+    "ia_crypto": "6ZLZ",
+    "claude_book": "2EQN"
+  },
+  "claude_book": "GET-only; not an AI variant or baseline",
+  "protection_registration_audit": {
+    "comparison_protocol_v1_crypto_products": [
+      "BTC-USD",
+      "ETH-USD"
+    ],
+    "comparison_protocol_v2_crypto_products": [
+      "BTC-USD",
+      "ETH-USD"
+    ],
+    "active_trader_store_hypothesis_trial_experiment_reference_count": 0,
+    "active_paper_store_hypothesis_trial_experiment_reference_count": 0
+  },
+  "verification": {
+    "required_gate": {
+      "passed": 505,
+      "designated_skip": 1,
+      "private_fomc_fixture_exercised": true
+    },
+    "trader_suite": {
+      "passed": 221,
+      "covers": "reviewed union, conflict and downgrade veto, consensus retained, explicit empty-ledger rebinding, amended context/labels/crypto costs and score population, native nine-decimal fills, GET-only claude_book and replay; literal KEEP union below 0.55 with crypto threshold retained"
+    },
+    "web_gate": {
+      "npm_ci": "PASS",
+      "typecheck": "PASS",
+      "lint": "PASS",
+      "vitest_test_files": 19,
+      "vitest_tests": 257
+    }
+  },
+  "crypto_increment_evidence_digest": "52f955890f883072d486db0f586bcce7a989e3837d984964530f71098d5bbda3"
+}
