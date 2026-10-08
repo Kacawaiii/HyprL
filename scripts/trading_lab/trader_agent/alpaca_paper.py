@@ -338,7 +338,8 @@ class PaperExecutor:
     def __init__(self, ledger, research, *, client_factory=PaperClient, quotes=None, clock=now, pause_paths=()):
         self.ledger, self.grant, self.research = ledger, ledger.grant, research
         self.clock, self.client_factory = clock, client_factory
-        self.quotes = quotes or PrivateQuotes()
+        from .alpaca_data import QuoteFeed
+        self.quotes = quotes or QuoteFeed(self.grant, clock=clock)
         self.pause_paths = [self.ledger.root / 'PAPER_PAUSED', self.ledger.root / 'PAUSED', *map(Path, pause_paths)]
         execution_spec()
 

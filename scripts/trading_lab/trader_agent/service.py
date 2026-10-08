@@ -14,6 +14,7 @@ from .data import build_context, calendar_session, label_window
 from .portfolio import portfolios
 from .runners import HERE, prompt
 from .schemas import validate, validate_analyst, validate_reviewer
+from .scoring import rows
 
 # Operator-approved same-day recovery (2026-10-06), extended 2026-10-07 ~12:45Z:
 # "on peut pas reprendre le run mtn on perd trop" authorizes recovery after FAILED even if models were called.
@@ -107,10 +108,13 @@ class TraderService:
 
     def catchup_missing(self, daily_run_id):
         counts = self.ledger.counts()
-        statuses = {r['payload'].get('status') for r in self.store.records('replay-summary')
+        statuses = {r['payload'].get('status') for r in rows(self.store, 'replay-summary')
                     if r['payload'].get('schema') == 'trader-run-v1'
                     and r['payload'].get('run_id') == daily_run_id}
         if counts.get('run', 0) < 1 or 'FAILED' not in statuses or statuses & {'COMPLETE', 'DEGRADED'}:
+            raise TraderError('CATCHUP_NOT_ALLOWED')
+        if any(r['payload'].get('signal', {}).get('run_id') == daily_run_id
+               for r in rows(self.store, 'prediction')):
             raise TraderError('CATCHUP_NOT_ALLOWED')
         missing = {role: 'BUDGET_EXHAUSTED' for role in ROLES if self.role_exhausted(role, counts)}
         remaining = self.ledger.grant.payload['budgets']['max_llm_calls_per_day'] - sum(

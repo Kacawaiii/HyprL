@@ -29,7 +29,8 @@ def health(ledger):
         state = "PAUSED" if ledger.paused else "HEALTHY"
         if not ledger.paused and started and session and at >= session.open_at and not any(r["status"] in {"COMPLETE", "DEGRADED"} for r in today):
             state = "MISSING_DAILY_RUN"
-        if not ledger.paused and any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today):
+        if (not ledger.paused and any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today)
+                and not any(r['status'] in {'COMPLETE', 'DEGRADED'} for r in today)):
             state = "FAILED_DAILY_RUN"
         label_path = ledger.root / 'last-label.json'
         if not ledger.paused and started and session and at >= at.replace(hour=22, minute=0, second=0, microsecond=0):
@@ -46,10 +47,21 @@ def health(ledger):
     return payload
 
 
+def paper_executor(args, grant, runtime):
+    from .alpaca_paper import PaperAuthorization, PaperExecutor, PaperLedger
+    from .alpaca_data import QuoteFeed
+    paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+    # Shared production bank: runtime paths never reset order caps or peak equity.
+    paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
+    evidence = ResearchStore(runtime / 'evidence', read_only=True)
+    return PaperExecutor(paper, evidence, quotes=QuoteFeed(paper_grant, args.data_authorization, args.paper_quotes),
+                         pause_paths=(runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED'))
+
+
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume",
+    parser.add_argument("action", choices=("run", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume",
                                           'paper-execute', 'paper-exit', 'paper-report', 'paper-status'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
@@ -58,24 +70,19 @@ def main(argv=None):
     parser.add_argument('--paper-authorization')
     parser.add_argument('--paper-account', choices=('ia_actions', 'ia_crypto'))
     parser.add_argument('--paper-quotes')
+    parser.add_argument('--data-authorization')
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--synthetic-time", default="2026-10-06T12:00:00Z")
     args = parser.parse_args(argv)
     grant = Authorization.load(args.authorization)
     if args.action.startswith('paper-'):
-        from .alpaca_paper import PaperAuthorization, PaperExecutor, PaperLedger, PrivateQuotes
         if not args.paper_authorization:
             parser.error('--paper-authorization is required for paper actions')
         runtime = private_root(args.runtime)
-        paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
-        # One production event/budget bank across CLI runtime paths; cannot reset order caps or peak equity.
-        paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
-        evidence = ResearchStore(runtime / 'evidence', read_only=True)
-        executor = PaperExecutor(paper, evidence, quotes=PrivateQuotes(args.paper_quotes),
-                                 pause_paths=(runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED'))
+        executor = paper_executor(args, grant, runtime)
         if args.action == 'paper-report':
             from .paper_reporting import benchmarks
-            result = executor.report(benchmarks(paper, runtime, grant))
+            result = executor.report(benchmarks(executor.ledger, runtime, grant))
             temp = runtime / 'paper-report.tmp'
             temp.write_text(json.dumps(result, indent=2) + '\n')
             temp.replace(runtime / 'paper-report.json')
@@ -107,7 +114,22 @@ def main(argv=None):
         service = TraderService(ledger, data, runner, clock=clock,
                                 fomc=None if args.dry_run else args.fomc_store,
                                 edgar=None if args.dry_run else args.edgar_store)
-        if args.action in {"catchup", 'catchup-after-hours'}:
+        if args.action == 'recover':
+            from .recovery import recover
+            result = recover(service)
+            # Close-entry recovery remains score-only. Only a fresh, successful
+            # after-hours recovery may invoke the existing paper executor.
+            if result.get('mode') == 'after_hours' and result.get('status') in {'COMPLETE', 'DEGRADED'} and args.paper_authorization and not args.dry_run:
+                try:
+                    result['paper_execution'] = paper_executor(args, grant, runtime).run('execute', accounts=['ia_actions'])
+                    ledger.alert('RECOVERY_PAPER_' + result['paper_execution']['state'])
+                except TraderError as error:
+                    ledger.alert('RECOVERY_PAPER_' + error.code)
+                    result['paper_execution'] = {'state': 'BLOCKED', 'reason': error.code}
+                except Exception:
+                    ledger.alert('RECOVERY_PAPER_UNEXPECTED_FAILURE')
+                    raise
+        elif args.action in {"catchup", 'catchup-after-hours'}:
             result = service.run(catchup=True, after_hours=args.action == 'catchup-after-hours')
         elif args.action == "run":
             result = service.run()
@@ -126,7 +148,7 @@ def main(argv=None):
         if args.action == "label":
             (runtime / "last-label.json").write_text(json.dumps({"at": iso(clock()), "state": result["state"]}))
     print(json.dumps(result, indent=2))
-    if result.get("status") == "FAILED" or result.get("state") == "BLOCKED":
+    if result.get("status") == "FAILED" or result.get("state") == "BLOCKED" or result.get('paper_execution', {}).get('state') == 'BLOCKED':
         return 1
     return 0
 

@@ -11,6 +11,7 @@ from .service import preregistration, skills
 
 
 CALENDARS = {"run": "Mon..Fri *-*-* 12:00:00 UTC", "label": "Mon..Fri *-*-* 21:30:00 UTC",
+             "recover": "Mon..Fri *-*-* 08..19:00/10:00 America/New_York",
              "health": "*-*-* *:05:00 UTC"}
 
 
@@ -20,16 +21,23 @@ def unit_quote(value):
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=None, paper_authorization=None, paper_quotes=None):
+def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=None, paper_authorization=None, paper_quotes=None,
+           data_authorization=None):
     unit_quote(repo)  # Validate path; WorkingDirectory takes an unquoted whole path value.
     output = {}
     for action, calendar in CALENDARS.items():
         argv = [python, "-m", "scripts.trading_lab.trader_agent.cli", action,
                 "--authorization", authorization, "--runtime", runtime]
-        if action == "run":
+        if action in {"run", "recover"}:
             for flag, root in (("--fomc-store", fomc), ("--edgar-store", edgar)):
                 if root:
                     argv.extend((flag, root))
+        if action == 'recover' and paper_authorization:
+            argv.extend(('--paper-authorization', paper_authorization))
+            if data_authorization:
+                argv.extend(('--data-authorization', data_authorization))
+            if paper_quotes:
+                argv.extend(('--paper-quotes', paper_quotes))
         output[f"hyprl-trader-{action}.service"] = (
             "[Unit]\nDescription=HyprL paper trader " + action + "\n"
             "[Service]\nType=oneshot\nWorkingDirectory=" + str(repo) + "\n"
@@ -53,6 +61,8 @@ def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=
                 argv.extend(('--paper-account', account))
             if paper_quotes:
                 argv.extend(('--paper-quotes', paper_quotes))
+            if data_authorization:
+                argv.extend(('--data-authorization', data_authorization))
             return ' '.join(unit_quote(a) for a in argv)
         for action, follow in (('run', 'execute'), ('label', 'report')):
             name = f'hyprl-trader-{action}.service'
@@ -88,20 +98,28 @@ def main(argv=None):
     parser.add_argument("--edgar-store")
     parser.add_argument('--paper-authorization')
     parser.add_argument('--paper-quotes')
+    parser.add_argument('--data-authorization')
     parser.add_argument("--install", action="store_true")
     args = parser.parse_args(argv)
     grant = Authorization.load(args.authorization)
     grant.check(now())
     if args.paper_authorization:
         from .alpaca_paper import PaperAuthorization
-        PaperAuthorization.load(args.paper_authorization, grant).check(now())
+        paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+        paper_grant.check(now())
+        if args.data_authorization:
+            from .alpaca_data import DataAuthorization
+            DataAuthorization.load(args.data_authorization, paper_grant).check(now())
+    elif args.data_authorization:
+        parser.error('--data-authorization requires --paper-authorization')
     preregistration()
     skills()
     root = private_root(args.runtime)
     repo = Path(__file__).resolve().parents[3]
     units = render(repo, sys.executable, Path(args.authorization).resolve(), root,
                    fomc=args.fomc_store, edgar=args.edgar_store, path=os.environ["PATH"],
-                   paper_authorization=args.paper_authorization, paper_quotes=args.paper_quotes)
+                   paper_authorization=args.paper_authorization, paper_quotes=args.paper_quotes,
+                   data_authorization=args.data_authorization)
     if not args.install:
         for name, body in units.items():
             print(name + "\n" + body)

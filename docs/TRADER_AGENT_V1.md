@@ -169,6 +169,20 @@ the primary consensus population or its minimum sample. Existing evidence retain
 Invoke the `catchup` CLI action with the production run's arguments through the authorized transient user
 unit; it is not a primary `run` retry and is never started by the daily timer.
 
+The 2026-10-08 recovery scheduler automates this existing approval through the
+separate `hyprl-trader-recover.timer` and `recover` CLI action. It checks FAILED
+primary runs with no recorded decision, chooses close-entry or after-hours
+recovery within the existing deadlines, and retains one shared recovery
+reservation per session. See [Alpaca timing and scheduling](TRADER_ALPACA_PAPER_V1.md)
+for the calendar, fallback feed, alerts and paper execution behavior.
+
+GPT's web tool router requires the bundled code-mode host even when shell tools
+are disabled. The runner enables that host and retains the read-only sandbox,
+shell prohibition, skill isolation and non-web tool restrictions. A reported
+tool-host failure raises `MODEL_WEB_UNAVAILABLE`; a final abstention object
+cannot hide that failure. The strict schemas and registered analyst/reviewer
+instructions remain unchanged.
+
 ## Operator commands and private files
 
 Set `TRADER_AUTH`, `TRADER_RUNTIME`, `FOMC_ARCHIVE` and `EDGAR_ARCHIVE` to operator-owned private paths
@@ -182,7 +196,7 @@ systemctl --user list-timers 'hyprl-trader-*'
 "$PYTHON" -m scripts.trading_lab.trader_agent.cli status --authorization "$TRADER_AUTH" --runtime "$TRADER_RUNTIME"
 "$PYTHON" -m scripts.trading_lab.trader_agent.cli pause --authorization "$TRADER_AUTH" --runtime "$TRADER_RUNTIME"
 "$PYTHON" -m scripts.trading_lab.trader_agent.cli resume --authorization "$TRADER_AUTH" --runtime "$TRADER_RUNTIME"
-systemctl --user stop hyprl-trader-run.timer hyprl-trader-label.timer hyprl-trader-health.timer hyprl-trader-run.service hyprl-trader-label.service hyprl-trader-health.service
+systemctl --user stop hyprl-trader-run.timer hyprl-trader-recover.timer hyprl-trader-label.timer hyprl-trader-health.timer hyprl-trader-run.service hyprl-trader-recover.service hyprl-trader-label.service hyprl-trader-health.service
 ```
 
 Do not manually start the real run service: the first real run belongs to the timer. Pause prevents

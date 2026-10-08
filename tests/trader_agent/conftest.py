@@ -1,11 +1,24 @@
 import json
 
 import pytest
+from urllib.request import OpenerDirector
+from urllib.parse import urlparse
 
 from scripts.trading_lab.trader_agent.config import Authorization, instant
 from scripts.trading_lab.trader_agent.ledger import Ledger
 from scripts.trading_lab.trader_agent.service import TraderService
 from scripts.trading_lab.trader_agent.synthetic import Clock, SyntheticData, SyntheticRunner
+
+
+@pytest.fixture(autouse=True)
+def no_unmocked_http(monkeypatch):
+    original = OpenerDirector.open
+    def refused(self, request, *args, **kwargs):
+        url = request if isinstance(request, str) else request.full_url
+        if urlparse(url).hostname in {'127.0.0.1', '::1'}:
+            return original(self, request, *args, **kwargs)
+        pytest.fail('Trader tests must mock the HTTP boundary')
+    monkeypatch.setattr(OpenerDirector, 'open', refused)
 
 
 @pytest.fixture

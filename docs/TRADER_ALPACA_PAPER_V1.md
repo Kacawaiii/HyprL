@@ -64,12 +64,20 @@ After-hours orders require a quote no older than 60 seconds, spread at most
 retain the decision reference. **Paper fills in thin after-hours liquidity are
 optimistic.**
 
-The current grant allows only the paper trading API origin. Fresh bid/ask data
-normally use a separate market-data origin, which is not granted. Until an
-operator grants that scope, `--paper-quotes` accepts a private operator feed:
+The separate `trader-alpaca-data-v1` grant authorizes GET-only latest quotes
+and trades at the exact `https://data.alpaca.markets` origin. The default feed
+uses the ia_actions credentials, IEX for equities, and refuses redirects,
+mutations, unknown products and protected intervals before transport. Quote
+timestamps, spread caps and limit prices retain the execution specification's
+existing checks. The data grant does not change the paper grant or its journal
+binding. Its default location is `~/authorizations/trader-alpaca-data-v1.json`;
+`--data-authorization` can supply another private file.
+
+`--paper-quotes` retains the private operator feed as fallback if the data
+grant is absent or the feed is unavailable or stale:
 `{"quotes":{"AAPL":{"bid":100,"ask":100.1,"at":"2026-10-08T20:10:00Z"}}}`.
-Missing, stale or future quotes refuse execution; no ungranted HTTP endpoint
-is contacted. Automatic after-hours quote acquisition is therefore blocked.
+Missing, stale or future fallback quotes refuse execution. Invalid grants,
+unapproved origins and protected products cannot be masked by the fallback.
 
 ## Commands and scheduling
 
@@ -88,13 +96,29 @@ prints proposed orders without client IDs, and reserves or submits no orders.
 It differs from the original trader's synthetic `run --dry-run`.
 
 Install units with the schedule module's `--paper-authorization` option and
-the usual parent/runtime/archive arguments. Installation starts timers, never
+the usual parent/runtime/archive arguments; `--data-authorization` is forwarded
+to the paper commands and recovery service. Installation starts timers, never
 a run. `paper-execute` follows a successful daily service invocation;
 `paper-report` follows label service completion, including a failed label job.
 Equity exit timers fire at 15:40 and 12:40 America/New_York; the latter handles
 half-days and otherwise has no due CLS exits. Crypto checks run hourly at
 `:30 UTC`, matching label anchors. An additional 19:30 America/New_York check
 cancels remaining after-hours entries at their cutoff. All timers are non-persistent.
+
+`hyprl-trader-recover.timer` checks every ten minutes on weekdays from 08:00
+through 19:50 America/New_York. The `recover` command uses the pinned exchange
+calendar, including holidays and half-days. It requires a recorded FAILED
+primary run with no decision or predictions, and uses the existing shared
+catch-up reservation and daily model/reviewer budgets. It launches the close-entry
+catch-up before close minus 80 minutes; after that it waits for the regular
+close, then permits after-hours recovery only with 80 minutes left before the
+19:30 cutoff. The run must finish within the unchanged deadline. One recovery
+reservation per session prevents a second launch after failure or restart.
+Close-entry recovery remains score-only. A successful after-hours recovery
+invokes the equity paper executor using the existing eligibility rules.
+Every check and execution outcome raises a private alert, including skips,
+waiting, exhausted budgets and success. Successful recovery resolves current
+daily health while retaining the primary failure history.
 
 The execution journal, order budget, peaks and halt state share one private
 bank across runtime paths. `PAPER_PAUSED` in that bank or the trader's runtime

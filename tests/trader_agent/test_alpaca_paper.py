@@ -80,6 +80,7 @@ class MockBroker:
 @pytest.fixture
 def environment(tmp_path, grant, clock, monkeypatch):
     clock.at = instant('2026-10-08T12:00:00Z')
+    monkeypatch.setenv('HOME', str(tmp_path))
     # No holdout prices are read. Synthetic broker tests model an authorized, unprotected universe.
     monkeypatch.setattr(paper, 'protected', lambda *a: None)
     accounts = {}

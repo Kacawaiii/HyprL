@@ -349,9 +349,11 @@ def test_api_read_only_bounded_no_private_transcripts(service, clock):
         TraderViews().dispatch('/api/v1/trader/today', {})
 
 
-def test_unit_schedule_has_no_catchup_and_no_inference_on_install(tmp_path):
+def test_unit_schedule_includes_recovery_and_no_inference_on_install(tmp_path):
     units = render(tmp_path, '/synthetic/python', '/synthetic/grant', tmp_path / 'runtime', path='/synthetic/bin')
-    assert len(units) == 6
+    assert len(units) == 8
+    assert '08..19:00/10:00 America/New_York' in units['hyprl-trader-recover.timer']
+    assert '"recover"' in units['hyprl-trader-recover.service']
     assert '12:00:00 UTC' in units['hyprl-trader-run.timer']
     assert '21:30:00 UTC' in units['hyprl-trader-label.timer']
     assert 'Persistent=false' in units['hyprl-trader-run.timer']
