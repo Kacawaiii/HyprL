@@ -16,6 +16,7 @@ PROMPT = ('Infrastructure health probe only. No market context or trading decisi
 def preflight(ledger, runner):
     base = {'schema': 'trader-gpt-preflight-v1', 'at': iso(ledger.clock()),
             'day': ledger.clock().date().isoformat(), 'synthetic_prompt': True}
+    attempted = False
     try:
         with ledger.owner():
             ledger.grant.check(ledger.clock())
@@ -26,6 +27,7 @@ def preflight(ledger, runner):
             schema = strict_json((HERE / 'schemas/analyst.gpt.json').read_text())
             if schema != GPT_SCHEMAS['analyst'] or openai_strict_problems(schema):
                 raise TraderError('GPT_SCHEMA_DRIFT')
+            attempted = True
             output = runner.once('analyst_gpt', PROMPT, preflight=True)
             validate('analyst', output)
             if output != {'regime': ['PREFLIGHT_OK'], 'views': []}:
@@ -38,10 +40,10 @@ def preflight(ledger, runner):
             ledger.alert_state('gpt-preflight', 'GPT_PREFLIGHT_GREEN', initial=False)
     except TraderError as error:
         result = {**base, 'state': 'BLOCKED', 'error': error.code}
-        ledger.alert_state('gpt-preflight', 'GPT_PREFLIGHT_' + error.code, role='analyst_gpt')
+        ledger.alert_state('gpt-preflight', 'GPT_PREFLIGHT_' + error.code, role='analyst_gpt', force=attempted)
     except (OSError, subprocess.SubprocessError):
         result = {**base, 'state': 'BLOCKED', 'error': 'MODEL_RUNNER_UNAVAILABLE'}
-        ledger.alert_state('gpt-preflight', 'GPT_PREFLIGHT_MODEL_RUNNER_UNAVAILABLE', role='analyst_gpt')
+        ledger.alert_state('gpt-preflight', 'GPT_PREFLIGHT_MODEL_RUNNER_UNAVAILABLE', role='analyst_gpt', force=attempted)
     except Exception:
         ledger.alert('GPT_PREFLIGHT_UNEXPECTED_FAILURE', role='analyst_gpt')
         raise

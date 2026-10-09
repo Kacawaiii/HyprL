@@ -145,6 +145,7 @@ def test_preflight_budget_survives_failure_and_runtime_change(ledger, tmp_path, 
     clock.at += timedelta(days=1)
     assert preflight(other, ModelRunner(other, clock=clock))['state'] == 'BLOCKED'
     assert len(calls) == 2 and other.counts() == {'gpt_preflight': 1}
+    assert json.loads((other.root / 'alert.json').read_text())['code'] == 'GPT_PREFLIGHT_MODEL_JSON_INVALID'
 
 
 @pytest.mark.parametrize('blocked', ['paused', 'expired', 'owner'])

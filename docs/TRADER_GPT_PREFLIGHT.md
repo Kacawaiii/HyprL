@@ -51,7 +51,8 @@ before the 12:00 run and the deployment deadline. It does not catch up missed
 timers. The service loads the operator's login environment, uses the existing
 deployed worktree and private grant/runtime, and has a three-minute unit timeout.
 The CLI action is `gpt-preflight`; it can also be run manually for installation
-verification, using the same daily cap. Its failure returns nonzero and alerts;
+verification, using the same daily cap. Each attempted probe failure returns nonzero
+and alerts, even if yesterday's probe failed for the same reason;
 a later GREEN transition alerts recovery. First-time GREEN is quiet. A duplicate
 invocation returns ALREADY_ATTEMPTED without replacing the day's result.
 
