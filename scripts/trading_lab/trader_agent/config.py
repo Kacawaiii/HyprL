@@ -1,6 +1,6 @@
 """Operator grants are private, explicit and rechecked at dispatch time."""
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -11,6 +11,8 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 AMENDMENT_NAME = 'trader-agent-crypto-amendment-v1.json'
 AMENDMENT_HASH = '2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7'
 AMENDED_CRYPTO = ('SOL-USD', 'AVAX-USD', 'LINK-USD', 'DOGE-USD', 'LTC-USD')
+WEEKEND_DECISION_NAME = 'trader-operator-decisions-2026-10-10.json'
+WEEKEND_DECISION_HASH = 'ceb0c46dd68b68d1db0dd995bf39b009934ce5e21de09adbffa7758143215cff'
 CRYPTO_PRODUCTS = frozenset({'BTC-USD', 'ETH-USD', *AMENDED_CRYPTO})
 UTC = timezone.utc
 ROLES = ("analyst_claude", "analyst_gpt", "reviewer")
@@ -61,6 +63,7 @@ class Authorization:
     base_identity: str | None = None
     amendment_identity: str | None = None
     amendment: dict | None = None
+    weekend_decision: dict | None = None
 
     @classmethod
     def load(cls, path, *, amendment_path=None):
@@ -72,7 +75,7 @@ class Authorization:
         if not amendment_path.exists():
             if explicit_amendment:
                 raise TraderError('CRYPTO_AMENDMENT_UNAVAILABLE')
-            return grant
+            return grant.load_weekend(Path(path).parent)
         amendment = strict_json(amendment_path.read_text())
         body = {k: v for k, v in amendment.items() if k != 'canonical_sha256'}
         if amendment.get('canonical_sha256') != AMENDMENT_HASH or sha256_canonical(body) != AMENDMENT_HASH:
@@ -95,7 +98,23 @@ class Authorization:
                                      'effective_payload': effective})
         amended = cls(effective, identity, grant.identity, AMENDMENT_HASH, amendment)
         amended.validate()
-        return amended
+        return amended.load_weekend(Path(path).parent)
+
+    def load_weekend(self, folder):
+        path = folder / WEEKEND_DECISION_NAME
+        if not path.exists():
+            return self
+        decision = strict_json(path.read_text())
+        if sha256_canonical(decision) != WEEKEND_DECISION_HASH:
+            raise TraderError('WEEKEND_OPERATOR_DECISION_HASH_MISMATCH')
+        return replace(self, weekend_decision=decision)
+
+    def check_weekend(self, at):
+        self.check(at)
+        if (not self.weekend_decision or instant(self.weekend_decision['decided_at']) > at
+                or self.amendment_identity is None
+                or self.payload['universe']['crypto'] != list(AMENDED_CRYPTO)):
+            raise TraderError('WEEKEND_CRYPTO_NOT_AUTHORIZED')
 
     def validate(self):
         p = self.payload

@@ -1,0 +1,45 @@
+{
+  "schema": "trader-weekend-crypto-spec-v1",
+  "revision": 1,
+  "registered_on": "2026-10-09",
+  "effective_from": "2026-10-10T00:00:00Z",
+  "variant": "weekend_crypto_v1",
+  "operator_decision_hash": "ceb0c46dd68b68d1db0dd995bf39b009934ce5e21de09adbffa7758143215cff",
+  "crypto_amendment_hash": "2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7",
+  "execution_spec_hash": "cc18ef9d4cf18ba33e47b4d9c6a17fa3ad82842891613168873b6a12372ff88b",
+  "population": [
+    "SOL-USD",
+    "AVAX-USD",
+    "LINK-USD",
+    "DOGE-USD",
+    "LTC-USD"
+  ],
+  "excluded": [
+    "BTC-USD",
+    "ETH-USD"
+  ],
+  "calendar": "pinned XNYS has no regular session on UTC decision date; Saturdays, Sundays and NYSE holidays",
+  "run_at": "12:00:00Z",
+  "decision_and_recording_before": "13:30:00Z",
+  "context": "Coinbase completed daily candles, crypto headlines and macro headlines; read-only FOMC archive; no Yahoo, equity/ETF prices, equity news, SPY/QQQ or EDGAR",
+  "models_and_retries": "unchanged two independent analysts and reviewer, serial, same per-role retry rules",
+  "budgets": "same durable per-UTC-day run, role, aggregate and source banks as weekdays; no separate allowance or refund",
+  "labels": {
+    "entry": "13:30:00Z on decision UTC date",
+    "1d_exit": "entry + 24 hours",
+    "5d_exit": "entry + 120 hours",
+    "price": "exact Coinbase one-minute candle open, observable after minute completion; missing anchors remain pending"
+  },
+  "execution": "ia_crypto only, consensus, UP long or flat, market gtc immediately after successful decision; all v2 caps, kill switch, idempotency, reconciliation, order budget and expiry guards retained",
+  "execution_registration": "explicit operator-approved weekend_registration journal event binds this spec, preregistration, unchanged execution spec and grants before any weekend order; never replaces existing ledger bindings",
+  "exits": "existing hourly :30Z crypto exit timer; at or after fixed label exit anchor",
+  "recovery": "daily recovery timer explicitly skips closed-day crypto recovery with durable RECOVERY_WEEKEND_CRYPTO_SKIPPED alert; no new call or catchup reservation",
+  "scores": "all analyst, reviewer, consensus, baseline and cohort scores in separate weekend_crypto_v1 population; no pooling into weekday scores, climatology or primary sample",
+  "limitations": [
+    "actual paper entry differs from fixed research entry anchor",
+    "exploratory population; no confirmatory claim",
+    "unavailable anchors and exhausted source budgets stay pending",
+    "production authorization expires 2026-11-05; no automatic renewal"
+  ],
+  "canonical_sha256": "421c3f7d7f71e4fdde59eec1216d72edcf5b720ea64938a4d52edb6c4451d998"
+}

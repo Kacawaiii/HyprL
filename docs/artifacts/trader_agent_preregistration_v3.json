@@ -1,0 +1,62 @@
+{
+  "schema": "trader-agent-preregistration-v3",
+  "revision": 6,
+  "registered_on": "2026-10-09",
+  "effective_from": "2026-10-10T00:00:00Z",
+  "previous_preregistration_hash": "3ae8bf1ba47ddd9a1aead3fabbc1444cdd05b3f9949f004c8aea500c62ed8ce7",
+  "scope": "weekend_crypto_v1 only; weekday decisions retain revision 5 and its exact hash",
+  "variant": "weekend_crypto_v1",
+  "population": [
+    "SOL-USD",
+    "AVAX-USD",
+    "LINK-USD",
+    "DOGE-USD",
+    "LTC-USD"
+  ],
+  "spec_hash": "421c3f7d7f71e4fdde59eec1216d72edcf5b720ea64938a4d52edb6c4451d998",
+  "operator_decision_hash": "ceb0c46dd68b68d1db0dd995bf39b009934ce5e21de09adbffa7758143215cff",
+  "execution_spec_hash": "cc18ef9d4cf18ba33e47b4d9c6a17fa3ad82842891613168873b6a12372ff88b",
+  "crypto_amendment_hash": "2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7",
+  "skill_hashes": {
+    "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
+    "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
+  },
+  "calendar": {
+    "provider": "pandas_market_calendars",
+    "version": "5.4.0",
+    "name": "XNYS"
+  },
+  "variants": [
+    "analyst_claude",
+    "analyst_gpt",
+    "reviewer_claude",
+    "reviewer_gpt",
+    "consensus",
+    "reviewer_kept",
+    "reviewer_rejected",
+    "reviewer_downgraded",
+    "always_up",
+    "momentum20",
+    "random_seeded",
+    "unhedged",
+    "weekend_crypto_v1"
+  ],
+  "labels": {
+    "entry": "13:30:00Z on decision UTC date",
+    "1d_exit": "entry + 24 hours",
+    "5d_exit": "entry + 120 hours",
+    "price": "exact Coinbase one-minute candle open, observable after minute completion; missing anchors remain pending"
+  },
+  "costs_per_side_bps": {
+    "crypto": 10
+  },
+  "baselines": [
+    "always_up",
+    "20 completed UTC-day momentum sign",
+    "random seeded by prediction identity"
+  ],
+  "scoring": "all analyst, reviewer, consensus, baseline and cohort scores in separate weekend_crypto_v1 population; no pooling into weekday scores, climatology or primary sample",
+  "confirmatory": false,
+  "revision_note": "Register the authorized closed-day crypto population before first use. Existing analyst/reviewer instructions, schemas, execution rules, original grants and historical bindings remain frozen.",
+  "canonical_sha256": "d38d91c8c822ddfaa478b102c22099aa00a750ec1957c83bb006ccd38df1d89c"
+}
