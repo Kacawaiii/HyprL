@@ -104,6 +104,15 @@ def parse_gpt(raw):
         raise TraderError("MODEL_JSON_INVALID") from None
 
 
+def completed_web_searches(events):
+    return sum(1 for event in events
+        if event.get('type') == 'item.completed'
+        and event.get('item', {}).get('type') == 'web_search'
+        and event['item'].get('action', {}).get('type') == 'search'
+        and any(result.get('type') == 'text_result' for result in event['item'].get('results', [])
+                if isinstance(result, dict)))
+
+
 def web_unavailable(message):
     return any(marker in message.lower() for marker in
                ('code mode is unavailable', 'code-mode host is disabled', 'failed to start code-mode host',
@@ -224,12 +233,7 @@ class ModelRunner:
                     raise TraderError("MODEL_FAILED")
         output = parse_gpt(raw) if role == "analyst_gpt" else parse_claude(raw)
         if role == 'analyst_gpt':
-            self.web_searches[role] = sum(1 for event in emitted
-                if event.get('type') == 'item.completed'
-                and event.get('item', {}).get('type') == 'web_search'
-                and event['item'].get('action', {}).get('type') == 'search'
-                and any(result.get('type') == 'search_result' for result in event['item'].get('results', [])
-                        if isinstance(result, dict)))
+            self.web_searches[role] = completed_web_searches(emitted)
         reported = self.ledger.grant.gpt_model if role == "analyst_gpt" else "alias_not_reported_by_cli"
         if role != "analyst_gpt":
             reported = ",".join(sorted(strict_json(raw).get("modelUsage", {}))) or reported

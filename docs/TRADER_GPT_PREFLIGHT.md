@@ -40,7 +40,8 @@ the same GPT model, runner, schema and web tool host as the analyst. Its prompt
 contains no market context or analyst skill: it asks for one Python documentation
 search and exactly `{"regime":["PREFLIGHT_OK"],"views":[]}`. Success requires a
 completed web search with returned search results and a valid empty-view answer;
-a model claiming success without web evidence fails. Transcripts and the latest
+a model claiming success without web evidence fails. Codex returns successful
+search hits as `text_result` entries. Transcripts and the latest
 `gpt-preflight.json` stay private. The probe never constructs a research store,
 records predictions, or invokes paper execution.
 

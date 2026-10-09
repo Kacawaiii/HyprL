@@ -14,7 +14,7 @@ WEB_STARTED = ('{"type":"item.started","item":{"id":"item_2","type":"web_search"
 WEB_COMPLETED = ('{"type":"item.completed","item":{"id":"item_2","type":"web_search",'
                  '"id":"exec-synthetic","query":"synthetic query",'
                  '"action":{"type":"search","queries":["synthetic query"]},'
-                 '"results":[{"type":"search_result","domain":"example.invalid",'
+                 '"results":[{"type":"text_result","domain":"example.invalid",'
                  '"ref_id":"synthetic0","snippet":"Synthetic evidence",'
                  '"title":"Synthetic result","url":"https://example.invalid/"}]}}')
 
@@ -113,7 +113,7 @@ def test_preflight_proves_schema_and_web_with_one_separate_call_and_no_view(ledg
 
 @pytest.mark.parametrize('raw,stderr,error', [
     (stream({'regime': ['PREFLIGHT_OK'], 'views': []}), '', 'MODEL_WEB_UNPROVEN'),
-    (stream({'regime': ['PREFLIGHT_OK'], 'views': []}, WEB_COMPLETED.replace('search_result', 'error')), '', 'MODEL_WEB_UNPROVEN'),
+    (stream({'regime': ['PREFLIGHT_OK'], 'views': []}, WEB_COMPLETED.replace('text_result', 'error')), '', 'MODEL_WEB_UNPROVEN'),
     (stream({'regime': ['PREFLIGHT_OK'], 'views': []}, WEB_COMPLETED), 'code-mode host is disabled', 'MODEL_WEB_UNAVAILABLE'),
     (stream({'regime': ['PREFLIGHT_OK'], 'views': []}, '{"type":"error","message":"quota exhausted"}'), '', 'SKIPPED_QUOTA'),
     (stream({'regime': ['PREFLIGHT_OK'], 'views': []}, '{"type":"item.completed","item":{"type":"command_execution"}}'), '', 'TAINTED_RUN'),
