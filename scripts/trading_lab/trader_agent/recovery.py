@@ -13,6 +13,9 @@ NY = ZoneInfo('America/New_York')
 def recover(service):
     ledger, at = service.ledger, service.clock()
     day = at.astimezone(NY).date().isoformat()
+    utc_closed = calendar_session(at.date().isoformat()) is None
+    if utc_closed and ledger.grant.weekend_decision:
+        day = at.date().isoformat()
     base = {'schema': 'trader-recovery-v1', 'at': iso(at), 'session': day}
 
     def outcome(state, **extra):
@@ -25,6 +28,9 @@ def recover(service):
         ledger.grant.check(at)
         if ledger.paused:
             return outcome('PAUSED')
+        if utc_closed and ledger.grant.weekend_decision:
+            ledger.grant.check_weekend(at)
+            return outcome('WEEKEND_CRYPTO_SKIPPED')
         session = calendar_session(day)
         if not session:
             return outcome('SKIPPED_HOLIDAY')

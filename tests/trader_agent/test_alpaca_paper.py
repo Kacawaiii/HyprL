@@ -124,7 +124,8 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
                                       1 - probability if role == 'analyst_gpt' and peer_direction == 'DOWN' else probability}
                    for role in ('analyst_claude', 'analyst_gpt')]
             views.extend(raw)
-            entry, exit_at = label_window(asset, day, horizon, executor.grant.parent.payload['universe']['crypto'], 'close' if variant else 'open')
+            entry, exit_at = label_window(asset, day, horizon, executor.grant.parent.payload['universe']['crypto'],
+                                         'close' if variant and variant != 'weekend_crypto_v1' else 'open')
             definition = {'entry_at': iso(entry), 'exit_at': iso(exit_at), 'horizon': horizon}
             if variant:
                 definition['variant'] = variant

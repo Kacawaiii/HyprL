@@ -95,6 +95,7 @@ class TraderService:
         self.fomc, self.edgar = fomc, edgar
         self.store = ResearchStore(ledger.root / "evidence")
         self.entry_at = "open"
+        self.crypto_only = False
 
     def summary(self, run_id, status, at, **extra):
         payload = {"schema": "trader-run-v1", "run_id": run_id, "status": status, "at": iso(at),
@@ -150,8 +151,17 @@ class TraderService:
                 if not self.data.synthetic and at < instant("2026-10-06T12:00:00Z"):
                     return self.summary(run_id, "NOT_STARTED", at)
                 session = calendar_session(day)
+                self.crypto_only = session is None and self.ledger.grant.weekend_decision is not None
                 if not session:
-                    return self.summary(run_id, "SKIPPED_HOLIDAY", at)
+                    if not self.crypto_only:
+                        return self.summary(run_id, "SKIPPED_HOLIDAY", at)
+                    from . import weekend
+                    weekend.check(self.ledger.grant, at)
+                    if catchup:
+                        raise TraderError('WEEKEND_CRYPTO_RECOVERY_DISABLED')
+                    if at < instant(day + 'T12:00:00Z'):
+                        return self.summary(run_id, 'NOT_STARTED', at)
+                deadline = session.open_at if session else instant(day + 'T13:30:00Z')
                 degraded = {}
                 if catchup:
                     degraded = self.catchup_missing(run_id.removesuffix(':catchup'))
@@ -159,14 +169,21 @@ class TraderService:
                     cutoff = after_hours_cutoff(session) if after_hours else session.close_at - timedelta(minutes=80)
                     if (after_hours and at < session.close_at) or at >= cutoff - (timedelta(minutes=80) if after_hours else timedelta()):
                         raise TraderError("MISSED_DECISION_DEADLINE")
-                elif at >= session.open_at:
+                elif at >= deadline:
                     raise TraderError("MISSED_DECISION_DEADLINE")
-                self.runner.deadline = cutoff if catchup else session.open_at
-                prereg_hash = preregistration()
+                self.runner.deadline = cutoff if catchup else deadline
+                prereg_hash = weekend.preregistration() if self.crypto_only else preregistration()
                 texts, hashes = skills()
                 self.ledger.reserve("catchup_run" if catchup else "run")
-                self.summary(run_id, "RUNNING", at, preregistration_hash=prereg_hash, multiple_testing_variants=VARIANTS)
-                context, context_hash = build_context(self.ledger.grant, self.data, at=at, fomc=self.fomc, edgar=self.edgar)
+                variants = weekend.variants() if self.crypto_only else VARIANTS
+                self.summary(run_id, "RUNNING", at, preregistration_hash=prereg_hash, multiple_testing_variants=variants)
+                context, context_hash = build_context(self.ledger.grant, self.data, at=at, fomc=self.fomc,
+                                                      edgar=self.edgar, crypto_only=self.crypto_only)
+                if self.crypto_only:
+                    context['label_convention'] = {'variant': weekend.VARIANT, 'entry': day + 'T13:30:00Z',
+                        '1d_exit': 'entry + 24 hours', '5d_exit': 'entry + 120 hours',
+                        'execution': 'market immediately after decision; actual entry differs from fixed label anchor'}
+                    context_hash = sha256_canonical(context)
                 if catchup:   # equities only (crypto has no session close); the analysts are told when positions enter and exit
                     crypto_assets = self.ledger.grant.payload["universe"]["crypto"]
                     context = {**context, "universe": [a for a in context["universe"] if a not in crypto_assets],
@@ -224,7 +241,7 @@ class TraderService:
                     portfolios=portfolios(decision["views"]), exclusions=context["exclusions"],
                     reviewed_analyst_portfolios={a:portfolios(decision['views'],analyst=a)
                                                 for a in ('reviewer_claude','reviewer_gpt')},
-                    multiple_testing_variants=VARIANTS,
+                    multiple_testing_variants=variants,
                     budget_counts=self.ledger.counts())
             except TraderError as error:
                 self.ledger.alert(error.code)
@@ -239,7 +256,7 @@ class TraderService:
 
     def before_call(self, session):
         self.ledger.grant.check(self.clock())
-        if self.clock() >= getattr(self.runner, 'deadline', session.open_at) or self.ledger.paused:
+        if self.clock() >= self.runner.deadline or self.ledger.paused:
             raise TraderError("MISSED_DECISION_DEADLINE_OR_PAUSED")
 
     def record(self, decision, context):
@@ -269,7 +286,8 @@ class TraderService:
             snapshot = {'schema':'trader-input-reference-v1', 'context_hash':decision['context_hash'],
                         'context_record_hash':context_record_hash, 'decision_time':context['decision_time'],
                         'asset':view['asset'], 'price':price, 'headlines_hash':sha256_canonical(context['headlines'].get(view['asset'])),
-                        'macro_politics_trade_hash':sha256_canonical({a:context['headlines'][a] for a in ('macro','politics','trade')}),
+                        'macro_politics_trade_hash':sha256_canonical({a:context['headlines'][a] for a in ('macro','politics','trade')
+                                                                    if a in context['headlines']}),
                         'archives_hash':sha256_canonical(context['archives']), 'synthetic':decision['synthetic']}
             features = tuple(sorted({**price['returns'], 'vol_20d': price['vol_20d'],
                                      'last_close': price['recent_closes'][-1]}.items()))
@@ -292,7 +310,8 @@ class TraderService:
                     "label_definition": {"entry_at": iso(entry), "exit_at": iso(exit_at), "horizon": view["horizon"],
                                          "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"],
                                          **({"entry_price": "alpaca_actual_fill", "variant": AFTER_HOURS_VARIANT} if self.entry_at == 'after_hours'
-                                            else {"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close" else {})},
+                                            else {"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close"
+                                            else {'variant': 'weekend_crypto_v1'} if self.crypto_only else {})},
                     "models": decision["models"], "skill_hashes": decision["skill_hashes"], "run_id": decision["run_id"]},
                 risk={"mode": "PAPER_SHADOW_ONLY", "verdict": view["verdict"]},
                 proposed_position={"weight": proposals[view['analyst']][view["horizon"]]["unhedged"].get(view["asset"], 0)
@@ -307,6 +326,8 @@ class TraderService:
             baselines = {"always_up": 1, "momentum20": 1 if dict(features)["20"] > 0 else 0,
                          "random_seeded": int(hashlib.sha256(identity.encode()).hexdigest()[-1], 16) % 2,
                          "spy_relative_zero": .5}
+            if self.crypto_only:
+                baselines.pop('spy_relative_zero')
             evidence = PredictionEvidence(prediction_id=identity, prediction_hash=prediction.identity, recorded_at=recorded,
                 features=features, snapshot=snapshot, baselines=baselines, input_quality={"state": "AVAILABLE"},
                 split="PROSPECTIVE_SYNTHETIC" if decision["synthetic"] else "PROSPECTIVE", provenance={

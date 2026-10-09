@@ -226,11 +226,13 @@ def archived(root, kind, at):
         views.close()
 
 
-def build_context(grant, data, *, at, fomc=None, edgar=None):
+def build_context(grant, data, *, at, fomc=None, edgar=None, crypto_only=False):
     start = at.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=70)
     crypto_assets = grant.payload["universe"]["crypto"]
     prices, sources, headlines, exclusions = {}, [], {}, []
-    for asset in grant.universe + grant.payload["universe"]["benchmarks_not_predicted"]:
+    population = crypto_assets if crypto_only else grant.universe
+    assets = population if crypto_only else population + grant.payload['universe']['benchmarks_not_predicted']
+    for asset in assets:
         _, last = label_window(asset, at.date().isoformat(), "5d", crypto_assets)
         binding = None if data.synthetic else protected(asset, start, last)
         if binding:
@@ -250,10 +252,10 @@ def build_context(grant, data, *, at, fomc=None, edgar=None):
             exclusions.append({"asset": asset, "reason": error.code})
             if error.evidence:
                 exclusions[-1]["evidence_digest"] = error.evidence
-    eligible = [a for a in grant.universe if prices[a]["state"] == "AVAILABLE"]
-    if prices["SPY"]["state"] != "AVAILABLE" or not eligible:
+    eligible = [a for a in population if prices[a]["state"] == "AVAILABLE"]
+    if not eligible or (not crypto_only and prices['SPY']['state'] != 'AVAILABLE'):
         raise TraderError("MISSING_PRICES")
-    for asset in eligible + ["macro", "politics", "trade"]:
+    for asset in eligible + (['macro'] if crypto_only else ['macro', 'politics', 'trade']):
         try:
             query = news_query(asset)
         except TraderError as error:
@@ -273,7 +275,8 @@ def build_context(grant, data, *, at, fomc=None, edgar=None):
     decision_at = max([at] + [instant(s["received_at"]) for s in sources])
     context = {"schema": "trader-context-v1", "session": at.date().isoformat(), "decision_time": iso(decision_at),
                "price_cutoff": iso(at), "universe": eligible, "prices": prices, "headlines": headlines,
-               "archives": {k: archived(root, k, decision_at) for k, root in (("fomc", fomc), ("edgar", edgar))},
+               "archives": {k: archived(root, k, decision_at) for k, root in
+                            ((("fomc", fomc),) if crypto_only else (("fomc", fomc), ("edgar", edgar)))},
                "sources": sources, "exclusions": exclusions, "synthetic": data.synthetic,
                "limitations": ["GDELT seen time is not attested publisher time", "Raw OHLC; corporate actions may distort returns",
                                "Probabilities are uncalibrated analyst judgments", "Archive coverage is stale and source specific"]}

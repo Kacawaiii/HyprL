@@ -25,15 +25,20 @@ def health(ledger):
         runs = [json.loads(r[0]) for r in rows if json.loads(r[0]).get("schema") == "trader-run-v1"]
         today = [r for r in runs if r["at"][:10] == at.date().isoformat() and not r["synthetic"]]
         session = calendar_session(at.date().isoformat())
+        crypto_day = session is None and ledger.grant.weekend_decision is not None
+        if crypto_day:
+            from .weekend import check
+            check(ledger.grant, at)
         started = at >= instant('2026-10-06T12:00:00Z')
         state = "PAUSED" if ledger.paused else "HEALTHY"
-        if not ledger.paused and started and session and at >= session.open_at and not any(r["status"] in {"COMPLETE", "DEGRADED"} for r in today):
+        deadline = session.open_at if session else at.replace(hour=13, minute=30, second=0, microsecond=0)
+        if not ledger.paused and started and (session or crypto_day) and at >= deadline and not any(r["status"] in {"COMPLETE", "DEGRADED"} for r in today):
             state = "MISSING_DAILY_RUN"
         if (not ledger.paused and any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today)
                 and not any(r['status'] in {'COMPLETE', 'DEGRADED'} for r in today)):
             state = "FAILED_DAILY_RUN"
         label_path = ledger.root / 'last-label.json'
-        if not ledger.paused and started and session and at >= at.replace(hour=22, minute=0, second=0, microsecond=0):
+        if not ledger.paused and started and (session or crypto_day) and at >= at.replace(hour=22, minute=0, second=0, microsecond=0):
             if not label_path.is_file() or json.loads(label_path.read_text()).get('at', '')[:10] != at.date().isoformat():
                 state = 'MISSING_LABEL_JOB'
     except (TraderError, FileNotFoundError):
@@ -61,7 +66,7 @@ def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
-                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind'))
+                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
@@ -82,6 +87,14 @@ def main(argv=None):
         runtime = private_root(args.runtime)
         if args.paper_replay_at and (args.action != 'paper-execute' or not args.dry_run):
             parser.error('--paper-replay-at requires paper-execute --dry-run')
+        if args.action == 'paper-register-weekend':
+            if not args.operator_decision or args.dry_run:
+                parser.error('paper-register-weekend requires --operator-decision and forbids --dry-run')
+            from .alpaca_paper import PaperAuthorization, PaperLedger
+            paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+            paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
+            print(json.dumps({'state': 'REGISTERED', 'registration': paper.register_weekend(args.operator_decision)}, indent=2))
+            return 0
         if args.action == 'paper-rebind':
             if not args.operator_decision:
                 parser.error('--operator-decision is required for paper-rebind')
@@ -90,6 +103,9 @@ def main(argv=None):
             rebound = PaperLedger.rebind(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant,
                                         args.operator_decision)
             print(json.dumps({'state': 'REBOUND', 'binding': rebound.events(event='binding')[-1]}, indent=2))
+            return 0
+        if args.action == 'paper-report' and calendar_session(now().date().isoformat()) is None:
+            print(json.dumps({'state': 'SKIPPED_CLOSED_EQUITY_MARKET'}))
             return 0
         executor = paper_executor(args, grant, runtime)
         if args.action == 'paper-report':

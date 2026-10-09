@@ -212,7 +212,8 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             label = labels[row["identity"]]
             value = label["value"]
             r = value["raw_return"] if target == "raw" else value["spy_relative_return"]
-            history_key = (population, horizon, target)
+            # Preserve existing weekday climatology; the new population has its own history.
+            history_key = (population, horizon, target, variant == 'weekend_crypto_v1')
             prior = [v for a, v in historical[history_key] if a < p["decision_at"]]
             climate = statistics.mean(prior) if prior else .5
             sample = {"p": view["p_outperform"], "view": view["view"], "y": int(r > 0), "return": r,
@@ -235,7 +236,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
         values = {v['asset']: label['value'] for v, label in pairs if label}
         result = {"session": day, "horizon": horizon, 'analyst':analyst, "capital_fraction": portfolio['capital_fraction'],
                   "state": "COMPLETE" if len(values) == len(pairs) else "PENDING", "variants": {}}
-        for variant in ('unhedged', 'spy_hedged'):
+        for variant in (('unhedged',) if day.endswith(':weekend_crypto_v1') else ('unhedged', 'spy_hedged')):
             w = portfolio[variant]
             if result['state'] != 'COMPLETE':
                 pnl = None

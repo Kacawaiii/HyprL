@@ -10,8 +10,8 @@ from .config import Authorization, TraderError, now, private_root
 from .service import preregistration, skills
 
 
-CALENDARS = {"run": "Mon..Fri *-*-* 12:00:00 UTC", "label": "Mon..Fri *-*-* 21:30:00 UTC",
-             "recover": "Mon..Fri *-*-* 08..19:00/10:00 America/New_York",
+CALENDARS = {"run": "*-*-* 12:00:00 UTC", "label": "*-*-* 21:30:00 UTC",
+             "recover": "*-*-* 08..19:00/10:00 America/New_York",
              "health": "*-*-* *:05:00 UTC"}
 
 

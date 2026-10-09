@@ -234,6 +234,32 @@ class PaperLedger:
                 'effective_grant_hash': parent.identity, 'crypto_amendment_hash': parent.amendment_identity,
                 'preregistration_hash': preregistration(), 'operator_decision_hash': OPERATOR_DECISION_HASH}
 
+    def register_weekend(self, decision_path):
+        """Explicit additive registration; no grant/spec migration or broker request."""
+        from .config import WEEKEND_DECISION_HASH
+        from .weekend import registration_target
+        decision = strict_json(Path(decision_path).read_text())
+        if sha256_canonical(decision) != WEEKEND_DECISION_HASH:
+            raise TraderError('WEEKEND_OPERATOR_DECISION_HASH_MISMATCH')
+        self.grant.check(self.clock())
+        self.grant.parent.check_weekend(self.clock())
+        with self.owner():
+            target = registration_target(self.grant)
+            previous = self.events(event='weekend_registration')
+            if previous:
+                if any(previous[-1].get(k) != v for k, v in target.items()):
+                    raise TraderError('WEEKEND_PAPER_REGISTRATION_MISMATCH')
+                return previous[-1]
+            return self.append('weekend_registration', None, **target,
+                               reason='OPERATOR_APPROVED_SEPARATE_WEEKEND_POPULATION')
+
+    def check_weekend_registration(self):
+        from .weekend import registration_target
+        target = registration_target(self.grant)
+        registrations = self.events(event='weekend_registration')
+        if not registrations or any(registrations[-1].get(k) != v for k, v in target.items()):
+            raise TraderError('WEEKEND_PAPER_REGISTRATION_REQUIRED')
+
     @staticmethod
     def validate_bindings(bindings):
         for previous, current in zip(bindings, bindings[1:]):
@@ -552,11 +578,21 @@ class PaperExecutor:
         for row in rows(self.research, 'prediction'):
             p = row['payload']
             view, definition = p['signal']['view'], p['signal']['label_definition']
-            from .service import preregistration
-            if not self.replay_prior_registration and (p['artifact_hash'] != preregistration() or
-                    instant(p['decision_at']) < instant(execution_spec()['effective_from'])):
-                continue
             if p['synthetic'] or p['signal']['run_id'] != run['run_id'] or view['analyst'] not in ({'analyst_claude', 'analyst_gpt'} if name == 'ia_actions' else {'consensus'}):
+                continue
+            from .service import preregistration
+            from . import weekend
+            is_weekend = definition.get('variant') == weekend.VARIANT
+            expected_registration = weekend.preregistration() if is_weekend else preregistration()
+            if is_weekend:
+                if name != 'ia_crypto' or calendar_session(p['signal']['session']) is not None:
+                    continue
+                weekend.check(self.grant.parent, instant(p['decision_at']))
+                self.ledger.check_weekend_registration()
+            elif calendar_session(p['signal']['session']) is None:
+                continue
+            if not self.replay_prior_registration and (p['artifact_hash'] != expected_registration or
+                    instant(p['decision_at']) < instant(execution_spec()['effective_from'])):
                 continue
             selected = views.get((p['product'], definition['horizon']))
             if selected is None or selected['analyst'] != view['analyst']:
@@ -566,15 +602,17 @@ class PaperExecutor:
             if (view['view'] not in {'UP', 'DOWN'} or view['verdict'] not in ({'KEEP'} if name == 'ia_actions' else {'KEEP', 'DOWNGRADE'})
                     or p['risk'].get('tainted') or definition.get('variant') == 'catchup_close_entry_v1'):
                 continue
-            if definition.get('variant') not in {None, 'alpaca_after_hours_v1'}:
+            if definition.get('variant') not in {None, 'alpaca_after_hours_v1', weekend.VARIANT}:
                 continue
             if definition['horizon'] not in {'1d', '5d'}:
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             session_day = p['signal'].get('session', instant(p['decision_at']).astimezone(NY).date().isoformat())
             expected_entry, expected_exit = label_window(p['product'], session_day, definition['horizon'],
-                self.grant.parent.payload['universe']['crypto'], 'close' if definition.get('variant') else 'open')
+                self.grant.parent.payload['universe']['crypto'], 'close' if definition.get('variant') == 'alpaca_after_hours_v1' else 'open')
             if (instant(definition['exit_at']) != expected_exit or
-                    (not definition.get('variant') and instant(definition['entry_at']) != expected_entry)):
+                    ((not definition.get('variant') or is_weekend) and instant(definition['entry_at']) != expected_entry)):
+                raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
+            if is_weekend and (instant(p['decision_at']) >= expected_entry or instant(row['recorded_at']) >= expected_entry):
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             if p['decision_at'] > iso(self.clock()) or row['recorded_at'] > iso(self.clock()):
                 continue
@@ -888,6 +926,10 @@ class PaperExecutor:
                 return {**result, 'state': 'NOT_STARTED', 'first_execution': iso(FIRST_EXECUTION)}
             if action != 'status' and any(p.exists() for p in self.pause_paths):
                 return {**result, 'state': 'PAUSED'}
+            if action in {'execute', 'exit'} and calendar_session(self.clock().date().isoformat()) is None:
+                accounts = [a for a in (accounts or ('ia_actions', 'ia_crypto')) if a == 'ia_crypto']
+                if not accounts:
+                    return {**result, 'state': 'SKIPPED_CLOSED_EQUITY_MARKET'}
             for name in accounts or ('ia_actions', 'ia_crypto'):
                 if name not in {'ia_actions', 'ia_crypto'}:
                     raise TraderError('PAPER_MOMENTUM_READ_ONLY')
