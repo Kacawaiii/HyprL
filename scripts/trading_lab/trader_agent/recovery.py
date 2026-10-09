@@ -16,7 +16,7 @@ def recover(service):
     base = {'schema': 'trader-recovery-v1', 'at': iso(at), 'session': day}
 
     def outcome(state, **extra):
-        ledger.alert('RECOVERY_' + state)
+        ledger.alert_state('recovery', 'RECOVERY_' + state)
         return {**base, 'state': state, **extra}
 
     previous_day = ledger.budget_day
@@ -51,7 +51,7 @@ def recover(service):
         # Service acquires the global owner and rechecks eligibility, deadlines,
         # pause and all budgets before reserving or dispatching anything.
         result = service.run(catchup=True, after_hours=mode == 'after_hours')
-        ledger.alert('RECOVERY_' + result['status'])
+        ledger.alert_state('recovery', 'RECOVERY_' + result['status'], force=True)
         return {**base, **result, 'mode': mode}
     except TraderError as error:
         return outcome(error.code)

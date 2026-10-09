@@ -38,8 +38,7 @@ def health(ledger):
                 state = 'MISSING_LABEL_JOB'
     except (TraderError, FileNotFoundError):
         state = "EXPIRED_OR_UNAVAILABLE"
-    if state not in {"HEALTHY", "PAUSED"}:
-        ledger.alert(state)
+    ledger.alert_state('health', state, initial=state not in {'HEALTHY', 'PAUSED'})
     payload = {"schema": "trader-health-v1", "at": iso(at), "state": state, "budget_counts": ledger.counts()}
     temp = ledger.root / "health.tmp"
     temp.write_text(json.dumps(payload))
@@ -61,7 +60,7 @@ def paper_executor(args, grant, runtime):
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume",
+    parser.add_argument("action", choices=("run", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
                                           'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
@@ -111,7 +110,12 @@ def main(argv=None):
     # One production budget bank/owner across runtime paths: changing --runtime never refunds grants.
     bank = None if args.dry_run else Path.home() / '.local/share/hyprl/trader-agent-budget'
     ledger = Ledger(runtime, grant, clock=clock, budget_root=bank)
-    if args.action in {"pause", "resume"}:
+    if args.action == 'gpt-preflight':
+        if args.dry_run:
+            parser.error('gpt-preflight requires the real GPT/web boundary; use offline tests for a synthetic CLI')
+        from .preflight import preflight
+        result = preflight(ledger, ModelRunner(ledger))
+    elif args.action in {"pause", "resume"}:
         marker = ledger.budget_root / "PAUSED"
         if args.action == "pause":
             marker.touch(mode=0o600)

@@ -1,0 +1,11 @@
+[Unit]
+Description=HyprL GPT pre-flight before the daily analyst run
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 10:30:00 UTC
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+
+[Install]
+WantedBy=timers.target

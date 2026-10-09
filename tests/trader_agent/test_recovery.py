@@ -19,7 +19,7 @@ def alert_code(service):
     return json.loads((service.ledger.root / 'alert.json').read_text())['code']
 
 
-def test_failed_primary_recovers_once_and_alerts_every_outcome(service, clock):
+def test_failed_primary_recovers_once_and_alerts_outcomes_and_state_changes(service, clock):
     fail_primary(service)
     clock.at = instant('2026-10-06T14:00:00Z')
     result = recover(service)
@@ -31,6 +31,47 @@ def test_failed_primary_recovers_once_and_alerts_every_outcome(service, clock):
     assert recover(service)['state'] == 'ALREADY_ATTEMPTED'
     assert alert_code(service) == 'RECOVERY_ALREADY_ATTEMPTED'
     assert service.ledger.counts() == counts
+
+
+def test_idle_recovery_alerts_only_on_durable_state_changes(service, clock):
+    from scripts.trading_lab.trader_agent.ledger import Ledger
+    from scripts.trading_lab.trader_agent.service import TraderService
+    assert service.run()['status'] == 'COMPLETE'
+    assert recover(service)['state'] == 'NO_RECOVERY_NEEDED'
+    path = service.ledger.root / 'alerts.jsonl'
+    before = path.read_bytes()
+    # New process/ledger object: polling suppression must survive restarts.
+    fresh = Ledger(service.ledger.root, service.ledger.grant, clock=clock)
+    restarted = TraderService(fresh, service.data, service.runner, clock=clock)
+    for _ in range(3):
+        clock.at += timedelta(minutes=10)
+        assert recover(restarted)['state'] == 'NO_RECOVERY_NEEDED'
+    assert path.read_bytes() == before
+    (fresh.root / 'PAUSED').touch()
+    assert recover(restarted)['state'] == 'PAUSED'
+    paused = path.read_bytes()
+    assert paused != before
+    assert recover(restarted)['state'] == 'PAUSED' and path.read_bytes() == paused
+    (fresh.root / 'PAUSED').unlink()
+    assert recover(restarted)['state'] == 'NO_RECOVERY_NEEDED'
+    assert path.read_bytes() != paused
+
+
+def test_periodic_health_alerts_failure_and_recovery_once(service, clock):
+    from scripts.trading_lab.trader_agent.cli import health
+    service.data.synthetic = False
+    clock.at = instant('2026-10-09T14:00:00Z')
+    fail_primary(service)
+    assert health(service.ledger)['state'] == 'FAILED_DAILY_RUN'
+    path = service.ledger.root / 'alerts.jsonl'
+    failed = path.read_bytes()
+    assert health(service.ledger)['state'] == 'FAILED_DAILY_RUN'
+    assert path.read_bytes() == failed
+    assert recover(service)['status'] == 'COMPLETE'
+    assert health(service.ledger)['state'] == 'HEALTHY'
+    assert alert_code(service) == 'HEALTHY'
+    recovered = path.read_bytes()
+    assert health(service.ledger)['state'] == 'HEALTHY' and path.read_bytes() == recovered
 
 
 def test_late_failure_waits_until_close_then_uses_after_hours(service, clock):

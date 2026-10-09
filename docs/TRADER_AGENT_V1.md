@@ -76,11 +76,12 @@ to the operator's scope and the prompt's prohibition on official-source fetching
 
 Installed Codex 0.160.0 requires global `--search` **before** `exec`:
 `codex --search exec --sandbox read-only --ephemeral --output-schema SCHEMA --json`.
-It uses an empty cwd, ignores user config/rules, disables stable `shell_tool`, code-mode host,
+It uses an empty cwd, ignores user config/rules, disables stable `shell_tool`, enables the web tool's code-mode host, and disables
 apps/plugins/hooks, agents, browser/computer/image tools and skill discovery. The installed feature
 listing verifies `shell_tool=false`; `unified_exec` is enforced by this CLI version, so disabling it
 is not claimed. Every command-execution/file-change/MCP event still taints the whole run, rejects
-its views and raises an alert. No real model invocation is used as a deployment test.
+its views and raises an alert. Deployment readiness uses offline synthetic inference.
+The separate [GPT pre-flight](TRADER_GPT_PREFLIGHT.md) checks the real CLI, strict schema and web transport with a non-market prompt and no views.
 
 The configured timeout kills and reaps the whole subprocess group. Retries consume role and aggregate
 daily budgets. Quota/limit responses stop the day as SKIPPED_QUOTA and raise an alert. Recording after

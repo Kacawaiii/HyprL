@@ -1,0 +1,17 @@
+[Unit]
+Description=HyprL GPT schema and web pre-flight (synthetic, no views)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/work/codex-trader-agent-core
+ExecStart=/bin/bash -lc 'exec "%h/venv-gate/bin/python" -m scripts.trading_lab.trader_agent.cli gpt-preflight --authorization "%h/authorizations/trader-agent-v1.json" --runtime "%h/trader-agent-v1"'
+UMask=0077
+Nice=10
+MemoryMax=512M
+CPUQuota=50%
+NoNewPrivileges=yes
+TimeoutStartSec=3min
+TimeoutStopSec=20s
+KillMode=control-group
+StandardOutput=append:%h/trader-agent-v1/gpt-preflight.log
+StandardError=append:%h/trader-agent-v1/gpt-preflight.error.log

@@ -24,6 +24,8 @@ class Ledger:
                   BEGIN SELECT RAISE(ABORT,'dispatch immutable'); END;
                 CREATE TRIGGER IF NOT EXISTS dispatch_no_delete BEFORE DELETE ON dispatch
                   BEGIN SELECT RAISE(ABORT,'dispatch immutable'); END;
+                CREATE TABLE IF NOT EXISTS alert_state (
+                  channel TEXT PRIMARY KEY, code TEXT NOT NULL, at TEXT NOT NULL);
             """)
 
     @contextmanager
@@ -56,6 +58,8 @@ class Ledger:
             maximum = p["budgets"]["max_runs_per_day"]
         elif kind == "catchup_run":
             maximum = 1   # one operator-approved recovery per day; the service requires a FAILED daily run
+        elif kind == 'gpt_preflight':
+            maximum = 1   # task-authorized synthetic health probe; separate from analyst/reviewer budgets
         elif kind in p["external_models"]:
             m = p["external_models"][kind]
             maximum = m["calls_per_day"] + m["retries_per_day"]
@@ -104,3 +108,18 @@ class Ledger:
         temp = self.root / "alert.tmp"
         temp.write_text(json.dumps(payload))
         temp.replace(self.root / "alert.json")
+
+    def alert_state(self, channel, code, *, initial=True, force=False, role=None):
+        """Persist polling transitions across processes; actual outcomes can force an alert."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous = db.execute('SELECT code FROM alert_state WHERE channel=?', (channel,)).fetchone()
+            if previous and previous[0] == code and not force:
+                return False
+            db.execute('INSERT INTO alert_state(channel,code,at) VALUES(?,?,?) '
+                       'ON CONFLICT(channel) DO UPDATE SET code=excluded.code,at=excluded.at',
+                       (channel, code, iso(self.clock())))
+            if previous or initial or force:
+                self.alert(code, role=role)
+                return True
+        return False
