@@ -211,7 +211,13 @@ class FomcService:
         if self.settle_s > 0:
             deadline = time.monotonic() + self.settle_s
             for thread in list(self.workers):
-                while thread.is_alive() and thread.ident not in self._parked and time.monotonic() < deadline:
+                while thread.is_alive() and time.monotonic() < deadline:
+                    parked = self._parked.get(thread.ident)
+                    if parked is not None and not parked.is_set():
+                        break
+                    # A set event has released the worker even if it has not
+                    # yet cleared its marker. Let it resume before advancing
+                    # a simulated clock to another grant or deadline.
                     thread.join(0.002)
         with self._lock:
             self.workers = [t for t in self.workers if t.is_alive()]
