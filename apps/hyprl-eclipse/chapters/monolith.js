@@ -22,9 +22,9 @@ export function createMonolithChapter({ isMobile }) {
 
   // Sky (screen space): dark zenith, bright haze band at the horizon, star-shaped low sun, giant ring arc.
   const skyMaterial = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uSun: { value: state.sun }, uTint: { value: sun.clone() }, uArcC: { value: state.arcC }, uArcR: { value: 1 }, uArcEnd: { value: 0 }, uShift: { value: new THREE.Vector2() }, uHorizon: { value: .15 } },
+    uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uSun: { value: state.sun }, uTint: { value: sun.clone() }, uArcC: { value: state.arcC }, uArcR: { value: 1 }, uArcEnd: { value: 0 }, uArcFade: { value: 1 }, uShift: { value: new THREE.Vector2() }, uHorizon: { value: .15 } },
     vertexShader: VERT_SCREEN, depthWrite: false, depthTest: false,
-    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect,uArcR,uArcEnd,uHorizon;uniform vec2 uSun,uArcC,uShift;uniform vec3 uTint;
+    fragmentShader: NOISE + /* glsl */`varying vec2 vUv;uniform float uTime,uAspect,uArcR,uArcEnd,uHorizon,uArcFade;uniform vec2 uSun,uArcC,uShift;uniform vec3 uTint;
       void main(){vec2 q=vUv+uShift;vec2 asp=vec2(uAspect,1.);float y=q.y,above=max(y-uHorizon,0.);
         vec3 top=vec3(.0055,.006,.0075),mid=vec3(.016,.017,.021),hor=vec3(.1,.106,.122);
         vec3 col=mix(hor,mid,smoothstep(0.,.3,above));col=mix(col,top,smoothstep(.22,.85,above));
@@ -40,7 +40,7 @@ export function createMonolithChapter({ isMobile }) {
         vec2 pa=(q-.5)*asp;float s=length(pa-uArcC)-uArcR;
         float ring=exp(-(s*s)/(1.1e-5))*.85+(s<0.?exp(s/.007)*.14:exp(-s*80.)*.04);
         ring*=smoothstep(uHorizon+.004,uHorizon+.09,y)*smoothstep(uArcEnd+.035,uArcEnd-.01,pa.x)*(.72+.28*smoothstep(uHorizon,1.,y));
-        col+=vec3(.8,.84,.9)*ring;
+        col+=vec3(.8,.84,.9)*ring*uArcFade;
         float h=fbm(q*vec2(2.2,6.)+vec2(uTime*.006,0.));col+=vec3(.035,.037,.042)*h*h*smoothstep(.3,0.,above);
         gl_FragColor=vec4(col,1.);}`
   });
@@ -52,9 +52,13 @@ export function createMonolithChapter({ isMobile }) {
     vec3 haze(vec3 v){vec3 c=mix(vec3(.028,.031,.038),vec3(.1,.106,.122),smoothstep(.14,-.01,v.y));
       vec2 a=normalize(v.xz+1e-5),b=normalize(uSunDir.xz);return c+uTint*pow(max(dot(a,b),0.),5.)*.16*smoothstep(.22,0.,v.y);}`;
   const landMaterial = (snowAmount, albedoLow, fogK) => new THREE.ShaderMaterial({
-    uniforms: { uSunDir: { value: sunDir }, uLight: { value: landLight }, uTint: { value: sun.clone() }, uTime: { value: 0 }, uSnow: { value: snowAmount }, uLow: { value: albedoLow }, uFogK: { value: fogK } },
-    vertexShader: /* glsl */`varying vec3 vW;varying vec3 vN;void main(){vec4 w=modelMatrix*vec4(position,1.);vW=w.xyz;vN=normalize(mat3(modelMatrix)*normal);gl_Position=projectionMatrix*viewMatrix*w;}`,
-    fragmentShader: NOISE + BUMP + HAZE + /* glsl */`varying vec3 vW;varying vec3 vN;uniform vec3 uLight;uniform float uSnow,uLow,uFogK,uTime;
+    uniforms: { uSunDir: { value: sunDir }, uLight: { value: landLight }, uTint: { value: sun.clone() }, uTime: { value: 0 }, uSnow: { value: snowAmount }, uLow: { value: albedoLow }, uFogK: { value: fogK }, uBend: { value: 0 }, uAir: { value: 1 }, uTerrainFade: { value: 1 }, uRaised: { value: albedoLow > .02 ? 1 : 0 }, uBounds: { value: new THREE.Vector4() } },
+    vertexShader: /* glsl */`uniform float uBend;varying float vHeight;varying vec3 vW;varying vec3 vN;
+      void main(){vec4 w=modelMatrix*vec4(position,1.);vHeight=w.y;vec2 ground=vec2(w.x,w.z+62.);
+        float drop=6000.-sqrt(max(1.,6000.*6000.-dot(ground,ground)));
+        w.y-=drop*uBend;vW=w.xyz;vN=normalize(mat3(modelMatrix)*normal+vec3(ground.x,0.,ground.y)*uBend/6000.);
+        gl_Position=projectionMatrix*viewMatrix*w;}`,
+    fragmentShader: NOISE + BUMP + HAZE + /* glsl */`varying float vHeight;varying vec3 vW;varying vec3 vN;uniform vec3 uLight;uniform float uSnow,uLow,uFogK,uTime,uAir,uTerrainFade,uRaised;uniform vec4 uBounds;
       void main(){vec3 g=normalize(vN);float px=length(fwidth(vW));
         float rel=fbm3(vW.xz*.07)*.28+fbm3(vW.xz*.19+3.7)*.045*smoothstep(2.5,.6,px);
         vec2 erosionUv=vec2(vW.x*.13+vW.y*.024,vW.y*.021+vW.z*.006);
@@ -67,12 +71,16 @@ export function createMonolithChapter({ isMobile }) {
         vec3 albedo=mix(vec3(uLow),vec3(.43,.45,.49),snow);
         vec3 col=albedo*(lit*1.15*uTint+.05)+vec3(.015)*max(-ndl,0.)*snow;
         vec3 v=vW-cameraPosition;float dist=length(v);vec3 hz=haze(v/dist);
-        col=mix(col,hz,1.-exp(-dist*uFogK));
+        col=mix(col,hz,1.-exp(-dist*uFogK*uAir));
         // Height-dependent extinction: the deep faces dissolve into drifting valley volumes.
         float bank=fbm3(vW.xz*.014+vec2(uTime*.018,0.));
         float valley=exp(-max(vW.y-6.,0.)*.052)*smoothstep(65.,230.,dist);
-        col=mix(col,hz*1.12,clamp(valley*(.64+bank*.36),0.,.94));
-        gl_FragColor=vec4(col,1.);}`
+        col=mix(col,hz*1.12,clamp(valley*(.64+bank*.36)*uAir,0.,.94));
+        float edge=min(min(vW.x-uBounds.x,uBounds.y-vW.x),min(vW.z-uBounds.z,uBounds.w-vW.z));
+        float alpha=uTerrainFade*mix(1.,smoothstep(0.,35.,edge),1.-uAir);
+        alpha*=mix(1.,mix(1.,smoothstep(2.,12.,vHeight),uRaised),1.-uAir);
+        if(alpha<.002)discard;gl_FragColor=vec4(col,alpha);}`,
+    transparent: true
   });
   const ss = THREE.MathUtils.smoothstep;
   const ridgedN = (x, z, oct = 5) => { let a = .5, f = 1, s = 0; for (let i = 0; i < oct; i++) { const n = 1 - Math.abs(noise2(x * f + 11.3, z * f - 4.1) * 2 - 1); s += n * n * a; a *= .5; f *= 2.03; } return s; };
@@ -81,6 +89,7 @@ export function createMonolithChapter({ isMobile }) {
     const p = g.attributes.position;
     for (let i = 0; i < p.count; i++) p.setY(i, height(p.getX(i), p.getZ(i)));
     g.computeVertexNormals();
+    material.uniforms.uBounds.value.set(x0, x1, z0, z1);
     const mesh = new THREE.Mesh(g, material); mesh.name = name; scene.add(mesh); return mesh;
   }
   const res = isMobile() ? .5 : 1;
@@ -189,18 +198,11 @@ export function createMonolithChapter({ isMobile }) {
     const cx = .1 * state.aspect + .02, cy = ((cx - A.x) ** 2 - (cx - B.x) ** 2 + A.y ** 2 - B.y ** 2) / (2 * (A.y - B.y));
     state.arcC.set(cx, cy); state.arcR = Math.hypot(B.x - cx, B.y - cy); skyMaterial.uniforms.uArcR.value = state.arcR; skyMaterial.uniforms.uArcEnd.value = B.x;
   }
-  function update({ time, pointer, motion, local, pr, transition }) {
+  function update({ time, pointer, motion, local, pr }) {
     const dolly = local ?? .5, z = 16 - dolly * 7;
     camera.position.set(pointer.x * .5 * motion, 1.7 - pointer.y * .15 * motion, z);
-    let pitch = PITCH;
-    if (transition?.role === 'out') {
-      const t = transition.progress, travel = Math.min(t / .56, 1);
-      const lift = travel * travel * (3 - 2 * travel);
-      camera.position.z += lift * 650;
-      camera.position.y += lift * 180;
-      const tilt = Math.min(t / .52, 1);
-      pitch -= (1 - (1 - tilt) ** 1.6) * THREE.MathUtils.degToRad(18);
-    }
+    const pitch = PITCH;
+    camera.fov = state.aspect < 1 ? 58 : 34; camera.far = 4000; camera.updateProjectionMatrix();
     camera.lookAt(camera.position.x * .2, camera.position.y + Math.tan(pitch) * 100, camera.position.z - 100);
     camera.updateMatrixWorld();
     // The sun slides a little along the horizon with the pointer; the land is lit from where it is drawn.
@@ -225,5 +227,5 @@ export function createMonolithChapter({ isMobile }) {
     for (const land of lands) g.add(portable(land, { color: land === plain ? 0x1a1b1e : 0x8a8c90, roughness: 1 }));
     return g;
   }
-  return { name: 'monolith', scene, camera, labels, labelCamera, resize, update, setPalette, exportGroup, post: { ca: .0008, bloom: .45, exposure: 1, sat: .22 } };
+  return { name: 'monolith', scene, camera, surface: { lands, monolith, sky, rays, mists, spindrift, dustPts, sunDir, landLight }, labels, labelCamera, resize, update, setPalette, exportGroup, post: { ca: .0008, bloom: .45, exposure: 1, sat: .22 } };
 }

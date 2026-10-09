@@ -16,7 +16,7 @@ export function createSingularityChapter({ isMobile }) {
   const camera = new THREE.PerspectiveCamera(40, 1, .1, 400); camera.position.set(0, 0, 10);
   const gold = new THREE.Color('#ffc45a'), hot = new THREE.Color('#fff1d6');
   const state = { aspect: 1, center: new THREE.Vector2(.64, .47), horizon: .47, ship: new THREE.Vector3(), shipTarget: new THREE.Vector3(), roll: 0 };
-  const shipUv = new THREE.Vector2(.7, .5), arrivalOrigin = new THREE.Vector2(.5, .5);
+  const shipUv = new THREE.Vector2(.7, .5);
 
   const backdrop = new THREE.ShaderMaterial({
     uniforms: { uTime: { value: 0 }, uAspect: { value: 1 }, uC: { value: state.center }, uH: { value: .47 }, uRs: { value: .4 }, uGold: { value: gold }, uHot: { value: hot }, uFlow: { value: 0 }, uShip: { value: shipUv }, uMotion: { value: 1 }, uPixelSize: { value: 1 / 900 }, uArrival: { value: 1 }, uArrivalCenter: { value: new THREE.Vector2(.5,.5) } },
@@ -72,7 +72,7 @@ export function createSingularityChapter({ isMobile }) {
       vec3 stars(vec2 p){float r=length(p);if(r<uRs*1.01)return vec3(0.);vec2 b=p*(1.-uRs*uRs*1.3/(r*r));
         vec2 g=floor(b*300.),f=fract(b*300.)-.5;float h=hash12(g);float tw=.6+.4*sin(uTime*2.+h*60.);
         float s=step(.991,h)*smoothstep(.45,.05,length(f))*tw;return vec3(.95,.88,.75)*s*(.4+1.6*step(.9993,h));}
-      void main(){vec2 uv=vUv;if(uArrival<1.)uv=uC+(vUv-uArrivalCenter)/uArrival;vec2 asp=vec2(uAspect,1.);vec2 p=(uv-uC)*asp;float y=uv.y-uH;float t=uTime*uMotion;
+      void main(){vec2 uv=vUv;uv=uC+(vUv-uArrivalCenter)/uArrival;vec2 asp=vec2(uAspect,1.);vec2 p=(uv-uC)*asp;float y=uv.y-uH;float t=uTime*uMotion;
         vec3 col=vec3(.0025,.002,.0016);
         float r=length(p),a=atan(p.y,p.x);
         float leftX=smoothstep(.15,-.75,p.x);
@@ -206,17 +206,18 @@ export function createSingularityChapter({ isMobile }) {
     // Camera drift: a slow float on top of the pointer.
     const driftX = Math.sin(time * .13) * .006 * motion, driftY = Math.sin(time * .17 + 1) * .004 * motion;
     state.center.set((mobile ? 1.27 : .64) - pointer.x * .01 * motion + driftX, .47 + pointer.y * .008 * motion + driftY);
-    const arrive = transition?.role === 'in' ? smooth(.54, 1, transition.progress) : 1;
-    const scale = Math.exp(Math.log(.025) * (1 - arrive));
+    const arrive = transition?.role === 'in' ? smooth(.50, 1, transition.progress) : 1;
+    // Reveal the established composition at the flash; the camera only settles farther away.
+    const scale = 1 + .08 * (1 - arrive);
     backdrop.uniforms.uArrival.value = scale;
-    backdrop.uniforms.uArrivalCenter.value.lerpVectors(arrivalOrigin,state.center,smooth(.08, 1, scale));
+    backdrop.uniforms.uArrivalCenter.value.copy(state.center);
     camera.position.set(pointer.x * .25 * motion + Math.sin(time * .13) * .08 * motion, -pointer.y * .15 * motion + Math.sin(time * .17 + 1) * .05 * motion, 10); camera.position.y += .8; camera.lookAt(camera.position.x * .5, .8, 0); camera.updateMatrixWorld();
     if (transition?.role === 'in') {
       camera.position.z = 10 / scale;
       camera.lookAt(camera.position.x * .5, .8, 0); camera.updateMatrixWorld();
     }
     const horizon = transition?.role === 'in' ? backdrop.uniforms.uArrivalCenter.value.y + scale * (state.horizon - state.center.y) : state.horizon;
-    sparkMaterial.opacity = smooth(.35, 1, scale);
+    sparkMaterial.opacity = transition?.role === 'in' ? arrive : 1;
     sparkLines.visible = sparkMaterial.opacity > 0;
     for (let i = 0; i < sparkN; i++) {
       const s = sparks[i]; s.z += s.v * (dt || 0) * motion; if (s.z > 8) s.z -= 68;

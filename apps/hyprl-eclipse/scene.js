@@ -7,6 +7,7 @@ import { createPlanetChapter } from './chapters/planet.js';
 import { createSingularityChapter } from './chapters/singularity.js';
 import { createPrismChapter } from './chapters/prism.js';
 import { createShatter } from './lib/shatter.js';
+import { createSurfacePullback } from './lib/pullback.js';
 
 export const CHAPTERS = ['monolith', 'planet', 'singularity', 'prism'];
 // How the frame passes from one chapter to the next (scrolling back plays it in reverse).
@@ -46,18 +47,16 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
 
   const ctx = { isMobile };
   const chapters = [createMonolithChapter(ctx), createPlanetChapter(ctx), createSingularityChapter(ctx), createPrismChapter(ctx)];
+  const pullback = createSurfacePullback(chapters[0], chapters[1]);
   const byName = Object.fromEntries(chapters.map((c, i) => [c.name, i]));
   const shatter = createShatter({ isMobile });
 
-  // Camera travel belongs to each chapter. These passes only blend their full frames through haze,
-  // add radial star streaks / a flash, and retain the existing shatter's incoming zoom.
+  // The surface pullback is one world. Warp blends at the flash; shatter retains its incoming zoom.
   const TRANSITION = /* glsl */`uniform float uMix,uTime,uAspect;uniform vec3 uTravelTint;uniform vec2 uTravelOrigin;uniform int uKind;
     float tHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-    float tNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
-      return mix(mix(tHash(i),tHash(i+vec2(1,0)),f.x),mix(tHash(i+vec2(0,1)),tHash(i+vec2(1,1)),f.x),f.y);}
     vec2 zoomB(vec2 uv){float k=1.-uMix;return uKind==2?(uv-.5)/(1.+.12*k*k)+.5:uv;}
     float blendWeight(){if(uKind<0)return uMix;if(uKind==2)return 1.;
-      return uKind==0?smoothstep(.40,.64,uMix):smoothstep(.48,.65,uMix);}
+      return uKind==0?0.:smoothstep(.48,.60,uMix);}
     float streak(vec2 p,float stretch){float r=length(p),a=atan(p.y,p.x)*56.;float lane=floor(a);
       float seed=tHash(vec2(lane,13.));float jitter=.15+.7*tHash(vec2(lane,7.));
       float d=abs(fract(a)-jitter)*r/56.;
@@ -65,9 +64,6 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
       float tail=smoothstep(1.-stretch,1.-stretch*.18,phase)*(1.-smoothstep(.97,1.,phase));
       return exp(-pow(d/.00085,2.))*tail*step(.79,seed)*smoothstep(.04,.15,r);}
     vec3 travelLight(vec2 uv){vec2 p=(uv-.5)*vec2(uAspect,1.);
-      if(uKind==0){float cover=smoothstep(.16,.43,uMix)*(1.-smoothstep(.53,.78,uMix));
-        float cloud=tNoise(p*2.7+vec2(0.,uMix*1.7))*.7+tNoise(p*5.1-vec2(uMix,.0))*.3;
-        return mix(vec3(.10,.13,.17),vec3(.38,.43,.50),smoothstep(.12,.86,cloud))*cover*.95;}
       if(uKind==1){float speed=smoothstep(.10,.43,uMix)*(1.-smoothstep(.58,.96,uMix));
         float stretch=.08+.78*speed;
         vec2 stream=(uv-uTravelOrigin)*vec2(uAspect,1.);
@@ -76,7 +72,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
         float point=exp(-dot(p,p)*4000.)*smoothstep(.32,.48,uMix)*(1.-smoothstep(.54,.62,uMix));
         return lines*mix(vec3(.65,.78,1.),uTravelTint,.25)*speed*.85+vec3(1.,.85,.66)*(flash*.36+point*3.);}
       return vec3(0.);}
-    float hazeTransmission(){return uKind==0?1.-smoothstep(.16,.43,uMix)*(1.-smoothstep(.53,.78,uMix)):1.;}`;
+    `;
 
   // ── Post-processing chain (all hand-written, three core only) ──
   const rtOpts = { type: THREE.HalfFloatType, depthBuffer: true, samples: isMobile() ? 0 : 2 };
@@ -91,7 +87,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     fragmentShader: 'varying vec2 vUv;uniform sampler2D tIn;void main(){gl_FragColor=texture2D(tIn,vUv);}', depthTest: false, depthWrite: false });
   const brightMat = new THREE.ShaderMaterial({ uniforms: { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uKind: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 1 }, uTravelTint: { value: new THREE.Color() }, uTravelOrigin: { value: new THREE.Vector2(.5,.5) }, uThreshold: { value: .35 }, uTexel: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
     fragmentShader: /* glsl */`varying vec2 vUv;uniform sampler2D tA,tB;uniform vec2 uTexel;uniform float uThreshold;${TRANSITION}
-      vec3 s(vec2 uv){if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,uv).rgb,texture2D(tB,zoomB(uv)).rgb,blendWeight())*hazeTransmission()+(uKind==0?vec3(0.):travelLight(uv));}
+      vec3 s(vec2 uv){if(uMix<.001)return texture2D(tA,uv).rgb;return mix(texture2D(tA,uv).rgb,texture2D(tB,zoomB(uv)).rgb,blendWeight())+(uKind==0?vec3(0.):travelLight(uv));}
       void main(){vec3 c=(s(vUv+uTexel*vec2(-1,-1))+s(vUv+uTexel*vec2(1,-1))+s(vUv+uTexel*vec2(-1,1))+s(vUv+uTexel*vec2(1,1)))*.25;
         float l=dot(c,vec3(.2126,.7152,.0722));gl_FragColor=vec4(c*smoothstep(uThreshold,uThreshold+.85,l),1.);}` });
   const blurMat = new THREE.ShaderMaterial({ uniforms: { tIn: { value: null }, uDir: { value: new THREE.Vector2() } }, vertexShader: VERT_SCREEN, depthTest: false, depthWrite: false,
@@ -107,7 +103,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
       void main(){vec3 col;
         if(uMix<.001)col=ca(tA,vUv,uCAa);
         else if(uKind==2)col=ca(tB,zoomB(vUv),uCAb);   // shatter: B underneath, A's shards were drawn over it
-        else col=mix(ca(tA,vUv,uCAa),ca(tB,vUv,uCAb),blendWeight())*hazeTransmission()+travelLight(vUv);
+        else col=mix(ca(tA,vUv,uCAa),ca(tB,vUv,uCAb),blendWeight())+travelLight(vUv);
         col+=texture2D(tBloom,vUv).rgb*uBloom;
         // Anamorphic flare: the brightest points smeared into a thin horizontal streak (chapters that ask for it).
         if(uFlare>.001){vec3 fl=vec3(0.);for(int i=1;i<=10;i++){float o=float(i*i)*.0032;fl+=(texture2D(tBloom,vUv+vec2(o,0.)).rgb+texture2D(tBloom,vUv-vec2(o,0.)).rgb)*exp(-float(i)*.3);}
@@ -168,10 +164,18 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     const vh = innerHeight, delta = stops[s.stopB].getBoundingClientRect().top - vh * (role === 'out' ? .9 : .2);
     return THREE.MathUtils.clamp((vh - rects[0].top + delta) / (rects.at(-1).bottom - rects[0].top + vh), 0, 1);
   }
+  function planetEntryLocal(s) {
+    const entry = stops.findIndex(el => el.dataset.chapter === 'planet');
+    return entry < 0 || media.matches ? undefined : travelLocal(chapters[1], { ...s, stopB: entry }, 'in');
+  }
   const warmed = new Set(), stillLocal = { monolith: .5, planet: .4, singularity: .4, prism: .5 };
   function renderChapter(c, target, s, pr, transition = null, visible = true) {
     const scroll = hero ? Math.max(0, -hero.getBoundingClientRect().top) : 0;
-    c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: media.matches ? stillLocal[c.name] : transition ? travelLocal(c, s, transition.role) : s.local[c.name], transition, scroll, viewH: H, pr });
+    c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: media.matches ? stillLocal[c.name] : transition ? travelLocal(c, s, transition.role) : s.local[c.name], transition, entryLocal: c.name === 'planet' ? planetEntryLocal(s) : undefined, scroll, viewH: H, pr });
+    if (transition?.kind === 0 && transition.role === 'out') {
+      chapters[1].update({ time: elapsed, pointer: smoothPointer, motion: paused ? 0 : 1, local: travelLocal(chapters[1], s, 'in'), entryLocal: planetEntryLocal(s) });
+      pullback.update(transition.progress);
+    }
     if (!visible && warmed.has(c)) return;
     warmed.add(c);
     if (!c.refraction) { renderer.setRenderTarget(target); renderer.render(c.scene, c.camera); return; }
@@ -195,9 +199,9 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     const A = chapters[s.a], B = chapters[s.b], mixT = s.a === s.b ? 0 : s.t;
     const kind = media.matches && mixT > .001 ? -1 : mixT > .001 ? TRANSITION_KIND[`${A.name}>${B.name}`] ?? TRANSITION_KIND[`${B.name}>${A.name}`] ?? 0 : 0;
     const travel = !media.matches && mixT > .001 && kind < 2;
-    const opaqueHaze = travel && kind === 0 && mixT >= .43 && mixT <= .53;
-    renderChapter(A, rtA, s, PR, travel ? { role: 'out', progress: mixT, kind } : null, !opaqueHaze && (!travel || mixT < (kind === 0 ? .64 : .65)));
-    if (mixT > .001) renderChapter(B, rtB, s, PR, travel ? { role: 'in', progress: mixT, kind } : null, !opaqueHaze && (!travel || mixT > (kind === 0 ? .40 : .48)));
+    pullback.reset();
+    renderChapter(A, rtA, s, PR, travel ? { role: 'out', progress: mixT, kind } : null, !travel || kind === 0 || mixT < .60);
+    if (mixT > .001 && !(travel && kind === 0)) renderChapter(B, rtB, s, PR, travel ? { role: 'in', progress: mixT, kind } : null, !travel || mixT > .48);
     if (kind === 2) { renderer.setRenderTarget(rtB); renderer.autoClear = false; renderer.clearDepth(); shatter.render(renderer, rtA.texture, mixT); renderer.autoClear = true; }
     brightMat.uniforms.uKind.value = finalMat.uniforms.uKind.value = kind;
     if (kind === 1) for (const m of [brightMat, finalMat]) {
@@ -284,6 +288,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     setPaused, setPalette, setChapter, exportGLB, exportPNG,
     get paused() { return paused; }, get userPaused() { return userPaused; }, get chapters() { return chapters; }, get chapter() { if (forced !== null || !stops.length) return CHAPTERS[forced ?? 0]; const { f, local } = scrollTarget(), b = blendAt(f, local); return CHAPTERS[b.t > .5 ? b.b : b.a]; },
     get stats() { return { drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles }; },
+    get travelState() { return { blend: lastBlend, pullback }; },
     dispose() {
       disposed = true; cancelAnimationFrame(frame); resizeObserver.disconnect(); removeEventListener('scroll', onScroll); interaction.removeEventListener('pointermove', pointerMove);
       document.documentElement.removeEventListener('pointerleave', pointerLeave); media.removeEventListener('change', mediaChange);
@@ -292,7 +297,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
       chapters[0].labels.traverse(o => { if (o.element) o.element.remove(); });
       for (const m of [brightMat, blurMat, finalMat]) m.dispose(); quad.geometry.dispose();
       for (const c of chapters) c.scene.traverse(o => { o.geometry?.dispose(); if (o.material) for (const m of [].concat(o.material)) m.dispose(); });
-      shatter.dispose(); copyMat.dispose(); for (const t of [rtA, rtB, rtS1, rtS2, rtGlass]) t.dispose(); renderer.dispose(); renderer.domElement.remove(); cssRenderer.domElement.remove();
+      pullback.dispose(); shatter.dispose(); copyMat.dispose(); for (const t of [rtA, rtB, rtS1, rtS2, rtGlass]) t.dispose(); renderer.dispose(); renderer.domElement.remove(); cssRenderer.domElement.remove();
     }
   };
 }
