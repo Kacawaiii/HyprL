@@ -668,6 +668,9 @@ def test_publication_preserves_existing_book_directory_permissions(tmp_path):
     from scripts.radar.core import write_private
     folder = tmp_path / 'synthetic-book'
     folder.mkdir(mode=0o750)
+    # mkdir's mode is filtered by the host umask; establish the intended
+    # pre-existing publication-directory permissions explicitly.
+    folder.chmod(0o750)
     write_private(folder / 'radar-latest.md', 'Synthetic radar')
     assert folder.stat().st_mode & 0o777 == 0o750
     assert (folder / 'radar-latest.md').stat().st_mode & 0o777 == 0o600
