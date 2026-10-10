@@ -12,6 +12,8 @@ from .digest import render, summarize
 from .entities import Dictionary
 from .registry import REGIME
 from .sources import Collector
+from .official import OfficialAuthorization, OfficialCollector
+from .telegram import TelegramDelivery
 
 
 def yahoo(collector, symbol):
@@ -38,7 +40,7 @@ def yahoo(collector, symbol):
     return len(bars)
 
 
-def radar(store, grant=None, *, slot='manual', live=False, client=None, channels=None, llm_runner=None, publish_book=None):
+def radar(store, grant=None, *, slot='manual', live=False, client=None, channels=None, llm_runner=None, publish_book=None, official_client=None, cached=False):
     with store.owner():
         key = store.clock().date().isoformat() + '-' + slot
         existing = store.latest('report', key)
@@ -47,11 +49,14 @@ def radar(store, grant=None, *, slot='manual', live=False, client=None, channels
                 write_private(publish_book, existing['markdown'])
             return existing
         collector = None
-        if live:
-            if not grant:
-                raise RadarError('AUTHORIZATION_REQUIRED')
+        official_health = []
+        if live and not grant:
+            raise RadarError('AUTHORIZATION_REQUIRED')
+        if live and not cached:
             collector = Collector(client, channels=channels)
             collector.collect(sleep=time.sleep)
+            if official_client:
+                official_health = OfficialCollector(official_client, sleep=time.sleep).collect()
             for provider, symbol, _ in REGIME.values():
                 if provider == 'yahoo':
                     collector.attempt('market:' + symbol, lambda symbol=symbol: yahoo(collector, symbol))
@@ -107,7 +112,10 @@ def radar(store, grant=None, *, slot='manual', live=False, client=None, channels
         missing = [s for s in dictionary.coverage()['names_unmapped']]
         if missing:
             limitations.append('Identités de noms non vérifiées: ' + ', '.join(missing))
-        health = collector.health if collector else []
+        health = (collector.health + official_health) if collector else []
+        if live and cached:
+            health = list({h['source']: h for h in store.rows('health')}.values())
+            limitations.append('Relecture des captures privées: aucune collecte HTTP pendant ce radar; horodatages conservés.')
         if any(h['status'] != 'LIVE' for h in health):
             limitations.append('Des sources sont bloquées ou mortes; détails et codes dans le JSON.')
         cursor = store.latest('news_cursor', 'alpaca')
@@ -128,7 +136,7 @@ def radar(store, grant=None, *, slot='manual', live=False, client=None, channels
                     and all(v['status'] == 'OBSERVED' for v in panel.values())
                     and not any(h['status'] == 'BLOCKED' for h in health))
         status = 'READY' if complete else 'PARTIAL' if live and any_live else 'BLOCKED' if live else 'SYNTHETIC'
-        report = {'schema': 'news-radar-v2', 'status': status, 'date': at.date().isoformat(), 'slot': slot, 'cutoff': iso(at),
+        report = {'schema': 'news-radar-v3', 'status': status, 'date': at.date().isoformat(), 'slot': slot, 'cutoff': iso(at),
                   'live': live, 'sources': health, 'coverage': coverage, 'events': events,
                   'regime': panel, 'anomalies': anomaly_rows, 'anomaly_groups': anomaly_groups,
                   'llm': llm, 'budgets_used': store.counts(),
@@ -142,10 +150,23 @@ def radar(store, grant=None, *, slot='manual', live=False, client=None, channels
         return report
 
 
+def deliver_alerts(store, grant, reports):
+    at = store.clock()
+    prior = store.latest('last_events', 'radar') or {'events': []}
+    events = cluster(store.rows('news', since=at-timedelta(days=3)), previous=prior['events'], at=at)
+    daily, minute = bar_map(store, 'daily_bars', at), bar_map(store, 'minute_bars', at)
+    for event in events:
+        event['priced_in'] = priced_in(event, daily, minute, at)
+    try:
+        return TelegramDelivery(store, grant).alerts(events, reports / 'radar-latest.md')
+    except RadarError as error:
+        return [{'status': 'BLOCKED', 'reason': str(error)}]
+
+
 def main():
     from pathlib import Path
     parser = argparse.ArgumentParser(description='Independent private news radar; no trades')
-    parser.add_argument('action', choices=['run', 'collect', 'status', 'demo'])
+    parser.add_argument('action', choices=['run', 'collect', 'official', 'status', 'demo'])
     parser.add_argument('--store', type=Path, default=Path.home() / 'private/radar-v1')
     parser.add_argument('--reports', type=Path, default=Path.home() / 'reports/radar')
     parser.add_argument('--authorization', type=Path, default=Path.home() / 'authorizations/news-radar-v1.json')
@@ -153,6 +174,9 @@ def main():
     parser.add_argument('--channels', type=Path, help='Private JSON list of handle/channel_id records')
     parser.add_argument('--slot', choices=['morning', 'evening', 'manual'], default='manual')
     parser.add_argument('--publish-book', action='store_true')
+    parser.add_argument('--official-authorization', type=Path, default=Path.home() / 'authorizations/news-radar-sec-fed-telegram-v1.json')
+    parser.add_argument('--telegram', action='store_true', help='Deliver this run or fresh collection alerts to the granted operator chat')
+    parser.add_argument('--cached', action='store_true', help='Build a radar from prior receipts without refreshing HTTP sources')
     args = parser.parse_args()
     try:
         store = Store(args.store)
@@ -166,6 +190,17 @@ def main():
             seed(store)
             report = radar(store, slot=args.slot)
         else:
+            official_client = None
+            if args.official_authorization.exists() or args.action == 'official' or args.telegram:
+                official_grant = OfficialAuthorization(args.official_authorization)
+                official_grant.check(store.clock())
+                official_client = Client(store, official_grant)
+            if args.action == 'official':
+                with store.owner():
+                    health = OfficialCollector(official_client, sleep=time.sleep).collect()
+                    delivery = deliver_alerts(store, official_grant, args.reports)
+                print(json.dumps({'sources_live': sum(h['status'] == 'LIVE' for h in health), 'counts_today': store.counts(), 'delivery': delivery}))
+                return 0
             grant = Authorization(args.authorization)
             grant.check(store.clock())
             client = Client(store, grant, credentials=args.credentials)
@@ -174,14 +209,26 @@ def main():
                 with store.owner():
                     at = store.clock()
                     health = Collector(client, channels=channels).collect(markets=False, gdelt=at.hour % 2 == 0, sleep=time.sleep)
-                print(json.dumps({'sources_live': sum(h['status'] == 'LIVE' for h in health), 'counts_today': store.counts()}))
+                    delivery = deliver_alerts(store, official_grant, args.reports) if args.telegram else []
+                print(json.dumps({'sources_live': sum(h['status'] == 'LIVE' for h in health), 'counts_today': store.counts(), 'delivery': delivery}))
                 return 0
             report = radar(store, grant, slot=args.slot, live=True, client=client, channels=channels,
-                           publish_book=Path.home() / 'claude-book/radar-latest.md' if args.publish_book else None)
+                           publish_book=Path.home() / 'claude-book/radar-latest.md' if args.publish_book else None,
+                           official_client=official_client, cached=args.cached)
         name = f"radar-{report['date']}-{args.slot}"
         write_private(args.reports / (name + '.md'), report['markdown'])
         write_private(args.reports / (name + '.json'), json.dumps({k: v for k, v in report.items() if k != 'markdown'}, ensure_ascii=False, indent=2))
-        print(json.dumps({'status': report['status'], 'date': report['date'], 'slot': args.slot, 'events': len(report['events']), 'sources_live': sum(h['status'] == 'LIVE' for h in report['sources'])}))
+        write_private(args.reports / 'radar-latest.md', report['markdown'])
+        delivery = None
+        alerts = []
+        if args.telegram and args.action != 'demo':
+            try:
+                sender = TelegramDelivery(store, official_grant)
+                delivery = sender.digest(report, args.reports / (name + '.md'))
+                alerts = sender.alerts(report['events'], args.reports / (name + '.md'))
+            except RadarError as error:
+                delivery = {'status': 'BLOCKED', 'reason': str(error)}
+        print(json.dumps({'status': report['status'], 'date': report['date'], 'slot': args.slot, 'events': len(report['events']), 'sources_live': sum(h['status'] == 'LIVE' for h in report['sources']), 'delivery': delivery, 'alerts': alerts}))
         return 0
     except RadarError as error:
         print(json.dumps({'status': 'BLOCKED', 'reason': str(error)}))

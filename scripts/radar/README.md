@@ -1,4 +1,4 @@
-# News radar v2
+# News radar v3
 
 This is an independent, read-only information pipeline. It does not import the
 AI trader, modify preregistration or call any broker. Paper follow-up means a
@@ -11,8 +11,10 @@ Every live request requires a dedicated `news-radar-v1` authorization file with
 an operator signature marker, UTC start/expiry, exact HTTPS origins, GET paths
 or path prefixes, and daily budgets. Existing trader grants do not apply.
 The collector rechecks expiry before every dispatch. Its transport never follows
-redirects or forwards Alpaca keys to another host. SEC and Federal Reserve adapters are
-absent. Source responses, keys, stores and reports must never enter Git.
+redirects or forwards Alpaca keys to another host. The v1 grant still rejects SEC
+and Federal Reserve origins. Their adapters require a separate signed
+`news-radar-sec-fed-telegram-v1` supplement. Source responses, keys, stores and
+reports must never enter Git.
 
 Produce a **false/unsigned** draft for review:
 
@@ -42,6 +44,9 @@ python -m scripts.radar.service run --slot morning --publish-book
 python -m scripts.radar.service status
 python -m scripts.radar.deploy --output ~/reports/radar-unit-preview
 python -m scripts.radar.deploy
+python -m scripts.radar.service official
+python -m scripts.radar.service run --slot evening --telegram
+python -m scripts.radar.deploy --with-official
 ```
 
 `demo` requires an empty separate store, does not use network/LLM and cannot
@@ -69,12 +74,59 @@ which are not feeds and redirects drop a candidate without following the
 redirect; 403, 429 and grant refusals are reported as blocked. Remove the cause or append a reviewed new health record
 to retry a dropped candidate; never edit/delete its historical evidence.
 
-The installer writes only three radar service/timer pairs. It requires a valid
+The installer writes three radar service/timer pairs, plus an official collector
+pair with `--with-official`. It requires a valid
 grant to activate them. Preview does not install or enable anything. It sets
 `KillMode=process`, low priority, a memory cap and no persistent catch-up runs.
 Timers are UTC: weekdays 12:20/21:20; weekends 11:30/19:30. Headlines are collected
 hourly at :05, with GDELT only on even hours and never 11:45–12:30Z. A timer
 that collides with another run skips via the private owner lock.
+
+## SEC, Fed and operator delivery
+
+The separate supplement names origins, exact paths, UTC start/expiry, budgets,
+the SEC User-Agent and the private Telegram credential file. Every actual request
+rechecks the supplement. The current SEC Atom query is restricted to
+`action=getcurrent&type=8-K&output=atom`, with a bounded count; no company query,
+filing page, exhibit, submissions API or redirect is fetched. Its supplemental
+scope must explicitly contain `/files/company_tickers.json` to enable CIK mapping.
+That JSON retains the observed SEC shape (`cik_str` integer, ticker and title
+strings), including multiple share classes per CIK. The mapping is cached for
+24 hours; even failed requests cannot be retried sooner. SEC dispatches share
+the grant's provider spacing (at least 0.5 seconds) and <=300/day. Feed polls are
+at least five minutes apart and use ETag/Last-Modified conditional GET.
+
+The observed Atom feed supplies literal `Item 2.02: ...` summary lines, category
+and filing-index links. Classifications cover 2.02 results, 1.01 material
+agreements, 5.02 executive changes and 8.01 other events. Unknown items stay
+unknown; an agreement alone does not establish an acquisition. Distinct
+accessions stay distinct even for identical issuer headlines. CIKs are
+zero-padded digit strings. Atom `updated` is retained as an update time and never
+substituted for original publication in event-time return calculations.
+
+Fed `/feeds/press_all.xml` and `/feeds/speeches.xml` become primary macro events,
+including titles without monetary keywords. Each feed polls at most hourly;
+the shared grant ceiling is <=48/day. Only official-origin links gain primary
+weight. Primary evidence scores 90; the statement establishes what the issuer
+said, with economic mechanisms still conditional.
+
+`--with-official` installs a five-minute official timer, enables operator
+Telegram digests on morning/evening units and alert checks on both collectors.
+The French digest ranks five events by importance and includes a regime line,
+conditional mechanisms, measured-or-unknown priced-in status, explained
+anomalies and the full private report file URI. That URI refers to the host
+file; no public report endpoint is created. `--cached` builds from prior private
+receipts without refreshing HTTP sources and labels this replay explicitly.
+
+Telegram uses only `TELEGRAM_BOT_TOKEN` and `ADMIN_TELEGRAM_ID` from the granted
+private credential file, sends plain text without link previews, and never logs
+the token-bearing URL, recipient or response body. UTF-16 length is <=3500.
+Messages reserve a durable shared <=12/day attempt budget before dispatch;
+alert bursts leave room for both scheduled digests. Importance >=80 alerts need
+a publisher/update time within the last day, so archive entries cannot generate
+a startup flood. Alerts dedupe by event; digests by date and slot. A claim is
+persisted before POST: a crash or lost response remains UNCONFIRMED and is never
+blindly retried. Delivery status is explicit in CLI output and private evidence.
 
 ## Evidence and interpretation
 

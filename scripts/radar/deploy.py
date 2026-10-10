@@ -6,12 +6,13 @@ import subprocess
 import sys
 
 from .core import Authorization, ROOT, RadarError, now
+from .official import OfficialAuthorization
 
 
 NAMES = ['hyprl-radar-collect', 'hyprl-radar-morning', 'hyprl-radar-evening']
 
 
-def unit_texts(python, repo, *, claude=None):
+def unit_texts(python, repo, *, claude=None, official=False):
     # systemd command parsing differs from a shell: quote arguments explicitly.
     def quote_arg(value):
         return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
@@ -22,9 +23,13 @@ def unit_texts(python, repo, *, claude=None):
     schedules = {'collect': '*-*-* *:05:00 UTC',
                  'morning': 'Mon..Fri *-*-* 12:20:00 UTC\nOnCalendar=Sat,Sun *-*-* 11:30:00 UTC',
                  'evening': 'Mon..Fri *-*-* 21:20:00 UTC\nOnCalendar=Sat,Sun *-*-* 19:30:00 UTC'}
+    if official:
+        schedules['official'] = '*-*-* *:00/5:00 UTC'
     for action, schedule in schedules.items():
         name = 'hyprl-radar-' + action
-        arguments = 'collect' if action == 'collect' else 'run --slot ' + action + ' --publish-book'
+        arguments = action if action in ('collect', 'official') else 'run --slot ' + action + ' --publish-book'
+        if official and action != 'official':
+            arguments += ' --telegram'
         result[name + '.service'] = f'''[Unit]
 Description=HyprL independent news radar ({action})
 
@@ -60,20 +65,25 @@ def main():
     parser = argparse.ArgumentParser(description='Install radar user timers only; no trader changes')
     parser.add_argument('--authorization', type=Path, default=Path.home() / 'authorizations/news-radar-v1.json')
     parser.add_argument('--output', type=Path, help='Render units only into this directory, without installation')
+    parser.add_argument('--with-official', action='store_true', help='Enable signed SEC/Fed collection and Telegram delivery')
+    parser.add_argument('--official-authorization', type=Path, default=Path.home() / 'authorizations/news-radar-sec-fed-telegram-v1.json')
     args = parser.parse_args()
     try:
-        texts = unit_texts(sys.executable, ROOT, claude=shutil.which('claude'))
+        texts = unit_texts(sys.executable, ROOT, claude=shutil.which('claude'), official=args.with_official)
+        names = NAMES + (['hyprl-radar-official'] if args.with_official else [])
         if not args.output:
             grant = Authorization(args.authorization)
             grant.check(now())
+            if args.with_official:
+                OfficialAuthorization(args.official_authorization).check(now())
         folder = args.output or Path.home() / '.config/systemd/user'
         folder.mkdir(parents=True, exist_ok=True)
         for name, content in texts.items():
             (folder / name).write_text(content)
-        subprocess.run(['systemd-analyze', '--user', 'verify', *[str(folder / (n + '.service')) for n in NAMES]], check=True, capture_output=True)
+        subprocess.run(['systemd-analyze', '--user', 'verify', *[str(folder / (n + '.service')) for n in names]], check=True, capture_output=True)
         if not args.output:
             subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True, capture_output=True)
-            subprocess.run(['systemctl', '--user', 'enable', '--now', *[n + '.timer' for n in NAMES]], check=True, capture_output=True)
+            subprocess.run(['systemctl', '--user', 'enable', '--now', *[n + '.timer' for n in names]], check=True, capture_output=True)
         print('RENDERED' if args.output else 'RADAR_TIMERS_ENABLED')
         return 0
     except RadarError as error:
