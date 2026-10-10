@@ -3,6 +3,8 @@ import re
 import unicodedata
 
 from .registry import CRYPTO_NAMES, ETFS, universe
+from .relationships import (COUNTRY_ETFS, CRYPTO_GROUPS, EXTERNAL_NAMES, ETF_EXPOSURES,
+                            INDUSTRIES, SECTORS, SECTOR_ETFS, SECTOR_CHANNELS, SUPPLIERS, industry, peers)
 
 # Public company names; symbol universe comes from the repository's existing snapshot.
 # Ambiguous short words (A, ALL, ON, etc.) require an explicit $ticker or feed symbol.
@@ -513,7 +515,7 @@ NAMES = dict(row.split('|', 1) for row in NAME_ROWS.strip().splitlines())
 # fabricate their identities. The coverage report lists missing name mappings.
 ALIASES = {'MSFT': ['Microsoft'], 'GOOGL': ['Alphabet', 'Google'],
            'META': ['Facebook', 'Meta'], 'IBM': ['IBM'], 'MU': ['Micron Technology'],
-           'T': ['AT&T'], 'BRK-B': ['Berkshire'], 'LRCX': ['Lam Research'],
+           'T': ['AT&T'], 'TMUS': ['T-Mobile'], 'BRK-B': ['Berkshire'], 'LRCX': ['Lam Research'],
            'KLAC': ['KLA'], 'AOS': ['A. O. Smith'], 'NVDA': ['NVIDIA']}
 COUNTRIES = {'Brazil': ['Brazil', 'Bresil', 'Lula'], 'Japan': ['Japan', 'Japon'],
              'China': ['China', 'Chine'], 'India': ['India', 'Inde'],
@@ -536,6 +538,7 @@ THEME_WORDS = {
     'election': ['election', 'vote', 'president'],
     'semiconductors': ['semiconductor', 'semi conducteur', 'memory', 'memoire', 'DRAM', 'HBM'],
     'crypto': ['bitcoin', 'ethereum', 'crypto', 'blockchain'],
+    'telecom_satellites': ['telecom', 'wireless carrier', 'Starlink', 'SpaceX', 'direct-to-cell', 'direct to cell'],
 }
 AMBIGUOUS_CRYPTO_NAMES = {'XRP', 'MKR', 'CRV', 'COMP', 'OP'}
 
@@ -562,14 +565,17 @@ class Dictionary:
         self.cryptos = [(s, phrases([name]), re.compile(r'(?<!\w)' + re.escape(s) + r'(?!\w)')) for s, name in CRYPTO_NAMES.items()]
         self.countries = [(c, phrases(a)) for c, a in COUNTRIES.items()]
         self.themes = [(c, phrases(a)) for c, a in THEME_WORDS.items()]
+        self.external = [(s, phrases(a)) for s, a in EXTERNAL_NAMES.items()]
+        self.sectors = [(s, phrases([s.replace('_', ' '), ETFS[SECTOR_ETFS[s]]])) for s in SECTOR_ETFS]
 
     def map(self, story):
         value = story['headline'] + ' ' + story['summary']
         normalized = fold(value)
         crypto_context = any(pattern.search(normalized) for theme, pattern in self.themes if theme == 'crypto')
         crypto_mentioned = False
-        symbols = {s.replace('.', '-') for s in story['symbols'] if re.fullmatch(r'[A-Z][A-Z0-9./-]{0,14}', s)}
-        symbols = {s + '/USD' if s in CRYPTO_NAMES else s[:-3] + '/USD' if s.endswith('USD') and s[:-3] in CRYPTO_NAMES else s for s in symbols}
+        provider_symbols = {s.replace('.', '-') for s in story['symbols'] if re.fullmatch(r'[A-Z][A-Z0-9./-]{0,14}', s)}
+        provider_symbols = {s + '/USD' if s in CRYPTO_NAMES else s[:-3] + '/USD' if s.endswith('USD') and s[:-3] in CRYPTO_NAMES else s for s in provider_symbols}
+        symbols = set()
         for symbol, pattern in self.names:
             if pattern.search(normalized):
                 symbols.add(symbol)
@@ -584,27 +590,80 @@ class Dictionary:
         themes = {c for c, pattern in self.themes if pattern.search(normalized)}
         if crypto_mentioned:
             themes.add('crypto')
-        return {'symbols': sorted(symbols),
+        named_symbols = sorted(symbols)
+        symbols |= provider_symbols
+        businesses = sorted(s for s, pattern in self.external if pattern.search(normalized))
+        sector_mentions = {s for s, pattern in self.sectors if pattern.search(normalized)}
+        sectors = sector_mentions | {SECTORS[s] for s in symbols if s in SECTORS}
+        return {'symbols': sorted(symbols), 'businesses': businesses, 'sectors': sorted(sectors),
+                'named_symbols': named_symbols,
+                'sector_mentions': sorted(sector_mentions),
                 'countries': sorted(c for c, pattern in self.countries if pattern.search(normalized)),
                 'themes': sorted(themes)}
 
     def coverage(self):
         missing = sorted(self.stocks - set(ETFS) - set(NAMES))
         return {'stock_etf_symbols': len(self.stocks), 'company_names': len(NAMES), 'crypto_candidates': len(CRYPTO_NAMES),
-                'names_unmapped': missing, 'universe_status': 'repository_snapshot_not_live_membership'}
+                'names_unmapped': missing, 'sectors_unmapped': sorted(self.stocks - set(ETFS) - set(SECTORS)),
+                'relationship_map': 'static_snapshot_v2', 'universe_status': 'repository_snapshot_not_live_membership'}
 
 
-def transmission(entities):
+def transmission(entities, headline='', summary=''):
     """Conditional hypotheses, not causal facts or trading recommendations."""
-    results = [{'symbol': s, 'role': 'direct', 'mechanism': 'Exposition directe à l’événement; sens à confirmer.'} for s in entities['symbols']]
-    if 'MU' in entities['symbols'] or 'semiconductors' in entities['themes']:
+    value = fold(headline + ' ' + summary)
+    negative = bool(re.search(r'\b(sell off|sell-off|sank|sink\w*|fall\w*|drop\w*|plunge\w*|loss\w*|outflow\w*|baisse|chute)\b', value))
+    positive = bool(re.search(r'\b(rally|rallies|rise\w*|rose|gain\w*|surge\w*|hausse)\b', value))
+    direction = 'loser' if negative and not positive else 'beneficiary' if positive and not negative else 'uncertain'
+    results = []
+    def add(symbol, role, mechanism, direction='uncertain'):
+        results.append({'symbol': symbol, 'role': role, 'direction': direction, 'mechanism': mechanism})
+    symbols_by_relevance = sorted(entities['symbols'], key=lambda s: (s not in entities.get('named_symbols', []), s))
+    for symbol in symbols_by_relevance:
+        group = industry(symbol)
+        mechanism = (f'Si le fait annoncé se confirme pour {NAMES.get(symbol, symbol)}, effet possible sur ses revenus ou sa valorisation ({group}).')
+        if symbol in SECTORS:
+            mechanism = f'Si le fait annoncé se confirme, {NAMES.get(symbol, symbol)} pourrait être affecté via {SECTOR_CHANNELS[SECTORS[symbol]]}.'
+        if group == 'semiconductors':
+            mechanism = f'Si la demande de puces se confirme, effet possible sur volumes, prix de vente et utilisation des capacités de {NAMES.get(symbol, symbol)}.'
+        if group == 'managed_care':
+            mechanism = f'Si les changements de remboursements ou de dépenses médicales se confirment, effet possible sur la marge des contrats de soins de {NAMES.get(symbol, symbol)}.'
+        if group == 'pharma':
+            mechanism = f'Si les résultats cliniques, autorisations ou ventes annoncés se confirment, effet possible sur les revenus et le portefeuille de traitements de {NAMES.get(symbol, symbol)}.'
+        if symbol in CRYPTO_GROUPS:
+            mechanism = f'Si les flux ou usages annoncés se confirment, demande et liquidité possibles pour {CRYPTO_NAMES.get(symbol.split("/")[0], symbol)} ({group}).'
+        elif symbol in ETF_EXPOSURES:
+            mechanism = f'Si le choc se diffuse à {ETF_EXPOSURES[symbol]}, les actifs du fonds pourraient être réévalués; composition et pondérations non observées.'
+        name = NAMES.get(symbol) or CRYPTO_NAMES.get(symbol.split('/')[0], symbol)
+        add(symbol, 'direct', mechanism, direction if mentions(headline, symbol) or mentions(headline, name) else 'uncertain')
+    focal_symbols = entities.get('named_symbols') or entities['symbols']
+    focal_sectors = set(entities.get('sector_mentions', [])) | {SECTORS[s] for s in focal_symbols if s in SECTORS}
+    for sector in sorted(focal_sectors):
+        if sector in SECTOR_ETFS:
+            add(SECTOR_ETFS[sector], 'sector_etf', f'Si le choc se diffuse au secteur {sector}, réévaluation possible des entreprises du fonds.')
+    for symbol in focal_symbols:
+        for supplier in sorted(SUPPLIERS.get(symbol, set())):
+            add(supplier, 'supplier', f'Si les investissements de {NAMES.get(symbol, symbol)} progressent, demande possible pour {NAMES.get(supplier, supplier)}; relation commerciale actuelle non vérifiée.')
+        for competitor in sorted(peers(symbol))[:3]:
+            if competitor in NAMES:
+                add(competitor, 'competitor', f'Si le choc de {NAMES.get(symbol, symbol)} est sectoriel, effet commun possible; si des clients changent de fournisseur, {NAMES[competitor]} pourrait capter des parts de marché.')
+    if 'telecom_satellites' in entities['themes']:
+        for symbol in ('T', 'VZ', 'TMUS'):
+            add(symbol, 'direct' if symbol in entities['symbols'] else 'competitor',
+                'Si Starlink devient une alternative mobile, concurrence possible sur les tarifs, la rétention et les dépenses de réseau; partenariats possibles.',
+                'loser' if negative else 'uncertain')
+        for symbol in ('CCI', 'AMT', 'SBAC'):
+            tower_benefit = bool(re.search(r'could benefit|winners|beneficiaire', value) and
+                                 re.search(r'cell.tower|american tower|crown castle|sba communications', value))
+            add(symbol, 'supplier', 'Si l’expansion mobile requiert des sites terrestres complémentaires, demande possible de baux; si le satellite remplace des antennes, pression possible sur les loyers. La hausse seule ne prouve aucun bénéfice.',
+                'beneficiary' if tower_benefit else 'uncertain')
+    if 'MU' in focal_symbols or 'semiconductors' in entities['themes']:
         results += [{'symbol': s, 'role': role, 'mechanism': mechanism} for s, role, mechanism in [
             ('AMAT', 'supplier', 'Si les investissements en mémoire augmentent, demande potentielle d’équipements.'),
             ('LRCX', 'supplier', 'Si les investissements en mémoire augmentent, demande potentielle de gravure.'),
             ('KLAC', 'supplier', 'Si les capacités augmentent, demande potentielle de contrôle des procédés.'),
             ('SNDK', 'competitor', 'Effet concurrentiel à confirmer selon mémoire NAND ou DRAM; pas de sens automatique.'),
             ('SMH', 'sector_etf', 'Diffusion possible aux semi-conducteurs; dépend de l’ampleur sectorielle.')]]
-    country_etfs = {'Brazil': 'EWZ', 'Japan': 'EWJ', 'China': 'FXI', 'India': 'INDA', 'France': 'EWQ', 'Germany': 'EWG', 'Taiwan': 'EWT', 'Korea': 'EWY', 'UK': 'EWU', 'Canada': 'EWC', 'Mexico': 'EWW', 'Australia': 'EWA', 'South Africa': 'EZA', 'Israel': 'EIS'}
+    country_etfs = COUNTRY_ETFS
     for country in entities['countries']:
         if country in country_etfs:
             results.append({'symbol': country_etfs[country], 'role': 'country_etf', 'mechanism': 'Si le risque politique ou les perspectives locales changent, réévaluation possible des actions du pays.'})
@@ -620,4 +679,9 @@ def transmission(entities):
             ('V', 'direct', 'Si un euro numérique modifie les usages de paiement, les réseaux pourraient subir une pression concurrentielle; adoption et calendrier inconnus.'),
             ('MA', 'competitor', 'Si un moyen de paiement public gagne des usages, effet possible sur les commissions; dépend des règles finales.'),
             ('EWQ', 'country_etf', 'Répercussions possibles sur banques et paiements européens; pas de bénéficiaire automatique.')]]
-    return list({(r['symbol'], r['role']): r for r in results}.values())
+    for row in results:
+        row.setdefault('direction', 'uncertain')
+    unique = list({(r['symbol'], r['role']): r for r in results}.values())
+    # Named entities and concrete downstream channels precede broad provider baskets.
+    return sorted(unique, key=lambda r: (r['symbol'] not in entities.get('named_symbols', []) and r['role'] == 'direct',
+                                         r['role'] != 'direct'))

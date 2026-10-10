@@ -7,6 +7,7 @@ import re
 from .core import digest, instant, iso
 from .entities import Dictionary, fold, transmission
 from .registry import REGIME
+from .relationships import SECTORS, industry, peers
 
 STOP = set('the a an of to in for and on with as after de la le les des du un une et en sur pour au aux'.split())
 RUMOUR = re.compile(r'\b(rumou?r|reportedly|unconfirmed|may|could|might|rumeur|pourrait|serait|speculat\w*)\b', re.I)
@@ -20,7 +21,8 @@ def tokens(value):
 def independent_publisher(story):
     headline = fold(story['headline'] + ' ' + story['summary'])
     for source in ('reuters', 'benzinga', 'bloomberg', 'associated press', 'coindesk', 'cointelegraph'):
-        if re.search(r'\b' + source + r'\b', headline):
+        attribution = r'(?:^|\(|according to |via |source: |d.apres |selon )' + source + r'\b'
+        if re.search(attribution, headline):
             return source.replace(' ', '_')
     host = story['publisher'].removeprefix('www.')
     for needle, publisher in [('cnbc', 'cnbc'), ('yahoo', 'yahoo'), ('marketwatch', 'dowjones'),
@@ -69,14 +71,16 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
             shared_entities = bool(set(entities['symbols']) & set(event['entities']['symbols']) or
                                    set(entities['countries']) & set(event['entities']['countries']))
             # Shared ticker alone cannot merge different events about the same company.
-            if same_url or same_headline or (shared_entities and similarity >= .5):
+            shared_themes = set(entities['themes']) & set(event['entities']['themes'])
+            if same_url or same_headline or (shared_entities and (similarity >= .5 or
+                    (similarity >= .32 and len(words & event_words) >= 3 and shared_themes))):
                 match = event
                 match_index = index
                 break
         if not match:
             match = {'id': digest([story['url'], story['headline_hash']]), 'headline': story['headline'],
                      'first_received_at': story['received_at'], 'stories': [],
-                     'entities': {'symbols': [], 'countries': [], 'themes': []}}
+                     'entities': {key: [] for key in entities}}
             events.append(match)
             match_index = len(events) - 1
         match['stories'].append(story)
@@ -97,7 +101,8 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
         event['headline'] = max(lead_candidates, key=lambda s: (instant(s['received_at']), s['id']))['headline']
         publishers = sorted({independent_publisher(s) for s in editorial})
         primary = any(s['primary'] for s in editorial)
-        rumours = any(RUMOUR.search(s['headline'] + ' ' + s['summary']) for s in stories)
+        rumours = any(RUMOUR.search(s['headline']) or
+                      re.search(r'\b(rumou?r|unconfirmed|reportedly|rumeur)\b', s['summary'], re.I) for s in stories)
         event['evidence'] = {'score': 90 if primary and not rumours else 65 if len(publishers) >= 2 and not rumours else 25,
                              'status': 'rumour' if rumours else 'primary_statement' if primary else 'corroborated_reporting' if len(publishers) >= 2 else 'single_source',
                              'publishers': publishers, 'primary': primary,
@@ -109,15 +114,17 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
         entities = event['entities']
         breadth = 15 if entities['countries'] or set(entities['themes']) & {'macro', 'geopolitics'} else 8 if len(entities['symbols']) >= 3 else 3
         size = 10 if set(entities['symbols']) & {'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOG', 'GOOGL', 'META', 'BTC/USD', 'ETH/USD'} else 4
+        support = (25 if primary else min(20, max(0, len(publishers) - 1) * 10)) if not rumours else 0
+        event['importance_components'] = {'source_support': support, 'independent_publishers': len(publishers)}
         event['importance'] = min(100, max([weights.get(t, 5) for t in entities['themes']] or [5]) +
-                                   min(20, len(publishers) * 5) + (20 if novel else 0) + breadth + size)
+                                   support + (20 if novel else 0) + breadth + size)
         retail_channels = {s['publisher'] for s in stories if s['retail']}
         event['retail_hype'] = {'score': min(100, len(retail_channels) * 20), 'channels': len(retail_channels),
                                 'posts': len({s['url'] for s in stories if s['retail']}),
                                 'meaning': 'observed channel breadth; no audience/view or TikTok data'}
         publication_times = [s['published_at'] for s in stories if s['published_at']]
         event['published_at'] = min(publication_times, key=instant) if publication_times else None
-        event['transmission_hypotheses'] = transmission(entities)
+        event['transmission_hypotheses'] = transmission(entities, event['headline'], ' '.join(s['summary'] for s in stories))
         event['conviction'] = None  # only separate qualitative scenario conviction may be produced by the LLM
         event['expectations'] = 'Consensus inconnu; un titre de presse ne prouve pas une surprise.'
     return sorted(events, key=lambda e: (not ('crypto' in e['entities']['themes']) if crypto_first else False,
@@ -205,11 +212,57 @@ def anomalies(daily, observations=None):
         if (move is not None and abs(move) >= 2) or (ratio is not None and ratio >= 2):
             result.append({'symbol': symbol, 'price': last['c'], 'move_atr': round(move, 4) if move is not None else None,
                            'volume_vs_20d': round(ratio, 4) if ratio is not None else None,
+                           'opened_at': last['t'],
                            'closed_at': last['closed_at'] if last.get('complete_at_receipt', True) else None,
                            'received_at': last.get('received_at'),
                            'partial_day': not last.get('complete_at_receipt', True),
                            'basis': 'observed daily bar vs completed prior days; partial-day volume not extrapolated; IEX stock volume is partial-market'})
     return sorted(result, key=lambda r: -abs(r['move_atr'] or 0))
+
+
+def link_anomalies(rows, events, at):
+    """Nearby captured news, grouped by business theme. Association is not causation."""
+    groups = {}
+    dictionary = Dictionary()
+    mapped = {s['id']: (dictionary.map(s), dictionary.map({**s, 'symbols': []}))
+              for event in events for s in event['stories'] if instant(s['received_at']) <= at}
+    for row in rows:
+        symbol = row['symbol']
+        observed = instant(row.get('received_at') or row.get('closed_at') or iso(at))
+        end = min(at, instant(row['closed_at'])) if row.get('closed_at') else min(at, observed)
+        start = instant(row['opened_at']) - timedelta(days=2) if row.get('opened_at') else end - timedelta(days=3)
+        links = []
+        for event in events:
+            candidates = [s for s in event['stories'] if instant(s['received_at']) <= at and
+                          start <= instant(s['published_at'] or s['received_at']) <= end]
+            if not candidates:
+                continue
+            # Match each in-window story's entities, not an out-of-window member
+            # of its cluster. Provider baskets alone get a weaker association.
+            for story in candidates:
+                entities, textual = mapped[story['id']]
+                symbols = set(entities['symbols'])
+                related = set(textual['symbols']) | set(textual['businesses'])
+                reason = ('ticker' if symbol in textual['symbols'] else
+                          'competitor' if peers(symbol) & related else
+                          'sector' if SECTORS.get(symbol) in textual['sector_mentions'] else
+                          'sector_event' if industry(symbol) in textual['themes'] else
+                          None)
+                if reason:
+                    links.append({'event_id': event['id'], 'headline': story['headline'], 'url': story['url'],
+                                  'publisher': story['publisher'], 'published_at': story['published_at'],
+                                  'received_at': story['received_at'], 'match': reason,
+                                  'importance': event['importance'], 'evidence': event['evidence']['score'],
+                                  'causality': 'not_established'})
+        links.sort(key=lambda r: ({'ticker': 0, 'competitor': 1, 'sector_event': 2, 'sector': 3, 'provider_symbol': 4}[r['match']],
+                                  -r['evidence'], -r['importance'], r['event_id']))
+        unique = list({(r['event_id'], r['url']): r for r in links}.values())
+        row.update(news_links=unique, news_status='MATCHED' if unique else 'NO_NEWS_FOUND',
+                   news_window={'start': iso(start), 'end': iso(end), 'cutoff': iso(at)})
+        theme = industry(symbol)
+        group = groups.setdefault(theme, {'theme': theme, 'anomalies': [], 'causality': 'not_established'})
+        group['anomalies'].append(row)
+    return list(groups.values())
 
 
 def priced_in(event, daily, minute, at):

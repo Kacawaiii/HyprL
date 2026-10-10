@@ -6,7 +6,7 @@ import json
 import math
 import time
 
-from .analysis import anomalies, bar_map, cluster, daily_observations, paper_followup, priced_in, regime
+from .analysis import anomalies, bar_map, cluster, daily_observations, link_anomalies, paper_followup, priced_in, regime
 from .core import Authorization, Client, RadarError, Store, instant, iso, write_private
 from .digest import render, summarize
 from .entities import Dictionary
@@ -116,6 +116,8 @@ def radar(store, grant=None, *, slot='manual', live=False, client=None, channels
         if any(v['status'] in ('MISSING', 'STALE') for v in panel.values()):
             limitations.append('Régime incomplet ou périmé: valeurs manquantes explicitement inconnues.')
         observed_daily = daily_observations(store, at)
+        anomaly_rows = anomalies(daily, observed_daily)
+        anomaly_groups = link_anomalies(anomaly_rows, events, at)
         coverage = {**dictionary.coverage(),
                     'news_items_received_3d': sum(len(e['stories']) for e in events),
                     'observed_stock_etf_symbols': sorted(s for s in observed_daily if s in dictionary.stocks),
@@ -126,9 +128,10 @@ def radar(store, grant=None, *, slot='manual', live=False, client=None, channels
                     and all(v['status'] == 'OBSERVED' for v in panel.values())
                     and not any(h['status'] == 'BLOCKED' for h in health))
         status = 'READY' if complete else 'PARTIAL' if live and any_live else 'BLOCKED' if live else 'SYNTHETIC'
-        report = {'schema': 'news-radar-v1', 'status': status, 'date': at.date().isoformat(), 'slot': slot, 'cutoff': iso(at),
+        report = {'schema': 'news-radar-v2', 'status': status, 'date': at.date().isoformat(), 'slot': slot, 'cutoff': iso(at),
                   'live': live, 'sources': health, 'coverage': coverage, 'events': events,
-                  'regime': panel, 'anomalies': anomalies(daily, observed_daily), 'llm': llm, 'budgets_used': store.counts(),
+                  'regime': panel, 'anomalies': anomaly_rows, 'anomaly_groups': anomaly_groups,
+                  'llm': llm, 'budgets_used': store.counts(),
                   'paper_watch_count': len(store.rows('paper_watch')), 'paper_new_labels': len(labels), 'limitations': limitations}
         report['markdown'] = render(report)
         store.append('report', key, report)
