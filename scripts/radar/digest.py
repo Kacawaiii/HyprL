@@ -165,6 +165,7 @@ def render(report):
     directions = {'beneficiary': 'bénéficiaire', 'loser': 'perdant', 'uncertain': 'incertain'}
     roles = {'direct': 'direct', 'supplier': 'fournisseur', 'competitor': 'concurrent', 'sector_etf': 'ETF sectoriel',
              'country_etf': 'ETF pays', 'input_cost': 'coût des intrants', 'commodity_etf': 'ETF matières premières', 'sector': 'secteur'}
+    youtube_available = any(s['source'].startswith('youtube:') and s['status'] == 'LIVE' for s in report['sources'])
     lines = [f"# Radar HyprL — {report['date']} — {report['slot']}",
              f"État: {states[report['status']]}. Réception arrêtée à {report['cutoff']}. Suivi papier d'observations.",
              f"Sources live: {sum(h['status'] == 'LIVE' for h in report['sources'])}; bloquées: {sum(h['status'] == 'BLOCKED' for h in report['sources'])}; mortes: {sum(h['status'] == 'DEAD' for h in report['sources'])}.",
@@ -177,7 +178,10 @@ def render(report):
         scenario = event.get('scenario')
         evidence = event['evidence']
         title = scenario['summary'] if scenario else event['headline']
-        lines.append(f"- {safe(title)} — importance {event['importance']}; preuve {evidence['score']} ({evidence_names[evidence['status']]}); nouveauté {novelty_names[event['novelty']]}; conviction {event['conviction'] or 'non évaluée'}; hype {event['retail_hype']['score']}.")
+        hype = str(event['retail_hype']['score'])
+        if report['live'] and not youtube_available and not event['retail_hype']['channels']:
+            hype = 'inconnu (collecte YouTube indisponible)'
+        lines.append(f"- {safe(title)} — importance {event['importance']}; preuve {evidence['score']} ({evidence_names[evidence['status']]}); nouveauté {novelty_names[event['novelty']]}; conviction {event['conviction'] or 'non évaluée'}; hype {hype}.")
         lines.append(f"  Publication: {event['published_at'] or 'inconnue'}; réception: {event['first_received_at']}; sources: " + ', '.join(f"[{safe(s['publisher'])}]({s['url']})" for s in event['stories'][:3]))
         if scenario:
             lines.append('  Attentes/impact/horizon: ' + ' '.join(safe(scenario[k]) for k in ('changed_expectations', 'impact', 'horizon')))

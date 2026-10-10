@@ -10,7 +10,7 @@ from scripts.radar.analysis import (anomalies, bar_map, cluster, daily_observati
                                     regime, valid_bars)
 from scripts.radar.core import Authorization, Client, RadarError, Store, iso
 from scripts.radar.deploy import unit_texts
-from scripts.radar.digest import command, summarize, validate
+from scripts.radar.digest import command, render, summarize, validate
 from scripts.radar.entities import Dictionary
 from scripts.radar.registry import FEEDS
 from scripts.radar.service import radar
@@ -385,6 +385,38 @@ def test_new_receipt_of_old_feed_article_does_not_rank_as_new_event():
     unknown = story(slug='unknown', headline='Brazil election', published=None)
     events = cluster([old, fresh, unknown], at=AT)
     assert {s['url'] for e in events for s in e['stories']} == {fresh['url'], unknown['url']}
+
+
+def test_rolling_daily_crypto_index_is_not_an_event_time_catalyst(state):
+    store, _, _, _ = state
+    roundup = story(slug='daily-index', headline='Here’s what happened in crypto today')
+    event = story(slug='specific', headline='Ethereum network upgrade')
+    collector = Collector(type('Client', (), {'store': store})(), channels=[])
+    collector.add([roundup, event])
+    ranked = cluster(store.rows('news'), at=AT)
+    assert len(ranked) == 1 and ranked[0]['headline'] == event['headline']
+    assert len(store.rows('news')) == 2
+
+
+def test_retired_observation_watch_does_not_generate_future_labels(state):
+    store, _, _, _ = state
+    store.append('paper_watch', 'synthetic-watch', {'key': 'synthetic-watch', 'symbol': 'BTC/USD',
+                 'recorded_at': iso(AT-timedelta(days=2)), 'baseline': 100, 'horizons_calendar_days': [1, 5]})
+    store.append('paper_watch_retired', 'synthetic-watch', {'watch_key': 'synthetic-watch', 'reason': 'non_event_roundup'})
+    assert paper_followup(store, [], {'BTC/USD': valid_bars(daily_history(), AT)}, {}, AT) == []
+    assert len(store.rows('paper_watch')) == 1
+    assert not store.rows('paper_label')
+
+
+def test_unavailable_youtube_is_unknown_hype_rather_than_zero(state):
+    store, _, _, _ = state
+    seed(store)
+    report = radar(store)
+    report['live'] = True
+    report['sources'] = [{'source': 'youtube:@synthetic', 'status': 'DEAD'}]
+    markdown = render(report)
+    assert 'hype inconnu (collecte YouTube indisponible)' in markdown
+    assert 'hype 0.' not in markdown
 
 
 def test_generic_financial_words_do_not_create_crypto_entities():

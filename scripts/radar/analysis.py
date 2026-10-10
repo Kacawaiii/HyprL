@@ -10,6 +10,7 @@ from .registry import REGIME
 
 STOP = set('the a an of to in for and on with as after de la le les des du un une et en sur pour au aux'.split())
 RUMOUR = re.compile(r'\b(rumou?r|reportedly|unconfirmed|may|could|might|rumeur|pourrait|serait|speculat\w*)\b', re.I)
+ROUNDUP = re.compile(r"^(?:here['’]?s\s+)?what happened in crypto today[.!?]?$", re.I)
 
 
 def tokens(value):
@@ -36,6 +37,9 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
     urls, hashes, word_index, entity_index = {}, {}, {}, {}
     # Stable order anchors IDs to the earliest time actually observed, not backdated publication.
     for story in sorted(stories, key=lambda s: (instant(s['received_at']), s['id'])):
+        if ROUNDUP.fullmatch(story['headline'].strip()):
+            # A rolling daily index is not a discrete event-time catalyst.
+            continue
         if at and instant(story['received_at']) > at:
             continue
         if at and story['published_at'] and instant(story['published_at']) < at - timedelta(days=3):
@@ -263,6 +267,7 @@ def regime(daily, at, observations=None):
 def paper_followup(store, events, daily, minute, at):
     """Prospective observation journal only. No orders, accounts or position sizes."""
     opened = {r['key'] for r in store.rows('paper_watch')}
+    retired = {r['watch_key'] for r in store.rows('paper_watch_retired')}
     for event in events:
         scenario = event.get('scenario')
         if not scenario:
@@ -281,6 +286,8 @@ def paper_followup(store, events, daily, minute, at):
             opened.add(key)
     labels = []
     for watch in store.rows('paper_watch'):
+        if watch['key'] in retired:
+            continue
         for days in watch['horizons_calendar_days']:
             key = digest([watch['key'], days])
             if store.latest('paper_label', key):

@@ -90,6 +90,12 @@ append-only. Entity patterns are compiled once per dictionary for live volume.
 Generic words such as maker, optimism and curve require explicit crypto context
 to identify tokens. Weekend priority uses textual crypto relevance rather than
 an incidental crypto ticker in a provider's broad basket of associated symbols.
+The rolling "what happened in crypto today" index stays in capture evidence
+but is excluded from discrete events and event-time price attribution. Reviewed
+observation watches can be retired by an append-only record without deleting
+their original baseline; retired watches do not acquire future labels.
+When YouTube is unavailable and no retail posts were observed for an event,
+the digest labels hype unknown rather than suggesting measured zero interest.
 Editorial groups and explicit syndication attribution determine corroboration;
 unattributed syndication remains uncertain. Repeated rumours remain rumours.
 YouTube breadth affects retail hype only. The snapshot dictionary contains
