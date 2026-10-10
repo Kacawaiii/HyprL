@@ -1,0 +1,37 @@
+{
+  "revision": 1,
+  "hypothesis": "Established liquid leaders may persist through rising crypto regimes; price and volume signals may identify a minority of future threefold winners.",
+  "design_end": "2022-12-31",
+  "validation_start": "2023-01-01",
+  "cutoff": "2026-08-31",
+  "design_start": "2017-01-01",
+  "cost_per_side": 0.003,
+  "liquidity_usd_daily": 1000000,
+  "minimum_age_days": 365,
+  "minimum_observations_365": 350,
+  "exclude_bases": ["USDT", "USDC", "DAI", "USDS", "USD1", "USDG", "PYUSD", "TUSD", "USDP", "PAX", "GUSD", "UST", "USTC", "EURC", "EUROC", "PAXG", "XAUT", "WBTC", "WETH", "CBETH", "CBBTC"],
+  "families": {
+    "momentum": [{"n": 3}, {"n": 5}, {"n": 8}],
+    "breakout": [{"n": 5, "stop": 0.20}, {"n": 5, "stop": 0.25}, {"n": 5, "stop": 0.30}],
+    "breadth": [{"n": 5, "threshold": 0.35}, {"n": 5, "threshold": 0.40}, {"n": 5, "threshold": 0.45}]
+  },
+  "selection": "Within each family choose highest design Calmar among variants with positive CAGR and at least 30 completed position cycles. If none qualifies use the middle variant and record design failure. No refitting during validation.",
+  "survival": {
+    "positive_design_required": true,
+    "minimum_closed_cycles": 30,
+    "max_drawdown_limit": 0.50,
+    "positive_complete_years_majority": true,
+    "beat_btc_cagr_or_calmar_with_lower_drawdown": true,
+    "positive_cagr_at_double_cost": true,
+    "minimum_positive_neighbours": 2,
+    "minimum_winner_capture_fraction": 0.10
+  },
+  "execution": "Signal uses completed UTC day t; rebalance next available calendar day's open, never t close. Stop uses entry open or highest previous completed daily close; gap fills at worse of open and stop, new positions can stop on entry day. Cash earns zero. Missing marks carry at most seven days, then position is written to zero.",
+  "momentum": "At each calendar month end, BTC close > MA200: equal-weight positive-return90 top-N eligible coins; otherwise cash. Hold weights until next month; no discretionary stops.",
+  "breakout": "Daily close > previous 365-day closing high and daily dollar volume >= 1.5 times previous 30-day mean, BTC > MA200. Buy strongest return90 first into N equal slots. Initial and prior-close trailing stop as specified; exit BTC regime failure or 365 calendar days. No same-day reentry after a stop.",
+  "breadth": "Eligible-universe 7-day average breadth crosses threshold from below and rises >= 10 percentage points versus 30 days earlier; BTC > MA200. Buy positive-return90 top-N equal slots; exit if BTC below MA200, breadth < threshold-0.10, or 90 days elapsed. No ranking refresh until next trigger.",
+  "winner_definition": "Forward 180/365 calendar-day close-to-close return >= 2.0, exact endpoints and >=95% observed closes in the interval. Missing or unfinished horizons are censored. Daily descriptive counts overlap; monthly eligible anchors are the main capture denominator; separate episodes suppress overlaps per coin/horizon.",
+  "capture": "Fraction of eligible monthly winner anchors held immediately after the next day's open; identifying a coin is distinct from realizing +200% on a closed position cycle.",
+  "features": "Trailing 30-day mean close*base-volume, observed Coinbase age, exact 30/90/180-day returns, 90-day excess return versus BTC, close/previous365-day maximum-1, close/observed expanding maximum-1, std(log returns,14)/std(log returns,60), today's dollar volume/previous30-day mean, BTC > MA200, eligible-universe breadth above MA200. Sector labels omitted without dated reliable taxonomy.",
+  "weekly": "Use the same frozen daily signal definitions on completed Alpaca UTC bars; weekly reports do not reproduce daily entry/stop execution. No orders, no account requests. Tradability requires a separately supplied operator-confirmed asset snapshot. Sizing in equity percentages only, at most 0.5% risk, 5% per crypto order and 35% aggregate crypto, subject to existing positions, reserved sleeve, names and drawdown halt. Fail closed without exact endpoint/credentials/scope/budget/expiry grant."
+}
