@@ -122,6 +122,8 @@ class GrantedReader:
         wait = 1.0 - (time.monotonic() - self.last_request)
         if wait > 0:
             time.sleep(wait)
+        if self.now() >= timestamp(self.grant["not_after"]):
+            raise Refused("autorisation expirée avant envoi")
         self.last_request = time.monotonic()
         self.calls += 1
         return self.transport(origin + path + "?" + urllib.parse.urlencode(params), self.headers)
@@ -211,8 +213,11 @@ def approved_rules(path: Path) -> dict:
     try:
         value = json.loads(path.read_text())
         result = json.loads(path.with_name("validation.json").read_text())
+        binding = json.loads(Path(__file__).with_name("validation-binding.json").read_text())
         if value["protocol_hash"] != canonical_hash(protocol()) or value["result_hash"] != canonical_hash(result):
             raise Refused("règles non liées à la validation")
+        if binding["validation_hash"] != value["result_hash"] or binding["protocol_hash"] != value["protocol_hash"]:
+            raise Refused("validation différente de l'étude publiée")
         for name, rule in value["rules"].items():
             if name not in protocol()["families"] or rule != {"survives": result["strategies"][name]["survives"],
                                                                "config": result["strategies"][name]["config"],

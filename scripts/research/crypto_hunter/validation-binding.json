@@ -1,0 +1,24 @@
+{
+  "protocol_hash": "2afe8b4a144c75a459a9ba4e4e7dac12753012e455fcecdbf669e3a7fc58177b",
+  "implementation_hash": "17dcefc65686c7ce2da3858e2d3448e72d874f7b4d55a3868fc401756d9a49b4",
+  "design_lock_hash": "6b860b331a5c52252b22bb4281bf82a61e1125301b5f5d7726d328fe5d1d83fa",
+  "validation_hash": "965aeb012beb7742ca9a63257263897f84afabf433e579b03700b5d138ea9656",
+  "cache_digest": "0ba14824865bdb6489200334fd7652f0ba86235af278db8fa93bbd778c3d3077",
+  "cached_products": 492,
+  "analysed_coins": 474,
+  "survivor_count": 0,
+  "winner_counts": {
+    "180": {
+      "monthly_winners": 63,
+      "monthly_observed": 2404,
+      "censored": 307,
+      "distinct_coins": 26
+    },
+    "365": {
+      "monthly_winners": 96,
+      "monthly_observed": 2036,
+      "censored": 675,
+      "distinct_coins": 27
+    }
+  }
+}

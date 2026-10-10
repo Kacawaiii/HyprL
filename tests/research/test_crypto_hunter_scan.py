@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import json
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +8,7 @@ from scripts.research.crypto_hunter.scan import (
     ASSET_ORIGIN, BAR_PATH, DATA_ORIGIN, GrantedReader, NoRedirect, Refused,
     bars, tradable_symbols,
 )
+from scripts.research.crypto_hunter.install_timer import render
 
 
 NOW = datetime(2026, 10, 10, 10, tzinfo=timezone.utc)
@@ -99,3 +100,30 @@ def test_pagination_does_not_drop_other_symbols(tmp_path):
     reader = setup_reader(tmp_path, lambda *args: next(answers))
     m = bars(reader, list(rows), NOW)
     assert list(m.close.columns) == ["BTC-USD", "ETH-USD"]
+
+
+def test_zero_survivors_write_french_report_without_network_or_keys(tmp_path, monkeypatch):
+    from scripts.research.crypto_hunter import scan
+    monkeypatch.setattr(scan, "approved_rules", lambda path: {})
+    monkeypatch.setattr(scan, "GrantedReader", lambda *args: pytest.fail("must not read credentials or use network"))
+    output = tmp_path / "latest.md"
+    monkeypatch.setattr("sys.argv", ["scan", "--approved", "unused", "--grant", "absent",
+                                    "--credentials", "absent", "--state", str(tmp_path), "--output", str(output)])
+    with pytest.raises(SystemExit) as exit_info:
+        scan.main()
+    assert exit_info.value.code == 0
+    assert "Aucune règle ne survit" in output.read_text()
+    assert output.stat().st_mode & 0o777 == 0o600
+
+
+def test_timer_is_utc_and_isolated_with_process_kill_mode(tmp_path):
+    args = SimpleNamespace(python=tmp_path / "python", worktree=tmp_path / "tree",
+                           approved=tmp_path / "rules", grant=tmp_path / "grant",
+                           credentials=tmp_path / "keys", state=tmp_path / "state",
+                           output=tmp_path / "latest", assets=None)
+    service, timer = render(args)
+    assert "KillMode=process" in service
+    assert "Sat *-*-* 10:00:00 UTC" in timer
+    assert "scripts.research.crypto_hunter.scan" in service
+    assert f"WorkingDirectory={args.worktree}\n" in service
+    assert "claude-book" not in service
