@@ -4,7 +4,7 @@ import re
 
 from .core import RadarError
 from .entities import fold, NAMES, ALIASES
-from .registry import CRYPTO_NAMES
+from .registry import CRYPTO_NAMES, ETFS
 from .relationships import EXTERNAL_NAMES
 
 NUMBER = re.compile(r'(?<![\w])(?P<prefix>[$€])?\s*(?P<number>[+−-]?\d+(?:[.,\u202f\u00a0 ]\d{3})*(?:[.,]\d+)?)(?!\d|[.,]\d)(?P<tail>\s*(?:trillions?|billions?|millions?|milliards?|mille|thousand|[kmb](?!\w))?\s*(?:de\s+)?(?:%|percent|pour cent|ATR|bps|points? de base|×|x(?!\w)|dollars?|euros?|USD|EUR)?)', re.I)
@@ -96,11 +96,25 @@ def check_numbers(text, facts, *, subject=None):
         raise RadarError('LLM_NUMBER_UNSUPPORTED')
     horizons = {'1d': ['1d', 'un jour', 'une seance'], '5d': ['5d', 'cinq jours', 'cinq seances'],
                 '1m': ['1m', 'un mois']}
-    requested_horizons = {h for h, names in horizons.items() if any(re.search(r'(?<!\w)' + re.escape(n) + r'(?!\w)', normalized) for n in names)}
+    boundaries = list(re.finditer(r'[;!?]|\.(?=\s|$)|,(?=\s)', text))
     for number in quantities(text, french=True):
+        left = max((m.end() for m in boundaries if m.end() <= number['start']), default=0)
+        right = min((m.start() for m in boundaries if m.start() >= number['end']), default=len(text))
+        scope = text[left:right]
+        normalized_scope = fold(scope)
+        position = number['start'] - left
+        requested_horizons = {h for h, names in horizons.items() if any(
+            re.search(r'(?<!\w)' + re.escape(n) + r'(?!\w)', normalized_scope) for n in names)}
         value, tolerance = Decimal(number['value']), Decimal(number['quantum']) / 2
-        claim_subject = subject or named_subject(text, number['start'], {f['subject'] for f in facts if f['subject'] != 'event'})
-        claim_movement = movement(text, number['start']) if number['unit'] in ('pct', 'atr') else None
+        subjects = {f['subject'] for f in facts if f['subject'] != 'event'}
+        claim_subject = subject or named_subject(scope, position, subjects)
+        local_tickers = set(re.findall(r'\b[A-Z][A-Z0-9./-]+\b', scope)) & (set(NAMES) | set(ETFS) | set(CRYPTO_NAMES))
+        if not claim_subject and not local_tickers:
+            # A comma can continue the same issuer's sentence (revenue growth,
+            # then revenue amount); a new sentence or semicolon cannot.
+            sentence_left = max((m.end() for m in boundaries if m.end() <= number['start'] and m.group() != ','), default=0)
+            claim_subject = subject or named_subject(text[sentence_left:right], number['start'] - sentence_left, subjects)
+        claim_movement = movement(scope, position) if number['unit'] in ('pct', 'atr') else None
         def supported(fact):
             if fact['unit'] != number['unit']:
                 return False
@@ -110,7 +124,7 @@ def check_numbers(text, facts, *, subject=None):
                 if claim_subject and claim_subject != fact['subject']:
                     return False
                 names = [fact['subject'], fact.get('label', ''), NAMES.get(fact['subject'], '')]
-                if claim_subject != fact['subject'] and not any(name and fold(name) in normalized for name in names):
+                if claim_subject != fact['subject'] and not any(name and fold(name) in normalized_scope for name in names):
                     return False
             captured = Decimal(fact['value'])
             if claim_movement and fact.get('movement') and claim_movement != fact['movement']:

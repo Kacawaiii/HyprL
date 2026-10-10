@@ -86,3 +86,13 @@ def test_long_decimals_are_checked_and_signed_declines_can_use_french_words():
     output['events'][0]['summary'] = 'Micron: baisse de 7,2619%.'
     with pytest.raises(RadarError, match='LLM_NUMBER_UNSUPPORTED'):
         validate(output, [event])
+
+
+def test_one_clause_cannot_borrow_another_clauses_asset_or_horizon():
+    event = cluster([story()])[0]
+    panel = {'SPY': {'symbol': 'SPY', 'last': 778.6, 'returns_pct': {'1d': 0.194, '5d': 1.16}}}
+    output = {'events': [scenario(event)]}
+    for claim in ['SPY: +0,19% sur 5d; SPY: +1,16% sur 1d.', 'QQQ: +0,19%; SPY: +1,16%.']:
+        output['events'][0]['priced_in'] = claim
+        with pytest.raises(RadarError, match='LLM_NUMBER_UNSUPPORTED'):
+            validate(output, [event], panel)
