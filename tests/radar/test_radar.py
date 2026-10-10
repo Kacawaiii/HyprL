@@ -192,6 +192,33 @@ def test_atom_video_only_titles_descriptions_and_published_time():
     assert row['published_at'] == '2026-10-10T10:00:00Z'
 
 
+def test_channel_metadata_id_wins_over_related_video_ids(state):
+    store, grant, _, _ = state
+    channel_id = 'UC' + 'a' * 22
+    related = 'UC' + 'b' * 22
+    calls = []
+    def send(url, headers):
+        calls.append(url)
+        if '/@' in url:
+            body = json.dumps({'channelMetadataRenderer': {'externalId': channel_id},
+                               'relatedVideoRenderer': {'channelId': related}}).encode()
+            return 200, {}, body
+        return 200, {}, RSS
+    collector = Collector(Client(store, grant, send=send), channels=[])
+    assert collector.channel({'handle': '@Synthetic'}) == 1
+    assert parse_qs(urlsplit(calls[-1]).query)['channel_id'] == [channel_id]
+    assert store.latest('channel', '@Synthetic')['channel_id'] == channel_id
+
+
+def test_ambiguous_channel_discovery_never_guesses_an_id(state):
+    store, grant, _, _ = state
+    body = json.dumps({'first': {'channelId': 'UC' + 'a' * 22}, 'second': {'channelId': 'UC' + 'b' * 22}}).encode()
+    collector = Collector(Client(store, grant, send=lambda *a: (200, {}, body)), channels=[])
+    with pytest.raises(RadarError, match='CHANNEL_ID_UNVERIFIED'):
+        collector.channel({'handle': '@Synthetic'})
+    assert store.latest('channel', '@Synthetic') is None
+
+
 @pytest.mark.parametrize('published', [None, '2026-10-11T00:00:00Z', '2026-10-10T10:00:00', 'nonsense'])
 def test_unknown_or_future_publication_not_backfilled(published):
     row = item('synthetic', 'wire', 'https://example.invalid/story', 'headline', '', published, AT)

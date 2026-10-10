@@ -156,7 +156,11 @@ class Collector:
             if status != 200:
                 raise RadarError('HTTP_' + str(status))
             # Metadata only; never downloads video, captions or stores the page.
-            ids = re.findall(br'"(?:channelId|externalId)"\s*:\s*"(UC[A-Za-z0-9_-]{22})"', body)
+            # Related videos can contain many channelId values. Prefer the
+            # channel metadata's externalId rather than guessing from them.
+            ids = re.findall(br'"externalId"\s*:\s*"(UC[A-Za-z0-9_-]{22})"', body)
+            if not ids:
+                ids = re.findall(br'"channelId"\s*:\s*"(UC[A-Za-z0-9_-]{22})"', body)
             if not ids or len(set(ids)) != 1:
                 raise RadarError('CHANNEL_ID_UNVERIFIED')
             channel_id = ids[0].decode()
