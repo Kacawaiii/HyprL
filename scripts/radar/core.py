@@ -158,7 +158,7 @@ class Store:
                 rows.reverse()
         return [json.loads(row[0]) for row in rows]
 
-    def reserve(self, grant, group, source, maximum, spacing=0):
+    def reserve(self, grant, group, source, maximum, spacing=0, *, source_spacing=0):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             at = self.clock()
@@ -172,10 +172,15 @@ class Store:
                 raise RadarError('DAILY_BUDGET')
             # GDELT shares spacing across queries; feeds have per-feed spacing.
             row = db.execute('SELECT at FROM dispatch WHERE group_name=? AND (? OR source=?) ORDER BY seq DESC LIMIT 1',
-                             (group, group == 'gdelt', source)).fetchone()
+                             (group, group in ('gdelt', 'sec', 'fed'), source)).fetchone()
             spacing = max(spacing, grant.payload.get('spacing_seconds', {}).get(group, 0))
             if row and (at - instant(row[0])).total_seconds() < spacing:
                 raise RadarError('POLL_SPACING')
+            if source_spacing:
+                row = db.execute('SELECT at FROM dispatch WHERE group_name=? AND source=? ORDER BY seq DESC LIMIT 1',
+                                 (group, source)).fetchone()
+                if row and (at - instant(row[0])).total_seconds() < source_spacing:
+                    raise RadarError('POLL_SPACING')
             db.execute('INSERT INTO dispatch(day,group_name,source,at,grant_hash) VALUES(?,?,?,?,?)',
                        (at.date().isoformat(), group, source, iso(at), grant.identity))
 
@@ -183,6 +188,12 @@ class Store:
         with self.connect() as db:
             return dict(db.execute('SELECT group_name,count(*) FROM dispatch WHERE day=? GROUP BY group_name',
                                    (self.clock().date().isoformat(),)))
+
+    def last_dispatch(self, group, source):
+        with self.connect() as db:
+            row = db.execute('SELECT at FROM dispatch WHERE group_name=? AND source=? ORDER BY seq DESC LIMIT 1',
+                             (group, source)).fetchone()
+        return instant(row[0]) if row else None
 
 
 class Authorization:
@@ -248,14 +259,23 @@ class Client:
     def get(self, url, group, source, *, headers=None):
         self.grant.check(self.store.clock())
         self.grant.permit(url)
+        if hasattr(self.grant, 'group_for') and self.grant.group_for(url) != group:
+            raise RadarError('SOURCE_OUTSIDE_GRANT')
+        if group == 'sec':
+            source = 'sec:tickers' if urlsplit(url).path == '/files/company_tickers.json' else 'sec:8k'
+        elif group == 'fed':
+            source = 'fed:press' if urlsplit(url).path == '/feeds/press_all.xml' else 'fed:speeches'
         cooldown = self.store.latest('cooldown', group)
         if cooldown and self.store.clock() < instant(cooldown['until']):
             raise RadarError('SOURCE_COOLDOWN')
-        maximum = {'alpaca': 400, 'gdelt': 60, 'rss': 300, 'youtube': 400, 'market': 24}[group]
+        maximum = {'alpaca': 400, 'gdelt': 60, 'rss': 300, 'youtube': 400, 'market': 24, 'sec': 300, 'fed': 48}[group]
         spacing = {'rss': 900, 'youtube': 900, 'gdelt': 15}.get(group, 0)
-        self.store.reserve(self.grant, group, source, maximum, spacing)
+        source_spacing = (86400 if urlsplit(url).path == '/files/company_tickers.json' else 300) if group == 'sec' else 3600 if group == 'fed' else 0
+        self.store.reserve(self.grant, group, source, maximum, spacing, source_spacing=source_spacing)
         request_headers = {'User-Agent': 'HyprL-NewsRadar/1.0', 'Accept': 'application/json, application/rss+xml, application/atom+xml, text/xml'}
         request_headers.update(headers or {})
+        if group == 'sec':
+            request_headers['User-Agent'] = self.grant.payload['scope']['https://www.sec.gov']['user_agent']
         if urlsplit(url).hostname == 'data.alpaca.markets':
             request_headers.update(self.alpaca_headers())
         status, response_headers, body = self.send(url, request_headers)

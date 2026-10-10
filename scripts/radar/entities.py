@@ -574,7 +574,8 @@ class Dictionary:
         crypto_context = any(pattern.search(normalized) for theme, pattern in self.themes if theme == 'crypto')
         crypto_mentioned = False
         provider_symbols = {s.replace('.', '-') for s in story['symbols'] if re.fullmatch(r'[A-Z][A-Z0-9./-]{0,14}', s)}
-        provider_symbols = {s + '/USD' if s in CRYPTO_NAMES else s[:-3] + '/USD' if s.endswith('USD') and s[:-3] in CRYPTO_NAMES else s for s in provider_symbols}
+        if story.get('source') != 'sec:8k':
+            provider_symbols = {s + '/USD' if s in CRYPTO_NAMES else s[:-3] + '/USD' if s.endswith('USD') and s[:-3] in CRYPTO_NAMES else s for s in provider_symbols}
         symbols = set()
         for symbol, pattern in self.names:
             if pattern.search(normalized):
@@ -588,6 +589,8 @@ class Dictionary:
                 symbols.add(symbol + '/USD')
                 crypto_mentioned = True
         themes = {c for c, pattern in self.themes if pattern.search(normalized)}
+        if story.get('primary') and story.get('source') in ('sec:8k', 'fed:press', 'fed:speeches'):
+            themes |= set(story.get('themes', []))
         if crypto_mentioned:
             themes.add('crypto')
         named_symbols = sorted(symbols)
@@ -642,6 +645,10 @@ def transmission(entities, headline='', summary=''):
             mechanism = f'Si les flux ou usages annoncés se confirment, demande et liquidité possibles pour {CRYPTO_NAMES.get(symbol.split("/")[0], symbol)} ({THEME_LABELS.get(group, group)}).'
         elif symbol in ETF_EXPOSURES:
             mechanism = f'Si le choc se diffuse à {ETF_EXPOSURES[symbol]}, les actifs du fonds pourraient être réévalués; composition et pondérations non observées.'
+        if 'material_agreement' in entities['themes']:
+            mechanism = f'Si les obligations du contrat modifient les revenus, coûts ou risques de {NAMES.get(symbol, symbol)}, réévaluation possible; termes économiques non observés.'
+        elif 'executive_change' in entities['themes']:
+            mechanism = f'Si le changement de direction modifie la stratégie ou la gouvernance de {NAMES.get(symbol, symbol)}, effet possible sur la prime de risque; sens non établi.'
         names = [NAMES.get(symbol, ''), CRYPTO_NAMES.get(symbol.split('/')[0], ''), *ALIASES.get(symbol, [])]
         named = any(mentions(headline, name) for name in names if name)
         ticker = '$' + symbol in headline or (len(symbol) >= 3 and bool(re.search(r'(?<!\w)' + re.escape(symbol) + r'(?!\w)', headline)))
@@ -684,6 +691,9 @@ def transmission(entities, headline='', summary=''):
             ('BNO', 'commodity_etf', 'Exposition aux contrats Brent, avec risque de roulement.')]]
     if 'crypto' in entities['themes']:
         results.append({'symbol': 'COIN', 'role': 'sector', 'mechanism': 'Si l’activité crypto augmente, les commissions peuvent progresser; coûts réglementaires possibles.'})
+    if 'macro' in entities['themes']:
+        for symbol in ('SPY', 'QQQ', 'TLT', 'UUP'):
+            add(symbol, 'sector_etf', 'Si la communication modifie les attentes de taux, effet possible sur le financement, les valorisations et le dollar; sens et surprise non établis.')
     if 'Europe' in entities['countries'] and 'regulation' in entities['themes']:
         results += [{'symbol': s, 'role': role, 'mechanism': mechanism} for s, role, mechanism in [
             ('V', 'direct', 'Si un euro numérique modifie les usages de paiement, les réseaux pourraient subir une pression concurrentielle; adoption et calendrier inconnus.'),

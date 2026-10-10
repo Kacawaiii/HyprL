@@ -61,6 +61,9 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
         match_index = None
         for index in sorted(candidates):
             event = events[index]
+            accession = story.get('filing', {}).get('accession')
+            if accession and any(s.get('filing', {}).get('accession') not in (None, accession) for s in event['stories']):
+                continue
             gap = abs((instant(story['received_at']) - instant(event['first_received_at'])).total_seconds())
             if gap > 72 * 3600:
                 continue
@@ -93,7 +96,7 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
             entity_index.setdefault(entity, set()).add(match_index)
     old = {e['id']: e for e in previous}
     weights = {'earnings': 20, 'guidance': 25, 'm&a': 25, 'regulation': 25, 'macro': 30,
-               'geopolitics': 30, 'election': 25}
+               'geopolitics': 30, 'election': 25, 'material_agreement': 20, 'executive_change': 15, 'other': 10}
     for event in events:
         stories = event['stories']
         editorial = [s for s in stories if not s['retail']]

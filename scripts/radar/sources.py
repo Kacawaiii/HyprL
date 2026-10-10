@@ -81,7 +81,7 @@ def parse_feed(raw, source, publisher, received, *, primary=False, retail=False)
             summary = next((''.join(c.itertext()) for c in node.iter() if name(c) == 'description'), '')
         try:
             result.append(item(source, publisher, link, field('title'), summary, published, received,
-                               primary=primary and urlsplit(link).hostname == 'www.ecb.europa.eu', retail=retail))
+                               primary=primary and urlsplit(link).hostname in ('www.ecb.europa.eu', 'www.federalreserve.gov'), retail=retail))
         except RadarError:
             continue
     return result
