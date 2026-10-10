@@ -357,6 +357,22 @@ def test_novelty_is_durable_and_repeats_do_not_gain_importance():
     assert second[0]['importance'] < first[0]['importance']
 
 
+def test_fractional_timestamps_keep_true_publication_and_receipt_order():
+    later = AT + timedelta(microseconds=500000)
+    event = cluster([story(slug='later', received=later, published=later),
+                     story(slug='first', received=AT, published=AT)])[0]
+    assert event['first_received_at'] == iso(AT)
+    assert event['published_at'] == iso(AT)
+
+
+def test_store_receipt_range_respects_fractional_boundary(state):
+    store, _, clock, _ = state
+    store.append('synthetic', 'first', {'id': 'first'})
+    clock.at = AT + timedelta(microseconds=300000)
+    store.append('synthetic', 'second', {'id': 'second'})
+    assert store.rows('synthetic', since=clock.at) == [{'id': 'second'}]
+
+
 def test_future_receipt_and_incomplete_or_invalid_bars_are_excluded():
     assert cluster([story(received=AT + timedelta(seconds=1))], at=AT) == []
     assert valid_bars([bar(AT), {**bar(AT-timedelta(days=2)), 'c': float('nan')},

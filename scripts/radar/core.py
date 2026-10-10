@@ -35,6 +35,12 @@ def iso(value):
     return value.astimezone(UTC).isoformat().replace('+00:00', 'Z')
 
 
+def database_time(value):
+    # Fixed precision makes SQLite range comparisons chronological, including
+    # the boundary between whole-second and fractional-second receipts.
+    return value.astimezone(UTC).isoformat(timespec='microseconds').replace('+00:00', 'Z')
+
+
 def digest(value):
     if not isinstance(value, str):
         value = json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False)
@@ -133,7 +139,7 @@ class Store:
     def append(self, kind, key, body, *, at=None):
         with self.connect() as db:
             db.execute('INSERT INTO evidence(kind,key,at,body) VALUES(?,?,?,?)',
-                       (kind, key, iso(at or self.clock()), json.dumps(body, ensure_ascii=False, allow_nan=False)))
+                       (kind, key, database_time(at or self.clock()), json.dumps(body, ensure_ascii=False, allow_nan=False)))
 
     def latest(self, kind, key):
         with self.connect() as db:
@@ -143,7 +149,7 @@ class Store:
     def rows(self, kind, *, since=None, limit=None):
         with self.connect() as db:
             query = 'SELECT body FROM evidence WHERE kind=? AND at>=? ORDER BY seq'
-            params = [kind, iso(since) if since else '']
+            params = [kind, database_time(since) if since else '']
             if limit is not None:
                 query += ' DESC LIMIT ?'
                 params.append(limit)

@@ -35,7 +35,7 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
     events = []
     urls, hashes, word_index, entity_index = {}, {}, {}, {}
     # Stable order anchors IDs to the earliest time actually observed, not backdated publication.
-    for story in sorted(stories, key=lambda s: (s['received_at'], s['id'])):
+    for story in sorted(stories, key=lambda s: (instant(s['received_at']), s['id'])):
         if at and instant(story['received_at']) > at:
             continue
         entities = dictionary.map(story)
@@ -87,7 +87,7 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
         stories = event['stories']
         editorial = [s for s in stories if not s['retail']]
         lead_candidates = [s for s in editorial if s['primary']] or editorial or stories
-        event['headline'] = max(lead_candidates, key=lambda s: (s['received_at'], s['id']))['headline']
+        event['headline'] = max(lead_candidates, key=lambda s: (instant(s['received_at']), s['id']))['headline']
         publishers = sorted({independent_publisher(s) for s in editorial})
         primary = any(s['primary'] for s in editorial)
         rumours = any(RUMOUR.search(s['headline'] + ' ' + s['summary']) for s in stories)
@@ -109,7 +109,7 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
                                 'posts': len({s['url'] for s in stories if s['retail']}),
                                 'meaning': 'observed channel breadth; no audience/view or TikTok data'}
         publication_times = [s['published_at'] for s in stories if s['published_at']]
-        event['published_at'] = min(publication_times) if publication_times else None
+        event['published_at'] = min(publication_times, key=instant) if publication_times else None
         event['transmission_hypotheses'] = transmission(entities)
         event['conviction'] = None  # only separate qualitative scenario conviction may be produced by the LLM
         event['expectations'] = 'Consensus inconnu; un titre de presse ne prouve pas une surprise.'
@@ -134,7 +134,7 @@ def valid_bars(rows, at, *, daily=True):
                                    'closed_at': iso(opened + duration)}
         except (ValueError, KeyError, TypeError, OverflowError):
             continue
-    return [result[k] for k in sorted(result)]
+    return [result[k] for k in sorted(result, key=instant)]
 
 
 def bar_map(store, kind, at):
@@ -176,7 +176,7 @@ def daily_observations(store, at):
             bar['complete_at_receipt'] = instant(bar['closed_at']) <= received
             bar['received_at'] = payload['received_at']
             symbol = payload['symbol']
-            if symbol not in result or (bar['t'], bar['received_at']) >= (result[symbol]['t'], result[symbol]['received_at']):
+            if symbol not in result or (instant(bar['t']), instant(bar['received_at'])) >= (instant(result[symbol]['t']), instant(result[symbol]['received_at'])):
                 result[symbol] = bar
     return result
 
