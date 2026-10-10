@@ -142,7 +142,7 @@ describe('app shell', () => {
 
   it('keeps the shell usable when a request fails', async () => {
     vi.stubGlobal('fetch', mockApi({ '/api/v1/overview': new Error('backend down') }));
-    renderAt('/');
+    renderAt('/overview');
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     // navigation survives a failed data request
     expect(screen.getByRole('link', { name: 'Markets' })).toBeInTheDocument();
@@ -151,7 +151,7 @@ describe('app shell', () => {
 
 describe('overview', () => {
   it('shows corpus coverage and the frozen engine badges', async () => {
-    renderAt('/');
+    renderAt('/overview');
     // BTC-USD appears both as a product card heading and in the benchmark
     // table, so the heading role is what disambiguates it.
     expect(await screen.findByRole('heading', { name: 'BTC-USD' })).toBeInTheDocument();
@@ -160,7 +160,7 @@ describe('overview', () => {
   });
 
   it('reports unavailable capabilities instead of promising them', async () => {
-    renderAt('/');
+    renderAt('/overview');
     await screen.findByRole('heading', { name: 'BTC-USD' });
     // Overview badges three capabilities. Since Phase 5D the backtest engine and
     // shadow trading both exist, so only LIVE trading remains unavailable --
@@ -172,7 +172,7 @@ describe('overview', () => {
   });
 
   it('never invents a latest price', async () => {
-    renderAt('/');
+    renderAt('/overview');
     await screen.findByRole('heading', { name: 'BTC-USD' });
     expect(screen.getAllByText('unavailable').length).toBeGreaterThan(0);
   });

@@ -11,8 +11,10 @@ import { carrySelection, parseSelection, writeSelection } from '../lib/cockpit';
 import type { Mode } from '../lib/cockpit';
 
 const NAV = [
+  { to: '/', label: 'Radar', icon: '◌', end: true },
+  { to: '/events', label: 'Events', icon: '◆' },
   { to: '/cockpit', label: 'Cockpit', icon: '◉' },
-  { to: '/', label: 'Overview', icon: '◫', end: true },
+  { to: '/overview', label: 'Overview', icon: '◫' },
   { to: '/markets', label: 'Markets', icon: '◪' },
   { to: '/signals', label: 'Signals', icon: '⌁' },
   { to: '/risk', label: 'Risk', icon: '⚖' },
@@ -23,7 +25,6 @@ const NAV = [
   { to: '/research', label: 'Research', icon: '⌕' },
   { to: '/lab', label: 'Lab', icon: '⚗' },
   { to: '/trader', label: 'Agent trader', icon: '◎' },
-  { to: '/events', label: 'Events', icon: '◆' },
   { to: '/system', label: 'System', icon: '⚙' },
   { to: '/api-docs', label: 'API docs', icon: '❯' },
   { to: '/settings', label: 'Settings', icon: '⚒' },

@@ -12,12 +12,14 @@
  *  Those ran on 100 000 each and never shared a dollar; their equity is not
  *  this portfolio's history. They live in a collapsed section, never summed,
  *  never charted together. */
+import { useInRouterContext } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { Badge, EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
 import { LineChart } from '../components/LineChart';
 import type { PaperPortfolioPosition, PendingBatch } from '../api/types';
 import { PaperReplaySection } from './PaperReplaySection';
+import { PaperAccounts } from './paper/PaperAccounts';
 
 function money(value: string | null | undefined): string {
   if (!value) return '—';
@@ -226,5 +228,7 @@ function LivePaperSession() {
 }
 
 export function PaperPage() {
-  return <div className="stack"><LivePaperSession /><PaperReplaySection /></div>;
+  // The accounts read the cockpit mode from the URL; a bare render of this page (no router) shows the rest.
+  const routed = useInRouterContext();
+  return <div className="stack">{routed && <PaperAccounts />}<LivePaperSession /><PaperReplaySection /></div>;
 }

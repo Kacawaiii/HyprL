@@ -30,6 +30,7 @@ import type {
   EdgarFilingDetail, EdgarReplay, EdgarSnapshotView, EdgarSourceStatus,
 } from './types';
 
+import type { PaperSnapshot, RadarHome } from './radarTypes';
 import type {
   TraderAlerts, TraderContext, TraderHealth, TraderLabels, TraderLedger, TraderRuns, TraderScorecard, TraderSeries, TraderToday,
 } from './traderTypes';
@@ -148,6 +149,9 @@ export interface CandleQuery {
 }
 
 export const apiClient = {
+  /** Sanitized Radar home snapshot (read only; written by the export job, outside Git). */
+  getRadarHome: (signal?: AbortSignal) => request<RadarHome>('/api/v1/radar/home', signal),
+  getRadarPaper: (signal?: AbortSignal) => request<PaperSnapshot>('/api/v1/radar/paper', signal),
   getPolicyDefinitions: (signal?: AbortSignal) => request<PolicyDefinitions>('/api/v1/policies/definitions', signal),
   getPolicyReport: (signal?: AbortSignal) => request<PolicyReport>('/api/v1/policies/report', signal),
   /** The paper trader (read only, bounded). A dry-run runtime holds synthetic records; its scorecard needs `synthetic`. */

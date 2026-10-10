@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './layouts/AppShell';
 import { OverviewPage } from './pages/OverviewPage';
+import { RadarHomePage } from './pages/RadarHomePage';
 import { LoadingState } from './components/States';
 
 // Route-level splitting: the chart and research views should not weigh on a
@@ -53,7 +54,8 @@ export function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<OverviewPage />} />
+        <Route index element={<RadarHomePage />} />
+        <Route path="overview" element={<OverviewPage />} />
         <Route
           path="cockpit"
           element={<Suspense fallback={<LoadingState />}><CockpitPage /></Suspense>}
