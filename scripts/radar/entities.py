@@ -537,6 +537,7 @@ THEME_WORDS = {
     'semiconductors': ['semiconductor', 'semi conducteur', 'memory', 'memoire', 'DRAM', 'HBM'],
     'crypto': ['bitcoin', 'ethereum', 'crypto', 'blockchain'],
 }
+AMBIGUOUS_CRYPTO_NAMES = {'XRP', 'MKR', 'CRV', 'COMP', 'OP'}
 
 
 def fold(value):
@@ -551,25 +552,41 @@ class Dictionary:
     def __init__(self):
         self.stocks = set(universe())
         self.allowed = self.stocks | {s + '/USD' for s in CRYPTO_NAMES}
+        # Keep compiled patterns rather than thrashing Python's small global
+        # regex cache for every headline. Normalize each story only once.
+        def phrases(values):
+            return re.compile(r'(?<!\w)(?:' + '|'.join(re.escape(fold(v)) for v in values) + r')(?!\w)')
+        self.names = [(s, phrases([name, *ALIASES.get(s, [])])) for s, name in NAMES.items()]
+        ambiguous = {'ALL', 'ARE', 'COST', 'IT', 'ON', 'NOW', 'FIX', 'KEY', 'FAST', 'TECH', 'SO', 'DD', 'BEN', 'GEN', 'ICE', 'BALL', 'FLEX'}
+        self.tickers = [(s, re.compile(r'(?<!\w)' + re.escape(s) + r'(?!\w)') if len(s) >= 3 and s not in ambiguous else None) for s in self.stocks]
+        self.cryptos = [(s, phrases([name]), re.compile(r'(?<!\w)' + re.escape(s) + r'(?!\w)')) for s, name in CRYPTO_NAMES.items()]
+        self.countries = [(c, phrases(a)) for c, a in COUNTRIES.items()]
+        self.themes = [(c, phrases(a)) for c, a in THEME_WORDS.items()]
 
     def map(self, story):
         value = story['headline'] + ' ' + story['summary']
+        normalized = fold(value)
+        crypto_context = any(pattern.search(normalized) for theme, pattern in self.themes if theme == 'crypto')
+        crypto_mentioned = False
         symbols = {s.replace('.', '-') for s in story['symbols'] if re.fullmatch(r'[A-Z][A-Z0-9./-]{0,14}', s)}
         symbols = {s + '/USD' if s in CRYPTO_NAMES else s[:-3] + '/USD' if s.endswith('USD') and s[:-3] in CRYPTO_NAMES else s for s in symbols}
-        for symbol, name in NAMES.items():
-            if mentions(value, name) or any(mentions(value, a) for a in ALIASES.get(symbol, [])):
+        for symbol, pattern in self.names:
+            if pattern.search(normalized):
                 symbols.add(symbol)
         # Uppercase tickers are exact tokens; ambiguous English words are excluded.
-        ambiguous = {'ALL', 'ARE', 'COST', 'IT', 'ON', 'NOW', 'FIX', 'KEY', 'FAST', 'TECH', 'SO', 'DD', 'BEN', 'GEN', 'ICE', 'BALL', 'FLEX'}
-        for symbol in self.stocks:
-            if '$' + symbol in value or (len(symbol) >= 3 and symbol not in ambiguous and re.search(r'(?<!\w)' + re.escape(symbol) + r'(?!\w)', value)):
+        for symbol, pattern in self.tickers:
+            if '$' + symbol in value or (pattern and pattern.search(value)):
                 symbols.add(symbol)
-        for symbol, name in CRYPTO_NAMES.items():
-            if mentions(value, name) or re.search(r'(?<!\w)' + symbol + r'(?!\w)', value):
+        for symbol, name, ticker in self.cryptos:
+            if (name.search(normalized) and (symbol not in AMBIGUOUS_CRYPTO_NAMES or crypto_context)) or ticker.search(value):
                 symbols.add(symbol + '/USD')
+                crypto_mentioned = True
+        themes = {c for c, pattern in self.themes if pattern.search(normalized)}
+        if crypto_mentioned:
+            themes.add('crypto')
         return {'symbols': sorted(symbols),
-                'countries': sorted(c for c, aliases in COUNTRIES.items() if any(mentions(value, a) for a in aliases)),
-                'themes': sorted(c for c, aliases in THEME_WORDS.items() if any(mentions(value, a) for a in aliases))}
+                'countries': sorted(c for c, pattern in self.countries if pattern.search(normalized)),
+                'themes': sorted(themes)}
 
     def coverage(self):
         missing = sorted(self.stocks - set(ETFS) - set(NAMES))

@@ -154,23 +154,34 @@ def safe(value):
 
 
 def render(report):
+    states = {'READY': 'prêt', 'PARTIAL': 'partiel', 'BLOCKED': 'bloqué', 'SYNTHETIC': 'synthétique'}
+    names = {'10y_yield': 'Taux dix ans', 'dollar_index': 'Indice dollar', 'gold': 'Or', 'Brent': 'Brent'}
+    instruments = {'equity ETF': 'ETF actions', 'provider yield index': 'indice de rendement fournisseur',
+                   'dollar index': 'indice dollar', 'spot FX': 'change au comptant', 'gold futures': 'contrats à terme or',
+                   'Brent futures': 'contrats à terme Brent', 'spot crypto': 'crypto au comptant', 'volatility index': 'indice de volatilité'}
+    evidence_names = {'rumour': 'rumeur', 'primary_statement': 'déclaration primaire',
+                      'corroborated_reporting': 'articles corroborés', 'single_source': 'source unique'}
+    novelty_names = {'new': 'nouveau', 'updated': 'mis à jour', 'repeat': 'répétition'}
+    directions = {'beneficiary': 'bénéficiaire', 'loser': 'perdant', 'uncertain': 'incertain'}
+    roles = {'direct': 'direct', 'supplier': 'fournisseur', 'competitor': 'concurrent', 'sector_etf': 'ETF sectoriel',
+             'country_etf': 'ETF pays', 'input_cost': 'coût des intrants', 'commodity_etf': 'ETF matières premières', 'sector': 'secteur'}
     lines = [f"# Radar HyprL — {report['date']} — {report['slot']}",
-             f"Réception arrêtée à {report['cutoff']}. Suivi papier d'observations.",
+             f"État: {states[report['status']]}. Réception arrêtée à {report['cutoff']}. Suivi papier d'observations.",
              f"Sources live: {sum(h['status'] == 'LIVE' for h in report['sources'])}; bloquées: {sum(h['status'] == 'BLOCKED' for h in report['sources'])}; mortes: {sum(h['status'] == 'DEAD' for h in report['sources'])}.",
              f"Synthèse: {report['llm']['status']}. Consensus inconnu sauf preuve explicite; scénarios conditionnels.",
              "Régime: variations des derniers cours clôturés, horizons calendaires; futures explicitement identifiés."]
     for label, row in report['regime'].items():
         changes = ', '.join(f"{h}: {v:+.2f}%" if v is not None else f'{h}: inconnu' for h, v in row['returns_pct'].items())
-        lines.append(f"- {label} ({row['symbol']}, {row['instrument']}): {row['last'] if row['last'] is not None else 'inconnu'}; {changes}; {row['at'] or row['status']}.")
+        lines.append(f"- {names.get(label, label)} ({row['symbol']}, {instruments[row['instrument']]}): {row['last'] if row['last'] is not None else 'inconnu'}; {changes}; {row['at'] or row['status']}.")
     for event in report['events'][:6]:
         scenario = event.get('scenario')
         evidence = event['evidence']
         title = scenario['summary'] if scenario else event['headline']
-        lines.append(f"- {safe(title)} — importance {event['importance']}; preuve {evidence['score']} ({evidence['status']}); nouveauté {event['novelty']}; conviction {event['conviction'] or 'non évaluée'}; hype {event['retail_hype']['score']}.")
+        lines.append(f"- {safe(title)} — importance {event['importance']}; preuve {evidence['score']} ({evidence_names[evidence['status']]}); nouveauté {novelty_names[event['novelty']]}; conviction {event['conviction'] or 'non évaluée'}; hype {event['retail_hype']['score']}.")
         lines.append(f"  Publication: {event['published_at'] or 'inconnue'}; réception: {event['first_received_at']}; sources: " + ', '.join(f"[{safe(s['publisher'])}]({s['url']})" for s in event['stories'][:3]))
         if scenario:
             lines.append('  Attentes/impact/horizon: ' + ' '.join(safe(scenario[k]) for k in ('changed_expectations', 'impact', 'horizon')))
-            lines.append('  Bénéficiaires/perdants possibles: ' + '; '.join(f"{r['symbol']} ({r['direction']}, {r['role']}): {safe(r['mechanism'])}" for r in scenario['exposures']))
+            lines.append('  Bénéficiaires/perdants possibles: ' + '; '.join(f"{r['symbol']} ({directions[r['direction']]}, {roles[r['role']]}): {safe(r['mechanism'])}" for r in scenario['exposures']))
             lines.append('  Invalidation: ' + safe(scenario['invalidation']))
         else:
             lines.append('  Mécanismes possibles: ' + '; '.join(f"{r['symbol']}: {safe(r['mechanism'])}" for r in event['transmission_hypotheses'][:3]))

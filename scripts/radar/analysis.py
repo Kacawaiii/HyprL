@@ -38,6 +38,9 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
     for story in sorted(stories, key=lambda s: (instant(s['received_at']), s['id'])):
         if at and instant(story['received_at']) > at:
             continue
+        if at and story['published_at'] and instant(story['published_at']) < at - timedelta(days=3):
+            # A newly fetched archive entry is not a new market event.
+            continue
         entities = dictionary.map(story)
         words = tokens(story['headline'])
         match = None
@@ -113,7 +116,7 @@ def cluster(stories, *, previous=(), dictionary=None, at=None, crypto_first=Fals
         event['transmission_hypotheses'] = transmission(entities)
         event['conviction'] = None  # only separate qualitative scenario conviction may be produced by the LLM
         event['expectations'] = 'Consensus inconnu; un titre de presse ne prouve pas une surprise.'
-    return sorted(events, key=lambda e: (not ('crypto' in e['entities']['themes'] or any('/' in s for s in e['entities']['symbols'])) if crypto_first else False,
+    return sorted(events, key=lambda e: (not ('crypto' in e['entities']['themes']) if crypto_first else False,
                                          -e['importance'], -e['evidence']['score'], e['id']))
 
 

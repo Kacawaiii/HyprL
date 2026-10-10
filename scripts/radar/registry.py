@@ -58,6 +58,7 @@ CRYPTO_NAMES = {
 }
 # Direct observations use provider instruments, explicitly labelled futures or indices.
 # None of these are silently substituted with an ETF proxy.
+ALPACA_STOCK_SYMBOLS = {'BRK-B': 'BRK.B', 'BF-B': 'BF.B'}
 REGIME = {
     'SPY': ('alpaca', 'SPY', 'equity ETF'), 'QQQ': ('alpaca', 'QQQ', 'equity ETF'),
     '10y_yield': ('yahoo', '^TNX', 'provider yield index'),

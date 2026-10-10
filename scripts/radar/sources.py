@@ -8,7 +8,7 @@ import re
 import xml.etree.ElementTree as ET
 
 from .core import RadarError, UTC, canonical_url, digest, instant, iso
-from .registry import FEEDS, CHANNELS, THEMES, CRYPTO_NAMES, universe
+from .registry import ALPACA_STOCK_SYMBOLS, FEEDS, CHANNELS, THEMES, CRYPTO_NAMES, universe
 
 
 def text(value, limit=600):
@@ -117,7 +117,10 @@ class Collector:
             code = str(error) if isinstance(error, RadarError) else 'INVALID_PROVIDER_SHAPE'
             if code == 'HTTP_429_STOP_SOURCE':
                 self.stopped.add(group)
-            state = {'source': source, 'status': 'DEAD' if code in ('HTTP_404', 'HTTP_410', 'NOT_A_FEED') else 'BLOCKED',
+            dropped = code in ('HTTP_404', 'HTTP_410', 'NOT_A_FEED') or (
+                group in ('rss', 'youtube') and code in (
+                    'REDIRECT_REQUIRES_EXPLICIT_URL', 'HTTP_301', 'HTTP_302', 'HTTP_303', 'HTTP_307', 'HTTP_308'))
+            state = {'source': source, 'status': 'DEAD' if dropped else 'BLOCKED',
                      'reason': code, 'items': 0, 'checked_at': iso(self.store.clock())}
         self.health.append(state)
         self.store.append('health', source, state)
@@ -217,9 +220,10 @@ class Collector:
 
     def bars(self, symbols, *, crypto=False, minute=False, start=None, end=None):
         path = '/v1beta3/crypto/us/bars' if crypto else '/v2/stocks/bars'
+        requested = {ALPACA_STOCK_SYMBOLS.get(s, s) if not crypto else s: s for s in symbols}
         end = end or iso(self.store.clock())
         start = start or iso(self.store.clock() - timedelta(days=65))
-        params = {'symbols': ','.join(symbols), 'timeframe': '1Min' if minute else '1Day',
+        params = {'symbols': ','.join(requested), 'timeframe': '1Min' if minute else '1Day',
                   'start': start, 'end': end, 'limit': 10000, 'sort': 'asc'}
         if not crypto:
             params.update(feed='iex', adjustment='all')
@@ -227,11 +231,16 @@ class Collector:
         for _ in range(12):
             payload, received = self.client.json('https://data.alpaca.markets' + path + '?' + urlencode(params), 'alpaca', 'alpaca:bars')
             for symbol, bars in payload['bars'].items():
+                if symbol not in requested:
+                    raise RadarError('BARS_SYMBOL_MISMATCH')
+                symbol = requested[symbol]
                 self.store.append('minute_bars' if minute else 'daily_bars', symbol,
                                   {'symbol': symbol, 'bars': bars, 'received_at': iso(received), 'provider': 'alpaca', 'feed': None if crypto else 'iex'})
                 total += len(bars)
             token = payload.get('next_page_token')
             if not token:
+                if not total:
+                    raise RadarError('EMPTY_BARS')
                 return total
             params['page_token'] = token
         raise RadarError('BARS_PAGINATION_INCOMPLETE')

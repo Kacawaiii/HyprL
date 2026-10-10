@@ -46,6 +46,13 @@ def state(tmp_path):
     return store, grant, clock, path
 
 
+@pytest.fixture
+def synthetic_credentials(tmp_path):
+    path = tmp_path / 'synthetic.env'
+    path.write_text('APCA_API_KEY_ID=synthetic-id\nAPCA_API_SECRET_KEY=synthetic-secret\n')
+    return path
+
+
 def story(slug='one', headline='Micron raises memory guidance after earnings', publisher='wire',
           symbols=(), retail=False, received=AT, published=AT-timedelta(hours=1), primary=False):
     return item('synthetic', publisher, 'https://example.invalid/' + slug, headline, '',
@@ -263,6 +270,24 @@ def test_dead_feeds_are_not_polled_again(state):
     assert any(h['status'] == 'DEAD' for h in collector.health)
 
 
+@pytest.mark.parametrize('code', ['REDIRECT_REQUIRES_EXPLICIT_URL', 'HTTP_301', 'HTTP_302', 'HTTP_303', 'HTTP_307', 'HTTP_308'])
+def test_redirected_feeds_are_dropped_without_a_second_dispatch(state, code):
+    store, grant, clock, _ = state
+    sent = []
+    def send(url, headers):
+        sent.append(url)
+        raise RadarError(code)
+    collector = Collector(Client(store, grant, send=send), channels=[])
+    source = 'rss:' + FEEDS[0][0]
+    collector.attempt(source, lambda: collector.feed(source, 'https://example.invalid/feed', 'wire'))
+    assert collector.health[0]['status'] == 'DEAD'
+    assert collector.health[0]['reason'] == code
+    clock.at += timedelta(hours=1)
+    collector.collect(markets=False, gdelt=False)
+    assert sent == ['https://example.invalid/feed']
+    assert store.counts()['rss'] == 1
+
+
 def test_gdelt_seen_time_never_becomes_publication(state):
     store, grant, _, _ = state
     payload = {'articles': [{'url': 'https://example.invalid/event', 'title': 'Brazil election',
@@ -271,6 +296,35 @@ def test_gdelt_seen_time_never_becomes_publication(state):
     collector.gdelt('elections', 'Brazil')
     row = store.rows('news')[0]
     assert row['published_at'] is None and row['discovery_at'] == '20261010T100000Z'
+
+
+def test_alpaca_class_symbols_map_at_the_provider_boundary(state, synthetic_credentials):
+    store, grant, _, _ = state
+    requests = []
+    def send(url, headers):
+        requests.append(parse_qs(urlsplit(url).query)['symbols'][0])
+        return 200, {}, json.dumps({'bars': {'BRK.B': daily_history(), 'BF.B': daily_history()}, 'next_page_token': None}).encode()
+    collector = Collector(Client(store, grant, send=send, credentials=synthetic_credentials), channels=[])
+    assert collector.bars(['BRK-B', 'BF-B']) == 80
+    assert requests == ['BRK.B,BF.B']
+    assert {r['symbol'] for r in store.rows('daily_bars')} == {'BRK-B', 'BF-B'}
+
+
+def test_empty_alpaca_bars_do_not_verify_price_coverage(state, synthetic_credentials):
+    store, grant, _, _ = state
+    collector = Collector(Client(store, grant, credentials=synthetic_credentials, send=lambda *a: (200, {}, b'{"bars":{},"next_page_token":null}')), channels=[])
+    collector.attempt('alpaca:crypto_daily:SOL', lambda: collector.bars(['SOL/USD'], crypto=True))
+    assert collector.health[0]['status'] == 'BLOCKED'
+    assert collector.health[0]['reason'] == 'EMPTY_BARS'
+
+
+def test_alpaca_unrequested_bar_identity_is_rejected(state, synthetic_credentials):
+    store, grant, _, _ = state
+    payload = {'bars': {'QQQ': daily_history()}, 'next_page_token': None}
+    collector = Collector(Client(store, grant, credentials=synthetic_credentials, send=lambda *a: (200, {}, json.dumps(payload).encode())), channels=[])
+    with pytest.raises(RadarError, match='BARS_SYMBOL_MISMATCH'):
+        collector.bars(['SPY'])
+    assert not store.rows('daily_bars')
 
 
 def test_alpaca_all_symbols_pagination_and_source_shape(state, tmp_path):
@@ -323,6 +377,30 @@ def test_ambiguous_short_tickers_not_matched_as_english_words():
     dictionary = Dictionary()
     mapped = dictionary.map(story(headline='All stocks are on sale now with a key change'))
     assert not {'ALL', 'ARE', 'ON', 'NOW', 'KEY', 'A', 'T'} & set(mapped['symbols'])
+
+
+def test_new_receipt_of_old_feed_article_does_not_rank_as_new_event():
+    old = story(slug='old', headline='Bitcoin regulation', published=AT-timedelta(days=10))
+    fresh = story(slug='fresh', headline='Ethereum guidance', published=AT-timedelta(hours=1))
+    unknown = story(slug='unknown', headline='Brazil election', published=None)
+    events = cluster([old, fresh, unknown], at=AT)
+    assert {s['url'] for e in events for s in e['stories']} == {fresh['url'], unknown['url']}
+
+
+def test_generic_financial_words_do_not_create_crypto_entities():
+    mapped = Dictionary().map(story(headline='Chip maker sees optimism as the yield curve and compound costs ripple through margins'))
+    assert not {'MKR/USD', 'OP/USD', 'CRV/USD', 'COMP/USD', 'XRP/USD'} & set(mapped['symbols'])
+    assert 'crypto' not in mapped['themes']
+    explicit = Dictionary().map(story(headline='Crypto lending at Compound and Curve'))
+    assert {'COMP/USD', 'CRV/USD'} <= set(explicit['symbols'])
+
+
+def test_weekend_prioritizes_crypto_text_over_provider_basket_tags():
+    macro = story(slug='macro', headline='Brazil election and inflation guidance', symbols=['BTC'])
+    crypto = story(slug='crypto', headline='Solana network update')
+    events = cluster([macro, crypto], at=AT, crypto_first=True)
+    assert events[0]['headline'] == crypto['headline']
+    assert 'BTC/USD' in events[1]['entities']['symbols']
 
 
 def test_dedupe_syndication_does_not_create_confirmation():

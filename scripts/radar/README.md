@@ -56,8 +56,8 @@ Channel configuration is an optional private JSON array of `handle` and/or
 `channel_id` records. Fifteen French/US candidates are included. A channel ID
 must be verified from metadata or supplied by the operator; no ID is guessed.
 Candidates are unverified until a successful parse. HTTP 404/410 and pages
-which are not feeds drop a candidate; 403, 429, redirects and grant refusals are
-reported as blocked. Remove the cause or append a reviewed new health record
+which are not feeds and redirects drop a candidate without following the
+redirect; 403, 429 and grant refusals are reported as blocked. Remove the cause or append a reviewed new health record
 to retry a dropped candidate; never edit/delete its historical evidence.
 
 The installer writes only three radar service/timer pairs. It requires a valid
@@ -84,6 +84,12 @@ Publication and receipt remain separate. Unknown/future/naive publisher times
 stay unknown; GDELT `seendate` is discovery only. Source and original URL,
 headline/summary digests, publisher and feed symbols are retained. Headline,
 URL, shared entity and token similarity cluster repeats within a bounded window.
+An article with a known publication time older than three days does not enter
+the ranking merely because its feed was fetched now. The private evidence stays
+append-only. Entity patterns are compiled once per dictionary for live volume.
+Generic words such as maker, optimism and curve require explicit crypto context
+to identify tokens. Weekend priority uses textual crypto relevance rather than
+an incidental crypto ticker in a provider's broad basket of associated symbols.
 Editorial groups and explicit syndication attribution determine corroboration;
 unattributed syndication remains uncertain. Repeated rumours remain rumours.
 YouTube breadth affects retail hype only. The snapshot dictionary contains
@@ -117,6 +123,9 @@ historical returns use calendar anchors and conservative completed daily bars.
 The JSON records anchor timestamps. Yield is labelled as the provider's yield
 index without guessing a scaling conversion. Gold/Brent are futures, not spot.
 Missing/stale measurements stay unknown; ETFs never impersonate exact indices.
+Alpaca class symbols use the provider's dotted notation on dispatch, then map
+back to the repository identity. Empty bars are unverified coverage, not a
+successful price-source check; unexpected returned symbols are rejected.
 
 One Sonnet CLI invocation per radar, with no tools, hooks, MCP, skills or session
 persistence, returns validated qualitative French scenario JSON. Feed data are
