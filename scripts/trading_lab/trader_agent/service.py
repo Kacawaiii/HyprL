@@ -176,6 +176,11 @@ class TraderService:
                 texts, hashes = skills()
                 self.ledger.reserve("catchup_run" if catchup else "run")
                 variants = weekend.variants() if self.crypto_only else VARIANTS
+                from .paper_spec import execution_spec, execution_preregistration
+                execution_registration = None
+                if at >= instant(execution_spec()['effective_from']):
+                    execution_registration = execution_preregistration()
+                    variants = list(dict.fromkeys([*variants, *execution_spec()['variants']]))
                 self.summary(run_id, "RUNNING", at, preregistration_hash=prereg_hash, multiple_testing_variants=variants)
                 context, context_hash = build_context(self.ledger.grant, self.data, at=at, fomc=self.fomc,
                                                       edgar=self.edgar, crypto_only=self.crypto_only)
@@ -228,6 +233,7 @@ class TraderService:
                 decision = {"schema": "trader-decision-v1", "run_id": run_id, "session": day,
                     "decision_at": iso(decision_at), "context_hash": context_hash,
                     "authorization_hash": self.ledger.grant.identity, "preregistration_hash": prereg_hash,
+                    **({'execution_preregistration_hash': execution_registration} if execution_registration else {}),
                     "skill_hashes": hashes, "synthetic": self.data.synthetic,
                     "models": {**{role: {"model": self.ledger.grant.gpt_model if role == "analyst_gpt" else
                                         self.ledger.grant.payload["external_models"][role]["model"],

@@ -96,8 +96,8 @@ def main(argv=None):
             print(json.dumps({'state': 'REGISTERED', 'registration': paper.register_weekend(args.operator_decision)}, indent=2))
             return 0
         if args.action == 'paper-rebind':
-            if not args.operator_decision:
-                parser.error('--operator-decision is required for paper-rebind')
+            if not args.operator_decision or args.dry_run:
+                parser.error('paper-rebind requires --operator-decision and forbids --dry-run')
             from .alpaca_paper import PaperAuthorization, PaperLedger
             paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
             rebound = PaperLedger.rebind(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant,

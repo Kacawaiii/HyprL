@@ -42,7 +42,7 @@ def test_weekend_paper_population_requires_registration_then_trades_crypto_only(
     from dataclasses import replace
     from scripts.trading_lab.trader_agent import weekend
     executor, broker, grant, clock = environment
-    clock.at = instant('2026-10-10T12:10:00Z')
+    clock.at = instant('2026-10-11T12:10:00Z')
     # Synthetic authority has no protection; preserve native broker shapes.
     grant.parent.payload['universe']['crypto'] = ['SOL-USD', 'AVAX-USD', 'LINK-USD', 'DOGE-USD', 'LTC-USD']
     executor.grant = executor.ledger.grant = replace(grant, parent=replace(grant.parent,
@@ -60,11 +60,11 @@ def test_weekend_paper_population_requires_registration_then_trades_crypto_only(
     assert {l['variant'] for l in executor.ledger.events('ia_crypto', 'intent')[0]['lots']} == {weekend.VARIANT}
     executor.run('execute')
     assert len(broker.posts()) == 1
-    clock.at = instant('2026-10-11T13:30:00Z')
+    clock.at = instant('2026-10-12T13:30:00Z')
     assert executor.run('exit')['state'] == 'COMPLETE'
     assert broker.posts()[-1][3]['side'] == 'sell'
     assert len(broker.posts()) == 2
-    clock.at = instant('2026-10-15T13:30:00Z')
+    clock.at = instant('2026-10-16T13:30:00Z')
     assert executor.run('exit', accounts=['ia_crypto'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 3 and broker.posts()[-1][3]['side'] == 'sell'
     assert executor.run('exit', accounts=['ia_crypto'])['accounts'][0]['open_lots'] == 0

@@ -1,0 +1,50 @@
+{
+  "schema": "trader-agent-preregistration-v4",
+  "revision": 7,
+  "registered_on": "2026-10-10",
+  "effective_from": "2026-10-10T14:15:00Z",
+  "scope": "Execution tiers only, both weekday and weekend_crypto_v1 populations. Original analyst/reviewer instructions, research prediction identities, labels, primary hypothesis and historical preregistrations remain authoritative.",
+  "previous_weekday_preregistration_hash": "3ae8bf1ba47ddd9a1aead3fabbc1444cdd05b3f9949f004c8aea500c62ed8ce7",
+  "previous_weekend_preregistration_hash": "d38d91c8c822ddfaa478b102c22099aa00a750ec1957c83bb006ccd38df1d89c",
+  "weekend_spec_hash": "421c3f7d7f71e4fdde59eec1216d72edcf5b720ea64938a4d52edb6c4451d998",
+  "execution_spec_hash": "42c025197da23ca3f4686a710f73f3a31c242edac89ac1043cd45c9cb6430252",
+  "operator_decision_hash": "61bb7b1758bcb7e8d1e7cab2b2bda5c61afbf213dd7fd88d79a31d611a33d57b",
+  "crypto_amendment_hash": "2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7",
+  "variants": [
+    "alpaca_open_entry_v1",
+    "alpaca_after_hours_v1",
+    "alpaca_open_entry_v2",
+    "alpaca_after_hours_v2",
+    "weekend_crypto_v1",
+    "half_size_downgrade_v1",
+    "crypto_single_kept_half_v1"
+  ],
+  "tiers": {
+    "ia_actions_KEEP": {
+      "multiplier": "1",
+      "variants": [
+        "alpaca_open_entry_v2",
+        "alpaca_after_hours_v2"
+      ]
+    },
+    "ia_actions_DOWNGRADE": {
+      "multiplier": "0.5",
+      "variant": "half_size_downgrade_v1"
+    },
+    "ia_crypto_consensus": {
+      "multiplier": "1",
+      "variants": [
+        "alpaca_open_entry_v1",
+        "weekend_crypto_v1"
+      ]
+    },
+    "ia_crypto_single_KEEP": {
+      "multiplier": "0.5",
+      "variant": "crypto_single_kept_half_v1"
+    }
+  },
+  "scoring": "Executed lots scored separately by account, population (weekday, after_hours, weekend_crypto_v1), tier variant and horizon. Count submitted/filled/unfilled/pending lots, cumulative realized P&L before broker fees, remaining quantity. Never pool new tiers into v2 or the primary shadow scores; unfilled and pending are not realized returns. Replay is counterfactual sizing evidence, not performance.",
+  "confirmatory": false,
+  "unchanged": "Grant caps, kill switch, timing, model/source/order budgets, idempotency, expiry and recovery.",
+  "canonical_sha256": "7b134cdaf0cb1b6d750ada86a9a8cd365745ad4dab1f14053354cbaa863a9adc"
+}

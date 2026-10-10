@@ -1,0 +1,109 @@
+{
+  "schema": "trader-alpaca-execution-spec-v3",
+  "revision": 3,
+  "registered_on": "2026-10-10",
+  "mode": "ALPACA_PAPER_ONLY",
+  "variants": [
+    "alpaca_open_entry_v1",
+    "alpaca_after_hours_v1",
+    "alpaca_open_entry_v2",
+    "alpaca_after_hours_v2",
+    "weekend_crypto_v1",
+    "half_size_downgrade_v1",
+    "crypto_single_kept_half_v1"
+  ],
+  "population": "ia_actions reviewed union KEEP full and DOWNGRADE half; ia_crypto weekday/weekend consensus full or single analyst KEEP half; COMPLETE or DEGRADED, reviewer present, no taint",
+  "sizing": {
+    "directional_threshold": {
+      "ia_actions": "every reviewer KEEP directional view; UP p>0.50 or DOWN p<0.50, probability controls size",
+      "ia_crypto": 0.55
+    },
+    "max_probability": 0.8,
+    "formula": "signed name_cap * horizon_fraction * abs(p_outperform - 0.50) / 0.30; horizon_fraction=0.5 for 1d, 0.1 for each 5d cohort; pro-rata scale new lots to remaining gross and short capacity; deterministic asset/horizon order; floor shares or crypto 1e-8; divide sizing price by a 1.10 reserve factor",
+    "cohorts": "half the capital allocation for 1d, half for five overlapping 5d cohorts; cap total absolute lots per name including pending intents",
+    "reference": "causal decision input last close for OPG; fresh decision bid/ask midpoint for after-hours",
+    "caps": "private grant, asserted in code; no leverage; all pending entry intents reserve risk; no automatic position discrepancy repair"
+  },
+  "orders": {
+    "idempotency": "sha256(run_id, symbol, purpose) first 40 hex; durable intent before submission; lookup before POST; recovery never reschedules a missed auction",
+    "lot_identity": "sha256(run_id, asset, horizon); broker target is sum of live signed lot quantities; orders are deltas",
+    "netting": "Opposing live lots share a broker position; allocate cumulative partial fills in broker quantity units by largest remainders. Zero entry delta is NOT_TRADED; zero exit delta is internal settlement, never claimed as a broker fill.",
+    "daily_cap": 40,
+    "mutation_start": "2026-10-08T12:00:00Z",
+    "daily_cap_reservation": "Before entries, reserve one order per symbol exiting today, including new 1d lots. Admit entry deltas in deterministic symbol order within the remaining 40/day budget.",
+    "claude_book": "Account suffix 2EQN remains GET-only, outside every AI variant and baseline.",
+    "crypto_partial_fills": "V2 and v3 intents allocate crypto fills in native 1e-9 units; v1 intents retain frozen 1e-8 allocation; entries retain 1e-8 flooring."
+  },
+  "timing": {
+    "equity_entry": "whole-share market OPG, before open minus 2 minutes; open-entry label sessions",
+    "equity_exit": "market CLS, between label session close minus 20 and minus 10 minutes; pinned calendar handles holidays, early closes, DST",
+    "crypto_entry": "market gtc immediately after the successful daily decision; record anchor tracking difference",
+    "crypto_exit": "market gtc at label exit timestamp, hourly :30Z scheduler matches 13:30Z anchors"
+  },
+  "after_hours": {
+    "entry": "after regular close until 19:30 America/New_York; equity-only distinct prediction population; actual paper fill price or decision quote if no fill, marked NOT_TRADED",
+    "order": "limit only, extended_hours=true, time_in_force=day",
+    "max_spread_bps": 30,
+    "max_slippage_bps": 10,
+    "max_quote_age_seconds": 60,
+    "quote_source": "operator-provided private bid/ask feed until a separate market-data grant exists; unavailable quotes refuse execution",
+    "exit": "unchanged catch-up horizon, next session close for 1d and fifth following session close for 5d",
+    "scoring": "broker execution outcomes apart from open-entry and close-entry shadow predictions; unfilled entries are NOT_TRADED",
+    "limitation": "paper fills in thin after-hours liquidity are optimistic",
+    "daily_model_budget": "Pinned to the failed daily session during after-hours recovery, including across UTC midnight; no quota refund.",
+    "unfilled": "Cancel known outstanding entries at the 19:30 New York cutoff, reconcile final cumulative fills, and mark unfilled lots NOT_TRADED."
+  },
+  "storage": "append-only private ResearchStore journal; grant/spec binding; account suffix only; broker order identities hashed; no bodies or credentials",
+  "kill_switch": "equity below 90% of observed peak (initial base 100000); halt persistently, cancel known pending orders and flatten broker-reconciled lots, retain all order caps; operator required to resume",
+  "benchmarks": [
+    "SPY",
+    "QQQ",
+    "BTC (protected: unavailable)"
+  ],
+  "limitations": [
+    "Marked price changes and opening gaps can exceed intended weights; refuse new risk while marked caps are breached; scheduled exits remain enabled.",
+    "Crypto actual entry differs from the fixed research label anchor.",
+    "No result is confirmatory; all execution variants are exploratory."
+  ],
+  "benchmark_baselines": {
+    "SPY_QQQ": "observed open of first execution session",
+    "BTC": "fixed 13:30Z anchor of first execution session, only if unprotected"
+  },
+  "effective_from": "2026-10-10T14:15:00Z",
+  "previous_spec_hash": "cc18ef9d4cf18ba33e47b4d9c6a17fa3ad82842891613168873b6a12372ff88b",
+  "operator_decision_hash": "61bb7b1758bcb7e8d1e7cab2b2bda5c61afbf213dd7fd88d79a31d611a33d57b",
+  "crypto_amendment_hash": "2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7",
+  "selection": {
+    "ia_actions": "KEEP candidates take precedence over DOWNGRADE; one lot per asset/horizon, conservative raw analyst probability within selected tier, deterministic analyst tie-break. DOWNGRADE uses original issued probability, not adjusted reviewer probability.",
+    "conflict": "Any issued UP versus DOWN vetoes every tier, regardless of reviewer verdict.",
+    "ia_crypto": "Full consensus requires two issued agreeing directional KEEP views and the existing consensus directional threshold. Otherwise exactly one issued directional analyst KEEP with the other ABSTAIN/MISSING is half size; DOWNGRADE and REJECT never contribute; long or flat, existing 0.55 threshold.",
+    "scores": "Original research views and primary scores unchanged; execution fill/P&L scores separate by tier, population and horizon."
+  },
+  "rebinding": "Explicit operator decision and canonical v3 execution preregistration bound under owner lock; previous binding/spec/grant hashes journaled. Refuse any open lot, pending intent, broker position or open order; no existing lot is covered by this empty-ledger transition. Preserve historical v1/v2 transitions and weekend registration; original grants and events immutable.",
+  "tiers": {
+    "ia_actions_KEEP": {
+      "multiplier": "1",
+      "variants": [
+        "alpaca_open_entry_v2",
+        "alpaca_after_hours_v2"
+      ]
+    },
+    "ia_actions_DOWNGRADE": {
+      "multiplier": "0.5",
+      "variant": "half_size_downgrade_v1"
+    },
+    "ia_crypto_consensus": {
+      "multiplier": "1",
+      "variants": [
+        "alpaca_open_entry_v1",
+        "weekend_crypto_v1"
+      ]
+    },
+    "ia_crypto_single_KEEP": {
+      "multiplier": "0.5",
+      "variant": "crypto_single_kept_half_v1"
+    }
+  },
+  "tier_sizing": "Compute v2 reference-price sizing, candidate gross/short scale and remaining name cap in deterministic order; floor the v2 quantity first, then multiply by the tier and floor again (whole shares for actions, 1e-8 for crypto). Skip zero. Do not redistribute released gross capacity. All live and pending risk counts against unchanged caps.",
+  "canonical_sha256": "42c025197da23ca3f4686a710f73f3a31c242edac89ac1043cd45c9cb6430252"
+}

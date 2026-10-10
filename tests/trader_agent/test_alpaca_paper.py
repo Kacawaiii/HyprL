@@ -81,7 +81,7 @@ class MockBroker:
 
 @pytest.fixture
 def environment(tmp_path, grant, clock, monkeypatch):
-    clock.at = instant('2026-10-09T12:00:00Z')
+    clock.at = instant('2026-10-12T12:00:00Z')
     monkeypatch.setenv('HOME', str(tmp_path))
     # No holdout prices are read. Synthetic broker tests model an authorized, unprotected universe.
     monkeypatch.setattr(paper, 'protected', lambda *a: None)
@@ -143,7 +143,7 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
                 executor.research.issue(p, evidence)
     executor.research.append('replay-summary', {'schema': 'trader-run-v1', 'run_id': run_id, 'at': iso(at),
         'status': status, 'synthetic': False, 'tainted': tainted,
-        'decision': {'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
+        'decision': {'execution_preregistration_hash': paper.execution_preregistration(), 'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
 
 
 def test_live_url_refused_before_even_get(environment):
@@ -276,7 +276,7 @@ def test_partial_fill_projection_and_due_cls_delta(environment):
     assert sum(paper.decimal(l['qty']) for l in executor.ledger.projection('ia_actions')[2].values()) == paper.D('21')
     assert all(paper.decimal(l['qty']) == paper.decimal(l['qty']).quantize(paper.D(1)) for l in executor.ledger.projection('ia_actions')[2].values())
     broker.fill('ia_actions', intent['client_id'])
-    clock.at = instant('2026-10-09T19:40:00Z')
+    clock.at = instant('2026-10-12T19:40:00Z')
     result = executor.run('exit', accounts=['ia_actions'])
     assert result['state'] == 'COMPLETE'
     exit_order = broker.posts()[-1][3]
@@ -316,7 +316,7 @@ def test_no_mutation_today_even_kill_switch(environment):
 
 
 @pytest.mark.parametrize('day,open_at,cls_at,cutoff', [
-    ('2026-10-09', '13:30', '19:40', '23:30'), ('2026-11-02', '14:30', '20:40', '00:30')])
+    ('2026-10-12', '13:30', '19:40', '23:30'), ('2026-11-02', '14:30', '20:40', '00:30')])
 def test_auction_and_after_hours_dst(day, open_at, cls_at, cutoff):
     session = calendar_session(day)
     assert iso(session.open_at)[11:16] == open_at
@@ -335,8 +335,8 @@ def test_early_close_cls_uses_calendar():
 
 @pytest.mark.parametrize('side', ['buy', 'sell'])
 def test_after_hours_limit_spread_and_cutoff(side):
-    session = calendar_session('2026-10-09')
-    at = instant('2026-10-09T22:00:00Z')
+    session = calendar_session('2026-10-12')
+    at = instant('2026-10-12T22:00:00Z')
     terms = paper.order_terms('ia_actions', 'entry', at, session, after_hours=True, bid='99.95', ask='100.05', side=side)
     assert terms['type'] == 'limit' and terms['extended_hours'] is True and terms['time_in_force'] == 'day'
     with pytest.raises(TraderError, match='PAPER_SPREAD_CAP'):
@@ -347,7 +347,7 @@ def test_after_hours_limit_spread_and_cutoff(side):
 
 def test_after_hours_requires_fresh_private_quote_and_no_other_http_host(environment, tmp_path):
     executor, broker, _, clock = environment
-    clock.at = instant('2026-10-09T20:10:00Z')
+    clock.at = instant('2026-10-12T20:10:00Z')
     issue(executor, variant='alpaca_after_hours_v1')
     assert executor.run('execute')['accounts'][0]['reason'] == 'PAPER_QUOTE_UNAVAILABLE'
     path = tmp_path / 'synthetic-quotes.json'
@@ -386,7 +386,7 @@ def test_schedule_chains_execute_report_and_uses_dst_and_crypto_anchor(tmp_path)
 
 def test_registered_execution_spec_and_private_store_binding(environment):
     executor, _, grant, clock = environment
-    assert execution_spec()['revision'] == 2 and len(SPEC_HASH) == 64
+    assert execution_spec()['revision'] == 3 and len(SPEC_HASH) == 64
     assert executor.ledger.events(event='binding')[0]['spec_hash'] == SPEC_HASH
     grant = paper.PaperAuthorization({**grant.payload}, 'e' * 64, grant.parent)
     with pytest.raises(TraderError, match='PAPER_LEDGER_BINDING_MISMATCH'):
@@ -402,7 +402,7 @@ def test_close_order_budget_reserved_before_entries(environment):
     assert len(result['accounts'][0]['budget_skipped_symbols']) == 6
     for (name, key) in list(broker.orders):
         broker.fill(name, key)
-    clock.at = instant('2026-10-09T19:40:00Z')
+    clock.at = instant('2026-10-12T19:40:00Z')
     assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 40
 
@@ -415,7 +415,7 @@ def test_stale_unsubmitted_intent_never_reschedules_next_open(environment):
         executor.run('execute', accounts=['ia_actions'])
     # Model an unacknowledged dispatch that never reached the broker.
     broker.orders.clear()
-    clock.at = instant('2026-10-09T13:29:00Z')
+    clock.at = instant('2026-10-12T13:29:00Z')
     result = executor.run('execute', accounts=['ia_actions'])
     assert result['accounts'][0]['reason'] == 'PAPER_OPG_CUTOFF'
     assert len(broker.posts()) == 1
@@ -517,13 +517,13 @@ def test_pause_and_expiry_block_transport_mutations(environment):
 
 def test_after_hours_unfilled_is_canceled_at_cutoff_and_scored_not_traded(environment, tmp_path):
     executor, broker, _, clock = environment
-    clock.at = instant('2026-10-09T20:10:00Z')
+    clock.at = instant('2026-10-12T20:10:00Z')
     issue(executor, variant='alpaca_after_hours_v1')
     path = tmp_path / 'quotes.json'
     path.write_text(json.dumps({'quotes': {'AAPL': {'bid': '99.95', 'ask': '100.05', 'at': iso(clock())}}}))
     executor.quotes = paper.PrivateQuotes(path)
     executor.run('execute', accounts=['ia_actions'])
-    clock.at = instant('2026-10-09T23:30:00Z')
+    clock.at = instant('2026-10-12T23:30:00Z')
     assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert any(c[1] == 'DELETE' for c in broker.calls)
     assert len(broker.posts()) == 1
@@ -535,17 +535,17 @@ def test_public_benchmarks_use_first_execution_open_and_protected_btc_remains_pe
     from scripts.trading_lab.trader_agent import paper_reporting
     executor, _, _, clock = environment
     executor.run('status')
-    clock.at = instant('2026-10-09T21:30:00Z')
+    clock.at = instant('2026-10-12T21:30:00Z')
     monkeypatch.setattr(paper_reporting, 'protected', lambda asset, *a: asset == 'BTC-USD')
     class Quotes:
         def yahoo(self, asset, start, end):
-            assert start.date().isoformat() == '2026-10-08'
-            return [{'bar_open_at': calendar_session('2026-10-09').open_at, 'open': 100, 'close': 105}], {'digest': 'a' * 64}
+            assert start.date().isoformat() == '2026-10-11'
+            return [{'bar_open_at': calendar_session('2026-10-12').open_at, 'open': 100, 'close': 105}], {'digest': 'a' * 64}
         def crypto(self, *a, **kw):
             pytest.fail('protected BTC must not be fetched')
     values = paper_reporting.benchmarks(executor.ledger, tmp_path / 'runtime', executor.grant.parent, data=Quotes())
     assert values['SPY']['return_since_paper_start'] == '0.05'
-    assert values['SPY']['base_at'] == '2026-10-09T13:30:00Z'
+    assert values['SPY']['base_at'] == '2026-10-12T13:30:00Z'
     assert values['BTC']['state'] == 'PENDING' and values['BTC']['reason'] == 'PROTECTED_BENCHMARK'
     report = executor.report(values)
     assert report['versus']['complet']['SPY'] == '-0.05' and report['versus']['complet']['BTC'] is None
@@ -553,7 +553,7 @@ def test_public_benchmarks_use_first_execution_open_and_protected_btc_remains_pe
 
 def test_no_entry_when_label_exit_is_after_grant_expiry(environment):
     executor, broker, _, clock = environment
-    executor.grant.payload['not_after'] = '2026-10-10T00:00:00Z'
+    executor.grant.payload['not_after'] = '2026-10-13T00:00:00Z'
     issue(executor, assets=('AAPL', 'BTC-USD'))
     result = executor.run('execute')
     assert result['state'] == 'COMPLETE'
@@ -563,9 +563,9 @@ def test_no_entry_when_label_exit_is_after_grant_expiry(environment):
 
 
 @pytest.mark.parametrize('peer, verdict, expected', [
-    ('ABSTAIN', 'KEEP', ['AAPL']), ('ABSTAIN', 'DOWNGRADE', []),
+    ('ABSTAIN', 'KEEP', ['AAPL']), ('ABSTAIN', 'DOWNGRADE', ['AAPL']),
     ('DOWN', 'KEEP', []), ('UP', 'KEEP', ['AAPL'])])
-def test_reviewed_union_plans_kept_view_and_refuses_downgrade_or_raw_conflict(environment, peer, verdict, expected):
+def test_reviewed_union_plans_kept_or_downgraded_view_and_refuses_raw_conflict(environment, peer, verdict, expected):
     executor, broker, _, _ = environment
     issue(executor, horizons=('1d',), verdict=verdict, peer_direction=peer)
     result = executor.run('execute', dry_run=True, accounts=['ia_actions'])

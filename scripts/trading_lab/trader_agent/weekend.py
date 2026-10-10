@@ -22,7 +22,7 @@ def pinned(name, expected):
 
 def preregistration():
     from .service import PREREG_HASH as weekday_hash, skills
-    from .paper_spec import SPEC_HASH as execution_hash
+    from .paper_spec import PREVIOUS_SPEC_HASH as execution_hash
     value = pinned('trader_agent_preregistration_v3.json', PREREG_HASH)
     spec = pinned('trader_weekend_crypto_spec_v1.json', SPEC_HASH)
     if (value['previous_preregistration_hash'] != weekday_hash or value['spec_hash'] != SPEC_HASH
@@ -48,7 +48,7 @@ def variants():
 
 def registration_target(paper_grant):
     from .config import WEEKEND_DECISION_HASH
-    from .paper_spec import SPEC_HASH as execution_hash
+    from .paper_spec import PREVIOUS_SPEC_HASH as execution_hash
     return {'variant': VARIANT, 'weekend_spec_hash': SPEC_HASH, 'preregistration_hash': preregistration(),
             'operator_decision_hash': WEEKEND_DECISION_HASH, 'execution_spec_hash': execution_hash,
             'grant_hash': paper_grant.identity, 'effective_grant_hash': paper_grant.parent.identity,

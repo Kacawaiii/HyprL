@@ -12,7 +12,7 @@ from tests.trader_agent.test_alpaca_paper import environment, issue
 @pytest.fixture
 def feed(environment, tmp_path):
     _, _, paper_grant, clock = environment
-    clock.at = instant('2026-10-09T20:10:00Z')
+    clock.at = instant('2026-10-12T20:10:00Z')
     payload = {'authorization': 'trader-alpaca-data-v1', 'extends': 'trader-alpaca-paper-v1',
                'granted_at': '2026-01-01T00:00:00Z', 'not_after': '2027-01-01T00:00:00Z',
                'data_endpoint': {'origin': data.DATA_URL, 'methods': ['GET'], 'credentials': 'ia_actions keys'}}
@@ -69,7 +69,7 @@ def test_unknown_and_protected_products_never_contact_data_host(feed, asset):
     assert not calls
 
 
-@pytest.mark.parametrize('timestamp', ['2026-10-09T20:08:59Z', '2026-10-09T20:10:01Z'])
+@pytest.mark.parametrize('timestamp', ['2026-10-12T20:08:59Z', '2026-10-12T20:10:01Z'])
 def test_stale_and_future_quotes_refuse_execution(feed, timestamp):
     client, _, _, _ = feed
     original = client.transport
@@ -85,8 +85,8 @@ def test_stale_and_future_quotes_refuse_execution(feed, timestamp):
 
 def test_expired_data_grant_refuses_before_http(feed):
     client, calls, clock, _ = feed
-    client.grant.payload['not_after'] = '2026-10-09T20:11:00Z'
-    clock.at = instant('2026-10-09T20:11:00Z')
+    client.grant.payload['not_after'] = '2026-10-12T20:11:00Z'
+    clock.at = instant('2026-10-12T20:11:00Z')
     with pytest.raises(TraderError, match='DATA_AUTHORIZATION_EXPIRED_OR_NOT_STARTED'):
         client.latest(['AAPL'])
     assert not calls
@@ -112,7 +112,7 @@ def test_data_unavailable_uses_only_a_fresh_private_file_fallback(feed, tmp_path
         raise TraderError('DATA_HTTP_503')
     quotes = data.QuoteFeed(client.grant.parent, path, fallback, clock=clock, transport=unavailable)
     assert quotes.get('AAPL', clock())['bid'] == 99.9
-    clock.at = instant('2026-10-09T20:11:01Z')
+    clock.at = instant('2026-10-12T20:11:01Z')
     with pytest.raises(TraderError, match='PAPER_QUOTE_STALE'):
         quotes.get('AAPL', clock())
 

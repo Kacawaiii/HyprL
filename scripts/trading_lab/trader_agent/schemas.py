@@ -49,6 +49,8 @@ DECISION = obj({"schema": {"const": "trader-decision-v1"}, "run_id": STRING, "se
                    for role in ("analyst_claude", "analyst_gpt", "reviewer")}),
     "synthetic": {"type": "boolean"}, "views": array(DECISION_VIEW, 500)})
 SCHEMAS = {"analyst": ANALYST, "reviewer": REVIEWER, "decision": DECISION}
+# Execution registration is additive; frozen pre-v3 decisions remain valid.
+DECISION['properties']['execution_preregistration_hash'] = HASH
 
 # OpenAI strict structured outputs (Codex --output-schema) accept only a subset of JSON Schema: 'format: uri' and
 # 'maxLength' made the first real run fail with invalid_json_schema. GPT gets a derived schema; every local validator

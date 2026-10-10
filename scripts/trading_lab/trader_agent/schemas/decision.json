@@ -369,6 +369,10 @@
         "additionalProperties": false
       },
       "maxItems": 500
+    },
+    "execution_preregistration_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     }
   },
   "required": [

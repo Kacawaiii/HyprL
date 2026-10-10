@@ -23,7 +23,8 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 
 from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import calendar_session, label_window, protected
-from .paper_spec import SPEC_HASH, PREVIOUS_SPEC_HASH, OPERATOR_DECISION_HASH, execution_spec
+from .paper_spec import SPEC_HASH, PREVIOUS_SPEC_HASH, OPERATOR_DECISION_HASH, execution_spec, execution_preregistration
+from .execution_tiers import selections, execution_scores
 from .scoring import rows
 
 PAPER_URL = 'https://paper-api.alpaca.markets'
@@ -61,7 +62,7 @@ def allocated_quantities(intent, observation):
     filled = decimal(observation.get('filled_qty', 0))
     fraction = filled / total if total else D(1) if observation.get('status') == 'internal' else D(0)
     values = [decimal(lot['qty']) * fraction for lot in intent['lots']]
-    crypto_unit = D('.000000001') if intent.get('spec_hash') == SPEC_HASH else D('.00000001')
+    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH} else D('.00000001')
     unit = crypto_unit if '/USD' in intent['order']['symbol'] else D(1)
     rounded = [v.quantize(unit, rounding=ROUND_DOWN) for v in values]
     signed_total = sum((decimal(l['qty']) for l in intent['lots']), D(0))
@@ -228,11 +229,14 @@ class PaperLedger:
 
     def binding_target(self):
         from .service import preregistration
+        from .weekend import PREREG_HASH as weekend_prereg, SPEC_HASH as weekend_spec
         parent = self.grant.parent
         return {'grant_hash': self.grant.identity, 'spec_hash': SPEC_HASH,
                 'base_grant_hash': parent.base_identity or parent.identity,
                 'effective_grant_hash': parent.identity, 'crypto_amendment_hash': parent.amendment_identity,
-                'preregistration_hash': preregistration(), 'operator_decision_hash': OPERATOR_DECISION_HASH}
+                'preregistration_hash': execution_preregistration(), 'research_preregistration_hash': preregistration(),
+                'weekend_preregistration_hash': weekend_prereg, 'weekend_spec_hash': weekend_spec,
+                'operator_decision_hash': OPERATOR_DECISION_HASH}
 
     def register_weekend(self, decision_path):
         """Explicit additive registration; no grant/spec migration or broker request."""
@@ -263,10 +267,15 @@ class PaperLedger:
     @staticmethod
     def validate_bindings(bindings):
         for previous, current in zip(bindings, bindings[1:]):
-            if (current.get('previous_binding_hash') != sha256_canonical(previous)
+            if ((previous.get('spec_hash'), current.get('spec_hash')) not in {
+                    ('c07ae3243d0b130c4ba9972158a2081ac3ff7fa5f280879a003915b98af5b386', PREVIOUS_SPEC_HASH),
+                    (PREVIOUS_SPEC_HASH, SPEC_HASH)}
+                    or current.get('previous_binding_hash') != sha256_canonical(previous)
                     or current.get('previous_spec_hash') != previous['spec_hash']
                     or current.get('previous_grant_hash') != previous['grant_hash']
-                    or current.get('operator_decision_hash') != OPERATOR_DECISION_HASH):
+                    or current.get('operator_decision_hash') != (
+                        '0caee3e1145b4cc401cccaface8ca7ecc928c6337c335ab23cc1695a3677e7a9'
+                        if current.get('spec_hash') == PREVIOUS_SPEC_HASH else OPERATOR_DECISION_HASH)):
                 raise TraderError('PAPER_LEDGER_BINDING_MISMATCH')
 
     @classmethod
@@ -288,7 +297,9 @@ class PaperLedger:
             target = ledger.binding_target()
             if all(bindings[-1].get(k) == v for k, v in target.items()):
                 return ledger
-            # Decision expressly says no open lots at approval. It cannot cover later risk.
+            if bindings[-1]['spec_hash'] != PREVIOUS_SPEC_HASH:
+                raise TraderError('PAPER_REBIND_PRIOR_BINDING_REFUSED')
+            # This transition covers an empty ledger only; historical lots are never rebound.
             for name in ('ia_actions', 'ia_crypto'):
                 intents, observed, lots = ledger.projection(name)
                 if any(decimal(l['qty']) for l in lots.values()):
@@ -556,29 +567,14 @@ class PaperExecutor:
         if (run.get('tainted') or decision.get('tainted') or 'TAINTED_RUN' in run.get('degraded', {}).values()
                 or not reviewer or reviewer.get('cli_version') == 'NOT_RUN'):
             return []
-        if name == 'ia_actions':
-            groups = {}
-            for view in decision.get('views', []):
-                if view['analyst'] in {'analyst_claude', 'analyst_gpt'}:
-                    groups.setdefault((view['asset'], view['horizon']), []).append(view)
-            views = {}
-            for key, pair in groups.items():
-                if len(pair) > 2 or len({v['analyst'] for v in pair}) != len(pair):
-                    raise TraderError('PAPER_ANALYST_BINDING_MISMATCH')
-                # Conflict is on issued directions, even if a reviewer rejected one.
-                if {v['view'] for v in pair} >= {'UP', 'DOWN'}:
-                    continue
-                kept = [v for v in pair if v['verdict'] == 'KEEP' and v['view'] in {'UP', 'DOWN'}]
-                if kept:
-                    # One lot per asset/horizon; agreeing KEEP views use the conservative probability.
-                    views[key] = min(kept, key=lambda v: (abs(decimal(v['p_outperform']) - D('.5')), v['analyst']))
-        else:
-            views = {(v['asset'], v['horizon']): v for v in decision.get('views', []) if v['analyst'] == 'consensus'}
+        views = selections(decision.get('views', []), name)
+        if not self.replay_prior_registration and decision.get('execution_preregistration_hash') != execution_preregistration():
+            return []
         predictions = []
         for row in rows(self.research, 'prediction'):
             p = row['payload']
             view, definition = p['signal']['view'], p['signal']['label_definition']
-            if p['synthetic'] or p['signal']['run_id'] != run['run_id'] or view['analyst'] not in ({'analyst_claude', 'analyst_gpt'} if name == 'ia_actions' else {'consensus'}):
+            if p['synthetic'] or p['signal']['run_id'] != run['run_id'] or view['analyst'] not in {'analyst_claude', 'analyst_gpt', 'consensus'}:
                 continue
             from .service import preregistration
             from . import weekend
@@ -594,12 +590,13 @@ class PaperExecutor:
             if not self.replay_prior_registration and (p['artifact_hash'] != expected_registration or
                     instant(p['decision_at']) < instant(execution_spec()['effective_from'])):
                 continue
-            selected = views.get((p['product'], definition['horizon']))
-            if selected is None or selected['analyst'] != view['analyst']:
+            selection = views.get((p['product'], definition['horizon']))
+            if selection is None or selection[0]['analyst'] != view['analyst']:
                 continue
+            selected, multiplier, tier = selection
             if selected != view:
                 raise TraderError('PAPER_ANALYST_BINDING_MISMATCH')
-            if (view['view'] not in {'UP', 'DOWN'} or view['verdict'] not in ({'KEEP'} if name == 'ia_actions' else {'KEEP', 'DOWNGRADE'})
+            if (view['view'] not in {'UP', 'DOWN'} or view['verdict'] not in ({'KEEP', 'DOWNGRADE'} if name == 'ia_actions' else {'KEEP'})
                     or p['risk'].get('tainted') or definition.get('variant') == 'catchup_close_entry_v1'):
                 continue
             if definition.get('variant') not in {None, 'alpaca_after_hours_v1', weekend.VARIANT}:
@@ -614,7 +611,7 @@ class PaperExecutor:
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             if is_weekend and (instant(p['decision_at']) >= expected_entry or instant(row['recorded_at']) >= expected_entry):
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
-            if p['decision_at'] > iso(self.clock()) or row['recorded_at'] > iso(self.clock()):
+            if instant(p['decision_at']) > self.clock() or instant(row['recorded_at']) > self.clock():
                 continue
             if instant(definition['exit_at']) >= min(instant(self.grant.payload['not_after']),
                                                      instant(self.grant.parent.payload['not_after'])):
@@ -624,7 +621,7 @@ class PaperExecutor:
                 continue
             if protected(p['product'], instant(p['decision_at']), instant(definition['exit_at'])):
                 continue
-            predictions.append((row, evidence[0]['payload']))
+            predictions.append((row, evidence[0]['payload'], multiplier, tier))
         return predictions
 
     def entries(self, name, equity, positions):
@@ -643,7 +640,7 @@ class PaperExecutor:
             short += max(-weight, D(0))
             weights[lot['symbol']] = weights.get(lot['symbol'], D(0)) + abs(weight)
         candidates = []
-        for row, evidence in self.eligible_predictions(name):
+        for row, evidence, multiplier, tier in self.eligible_predictions(name):
             p = row['payload']
             if p['product'] not in self.grant.assets(name):
                 continue
@@ -673,8 +670,11 @@ class PaperExecutor:
                                'session': p['signal'].get('session', instant(p['decision_at']).astimezone(NY).date().isoformat()),
                                'horizon': definition['horizon'], 'exit_at': definition['exit_at'], 'entry_at': definition['entry_at'],
                                'prediction_hash': row['identity'], 'reference_price': str(price), 'weight': weight,
-                               'direction': direction, 'variant': ('alpaca_after_hours_v2' if definition.get('variant') else 'alpaca_open_entry_v2')
-                               if name == 'ia_actions' else definition.get('variant', 'alpaca_open_entry_v1')})
+                               'direction': direction, 'size_multiplier': str(multiplier),
+                               'population': 'weekend_crypto_v1' if definition.get('variant') == 'weekend_crypto_v1'
+                               else 'after_hours' if definition.get('variant') == 'alpaca_after_hours_v1' else 'weekday',
+                               'variant': tier or (('alpaca_after_hours_v2' if definition.get('variant') else 'alpaca_open_entry_v2')
+                               if name == 'ia_actions' else definition.get('variant', 'alpaca_open_entry_v1'))})
         candidates.sort(key=lambda l: (l['asset'], l['horizon']))
         total = sum((l['weight'] for l in candidates), D(0))
         short_total = sum((l['weight'] for l in candidates if l['direction'] < 0), D(0))
@@ -688,6 +688,7 @@ class PaperExecutor:
             weight = min(lot.pop('weight') * scale, remaining)
             # Fixed 10% price reserve; marked risk remains checked on every start.
             qty = (weight * equity / (decimal(lot['reference_price']) * D('1.10'))).quantize(D(1) if name == 'ia_actions' else D('.00000001'), rounding=ROUND_DOWN)
+            qty = (qty * decimal(lot['size_multiplier'])).quantize(D(1) if name == 'ia_actions' else D('.00000001'), rounding=ROUND_DOWN)
             weights[lot['symbol']] = weights.get(lot['symbol'], D(0)) + qty * decimal(lot['reference_price']) / equity
             lot['qty'] = str(qty * lot.pop('direction'))
             if qty:
@@ -705,7 +706,7 @@ class PaperExecutor:
             run = group[0]['run_id'] if purpose == 'entry' else ':'.join(sorted(l['lot_id'] for l in group))
             key = sha256_canonical({'run_id': run, 'symbol': asset, 'purpose': purpose})[:40]
             side = 'buy' if net >= 0 else 'sell'
-            after = purpose == 'entry' and any(l['variant'] in {'alpaca_after_hours_v1', 'alpaca_after_hours_v2'} for l in group)
+            after = purpose == 'entry' and any(l.get('population') == 'after_hours' or l['variant'] in {'alpaca_after_hours_v1', 'alpaca_after_hours_v2'} for l in group)
             session = calendar_session(group[0]['session'] if after else at.astimezone(NY).date().isoformat())
             q = self.quotes.get(asset, at) if after else None
             terms = order_terms(name, purpose, at, session, after_hours=after,
@@ -965,6 +966,7 @@ class PaperExecutor:
         outcomes = self.ledger.events(event='trade_outcome')
         latest = {(e['client_id'], e['lot_id']): e for e in outcomes}
         result['execution_outcomes'] = list(latest.values())
+        result['execution_scores'] = execution_scores(self.ledger)
         result['limitations'] = ['After-hours paper fills in thin liquidity are optimistic.',
                                 'Crypto market entry follows the decision; its label uses the fixed 13:30Z anchor.',
                                 'Auction gaps and marked price changes can exceed reserved weights; entries stop if marked caps are breached.']
