@@ -50,6 +50,12 @@ INDUSTRIES = {
 SUPPLIERS = {'MU': {'AMAT', 'LRCX', 'KLAC'}, 'NVDA': {'TSM', 'ASML'},
              'AMD': {'TSM', 'ASML'}, 'AAPL': {'QCOM', 'AVGO'},
              'T': {'CCI', 'AMT', 'SBAC'}, 'VZ': {'CCI', 'AMT', 'SBAC'}, 'TMUS': {'CCI', 'AMT', 'SBAC'}}
+COMPETITOR_GROUPS = [
+    {'T', 'VZ', 'TMUS', 'SpaceX', 'Starlink'}, {'CCI', 'AMT', 'SBAC'},
+    {'ASTS', 'VSAT', 'SpaceX', 'Starlink'}, {'NVDA', 'AMD', 'INTC'},
+    {'MU', 'SNDK', 'WDC'}, {'AMAT', 'LRCX', 'KLAC'},
+    *[INDUSTRIES[key] for key in ('banks', 'managed_care', 'pharma', 'oil_producers', 'airlines', 'payments')],
+]
 EXTERNAL_NAMES = {'ASTS': ['AST SpaceMobile'], 'VSAT': ['Viasat'], 'SpaceX': ['SpaceX'],
                   'Starlink': ['Starlink'], 'TSM': ['Taiwan Semiconductor', 'TSMC'], 'ASML': ['ASML']}
 SECTOR_CHANNELS = {
@@ -65,6 +71,17 @@ SECTOR_CHANNELS = {
     'real_estate': 'loyers, occupation et coût de refinancement de la dette',
     'utilities': 'tarifs régulés, coût du combustible et financement des réseaux',
 }
+THEME_LABELS = {
+    'telecom_satellites': 'Télécoms, satellites et tours', 'semiconductors': 'Semi-conducteurs',
+    'banks': 'Banques', 'managed_care': 'Assurance santé', 'pharma': 'Pharmacie',
+    'oil_producers': 'Producteurs de pétrole', 'airlines': 'Compagnies aériennes', 'payments': 'Paiements',
+    'communications': 'Communication', 'consumer_discretionary': 'Consommation discrétionnaire',
+    'consumer_staples': 'Consommation courante', 'energy': 'Énergie', 'financials': 'Finance',
+    'healthcare': 'Santé', 'industrials': 'Industrie', 'technology': 'Technologie',
+    'materials': 'Matériaux', 'real_estate': 'Immobilier', 'utilities': 'Services collectifs',
+    'stablecoins': 'Stablecoins', 'crypto_lending': 'Crédit crypto', 'crypto_exchange': 'Échanges crypto',
+    'crypto_scaling': 'Réseaux de mise à l’échelle crypto', 'crypto_networks': 'Réseaux crypto', 'unmapped': 'Secteur inconnu',
+}
 
 
 def industry(symbol):
@@ -73,4 +90,4 @@ def industry(symbol):
 
 
 def peers(symbol):
-    return set().union(*(symbols for symbols in INDUSTRIES.values() if symbol in symbols)) - {symbol}
+    return set().union(*(symbols for symbols in COMPETITOR_GROUPS if symbol in symbols)) - {symbol}

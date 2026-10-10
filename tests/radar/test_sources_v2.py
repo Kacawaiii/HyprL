@@ -7,7 +7,14 @@ import pytest
 
 from scripts.radar.core import Client, RadarError, Store
 from scripts.radar.sources import Collector
-from tests.radar.test_radar import RSS, state
+from tests.radar.test_radar import state
+
+YOUTUBE_ATOM = b'''<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/">
+<id>yt:channel:UCaaaaaaaaaaaaaaaaaaaaaa</id><yt:channelId>UCaaaaaaaaaaaaaaaaaaaaaa</yt:channelId>
+<entry><id>yt:video:synthetic01</id><yt:videoId>synthetic01</yt:videoId><yt:channelId>UCaaaaaaaaaaaaaaaaaaaaaa</yt:channelId>
+<title>Synthetic market update</title><link rel="alternate" href="https://www.youtube.com/watch?v=synthetic01"/>
+<published>2026-10-10T10:00:00Z</published><updated>2026-10-10T11:00:00Z</updated>
+<media:group><media:description>Synthetic retail narrative</media:description></media:group></entry></feed>'''
 
 
 def test_channel_redirect_is_grant_checked_and_identity_cached_once(state):
@@ -21,7 +28,7 @@ def test_channel_redirect_is_grant_checked_and_identity_cached_once(state):
         if urlsplit(url).path == '/@Synthetic/featured':
             return 200, {}, json.dumps({'externalId': channel_id}).encode()
         assert parse_qs(urlsplit(url).query)['channel_id'] == [channel_id]
-        return 200, {}, RSS
+        return 200, {}, YOUTUBE_ATOM
     collector = Collector(Client(store, grant, send=send), channels=[])
     assert collector.channel({'handle': '@Synthetic'}) == 1
     clock.at += timedelta(hours=1)

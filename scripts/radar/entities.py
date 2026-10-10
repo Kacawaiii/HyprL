@@ -4,7 +4,7 @@ import unicodedata
 
 from .registry import CRYPTO_NAMES, ETFS, universe
 from .relationships import (COUNTRY_ETFS, CRYPTO_GROUPS, EXTERNAL_NAMES, ETF_EXPOSURES,
-                            INDUSTRIES, SECTORS, SECTOR_ETFS, SECTOR_CHANNELS, SUPPLIERS, industry, peers)
+                            INDUSTRIES, SECTORS, SECTOR_ETFS, SECTOR_CHANNELS, SUPPLIERS, THEME_LABELS, industry, peers)
 
 # Public company names; symbol universe comes from the repository's existing snapshot.
 # Ambiguous short words (A, ALL, ON, etc.) require an explicit $ticker or feed symbol.
@@ -620,7 +620,7 @@ def transmission(entities, headline='', summary=''):
     symbols_by_relevance = sorted(entities['symbols'], key=lambda s: (s not in entities.get('named_symbols', []), s))
     for symbol in symbols_by_relevance:
         group = industry(symbol)
-        mechanism = (f'Si le fait annoncé se confirme pour {NAMES.get(symbol, symbol)}, effet possible sur ses revenus ou sa valorisation ({group}).')
+        mechanism = (f'Si le fait annoncé se confirme pour {NAMES.get(symbol, symbol)}, effet possible sur ses revenus ou sa valorisation ({THEME_LABELS.get(group, group)}).')
         if symbol in SECTORS:
             mechanism = f'Si le fait annoncé se confirme, {NAMES.get(symbol, symbol)} pourrait être affecté via {SECTOR_CHANNELS[SECTORS[symbol]]}.'
         if group == 'semiconductors':
@@ -630,7 +630,7 @@ def transmission(entities, headline='', summary=''):
         if group == 'pharma':
             mechanism = f'Si les résultats cliniques, autorisations ou ventes annoncés se confirment, effet possible sur les revenus et le portefeuille de traitements de {NAMES.get(symbol, symbol)}.'
         if symbol in CRYPTO_GROUPS:
-            mechanism = f'Si les flux ou usages annoncés se confirment, demande et liquidité possibles pour {CRYPTO_NAMES.get(symbol.split("/")[0], symbol)} ({group}).'
+            mechanism = f'Si les flux ou usages annoncés se confirment, demande et liquidité possibles pour {CRYPTO_NAMES.get(symbol.split("/")[0], symbol)} ({THEME_LABELS.get(group, group)}).'
         elif symbol in ETF_EXPOSURES:
             mechanism = f'Si le choc se diffuse à {ETF_EXPOSURES[symbol]}, les actifs du fonds pourraient être réévalués; composition et pondérations non observées.'
         name = NAMES.get(symbol) or CRYPTO_NAMES.get(symbol.split('/')[0], symbol)
@@ -639,13 +639,12 @@ def transmission(entities, headline='', summary=''):
     focal_sectors = set(entities.get('sector_mentions', [])) | {SECTORS[s] for s in focal_symbols if s in SECTORS}
     for sector in sorted(focal_sectors):
         if sector in SECTOR_ETFS:
-            add(SECTOR_ETFS[sector], 'sector_etf', f'Si le choc se diffuse au secteur {sector}, réévaluation possible des entreprises du fonds.')
+            add(SECTOR_ETFS[sector], 'sector_etf', f'Si le choc se diffuse au secteur {THEME_LABELS[sector]}, réévaluation possible des entreprises du fonds.')
     for symbol in focal_symbols:
         for supplier in sorted(SUPPLIERS.get(symbol, set())):
             add(supplier, 'supplier', f'Si les investissements de {NAMES.get(symbol, symbol)} progressent, demande possible pour {NAMES.get(supplier, supplier)}; relation commerciale actuelle non vérifiée.')
-        for competitor in sorted(peers(symbol))[:3]:
-            if competitor in NAMES:
-                add(competitor, 'competitor', f'Si le choc de {NAMES.get(symbol, symbol)} est sectoriel, effet commun possible; si des clients changent de fournisseur, {NAMES[competitor]} pourrait capter des parts de marché.')
+        for competitor in sorted(s for s in peers(symbol) if s in NAMES)[:3]:
+            add(competitor, 'competitor', f'Si le choc de {NAMES.get(symbol, symbol)} est sectoriel, effet commun possible; si des clients changent de fournisseur, {NAMES[competitor]} pourrait capter des parts de marché.')
     if 'telecom_satellites' in entities['themes']:
         for symbol in ('T', 'VZ', 'TMUS'):
             add(symbol, 'direct' if symbol in entities['symbols'] else 'competitor',

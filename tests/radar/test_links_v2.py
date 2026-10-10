@@ -54,3 +54,11 @@ def test_unrelated_provider_basket_and_same_broad_sector_do_not_explain_an_anoma
     event = cluster([story(headline='Microsoft cloud subscription revenue rises', symbols=['MSFT', 'MRNA', 'DE'])])[0]
     rows = [{'symbol': 'MRNA', 'move_atr': 3, 'closed_at': AT.isoformat()}]
     assert link_anomalies(rows, [event], AT)[0]['anomalies'][0]['news_status'] == 'NO_NEWS_FOUND'
+
+
+def test_business_map_keeps_carrier_suppliers_and_competitors_distinct():
+    event = cluster([story(headline='AT&T raises wireless network spending')])[0]
+    exposures = {(r['symbol'], r['role']) for r in event['transmission_hypotheses']}
+    assert ('VZ', 'competitor') in exposures
+    assert ('CCI', 'supplier') in exposures
+    assert ('CCI', 'competitor') not in exposures
