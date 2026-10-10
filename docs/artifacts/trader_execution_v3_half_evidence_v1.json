@@ -1,0 +1,65 @@
+{
+  "schema": "trader-execution-v3-half-evidence-v1",
+  "execution_spec_hash": "42c025197da23ca3f4686a710f73f3a31c242edac89ac1043cd45c9cb6430252",
+  "execution_preregistration_hash": "7b134cdaf0cb1b6d750ada86a9a8cd365745ad4dab1f14053354cbaa863a9adc",
+  "operator_decision_hash": "61bb7b1758bcb7e8d1e7cab2b2bda5c61afbf213dd7fd88d79a31d611a33d57b",
+  "replays": [
+    {
+      "decision_date": "2026-10-09",
+      "run_status": "DEGRADED",
+      "research_head_hash": "e3de0bf196e06ce5ba64379f0d301aa25c4cdf2ec8b82e147947985354dad69c",
+      "replay_digest": "8b1e98d643e146593aeb91f1738f4fc214346497bf85afa0a610fdeb43fba4ea",
+      "network_request_count": 0,
+      "order_count": 5,
+      "lot_count": 5,
+      "planned_share_counts": [
+        {
+          "asset": "CVX",
+          "horizon": "1d",
+          "qty": "-1",
+          "variant": "half_size_downgrade_v1",
+          "prediction_hash": "7525b3d63d6282221e494a5b7941f841c98d705b7c5fedd3954f9fce589fff7e"
+        },
+        {
+          "asset": "NVDA",
+          "horizon": "1d",
+          "qty": "1",
+          "variant": "half_size_downgrade_v1",
+          "prediction_hash": "d4ed60378a85e07ddc78da7bc0246715d8d5c2e5dcc2b086b311c589674e1aea"
+        },
+        {
+          "asset": "XLE",
+          "horizon": "1d",
+          "qty": "-5",
+          "variant": "half_size_downgrade_v1",
+          "prediction_hash": "9ae48741d9a52ccf4c253daaf21bad65c300694873307cedae51c9461bc7b2ef"
+        },
+        {
+          "asset": "XLK",
+          "horizon": "1d",
+          "qty": "1",
+          "variant": "half_size_downgrade_v1",
+          "prediction_hash": "4f9a0187c11cf19be9f4e3c10c8b2b4ab7fab6c0ae3132f3480161767d3c23be"
+        },
+        {
+          "asset": "XOM",
+          "horizon": "1d",
+          "qty": "-2",
+          "variant": "half_size_downgrade_v1",
+          "prediction_hash": "a6375d6cf4de5194cf75ec785cf39b8fa4e5eace3d2877b2dacda3915e3896b6"
+        }
+      ]
+    },
+    {
+      "decision_date": "2026-10-10",
+      "run_status": "COMPLETE",
+      "research_head_hash": "e3de0bf196e06ce5ba64379f0d301aa25c4cdf2ec8b82e147947985354dad69c",
+      "replay_digest": "fe6f8b83ace6b371d64342f34c08649ba7fb993486920b47933cada72a7f937d",
+      "network_request_count": 0,
+      "order_count": 0,
+      "lot_count": 0,
+      "planned_share_counts": []
+    }
+  ],
+  "claim": "Counterfactual order counts and identities only, fixed flat 100000 per account, recorded decision inputs, no performance claim, no source/model/broker request or submission."
+}
