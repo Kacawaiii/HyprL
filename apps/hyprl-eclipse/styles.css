@@ -91,3 +91,6 @@ section[tabindex="-1"]:focus-visible .section-overline{color:var(--accent)}
 }
 .keyboard-input *, .keyboard-input *::before, .keyboard-input *::after{transition:none!important;animation:none!important}
 .keyboard-input [data-reveal]{opacity:1!important;transform:none!important}
+
+/* Reduced-motion opt-in: visible, explicit choice to get the full experience. */
+.scene-controls #motion.motion-optin,.fixed-controls #motion.motion-optin{width:auto;min-width:0;padding:0 14px;border-radius:999px;background:#dac09a;color:#0b0e16;font-size:12px;font-weight:600;letter-spacing:.2px;white-space:nowrap}

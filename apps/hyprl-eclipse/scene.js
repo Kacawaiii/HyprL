@@ -8,6 +8,7 @@ import { createSingularityChapter } from './chapters/singularity.js';
 import { createPrismChapter } from './chapters/prism.js';
 import { createShatter } from './lib/shatter.js';
 import { createSurfacePullback } from './lib/pullback.js';
+import { motionPref } from './lib/motion.js';
 
 export const CHAPTERS = ['monolith', 'planet', 'singularity', 'prism'];
 // How the frame passes from one chapter to the next (scrolling back plays it in reverse).
@@ -26,8 +27,7 @@ const TRANSITION_KIND = { 'monolith>planet': 0, 'planet>singularity': 1, 'singul
  *                 the WebGL scene move in the same frame
  */
 export function createEclipseScene(container, labelContainer, { studio = false, hero = null, stops = [], onFrame = null } = {}) {
-  const media = matchMedia('(prefers-reduced-motion: reduce)');
-  let userPaused = false, paused = media.matches, disposed = false, frame = 0, dirty = true, elapsed = 0, previous = performance.now(), palette = 'gold';
+  let userPaused = false, paused = motionPref.reduced, disposed = false, frame = 0, dirty = true, elapsed = 0, previous = performance.now(), palette = 'gold';
   let forced = studio ? 0 : null;
   const pointer = new THREE.Vector2(), smoothPointer = new THREE.Vector2();
   const isMobile = () => container.clientWidth < 600;
@@ -166,12 +166,12 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
   }
   function planetEntryLocal(s) {
     const entry = stops.findIndex(el => el.dataset.chapter === 'planet');
-    return entry < 0 || media.matches ? undefined : travelLocal(chapters[1], { ...s, stopB: entry }, 'in');
+    return entry < 0 || motionPref.reduced ? undefined : travelLocal(chapters[1], { ...s, stopB: entry }, 'in');
   }
   const warmed = new Set(), stillLocal = { monolith: .5, planet: .4, singularity: .4, prism: .5 };
   function renderChapter(c, target, s, pr, transition = null, visible = true) {
     const scroll = hero ? Math.max(0, -hero.getBoundingClientRect().top) : 0;
-    c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: media.matches ? stillLocal[c.name] : transition ? travelLocal(c, s, transition.role) : s.local[c.name], transition, entryLocal: c.name === 'planet' ? planetEntryLocal(s) : undefined, scroll, viewH: H, pr });
+    c.update({ time: elapsed, dt: s.dt, pointer: smoothPointer, motion: paused ? 0 : 1, local: motionPref.reduced ? stillLocal[c.name] : transition ? travelLocal(c, s, transition.role) : s.local[c.name], transition, entryLocal: c.name === 'planet' ? planetEntryLocal(s) : undefined, scroll, viewH: H, pr });
     if (transition?.kind === 0 && transition.role === 'out') {
       chapters[1].update({ time: elapsed, pointer: smoothPointer, motion: paused ? 0 : 1, local: travelLocal(chapters[1], s, 'in'), entryLocal: planetEntryLocal(s) });
       pullback.update(transition.progress);
@@ -197,8 +197,8 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     renderer.info.reset();
     const s = readScroll(); s.dt = dt; lastBlend = s;
     const A = chapters[s.a], B = chapters[s.b], mixT = s.a === s.b ? 0 : s.t;
-    const kind = media.matches && mixT > .001 ? -1 : mixT > .001 ? TRANSITION_KIND[`${A.name}>${B.name}`] ?? TRANSITION_KIND[`${B.name}>${A.name}`] ?? 0 : 0;
-    const travel = !media.matches && mixT > .001 && kind < 2;
+    const kind = motionPref.reduced && mixT > .001 ? -1 : mixT > .001 ? TRANSITION_KIND[`${A.name}>${B.name}`] ?? TRANSITION_KIND[`${B.name}>${A.name}`] ?? 0 : 0;
+    const travel = !motionPref.reduced && mixT > .001 && kind < 2;
     pullback.reset();
     renderChapter(A, rtA, s, PR, travel ? { role: 'out', progress: mixT, kind } : null, !travel || kind === 0 || mixT < .60);
     if (mixT > .001 && !(travel && kind === 0)) renderChapter(B, rtB, s, PR, travel ? { role: 'in', progress: mixT, kind } : null, !travel || mixT > .48);
@@ -255,12 +255,12 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     }
     else if (dirty || scrolling) render(0);
   }
-  function setPaused(value) { userPaused = Boolean(value); paused = userPaused || media.matches; if (paused) { pointer.set(0, 0); smoothPointer.set(0, 0); } previous = performance.now(); dirty = true; }
+  function setPaused(value) { userPaused = Boolean(value); paused = userPaused || motionPref.reduced; if (paused) { pointer.set(0, 0); smoothPointer.set(0, 0); } previous = performance.now(); dirty = true; }
   const gold = new THREE.Color('#dac09a'), ice = new THREE.Color('#a0c9e8');
   function setPalette(value) { palette = value === 'ice' ? 'ice' : 'gold'; const color = palette === 'ice' ? ice : gold; for (const c of chapters) c.setPalette(color, palette); finalMat.uniforms.uAccent.value.copy(color);brightMat.uniforms.uTravelTint.value.copy(color);finalMat.uniforms.uTravelTint.value.copy(color); document.documentElement.style.setProperty('--accent', `#${color.getHexString()}`); dirty = true; }
   function setChapter(name) { forced = name == null ? null : (typeof name === 'number' ? name : byName[name] ?? 0); dirty = true; }
   function mediaChange() { setPaused(userPaused); container.dispatchEvent(new CustomEvent('motionchange', { detail: { paused } })); }
-  media.addEventListener('change', mediaChange);
+  const offMotion = motionPref.onChange(mediaChange);
   function visibilityChange() {
     cancelAnimationFrame(frame); frame = 0; previous = performance.now();
     if (!document.hidden && !disposed) { dirty = true; frame = requestAnimationFrame(animate); }
@@ -291,7 +291,7 @@ export function createEclipseScene(container, labelContainer, { studio = false, 
     get travelState() { return { blend: lastBlend, pullback }; },
     dispose() {
       disposed = true; cancelAnimationFrame(frame); resizeObserver.disconnect(); removeEventListener('scroll', onScroll); interaction.removeEventListener('pointermove', pointerMove);
-      document.documentElement.removeEventListener('pointerleave', pointerLeave); media.removeEventListener('change', mediaChange);
+      document.documentElement.removeEventListener('pointerleave', pointerLeave); offMotion();
       document.removeEventListener('visibilitychange', visibilityChange);
       renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored);
       chapters[0].labels.traverse(o => { if (o.element) o.element.remove(); });

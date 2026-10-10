@@ -1,12 +1,13 @@
+import { motionPref } from './motion.js';
 /**
  * One damping stage for fine-pointer wheel input. The scene reads this rendered page position directly.
  * Touch, keyboard, focus, browser navigation and reduced motion retain immediate native behavior.
  */
 export function createSmoothScroll({ damping = 12 } = {}) {
-  const media = matchMedia('(prefers-reduced-motion: reduce)'), fine = matchMedia('(pointer: fine)');
+  const fine = matchMedia('(pointer: fine)');
   const root = document.documentElement, originalBehavior = root.style.scrollBehavior;
   let current = scrollY, target = scrollY, written = scrollY, previous = 0, tween = null, external = false, frame = 0;
-  const enabled = () => !media.matches && fine.matches;
+  const enabled = () => !motionPref.reduced && fine.matches;
   const max = () => Math.max(0, root.scrollHeight - innerHeight);
   const clamp = y => Math.min(Math.max(y, 0), max());
   const blocked = el => document.querySelector('dialog[open]') || el?.closest?.('dialog, textarea, input, select, [contenteditable], [data-native-scroll]');
@@ -74,7 +75,7 @@ export function createSmoothScroll({ damping = 12 } = {}) {
   function wake() { if (!external && !frame) frame = requestAnimationFrame(loop); }
   function resize() { current = clamp(current); target = clamp(target); if (tween) tween.to = target; }
   function preference() { reset(); root.style.scrollBehavior = 'auto'; }
-  preference(); media.addEventListener('change', preference); fine.addEventListener('change', preference);
+  preference(); const offMotion = motionPref.onChange(preference); fine.addEventListener('change', preference);
   addEventListener('wheel', wheel, { passive: false }); addEventListener('keydown', key); document.addEventListener('click', anchor);
   addEventListener('scroll', native, { passive: true }); addEventListener('resize', resize);
   return {
@@ -83,7 +84,7 @@ export function createSmoothScroll({ damping = 12 } = {}) {
     destroy() {
       cancelAnimationFrame(frame); removeEventListener('wheel', wheel); removeEventListener('keydown', key);
       document.removeEventListener('click', anchor); removeEventListener('scroll', native); removeEventListener('resize', resize);
-      media.removeEventListener('change', preference); fine.removeEventListener('change', preference); root.style.scrollBehavior = originalBehavior;
+      offMotion(); fine.removeEventListener('change', preference); root.style.scrollBehavior = originalBehavior;
     },
   };
 }

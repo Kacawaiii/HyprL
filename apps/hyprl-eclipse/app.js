@@ -1,18 +1,18 @@
 import { createEclipseScene } from './scene.js';
 import { createSmoothScroll } from './lib/smooth-scroll.js';
+import { motionPref } from './lib/motion.js';
 const studio=document.body.classList.contains('studio-page');
 // Inertial scroll (wheel, fine pointer): the scene drives it so the page and the WebGL frame move together.
 const scroller=studio?null:createSmoothScroll();
 const scene=createEclipseScene(document.querySelector('#scene'),document.querySelector('#scene-labels'),{studio,hero:document.querySelector('.hero'),stops:[...document.querySelectorAll('[data-chapter]')],onFrame:scroller?.update});
 if(scene&&scroller)scroller.drive();
 // A single, short discovery reveal. Retargetable opacity/transform transitions; no blur or scale.
-const motionMedia=matchMedia('(prefers-reduced-motion: reduce)');
 const revealGroups=[['.hero','.eyebrow,h1,.hero-copy>p,.hero-actions'],['.vision','.vision-inner'],['.platform','.section-heading,.feature'],['.interlude','.interlude-copy'],['.approach','.approach>div']];
 if(!studio&&'IntersectionObserver'in window){
-  if(!motionMedia.matches)document.documentElement.classList.add('reveal-ready');
+  if(!motionPref.reduced)document.documentElement.classList.add('reveal-ready');
   const revealer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('is-in');revealer.unobserve(entry.target);}},{rootMargin:'0px 0px -4% 0px',threshold:.08});
   for(const[section,selector]of revealGroups)document.querySelectorAll(section).forEach(root=>root.querySelectorAll(selector).forEach((el,i)=>{el.dataset.reveal='';el.style.setProperty('--reveal-delay',`${Math.min(i,3)*40}ms`);revealer.observe(el);}));
-  motionMedia.addEventListener('change',()=>{if(motionMedia.matches){document.documentElement.classList.remove('reveal-ready');document.querySelectorAll('[data-reveal]').forEach(el=>el.classList.add('is-in'));}});
+  motionPref.onChange(()=>{if(motionPref.reduced){document.documentElement.classList.remove('reveal-ready');document.querySelectorAll('[data-reveal]').forEach(el=>el.classList.add('is-in'));}});
 }
 // Keyboard focus and navigation respond immediately; pointer discovery retains the small reveal.
 addEventListener('keydown',event=>{if(!event.metaKey&&!event.ctrlKey&&!event.altKey)document.documentElement.classList.add('keyboard-input');});
@@ -26,8 +26,8 @@ studioChapters.forEach(button=>button.addEventListener('click',()=>{scene?.setCh
 // Exposed for local scene inspection and integration; no account/API connection.
 window.hyprlScene=scene;
 const motion=document.querySelector('#motion');
-function updateMotion(){if(!scene){motion.disabled=true;return;}motion.disabled=motionMedia.matches;motion.setAttribute('aria-pressed',String(scene.paused));motion.setAttribute('aria-label',motionMedia.matches?'Animation réduite selon vos préférences':scene.paused?'Reprendre l’animation':'Mettre l’animation en pause');motion.textContent=scene.paused?'▷':'Ⅱ';}
-updateMotion();motion.addEventListener('click',()=>{scene?.setPaused(!scene.paused);updateMotion();});document.querySelector('#scene').addEventListener('motionchange',updateMotion);
+function updateMotion(){if(!scene){motion.disabled=true;return;}motion.disabled=false;const optin=motionPref.reduced;motion.classList.toggle('motion-optin',optin);motion.setAttribute('aria-pressed',String(scene.paused));motion.setAttribute('aria-label',optin?'Activer les animations (votre système demande de les réduire)':scene.paused?'Reprendre l’animation':'Mettre l’animation en pause');motion.textContent=optin?'Activer les animations':scene.paused?'▷':'Ⅱ';}
+updateMotion();motion.addEventListener('click',()=>{if(!scene)return;if(motionPref.reduced){motionPref.setOverride(true);scene.setPaused(false);}else scene.setPaused(!scene.paused);updateMotion();});document.querySelector('#scene').addEventListener('motionchange',updateMotion);
 document.querySelectorAll('[data-palette]').forEach(button=>button.addEventListener('click',()=>{scene?.setPalette(button.dataset.palette);document.querySelectorAll('[data-palette]').forEach(other=>other.setAttribute('aria-pressed',String(other===button)));}));
 if(studio){
   const status=document.querySelector('.export-status');
