@@ -40,6 +40,8 @@ jobs:
           python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py \
             tests/crypto/test_edgar_slice.py tests/crypto/test_app_api*.py tests/crypto/test_ops_server.py \
             tests/crypto/test_equity_api.py tests/api -q
+      - name: Independent news radar synthetic sources, budgets, clustering and paper observations
+        run: python -m pytest tests/radar -q
       - name: Shared platform contracts and snapshots
         run: python -m pytest tests/platform -q
       - name: Synthetic Model Lab datasets, adapters, jobs, experiments and API
