@@ -608,12 +608,21 @@ class Dictionary:
                 'relationship_map': 'static_snapshot_v2', 'universe_status': 'repository_snapshot_not_live_membership'}
 
 
+def stated_direction(value):
+    negative = bool(re.search(r'\b(sell off|sell-off|sold off|sank|sink\w*|fall\w*|drop\w*|plunge\w*|loss\w*|outflow\w*|slid\w*|tumble\w*|trade lower|baisse|chute)\b', fold(value)))
+    positive = bool(re.search(r'\b(rally|rallies|rise\w*|rose|gain\w*|surge\w*|climb\w*|jump\w*|soar\w*|trade higher|hausse)\b', fold(value)))
+    if not negative and not positive:
+        return None
+    return 'loser' if negative and not positive else 'beneficiary' if positive and not negative else 'uncertain'
+
+
 def transmission(entities, headline='', summary=''):
     """Conditional hypotheses, not causal facts or trading recommendations."""
     value = fold(headline + ' ' + summary)
-    negative = bool(re.search(r'\b(sell off|sell-off|sank|sink\w*|fall\w*|drop\w*|plunge\w*|loss\w*|outflow\w*|baisse|chute)\b', value))
-    positive = bool(re.search(r'\b(rally|rallies|rise\w*|rose|gain\w*|surge\w*|hausse)\b', value))
-    direction = 'loser' if negative and not positive else 'beneficiary' if positive and not negative else 'uncertain'
+    # An unrelated rising asset in a broad summary cannot cancel an explicit
+    # decline in the event headline. Mixed directional headlines stay uncertain.
+    direction = stated_direction(headline) or stated_direction(summary) or 'uncertain'
+    negative = direction == 'loser'
     results = []
     def add(symbol, role, mechanism, direction='uncertain'):
         results.append({'symbol': symbol, 'role': role, 'direction': direction, 'mechanism': mechanism})
@@ -633,8 +642,10 @@ def transmission(entities, headline='', summary=''):
             mechanism = f'Si les flux ou usages annoncés se confirment, demande et liquidité possibles pour {CRYPTO_NAMES.get(symbol.split("/")[0], symbol)} ({THEME_LABELS.get(group, group)}).'
         elif symbol in ETF_EXPOSURES:
             mechanism = f'Si le choc se diffuse à {ETF_EXPOSURES[symbol]}, les actifs du fonds pourraient être réévalués; composition et pondérations non observées.'
-        name = NAMES.get(symbol) or CRYPTO_NAMES.get(symbol.split('/')[0], symbol)
-        add(symbol, 'direct', mechanism, direction if mentions(headline, symbol) or mentions(headline, name) else 'uncertain')
+        names = [NAMES.get(symbol, ''), CRYPTO_NAMES.get(symbol.split('/')[0], ''), *ALIASES.get(symbol, [])]
+        named = any(mentions(headline, name) for name in names if name)
+        ticker = '$' + symbol in headline or (len(symbol) >= 3 and bool(re.search(r'(?<!\w)' + re.escape(symbol) + r'(?!\w)', headline)))
+        add(symbol, 'direct', mechanism, direction if named or ticker else 'uncertain')
     focal_symbols = entities.get('named_symbols') or entities['symbols']
     focal_sectors = set(entities.get('sector_mentions', [])) | {SECTORS[s] for s in focal_symbols if s in SECTORS}
     for sector in sorted(focal_sectors):

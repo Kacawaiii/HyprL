@@ -62,3 +62,11 @@ def test_business_map_keeps_carrier_suppliers_and_competitors_distinct():
     assert ('VZ', 'competitor') in exposures
     assert ('CCI', 'supplier') in exposures
     assert ('CCI', 'competitor') not in exposures
+
+
+def test_explicit_headline_decline_wins_over_an_unrelated_summary_rally():
+    row = story(headline='AT&T, Verizon and T-Mobile tumble on satellite competition')
+    row['summary'] = 'Wireless carriers trade lower. Airline fares and Treasury yields are rising.'
+    event = cluster([row])[0]
+    carriers = [r for r in event['transmission_hypotheses'] if r['symbol'] in ('T', 'VZ', 'TMUS') and r['role'] == 'direct']
+    assert len(carriers) == 3 and all(r['direction'] == 'loser' for r in carriers)
