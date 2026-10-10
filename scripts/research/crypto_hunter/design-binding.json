@@ -1,0 +1,33 @@
+{
+  "protocol_hash": "2afe8b4a144c75a459a9ba4e4e7dac12753012e455fcecdbf669e3a7fc58177b",
+  "design_lock_hash": "6b860b331a5c52252b22bb4281bf82a61e1125301b5f5d7726d328fe5d1d83fa",
+  "implementation_hash": "17dcefc65686c7ce2da3858e2d3448e72d874f7b4d55a3868fc401756d9a49b4",
+  "selection": {
+    "momentum": {
+      "config": {
+        "n": 3
+      },
+      "design_pass": true,
+      "index": 0
+    },
+    "breakout": {
+      "config": {
+        "n": 5,
+        "stop": 0.3
+      },
+      "design_pass": true,
+      "index": 2
+    },
+    "breadth": {
+      "config": {
+        "n": 5,
+        "threshold": 0.4
+      },
+      "design_pass": false,
+      "index": 1
+    }
+  },
+  "cache_digest": "0ba14824865bdb6489200334fd7652f0ba86235af278db8fa93bbd778c3d3077",
+  "cached_products": 492,
+  "design_coins": 234
+}
