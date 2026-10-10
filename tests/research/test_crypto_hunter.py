@@ -89,9 +89,28 @@ def test_current_bar_signal_cannot_enter_at_current_open():
 
 
 def test_no_empty_position_cycles_after_cash_is_exhausted():
-    m = market(800)
-    # More candidates than slots verifies buy accounting at full investment.
-    r = simulate(m, features(m), "momentum", {"n": 1}, "2020-02-01", "2020-08-01")
+    index = pd.date_range("2020-12-30", periods=6)
+    frames = {}
+    for symbol in ("BTC-USD", "ALT-USD", "THIRD-USD"):
+        prices = np.full(6, 100.0)
+        if symbol == "BTC-USD":
+            prices[3:] = 1000
+        frames[symbol] = pd.DataFrame({"open": prices, "high": prices * 1.1,
+                                       "low": prices * 0.9, "close": prices, "volume": 100}, index=index)
+    m = from_frames(frames)
+    frame = lambda v: pd.DataFrame(v, index=index, columns=m.close.columns)
+    eligible = frame(False)
+    eligible["BTC-USD"] = True
+    eligible.loc[index[2]:, "ALT-USD"] = True
+    eligible.loc[index[3]:, "THIRD-USD"] = True
+    f = {"eligible": eligible, "btc_regime": pd.Series(True, index=index),
+         "return90": frame(1.0), "high_distance": frame(0.1), "surge": frame(2.0),
+         "volatility60": frame(0.5), "above200": frame(True)}
+    # The BTC gap raises the next slot budget above remaining cash. ALT exhausts it;
+    # THIRD's later signal must not produce a fictitious zero-quantity position.
+    r = simulate(m, f, "breakout", {"n": 3, "stop": 0.25}, "2021-01-01", "2021-01-04")
+    assert len(r.cycles) == 2
+    assert {x["symbol"] for x in r.cycles} == {"BTC-USD", "ALT-USD"}
     assert all(np.isfinite(x["return"]) for x in r.cycles)
 
 
