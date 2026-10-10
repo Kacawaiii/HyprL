@@ -223,7 +223,9 @@ class Authorization:
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise RadarError('REDIRECT_REQUIRES_EXPLICIT_URL')
+        # Return the redirect status/headers through HTTPError, without following.
+        # Only the bounded channel resolver may authorize a new metadata URL.
+        return None
 
 
 def transport(url, headers):
@@ -250,7 +252,7 @@ class Client:
         if cooldown and self.store.clock() < instant(cooldown['until']):
             raise RadarError('SOURCE_COOLDOWN')
         maximum = {'alpaca': 400, 'gdelt': 60, 'rss': 300, 'youtube': 400, 'market': 24}[group]
-        spacing = {'rss': 900, 'youtube': 900, 'gdelt': 7}.get(group, 0)
+        spacing = {'rss': 900, 'youtube': 900, 'gdelt': 15}.get(group, 0)
         self.store.reserve(self.grant, group, source, maximum, spacing)
         request_headers = {'User-Agent': 'HyprL-NewsRadar/1.0', 'Accept': 'application/json, application/rss+xml, application/atom+xml, text/xml'}
         request_headers.update(headers or {})
@@ -262,7 +264,8 @@ class Client:
         if status == 429:
             from email.utils import parsedate_to_datetime
             retry = next((v for k, v in response_headers.items() if k.lower() == 'retry-after'), None)
-            until = received + timedelta(hours=1)
+            failures = min(6, (cooldown or {}).get('failures', 0) + 1) if group == 'gdelt' else 1
+            until = received + timedelta(hours=min(24, 2 ** (failures - 1)))
             try:
                 until = max(until, received + timedelta(seconds=int(retry)))
             except (TypeError, ValueError):
@@ -270,8 +273,10 @@ class Client:
                     until = max(until, parsedate_to_datetime(retry).astimezone(UTC))
                 except (TypeError, ValueError, AttributeError):
                     pass
-            self.store.append('cooldown', group, {'until': iso(until), 'status': status})
+            self.store.append('cooldown', group, {'until': iso(until), 'status': status, 'failures': failures})
             raise RadarError('HTTP_429_STOP_SOURCE')
+        if group == 'gdelt' and status == 200 and cooldown and cooldown.get('failures'):
+            self.store.append('cooldown', group, {'until': iso(received), 'status': status, 'failures': 0})
         return status, response_headers, body, received
 
     def alpaca_headers(self):

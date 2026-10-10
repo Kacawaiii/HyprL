@@ -2,13 +2,13 @@
 from datetime import timedelta
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
-from urllib.parse import urlencode, quote, urlsplit
+from urllib.parse import urlencode, quote, urlsplit, urljoin, unquote
 import html
 import re
 import xml.etree.ElementTree as ET
 
 from .core import RadarError, UTC, canonical_url, digest, instant, iso
-from .registry import ALPACA_STOCK_SYMBOLS, FEEDS, CHANNELS, THEMES, CRYPTO_NAMES, universe
+from .registry import ALPACA_STOCK_SYMBOLS, CHANNEL_METADATA_ALIASES, FEEDS, CHANNELS, THEMES, CRYPTO_NAMES, universe
 
 
 def text(value, limit=600):
@@ -155,9 +155,34 @@ class Collector:
             cached = self.store.latest('channel', handle)
             channel_id = cached['channel_id'] if cached else None
         if not channel_id:
-            status, _, body, _ = self.client.get('https://www.youtube.com/' + quote(handle, safe='@'), 'youtube', 'discover:' + handle)
+            if not re.fullmatch(r'@[A-Za-z0-9_.-]+', handle):
+                raise RadarError('INVALID_CHANNEL_HANDLE')
+            if self.store.latest('channel_resolution', handle):
+                raise RadarError('CHANNEL_RESOLUTION_ALREADY_ATTEMPTED')
+            # One bounded metadata resolution; redirects never become implicit
+            # transport permission. Every hop is a separate grant/budget check.
+            self.store.append('channel_resolution', handle, {'status': 'STARTED', 'at': iso(self.store.clock())})
+            metadata_handle, identity = CHANNEL_METADATA_ALIASES.get(handle, (handle, None))
+            url = 'https://www.youtube.com/' + quote(metadata_handle, safe='@') + '/about'
+            for hop in range(3):
+                status, headers, body, _ = self.client.get(url, 'youtube', 'discover:' + handle + ':' + str(hop),
+                    headers={'Cookie': 'SOCS=CAI', 'Accept-Language': 'en-US,en;q=0.9'})
+                if status not in (301, 302, 303, 307, 308):
+                    break
+                location = next((v for k, v in headers.items() if k.lower() == 'location'), '')
+                target = canonical_url(urljoin(url, location))
+                parsed = urlsplit(target)
+                path = unquote(parsed.path)
+                expected = '/' + metadata_handle
+                if (parsed.netloc != 'www.youtube.com' or not location or
+                        not (path.casefold() == expected.casefold() or path.casefold().startswith(expected.casefold() + '/'))):
+                    raise RadarError('CHANNEL_REDIRECT_OUTSIDE_SCOPE')
+                self.client.grant.permit(target)
+                url = target
             if status != 200:
                 raise RadarError('HTTP_' + str(status))
+            if identity and identity.encode() not in body:
+                raise RadarError('CHANNEL_ID_UNVERIFIED')
             # Metadata only; never downloads video, captions or stores the page.
             # Related videos can contain many channelId values. Prefer the
             # channel metadata's externalId rather than guessing from them.
@@ -167,7 +192,7 @@ class Collector:
             if not ids or len(set(ids)) != 1:
                 raise RadarError('CHANNEL_ID_UNVERIFIED')
             channel_id = ids[0].decode()
-            self.store.append('channel', handle, {'channel_id': channel_id})
+            self.store.append('channel', handle, {'channel_id': channel_id, 'metadata_url': url, 'verified_at': iso(self.store.clock())})
         if not re.fullmatch(r'UC[A-Za-z0-9_-]{22}', channel_id):
             raise RadarError('INVALID_CHANNEL_ID')
         publisher = next((label for label in ('cnbc', 'yahoo', 'bloomberg') if label in handle.lower()), channel_id)
@@ -261,15 +286,26 @@ class Collector:
         for config in self.channels:
             source = 'youtube:' + config.get('handle', config.get('channel_id', 'unknown'))
             previous = self.store.latest('health', source)
-            if previous and previous['status'] == 'DEAD':
+            if previous and previous['status'] == 'DEAD' and not (
+                    previous.get('reason') in ('REDIRECT_REQUIRES_EXPLICIT_URL', 'HTTP_301', 'HTTP_302', 'HTTP_303', 'HTTP_307', 'HTTP_308')
+                    and config.get('handle') and not self.store.latest('channel_resolution', config['handle'])):
                 self.health.append(previous)
                 continue
             self.attempt(source, lambda config=config: self.channel(config))
         if gdelt:
+            cooldown = self.store.latest('cooldown', 'gdelt')
+            if cooldown and self.store.clock() < instant(cooldown['until']):
+                # A single durable status for a provider outage, not one alert per theme.
+                self.health.append({'source': 'gdelt:provider', 'status': 'BLOCKED', 'reason': 'SOURCE_COOLDOWN',
+                                    'retry_at': cooldown['until'], 'checked_at': iso(self.store.clock()), 'items': 0})
+                gdelt = False
+        if gdelt:
             for index, (theme, query) in enumerate(THEMES.items()):
                 if index and sleep and not '11:45' <= self.store.clock().strftime('%H:%M') < '12:30':
-                    sleep(7)
+                    sleep(max(15, self.client.grant.payload.get('spacing_seconds', {}).get('gdelt', 0)))
                 self.attempt('gdelt:' + theme, lambda theme=theme, query=query: self.gdelt(theme, query))
+                if 'gdelt' in self.stopped:
+                    break
         if markets:
             symbols = universe()
             for offset in range(0, len(symbols), 100):

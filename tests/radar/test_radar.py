@@ -762,6 +762,6 @@ def test_full_live_pipeline_with_synthetic_transports_and_llm(state, tmp_path, m
     assert book.read_text() == report['markdown'] and len(report['markdown'].splitlines()) <= 60
     assert len(store.rows('paper_watch')) >= 1
     assert all(urlsplit(url).hostname not in ('sec.gov', 'federalreserve.gov') for url in sent)
-    assert store.counts()['gdelt'] == 5
+    assert store.counts()['gdelt'] == 3
     again = radar(store, grant, live=True, client=Client(store, grant, send=send, credentials=keys), llm_runner=llm, publish_book=book)
     assert again == report and store.counts()['llm'] == 1

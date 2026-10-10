@@ -1,4 +1,4 @@
-# News radar v1
+# News radar v2
 
 This is an independent, read-only information pipeline. It does not import the
 AI trader, modify preregistration or call any broker. Paper follow-up means a
@@ -10,8 +10,8 @@ reports must be outside the checkout; permissions are directory 0700/file 0600.
 Every live request requires a dedicated `news-radar-v1` authorization file with
 an operator signature marker, UTC start/expiry, exact HTTPS origins, GET paths
 or path prefixes, and daily budgets. Existing trader grants do not apply.
-The collector rechecks expiry before every dispatch. It never follows redirects
-or forwards Alpaca keys to another host. SEC and Federal Reserve adapters are
+The collector rechecks expiry before every dispatch. Its transport never follows
+redirects or forwards Alpaca keys to another host. SEC and Federal Reserve adapters are
 absent. Source responses, keys, stores and reports must never enter Git.
 
 Produce a **false/unsigned** draft for review:
@@ -55,6 +55,15 @@ locations follow the task's operator conventions and can be overridden with
 Channel configuration is an optional private JSON array of `handle` and/or
 `channel_id` records. Fifteen French/US candidates are included. A channel ID
 must be verified from metadata or supplied by the operator; no ID is guessed.
+Approved handle metadata is resolved once at `/@handle/about`, using the local
+consent preference `SOCS=CAI` to remain on the authorized origin. Up to three
+explicitly checked requests may resolve redirects within the same handle on
+`www.youtube.com`. External consent, other handles, video pages and out-of-grant
+paths are refused before dispatch. Each hop consumes a YouTube reservation.
+Verified IDs are cached privately; later polls use
+`/feeds/videos.xml?channel_id=...`. Failed resolution is not repeated automatically;
+the operator can supply a verified ID. Legacy redirect-dead handles receive one
+new resolution attempt. Ordinary feed redirects remain dead.
 Candidates are unverified until a successful parse. HTTP 404/410 and pages
 which are not feeds and redirects drop a candidate without following the
 redirect; 403, 429 and grant refusals are reported as blocked. Remove the cause or append a reviewed new health record
@@ -73,10 +82,14 @@ SQLite has append-only news, request receipts, health, cursor/cache observations
 bars, reports and paper observations. Update/delete triggers protect evidence
 and budget reservations. Dispatch is committed before the network call; failures
 consume budget. Limits persist across restarts, shared by all runs using the
-same store: Alpaca <=400/day, GDELT <=60/day and >=7 seconds, RSS <=300/day,
+same store: Alpaca <=400/day, GDELT <=60/day and >=15 seconds, RSS <=300/day,
 YouTube <=400/day, Yahoo <=24/day, Sonnet <=2/day including failures. Feed polls
 are >=900 seconds per feed. Operator budgets can reduce these limits. A 429
 stops that provider and persists a cooldown of at least one hour/Retry-After.
+GDELT uses three themes (energy, policy, crypto). Consecutive throttles double
+the durable cooldown up to a day, respecting longer Retry-After values; success
+resets the streak. Collection stops after the first throttle. Later cooldown runs
+report one provider status without dispatches or per-theme alerts.
 Alpaca news has no symbol filter and uses ascending bounded pagination. An
 unfinished cursor is resumed with its original time range; backlog is visible.
 
@@ -107,7 +120,15 @@ The snapshot is not a live claim about S&P membership or Alpaca crypto support.
 Importance, evidence, novelty, retail hype, observed price movement and
 qualitative scenario conviction are separate fields. Transmission hypotheses
 include direct companies, suppliers, competitors, sectors and country ETFs;
-they are conditional mechanisms. No consensus is invented. Each ranked
+they are conditional mechanisms. Static business channels cover all named
+companies across eleven sectors, major ETFs, country ETFs and crypto groups.
+Competitor/supplier maps cover wireless carriers, satellite entrants, towers,
+semiconductors, banks, managed care, pharma, oil, airlines and payments. Explicit
+headline directions remain separate from conditional business effects. Tower
+gains never prove a benefit from satellite competition. Importance adds primary
+source and independent editorial support; syndicated and retail repetition do
+not receive that weight. A primary statement proves what its issuer said, not
+independent verification of its claims. No consensus is invented. Each ranked
 scenario includes changed expectations, impact, horizon and invalidation.
 Anomalies compare the latest provider daily observation (complete or explicitly
 partial) with completed prior twenty-day norms. A partial day's volume is not
@@ -115,6 +136,13 @@ extrapolated, and its close is not treated as a final daily close. Stock volume
 uses IEX and is labelled partial-market. A daily bar is conservatively final
 only when its entire day interval completed **before the response was received**.
 Advancing the clock never turns an earlier partial capture into a completed bar.
+Anomalies link to individual news items naming the ticker, sector or competitors
+in the observation window (two days preceding the daily bar through its close or
+partial receipt), received by cutoff. Unknown publication uses receipt for
+association only. Out-of-window cluster members cannot supply a match. Business
+theme groups and compact links appear in French Markdown. Each anomaly retains
+full links, match reasons, window and timestamps in private JSON. No matching
+news is explicitly labelled; association never proves causality.
 
 Priced-in is **observed movement**, not a remaining-upside score or proof of
 causation: last closed minute before publication to the latest closed minute,
@@ -133,14 +161,23 @@ Alpaca class symbols use the provider's dotted notation on dispatch, then map
 back to the repository identity. Empty bars are unverified coverage, not a
 successful price-source check; unexpected returned symbols are rejected.
 
-One Sonnet CLI invocation per radar, with no tools, hooks, MCP, skills or session
-persistence, returns validated qualitative French scenario JSON. Feed data are
-untrusted context. Event IDs and allowed symbol/role pairs are checked. Digits,
-financial numeric expressions and unsupported output fields are refused; all
-numeric report fields are rendered directly from observations/computed scores.
+One initial Sonnet CLI invocation per radar, with no tools, hooks, MCP, skills or session
+persistence, returns validated French scenario JSON. Feed data are
+untrusted context. Event IDs and allowed symbol/role pairs are checked. A per-event
+`allowed_numbers` ledger contains captured headline/summary quantities and
+observed prices/returns/ATR, with subjects, units and horizons. French decimal
+digits and magnitude conversions must match within half the last displayed
+digit; unit, asset, horizon and sign substitutions fail. Spelled financial
+quantities are refused: use digits. Mechanisms must be conditional. Text/schema
+checks are conservative lexical checks, not semantic proof of every statement.
+Programmatic scores and measurements still render from observed data.
 The CLI uses an empty temporary directory and fixed timeout, never broker keys.
 If it fails, the French deterministic digest shows the failure, unknown
-conviction/horizon/invalidation and measured data; there is no second LLM call.
+conviction/horizon/invalidation and measured data. A rejected response gets one
+retry with guard code, field, quantity detail and the original ledger. Each call
+reserves against the unchanged two-call daily budget; transport failures are not
+retried. Exhausted budgets, repeated guard failure or unavailable CLI retain the
+deterministic fallback. A retry may consume that day’s evening call.
 Reports are <=60 lines, with complete evidence in companion private JSON.
 Completed slots are idempotent and can rematerialize their reports after a crash.
 

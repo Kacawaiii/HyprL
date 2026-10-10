@@ -24,12 +24,12 @@ CHANNELS = [
     '@BloombergTelevision', '@YahooFinance', '@cryptoast', '@XavierDelmas',
     '@TheDefiant', '@Bankless',
 ]
+# Public metadata verified for the same approved creator; no guessed IDs.
+CHANNEL_METADATA_ALIASES = {'@PatrickBoyleOnFinance': ('@PBoyle', 'Patrick Boyle')}
 THEMES = {
     'energy': '(Hormuz OR oil OR energy) sourcelang:english',
-    'central_banks': '("central bank" OR ECB OR inflation) sourcelang:english',
-    'regulation': '(regulation OR tariff OR "digital euro") sourcelang:english',
-    'elections': '(election OR Brazil) sourcelang:english',
-    'crypto': '(bitcoin OR ethereum OR crypto) sourcelang:english',
+    'policy': '("central bank" OR inflation OR regulation OR tariff OR election) sourcelang:english',
+    'crypto': '(bitcoin OR ethereum OR crypto OR "digital euro") sourcelang:english',
 }
 ETFS = {
     'SPY': 'S&P 500', 'QQQ': 'Nasdaq', 'IWM': 'small caps', 'DIA': 'Dow Jones',
