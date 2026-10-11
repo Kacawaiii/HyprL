@@ -125,7 +125,11 @@ def test_home_keeps_point_in_time_stamps_and_no_article_text():
     first = home["events"][0]
     assert first["available_at"] == "2026-10-10T10:05:00Z" and first["published_at"] == "2026-10-10T10:00:00Z"
     blob = json.dumps(home)
-    assert "RAW ARTICLE TEXT" not in blob and "raw fact" not in blob
+    assert "RAW ARTICLE TEXT" not in blob
+    # Phase 2 retains the model's short cited fact inside its decision chain;
+    # it still never exports a captured story body/summary.
+    btc = next(e for e in home["events"] if e["headline"] == "Event 1")
+    assert btc["assets"][0]["anticipation"]["latest"]["views"][0]["decision"]["fact"] == "raw fact"
     assert "SECRETVALUE" not in blob and "token=zzz" not in blob
     assert first["link"] == "https://example.invalid/a?utm=1"
 

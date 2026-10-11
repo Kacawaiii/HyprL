@@ -1,8 +1,8 @@
-"""Read-only, sanitized JSON snapshots for the cockpit Radar home and Paper pages.
+"""Read-only, sanitized JSON snapshots for cockpit decisions and observations.
 
 Inputs are files the other jobs already wrote: the radar report, the trader evidence store (read only), the
 paper reports and the Claude book journal. Nothing here calls a broker or a data source, and nothing is
-written back to those inputs. Output is two JSON files, `radar-home.json` and `paper.json`, that the read-only
+written back to those inputs. Output is three JSON files, `radar-home.json`, `paper.json` and `analysis.json`, that the read-only
 application API serves from a private directory (never from Git).
 
 What is kept: headline, link and publisher of a story (no article text), point-in-time stamps, hashes,
@@ -56,7 +56,12 @@ def clean_url(url):
     """Keep the link, drop any query parameter that looks like a credential."""
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         return None
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if not parts.hostname or parts.username or parts.password:
+        return None
     query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not SECRET_PARAMS.search(k)]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))[:500]
 
@@ -109,16 +114,23 @@ def _scan(store, kind):
 
 def load_trader(store, scorecard=None, include_synthetic=False):
     """Plain dict from an open read-only ResearchStore (or anything with `records`)."""
-    runs = []
+    runs, contexts = [], []
     for record in _scan(store, "replay-summary"):
         payload = record["payload"]
+        if payload.get("schema") == "trader-context-evidence-v1":
+            context = payload.get("context") or {}
+            if not context.get("synthetic") or include_synthetic:
+                contexts.append(context)
+            continue
         if payload.get("schema") != "trader-run-v1" or (payload.get("synthetic") and not include_synthetic):
             continue
         decision = payload.get("decision") or {}
         runs.append({"run_id": payload["run_id"], "at": payload["at"], "status": payload.get("status"),
+                     "error": payload.get("error"),
                      "recorded_at": record.get("recorded_at"), "synthetic": bool(payload.get("synthetic")),
                      "preregistration_hash": decision.get("preregistration_hash"),
                      "context_hash": decision.get("context_hash"), "models": decision.get("models") or {},
+                     "entries": {h: text(p.get("entry"), 200) for h, p in (payload.get("portfolios") or {}).items()},
                      "views": decision.get("views") or []})
     predictions = {}
     for record in _scan(store, "prediction"):
@@ -130,6 +142,8 @@ def load_trader(store, scorecard=None, include_synthetic=False):
                                            "horizon": (p.get("signal") or {}).get("label_definition", {}).get("horizon"),
                                            "run_id": (p.get("signal") or {}).get("run_id"),
                                            "decision_at": p.get("decision_at"), "view": view.get("view")}
+        definition = (p.get("signal") or {}).get("label_definition") or {}
+        predictions[p["prediction_id"]].update({"entry_at": definition.get("entry_at"), "exit_at": definition.get("exit_at")})
     labels = []
     for record in _scan(store, "label"):
         p = record["payload"]
@@ -137,12 +151,17 @@ def load_trader(store, scorecard=None, include_synthetic=False):
         if prediction is None:
             continue
         value = p.get("value") or {}
+        prices = value.get("raw_prices") or []
+        if isinstance(prices, dict):
+            prices = prices.get(prediction["asset"]) or []
         labels.append({**prediction, "realized_at": p.get("realized_at"), "available_at": p.get("available_at"),
+                       "entry_price": number(prices[0]) if len(prices) == 2 else None,
+                       "exit_price": number(prices[1]) if len(prices) == 2 else None,
                        "raw_return": number(value.get("raw_return")),
                        "spy_relative_return": number(value.get("spy_relative_return")),
                        "net_unit_pnl": number(value.get("net_unit_pnl")),
                        "cost_roundtrip": number(value.get("cost_roundtrip"))})
-    return {"runs": runs, "labels": labels, "scorecard": scorecard}
+    return {"runs": runs, "labels": labels, "contexts": contexts, "scorecard": scorecard}
 
 
 def load_scorecard(store, synthetic=False):
@@ -163,6 +182,7 @@ def _quality(scorecard):
     out = {}
     for name, entry in (scorecard.get("scores") or {}).items():
         out[name] = {"issued": entry.get("issued"), "realized": entry.get("realized"),
+                     "non_abstained": entry.get("non_abstained"), "pending": entry.get("pending"),
                      "hit_rate": number(entry.get("hit_rate")), "brier": number(entry.get("brier")),
                      "climatology_brier": number(entry.get("climatology_brier")), "ic": number(entry.get("ic")),
                      "mean_unit_pnl_after_costs": number(entry.get("mean_unit_pnl_after_costs")),
@@ -185,8 +205,11 @@ def _quality_for(quality, classes):
     return out or None
 
 
-def _views_by_asset(runs):
+def _views_by_asset(runs, labels=None):
     """asset -> run index list of {analyst,horizon,view,p,verdict}, chronological."""
+    from .cockpit_analysis import label_result, trader_chain
+    by_decision = {(l["run_id"], norm_symbol(l["asset"]), l["model_id"].split(":")[-1], l["horizon"]): l
+                   for l in (labels or [])}
     table = defaultdict(list)
     for run in sorted(runs, key=lambda r: r["at"]):
         by_asset = defaultdict(list)
@@ -198,6 +221,8 @@ def _views_by_asset(runs):
                 "p_outperform": number(v.get("p_outperform"), 4), "verdict": v.get("verdict"),
                 "reason": text(raw.get("confidence_reason"), 280), "falsifier": text(raw.get("falsifier"), 200),
                 "review_note": text(review.get("note"), 200),
+                "decision": trader_chain(v, entry=(run.get("entries") or {}).get(v.get("horizon")), result=label_result(
+                    by_decision.get((run["run_id"], norm_symbol(v.get("asset")), v.get("analyst"), v.get("horizon"))))),
                 "catalysts": [{"url": clean_url(c.get("url")), "published_at": c.get("published_at")}
                               for c in (raw.get("catalysts") or [])[:3] if clean_url(c.get("url"))]})
         for asset, views in by_asset.items():
@@ -233,6 +258,7 @@ def _outcomes(asset, labels):
 
 
 def _event(rank, event, table, runs, labels, quality, paper_after_cost):
+    from .cockpit_analysis import radar_chain
     scenario = event.get("scenario") or None
     exposures = {norm_symbol(x.get("symbol")): x for x in (scenario or {}).get("exposures", [])}
     symbols, seen = [], set()
@@ -280,6 +306,7 @@ def _event(rank, event, table, runs, labels, quality, paper_after_cost):
         "source": stories[0]["publisher"] if stories else None,
         "published_at": event.get("published_at"), "available_at": event.get("first_received_at"),
         "novelty": event.get("novelty"),
+        "decision": radar_chain(event),
         "themes": [text(t, 40) for t in (event.get("entities") or {}).get("themes", [])][:6],
         "countries": [text(t, 40) for t in (event.get("entities") or {}).get("countries", [])][:6],
         "badges": {
@@ -326,7 +353,7 @@ def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS):
     runs = trader.get("runs", []) if trader else []
     labels = trader.get("labels", []) if trader else []
     quality = _quality((trader or {}).get("scorecard"))
-    table = _views_by_asset(runs)
+    table = _views_by_asset(runs, labels)
     ranked = sorted(radar.get("events", []), key=lambda e: (-(e.get("importance") or 0),
                     -((e.get("evidence") or {}).get("score") or 0), str(e.get("first_received_at")), e["id"]))
     after_cost = _paper_after_cost(paper)
@@ -361,6 +388,7 @@ def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS):
 
 def _engine_index(journal):
     """symbol -> last buy intent: stop, target, engine and the reasons the Claude book wrote down."""
+    from .cockpit_analysis import journal_chain
     out = {}
     for row in journal:
         if row.get("action") == "buy_intent" and row.get("symbol"):
@@ -369,6 +397,8 @@ def _engine_index(journal):
                 "at": row.get("at"), "stop": number(row.get("stop")), "target": number(row.get("target")),
                 "limit": number(row.get("limit")), "risk_usd": number(row.get("risk_usd")),
                 "engine": text(j.get("engine"), 40),
+                "tag": text(j.get("tag"), 60),
+                "decision": journal_chain(row),
                 "event": text(j.get("event"), 300), "mechanism": text(j.get("mechanism"), 300),
                 "priced_in": text(j.get("priced_in"), 300), "scenario": text(j.get("scenario"), 300),
                 "invalidation": text(j.get("invalidation"), 300)}
@@ -376,17 +406,19 @@ def _engine_index(journal):
 
 
 def _journal_rows(journal):
+    from .cockpit_analysis import journal_chain, journal_result
     out = []
     for row in journal[-MAX_JOURNAL:]:
         action = row.get("action")
-        if action not in ("buy_intent", "close", "note", "flatten", "submitted", "post_mortem"):
+        if action not in ("buy_intent", "close_intent", "closed", "close", "note", "flatten", "submitted", "post_mortem"):
             continue
         j = row.get("journal") or {}
         out.append({"at": row.get("at"), "action": action, "symbol": text(row.get("symbol"), 20),
                     "qty": number(row.get("qty")), "limit": number(row.get("limit")), "stop": number(row.get("stop")),
                     "target": number(row.get("target")), "engine": text(j.get("engine"), 40),
                     "reason": text(j.get("event") or row.get("reason") or row.get("start") or row.get("lesson"), 300),
-                    "mechanism": text(j.get("mechanism"), 300), "invalidation": text(j.get("invalidation"), 300)})
+                    "mechanism": text(j.get("mechanism"), 300), "invalidation": text(j.get("invalidation"), 300),
+                    "decision": journal_chain(row, result=journal_result(row))})
     return out
 
 
@@ -397,7 +429,7 @@ def build_claude_book(status, journal, sleeve=None, history=None):
     for p in status.get("positions", []):
         key = norm_symbol(p.get("symbol"))
         intent = index.get(key, {})
-        tag = "sleeve" if key in sleeve_symbols else (intent.get("engine") or "discretionary")
+        tag = "sleeve" if key in sleeve_symbols else (intent.get("tag") or intent.get("engine") or "discretionary")
         entry = number(p.get("avg_entry_price"), 6)
         positions.append({
             "symbol": text(p.get("symbol"), 20), "asset_class": p.get("asset_class"), "tag": tag,
@@ -406,6 +438,7 @@ def build_claude_book(status, journal, sleeve=None, history=None):
             "stop": intent.get("stop"), "target": intent.get("target"),
             "protection": "policy" if intent.get("stop") is not None else "none_defined",
             "opened_at": intent.get("at"),
+            "decision": intent.get("decision"),
             "reason": {k: intent.get(k) for k in ("event", "mechanism", "priced_in", "scenario", "invalidation")}
             if intent else None})
     orders = [{"symbol": text(o.get("symbol"), 20), "side": o.get("side"), "qty": number(o.get("qty"), 8),
@@ -485,11 +518,23 @@ def read_jsonl(path):
 
 
 def write_snapshot(directory: Path, name: str, snapshot: dict):
+    import os
+    import tempfile
+    assert_clean(snapshot)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / name
-    temporary = directory / (name + ".tmp")
-    temporary.write_text(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
-    temporary.replace(target)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".cockpit-", delete=False) as stream:
+            temporary = Path(stream.name)
+            os.chmod(temporary, 0o600)
+            stream.write(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(target)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
     return target
 
 
@@ -532,8 +577,11 @@ def main(argv=None):  # pragma: no cover - thin CLI over the functions above
             paper["curve"] = [{"at": h["at"], "equity": h["equity"], "spy": h.get("spy"), "btc": h.get("btc")}
                               for h in history][-MAX_EQUITY_POINTS:]
         write_snapshot(out, "paper.json", paper)
+    from .cockpit_analysis import build_analysis
+    journal = read_jsonl(args.book_journal) if args.book_journal else []
     write_snapshot(out, "radar-home.json", build_home(radar, trader, paper))
-    print(json.dumps({"written": ["radar-home.json"] + (["paper.json"] if paper else [])}))
+    write_snapshot(out, "analysis.json", build_analysis(radar, trader, paper, journal))
+    print(json.dumps({"written": ["radar-home.json", "analysis.json"] + (["paper.json"] if paper else [])}))
 
 
 if __name__ == "__main__":  # pragma: no cover

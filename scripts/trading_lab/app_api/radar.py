@@ -1,6 +1,6 @@
 """Read-only view over the sanitized cockpit snapshots written by scripts/radar/cockpit_export.py.
 
-The directory is fixed at startup. Only two files are ever served, each bounded in size, and the body is
+The directory is fixed at startup. Only three files are ever served, each bounded in size, and the body is
 re-validated as JSON of the expected schema, so a stray file cannot leak through this endpoint."""
 import json
 from pathlib import Path
@@ -12,7 +12,8 @@ class Unavailable(AppApiError):
     status = 503
 
 MAX_BYTES = 8 * 1024 * 1024
-FILES = {"/api/v1/radar/home": ("radar-home.json", "cockpit-radar-home-v1"),
+FILES = {"/api/v1/radar/analysis": ("analysis.json", "cockpit-analysis-v1"),
+         "/api/v1/radar/home": ("radar-home.json", "cockpit-radar-home-v1"),
          "/api/v1/radar/paper": ("paper.json", "cockpit-paper-v1")}
 
 
