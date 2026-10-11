@@ -3,6 +3,7 @@
 export type RadarAnalyst = 'analyst_claude' | 'analyst_gpt' | 'reviewer_claude' | 'reviewer_gpt' | 'consensus';
 
 export interface AnticipationView {
+  decision?: import('./analysisTypes').DecisionChain;
   analyst: string; horizon: string; view: 'UP' | 'DOWN' | 'ABSTAIN' | string; p_outperform: number | null;
   verdict: string | null; reason: string | null; falsifier: string | null; review_note: string | null;
   catalysts: Array<{ url: string; published_at: string | null }>;
@@ -46,6 +47,7 @@ export interface RadarStory {
   received_at: string | null; primary: boolean;
 }
 export interface RadarEvent {
+  decision?: import('./analysisTypes').DecisionChain;
   id: string; rank: number; headline: string; link: string | null; source: string | null;
   published_at: string | null; available_at: string | null; novelty: string | null;
   themes: string[]; countries: string[]; badges: EventBadges;
@@ -74,6 +76,7 @@ export interface RadarHome {
 }
 
 export interface PaperPosition {
+  decision?: import('./analysisTypes').DecisionChain;
   symbol: string; asset_class: string | null; tag: string; qty: number | null; entry: number | null; last: number | null;
   unrealized_pl: number | null; unrealized_pct: number | null; stop: number | null; target: number | null;
   protection: 'policy' | 'none_defined'; opened_at: string | null;
@@ -84,10 +87,12 @@ export interface PaperOrder {
   submitted: string | null; legs: Array<{ type: string; limit: number | null; stop: number | null }>;
 }
 export interface JournalRow {
+  decision?: import('./analysisTypes').DecisionChain;
   at: string; action: string; symbol: string | null; qty: number | null; limit: number | null; stop: number | null;
   target: number | null; engine: string | null; reason: string | null; mechanism: string | null; invalidation: string | null;
 }
 export interface PaperAccount {
+  observed_at?: string;
   account: string; suffix: string; label: string; equity: number | null; return_since_start: number | null;
   start_equity?: number | null; cash?: number | null; peak: number | null; pnl?: number | null; day_pnl?: number | null;
   open_lots?: number; halted?: boolean; planned_orders?: number;

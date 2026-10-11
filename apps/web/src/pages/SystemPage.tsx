@@ -5,6 +5,7 @@ import { ProductError } from '../components/ProductError';
 import type { HealthState } from '../api/types';
 import { bytes, duration } from '../lib/ops';
 import { OpsHealthPanel } from './OpsHealthPanel';
+import { RadarHealthPanel } from './RadarHealthPanel';
 
 const TONE: Record<HealthState, 'ok' | 'warn' | 'off'> = {
   HEALTHY: 'ok',
@@ -34,12 +35,13 @@ export function SystemPage() {
     apiClient.getHealthHistory(undefined, 25, signal),
   );
 
-  if (status === 'loading') return <LoadingState label="Loading system" />;
-  if (status === 'error' && error) return <ErrorState error={error} onRetry={refetch} />;
-  if (!data) return null;
+  if (status === 'loading') return <div className="stack"><RadarHealthPanel /><LoadingState label="Loading system" /></div>;
+  if (status === 'error' && error) return <div className="stack"><RadarHealthPanel /><ErrorState error={error} onRetry={refetch} /></div>;
+  if (!data) return <RadarHealthPanel />;
 
   return (
     <div className="stack">
+      <RadarHealthPanel />
       <section className="card">
         <h2 className="card-title">Application</h2>
         <dl style={{ margin: 0 }}>

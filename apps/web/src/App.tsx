@@ -11,6 +11,8 @@ const CockpitPage = lazy(() =>
   import('./pages/CockpitPage').then((module) => ({ default: module.CockpitPage })));
 const MarketsPage = lazy(() =>
   import('./pages/MarketsPage').then((module) => ({ default: module.MarketsPage })));
+const NewsValuePage = lazy(() =>
+  import('./pages/NewsValuePage').then((module) => ({ default: module.NewsValuePage })));
 const SignalsPage = lazy(() =>
   import('./pages/SignalsPage').then((module) => ({ default: module.SignalsPage })));
 const RiskPage = lazy(() =>
@@ -56,6 +58,7 @@ export function App() {
       <Route element={<AppShell />}>
         <Route index element={<RadarHomePage />} />
         <Route path="overview" element={<OverviewPage />} />
+        <Route path="news-value" element={<Suspense fallback={<LoadingState />}><NewsValuePage /></Suspense>} />
         <Route
           path="cockpit"
           element={<Suspense fallback={<LoadingState />}><CockpitPage /></Suspense>}

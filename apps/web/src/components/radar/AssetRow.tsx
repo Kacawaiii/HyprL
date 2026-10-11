@@ -4,6 +4,7 @@ import {
   analystLabel, horizonsOf, instant, pct, signedNumber, signedPct, viewWords, viewsForHorizon,
 } from '../../lib/radar';
 import { AnticipationTimeline } from './AnticipationTimeline';
+import { DecisionCard } from '../DecisionCard';
 
 const DIRECTION: Record<string, string> = {
   up: 'beneficiary', down: 'loser', uncertain: 'direction to confirm', mixed: 'mixed',
@@ -58,6 +59,17 @@ export function AssetRow({ asset, expert }: { asset: RadarAsset; expert: boolean
               <strong>{analystLabel(v.analyst)}:</strong> {v.reason}{v.falsifier ? ` Falsifier: ${v.falsifier}` : ''}
             </p>
           ))}
+          {latest.views.map((view) => {
+            const outcome = asset.outcomes.find((o) => o.run_id === latest.run_id && o.horizon === view.horizon && o.model_id === view.analyst);
+            const decision = view.decision;
+            return <details className="decision-detail" key={`${view.analyst}-${view.horizon}`}>
+              <summary>{analystLabel(view.analyst)} · {view.horizon} · {view.view} · reviewer {view.verdict ?? 'inconnu'} : chaîne de décision</summary>
+              <DecisionCard decision={decision && outcome ? { ...decision, result: {
+                pnl_after_costs: null, r_after_costs: null, net_return: outcome.net_unit_pnl, costs: outcome.cost_roundtrip,
+                at: outcome.available_at, basis: 'modelled_roundtrip_cost',
+              } } : decision} />
+            </details>;
+          })}
           <AnticipationTimeline timeline={asset.anticipation.timeline} expert={expert} />
         </div>
       )}

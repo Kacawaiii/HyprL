@@ -5,13 +5,16 @@ import type { Horizon, RunSummary, ScoreEntry } from '../../api/traderTypes';
 import {
   alertCounts, analystLabel, assetChart, assetsOf, baselineRows, isTaint, keptVsRejected, ledgerCounts, paperLines,
   runCounts, scoreKey, sideBySide, type ScoreKey,
+  type LedgerRow,
 } from '../../lib/trader';
 import { Direction, Query, pct, signed, when } from './shared';
 import type { TraderData } from './useTraderData';
+import { DecisionCard } from '../../components/DecisionCard';
+import { traderDecision } from '../../lib/decisions';
 
 const num = (v: number | null | undefined, d = 3) => (v === null || v === undefined ? 'n/a' : v.toFixed(d));
 
-function SideBySide({ run, asset }: { run: RunSummary; asset: string }) {
+function SideBySide({ run, asset, rows }: { run: RunSummary; asset: string; rows: LedgerRow[] }) {
   const views = run.decision?.views ?? [];
   return (
     <div className="stack">
@@ -26,6 +29,9 @@ function SideBySide({ run, asset }: { run: RunSummary; asset: string }) {
                 <article key={v.analyst} aria-label={analystLabel(v.analyst)}>
                   <h4 style={{ margin: '0 0 6px' }}>{analystLabel(v.analyst)}: <Direction view={v.raw_view?.view ?? v.view} /> {pct(v.raw_view?.p_outperform ?? v.p_outperform)}{' '}
                     <Badge tone={v.verdict === 'KEEP' ? 'ok' : 'warn'}>REVIEWER {v.verdict}</Badge></h4>
+                  <DecisionCard decision={traderDecision(v, rows.find((r) => r.prediction.payload.signal.run_id === run.run_id &&
+                    r.prediction.payload.product === asset && r.prediction.payload.signal.view.analyst === v.analyst &&
+                    r.prediction.payload.signal.label_definition.horizon === h), run.portfolios?.[h]?.entry)} />
                   <dl style={{ margin: 0 }}>
                     <div className="kv"><dt>Confidence reason</dt><dd>{v.raw_view?.confidence_reason ?? 'not provided'}</dd></div>
                     <div className="kv"><dt>Priced in?</dt><dd>{v.raw_view?.priced_in_assessment ?? 'not provided'}</dd></div>
@@ -144,7 +150,7 @@ function Ledger({ data }: { data: TraderData }) {
               return (
                 <tr key={r.prediction.identity}>
                   <td>{when(p.decision_at)}</td><td>{analystLabel(p.model_id.replace('trader:', ''))}</td><td>{p.product}</td><td>{p.signal.label_definition.horizon}</td>
-                  <td><Direction view={p.outputs.class} /></td><td>{p.outputs.class === 'ABSTAIN' ? '—' : num(p.outputs.probabilities.outperform, 2)}</td><td>{signed(p.proposed_position.weight, 1)}</td>
+                  <td><details><summary><Direction view={p.outputs.class} /></summary><DecisionCard decision={traderDecision(p.signal.view, r)} /></details></td><td>{p.outputs.class === 'ABSTAIN' ? '—' : num(p.outputs.probabilities.outperform, 2)}</td><td>{signed(p.proposed_position.weight, 1)}</td>
                   <td><Badge tone={r.state === 'realized' ? 'ok' : 'warn'}>{r.state === 'realized' ? 'REALIZED' : 'PENDING'}</Badge></td>
                   <td>{r.scoredReturn === null ? 'pending' : signed(r.scoredReturn, 3)}</td><td>{r.label ? signed(r.label.value.net_unit_pnl, 3) : 'pending'}</td><td><Hash value={r.prediction.identity} /></td>
                 </tr>
@@ -216,7 +222,7 @@ export function ExpertTrader({ data, run, asset }: { data: TraderData; run: RunS
           ? <PriceChart chart={assetChart(shown, data.series.data.series[shown] ?? [], data.rows)} />
           : <EmptyState title="Nothing to plot yet" />}
       </section>
-      {run?.decision && shown ? <SideBySide run={run} asset={shown} /> : <EmptyState title="No analyst output for this day" />}
+      {run?.decision && shown ? <SideBySide run={run} asset={shown} rows={data.rows} /> : <EmptyState title="No analyst output for this day" />}
       {run?.decision && (
         <section className="card" aria-label="Run provenance">
           <h2 className="card-title">Run provenance</h2>

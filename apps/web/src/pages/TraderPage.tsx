@@ -10,6 +10,7 @@ import { BeginnerTrader } from './trader/BeginnerTrader';
 import { ExpertTrader } from './trader/ExpertTrader';
 import { RunBanner, SyntheticBadge } from './trader/shared';
 import { useTraderData } from './trader/useTraderData';
+import { TraderDecisionCards } from './trader/TraderDecisionCards';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -50,6 +51,7 @@ export function TraderPage() {
         <p role="note" style={{ margin: '8px 0 0' }}><strong>Read this first.</strong> {NOT_A_CLAIM}</p>
       </section>
       {data.today.error && data.today.data === undefined ? <ErrorState error={data.today.error} onRetry={data.today.refetch} /> : <RunBanner state={state} date={date} />}
+      {run && <TraderDecisionCards run={run} rows={data.rows} asset={asset} />}
       {selection.mode === 'expert'
         ? <ExpertTrader data={data} run={run} asset={asset} />
         : <BeginnerTrader data={data} run={run} asset={asset} />}

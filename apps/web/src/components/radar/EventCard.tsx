@@ -3,6 +3,7 @@ import type { RadarEvent } from '../../api/radarTypes';
 import { host, instant } from '../../lib/radar';
 import { AssetRow } from './AssetRow';
 import { ScoreBadges } from './ScoreBadges';
+import { DecisionCard } from '../DecisionCard';
 
 function BeginnerSummary({ event }: { event: RadarEvent }) {
   const change = event.what_changed;
@@ -50,6 +51,7 @@ export function EventCard({ event, expert }: { event: RadarEvent; expert: boolea
       </header>
 
       <ScoreBadges badges={event.badges} expert={expert} />
+      <DecisionCard decision={event.decision} />
 
       {!expert && <BeginnerSummary event={event} />}
 

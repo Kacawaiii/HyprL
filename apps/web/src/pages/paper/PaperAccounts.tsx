@@ -10,6 +10,7 @@ import { RebasedChart } from '../../components/RebasedChart';
 import { instant, protectionDistances, rebasedCurves, signedNumber, signedPct } from '../../lib/radar';
 import { useQuery } from '../../state/useQuery';
 import { useCockpit } from '../../state/useCockpit';
+import { DecisionCard } from '../../components/DecisionCard';
 
 function money(value: number | null | undefined) {
   return value === null || value === undefined ? '—' : value.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -62,6 +63,7 @@ function Account({ account, expert }: { account: PaperAccount; expert: boolean }
         {account.cash !== undefined && <div><dt>Cash</dt><dd>{money(account.cash)}</dd></div>}
         {expert && <div><dt>Peak</dt><dd>{money(account.peak)}</dd></div>}
       </dl>
+      {account.observed_at && <p className="metric-sub">Dernière observation du compte : {instant(account.observed_at)}.</p>}
       {account.positions.length === 0 ? (
         <p className="muted">
           {isBook ? 'The book is flat.' : `No open position${account.open_lots === 0 ? '' : ` (${account.open_lots} lots reported)`}.`}
@@ -92,6 +94,11 @@ function Account({ account, expert }: { account: PaperAccount; expert: boolean }
           </ul>
         </details>
       )}
+      {account.positions.map((position) => <details className="decision-detail" key={`decision-${position.symbol}`}>
+        <summary>{position.symbol} · {position.tag} : chaîne de décision</summary>
+        <p className="metric-sub">Plan consigné pour cet actif; l’export n’attribue pas un lot exécuté à cette intention.</p>
+        <DecisionCard decision={position.decision} />
+      </details>)}
     </article>
   );
 }
@@ -112,6 +119,7 @@ function Journal({ accounts }: { accounts: PaperAccount[] }) {
           {row.reason && <p>{row.reason}</p>}
           {row.mechanism && <p className="muted">{row.mechanism}</p>}
           {row.invalidation && <p className="muted">Invalidation: {row.invalidation}</p>}
+          <DecisionCard decision={row.decision} />
         </li>
       ))}
     </ol>

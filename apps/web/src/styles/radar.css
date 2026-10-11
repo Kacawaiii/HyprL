@@ -117,3 +117,34 @@ li[data-analyst='consensus'] .swatch { background: var(--text); }
   .radar-filter { flex-wrap: wrap; }
 }
 .paper-account[data-wide='true'] { grid-column: 1 / -1; }
+
+/* The six steps encode a sequence, so the ordered rail carries meaning. */
+.decision-chain { min-width: 0; font-size: 13px; }
+.decision-title { margin: 0 0 12px; font-size: 14px; }
+.decision-chain > ol { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 24px; counter-reset: decision; }
+.decision-chain > ol > li { border-left: 2px solid var(--border-strong); padding-left: 12px; min-width: 0; counter-increment: decision; }
+.decision-chain h5 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.decision-chain h5::before { content: counter(decision) '. '; color: var(--text-muted); }
+.decision-chain p { margin: 4px 0; max-width: 72ch; overflow-wrap: anywhere; }
+.decision-sources { list-style: none; padding: 0; margin: 8px 0 0; }
+.decision-sources li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.verification { font-size: 10px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 1px 5px; white-space: nowrap; color: var(--text-muted); }
+.verification[data-level='OFFICIEL'] { border-color: var(--positive); color: var(--positive); }
+.verification[data-level='FIL'] { border-color: var(--warning); color: var(--warning); }
+.decision-detail { border-top: 1px solid var(--border); padding-top: 12px; }
+.decision-detail summary { cursor: pointer; margin-bottom: 12px; overflow-wrap: anywhere; }
+.observation-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.observation-controls label { display: flex; gap: 6px; align-items: center; }
+.overlay-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0; padding: 0; list-style: none; }
+.overlay-legend label { cursor: pointer; }
+.observation-chart { margin: 12px 0; }
+.observation-chart svg { width: 100%; height: auto; }
+.observation-chart text { fill: var(--text-muted); font-size: 12px; }
+.markets-controls { flex-wrap: wrap; }
+.overlay-list { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.overlay-list button { text-align: left; white-space: normal; min-height: 44px; }
+.observation-chart [role='button']:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.health-date { margin: 4px 0 12px; }
+.news-comparison .table-scroll { max-width: 100%; }
+@media (max-width: 900px) { .decision-chain > ol { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .decision-chain > ol { grid-template-columns: minmax(0, 1fr); gap: 12px; } }

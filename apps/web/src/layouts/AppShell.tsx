@@ -16,6 +16,7 @@ const NAV = [
   { to: '/cockpit', label: 'Cockpit', icon: '◉' },
   { to: '/overview', label: 'Overview', icon: '◫' },
   { to: '/markets', label: 'Markets', icon: '◪' },
+  { to: '/news-value', label: 'L’actualité aide ?', icon: '◍' },
   { to: '/signals', label: 'Signals', icon: '⌁' },
   { to: '/risk', label: 'Risk', icon: '⚖' },
   { to: '/policies', label: 'Calibration / TP / SL', icon: '◇' },

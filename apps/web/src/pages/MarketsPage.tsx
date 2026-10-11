@@ -10,6 +10,7 @@ import {
 import { SessionCalendar } from '../components/SessionCalendar';
 import { LocalResearchCorpus } from '../components/LocalResearchCorpus';
 import type { Candle, Instrument } from '../api/types';
+import { MarketDecisionPanel } from './MarketDecisionPanel';
 
 /** Windows are chosen in the UI; the server decides how many points come back. */
 const WINDOWS = [
@@ -85,14 +86,15 @@ export function MarketsPage() {
     { key: 'volume', header: 'Volume', render: (row) => Number(row.volume).toFixed(4) },
   ];
 
-  if (markets.status === 'loading') return <LoadingState label="Loading markets" />;
+  if (markets.status === 'loading') return <div className="stack"><MarketDecisionPanel /><LoadingState label="Loading markets" /></div>;
   if (markets.status === 'error' && markets.error) {
-    return <ErrorState error={markets.error} onRetry={markets.refetch} />;
+    return <div className="stack"><MarketDecisionPanel /><ErrorState error={markets.error} onRetry={markets.refetch} /></div>;
   }
 
   return (
     <div className="stack">
-      <div className="row">
+      <MarketDecisionPanel />
+      <div className="row markets-controls">
         <InstrumentSelector
           id="product-select"
           label="Instrument"
