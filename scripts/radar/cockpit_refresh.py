@@ -190,7 +190,7 @@ def render_units(repo, interpreter, config):
     def quote(value):
         return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
     service = ('[Unit]\nDescription=Read-only hourly cockpit snapshots\n\n[Service]\nType=oneshot\n'
-               f'WorkingDirectory={quote(repo)}\nExecStart={quote(interpreter)} -m scripts.radar.cockpit_refresh --config {quote(config)}\n'
+               f'WorkingDirectory={str(repo).replace("%", "%%")}\nExecStart={quote(interpreter)} -m scripts.radar.cockpit_refresh --config {quote(config)}\n'
                'KillMode=process\nMemoryMax=384M\nCPUQuota=40%\nNice=15\nUMask=0077\n'
                'NoNewPrivileges=true\nTimeoutStartSec=3min\n')
     timer = ('[Unit]\nDescription=Hourly cockpit refresh outside trader window\n\n[Timer]\n'

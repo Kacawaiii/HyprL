@@ -96,6 +96,7 @@ def test_timer_is_bounded_and_avoids_blackout(tmp_path):
     service, timer = render_units(tmp_path, '/usr/bin/python3', tmp_path / 'config.json')
     assert 'KillMode=process' in service and 'MemoryMax=384M' in service and 'TimeoutStartSec=3min' in service
     assert '*:35:00 UTC' in timer and 'Persistent=false' in timer
+    assert f'WorkingDirectory={tmp_path}\n' in service
     assert 'claude-book status' not in service and '--live' not in service
 
 
