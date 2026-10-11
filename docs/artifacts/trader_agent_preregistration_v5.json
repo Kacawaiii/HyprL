@@ -1,0 +1,30 @@
+{
+  "schema": "trader-agent-preregistration-v5",
+  "revision": 8,
+  "registered_on": "2026-10-11",
+  "effective_from": "2026-10-11T18:10:00Z",
+  "operator_decision_hash": "9e51bea823f5d29d4eafd183e79fa9668b33c152131988e7350cdf58554221e9",
+  "news_spec_hash": "e677c1874c2d549e80bc8dcdf48f8302593407b0560f2c29ca803c5d66d89a0a",
+  "previous_execution_preregistration_hash": "7b134cdaf0cb1b6d750ada86a9a8cd365745ad4dab1f14053354cbaa863a9adc",
+  "base_weekday_preregistration_hash": "3ae8bf1ba47ddd9a1aead3fabbc1444cdd05b3f9949f004c8aea500c62ed8ce7",
+  "base_weekend_preregistration_hash": "d38d91c8c822ddfaa478b102c22099aa00a750ec1957c83bb006ccd38df1d89c",
+  "variants": [
+    "news_context_v1",
+    "news_context_weekend_crypto_v1",
+    "news_context_catchup_v1",
+    "news_context_after_hours_v1"
+  ],
+  "skill_hashes": {
+    "TRADER_SKILL.md": "3c8385354a5c6e0faee08b99e7df63036e7016e349a9ddce008b9ac08f37567d",
+    "REVIEWER_SKILL.md": "c90fbd2eae9b9779130cca1e5ef7ed8474a81ed247617bbd3e47fdd25278b623"
+  },
+  "scope": "Additive prospective news A/B shadow populations and latched downgrade safety guard. Frozen historical preregistrations and execution v3 remain bound, with explicit additive paper guard registration.",
+  "promotion": {
+    "minimum_directional_per_arm": 30,
+    "target": "SPY_relative",
+    "comparison": "Same prospective A/B sessions/universe, per analyst/reviewed role, population and horizon; historical pre-A/B base excluded. News hit_rate strictly greater AND Brier strictly lower. No pooling roles, horizons or populations.",
+    "execution": "Operator approval and a new execution registration required even when eligible. Crypto has no SPY-relative target: descriptive raw scores only, never automatic eligibility."
+  },
+  "confirmatory": false,
+  "canonical_sha256": "e34839a11adbb3ff7aae52f311c190a2200dc6df5c51233422619ed060909b53"
+}

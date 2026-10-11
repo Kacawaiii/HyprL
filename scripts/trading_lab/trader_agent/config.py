@@ -64,6 +64,7 @@ class Authorization:
     amendment_identity: str | None = None
     amendment: dict | None = None
     weekend_decision: dict | None = None
+    news_decision: dict | None = None
 
     @classmethod
     def load(cls, path, *, amendment_path=None):
@@ -101,6 +102,13 @@ class Authorization:
         return amended.load_weekend(Path(path).parent)
 
     def load_weekend(self, folder):
+        from .news_spec import DECISION_NAME, DECISION_HASH
+        news_path = folder / DECISION_NAME
+        if news_path.exists():
+            news = strict_json(news_path.read_text())
+            if sha256_canonical(news) != DECISION_HASH:
+                raise TraderError('NEWS_OPERATOR_DECISION_HASH_MISMATCH')
+            self = replace(self, news_decision=news)
         path = folder / WEEKEND_DECISION_NAME
         if not path.exists():
             return self
@@ -108,6 +116,13 @@ class Authorization:
         if sha256_canonical(decision) != WEEKEND_DECISION_HASH:
             raise TraderError('WEEKEND_OPERATOR_DECISION_HASH_MISMATCH')
         return replace(self, weekend_decision=decision)
+
+    def check_news(self, at):
+        from .news_spec import DECISION_HASH, spec
+        self.check(at)
+        if (not self.news_decision or sha256_canonical(self.news_decision) != DECISION_HASH
+                or at < instant(spec()['effective_from'])):
+            raise TraderError('NEWS_NOT_AUTHORIZED')
 
     def check_weekend(self, at):
         self.check(at)

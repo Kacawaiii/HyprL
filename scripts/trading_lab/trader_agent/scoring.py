@@ -213,7 +213,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             value = label["value"]
             r = value["raw_return"] if target == "raw" else value["spy_relative_return"]
             # Preserve existing weekday climatology; the new population has its own history.
-            history_key = (population, horizon, target, variant == 'weekend_crypto_v1')
+            history_key = (population, horizon, target, 'weekend_crypto' in (variant or ''), p['signal'].get('arm', 'base'))
             prior = [v for a, v in historical[history_key] if a < p["decision_at"]]
             climate = statistics.mean(prior) if prior else .5
             sample = {"p": view["p_outperform"], "view": view["view"], "y": int(r > 0), "return": r,
@@ -236,7 +236,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
         values = {v['asset']: label['value'] for v, label in pairs if label}
         result = {"session": day, "horizon": horizon, 'analyst':analyst, "capital_fraction": portfolio['capital_fraction'],
                   "state": "COMPLETE" if len(values) == len(pairs) else "PENDING", "variants": {}}
-        for variant in (('unhedged',) if day.endswith(':weekend_crypto_v1') else ('unhedged', 'spy_hedged')):
+        for variant in (('unhedged',) if 'weekend_crypto' in day else ('unhedged', 'spy_hedged')):
             w = portfolio[variant]
             if result['state'] != 'COMPLETE':
                 pnl = None
@@ -249,8 +249,9 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             result['variants'][variant] = {'weights': w, 'return_after_costs': pnl,
                                            'capital_return': pnl * portfolio['capital_fraction'] if pnl is not None else None}
         cohorts.append(result)
-    attempts = [r['payload'] for r in rows(store, 'replay-summary') if r['payload'].get('status') == 'RUNNING'
-                and r['payload'].get('synthetic') == synthetic]
+    summaries = [r['payload'] for r in rows(store, 'replay-summary') if r['payload'].get('synthetic') == synthetic]
+    attempts = [r for r in summaries if r.get('status') == 'RUNNING'
+                and r.get('schema') in {'trader-run-v1', 'trader-news-run-v1'}]
     registered = sorted({v for r in attempts for v in r.get('multiple_testing_variants', [])})
     configurations = sorted({sha256_canonical({'models':r['payload']['decision']['models'],
         'skills':r['payload']['decision']['skill_hashes'], 'preregistration':r['payload']['decision']['preregistration_hash']})
@@ -269,6 +270,8 @@ def scorecard(store, *, synthetic=False, include_samples=False):
                             "No LLM backtest on pre-cutoff outcomes; no calibration or edge claim"]}
     if include_samples:
         card['_primary_samples'] = samples['consensus/equity_etf/5d/SPY_relative']
+    from .news_scoring import comparison
+    card['news_ab'] = comparison(predictions, labels, summaries, metrics)
     return card
 
 

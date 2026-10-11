@@ -24,7 +24,7 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import calendar_session, label_window, protected
 from .paper_spec import SPEC_HASH, PREVIOUS_SPEC_HASH, OPERATOR_DECISION_HASH, execution_spec, execution_preregistration
-from .execution_tiers import selections, execution_scores
+from .execution_tiers import HALF_DOWNGRADE, selections, execution_scores
 from .scoring import rows
 
 PAPER_URL = 'https://paper-api.alpaca.markets'
@@ -263,6 +263,21 @@ class PaperLedger:
         registrations = self.events(event='weekend_registration')
         if not registrations or any(registrations[-1].get(k) != v for k, v in target.items()):
             raise TraderError('WEEKEND_PAPER_REGISTRATION_REQUIRED')
+
+    def register_news_guard(self, decision_path):
+        from .news_spec import DECISION_HASH, registration_target
+        if sha256_canonical(strict_json(Path(decision_path).read_text())) != DECISION_HASH:
+            raise TraderError('NEWS_OPERATOR_DECISION_HASH_MISMATCH')
+        self.grant.parent.check_news(self.clock())
+        with self.owner():
+            target = registration_target(self.grant)
+            previous = self.events(event='news_guard_registration')
+            if previous:
+                if any(previous[-1].get(k) != v for k, v in target.items()):
+                    raise TraderError('PAPER_NEWS_GUARD_REGISTRATION_MISMATCH')
+                return previous[-1]
+            return self.append('news_guard_registration', None, **target,
+                               reason='OPERATOR_APPROVED_ADDITIVE_SAFETY_CONTRACT_NO_REBIND')
 
     @staticmethod
     def validate_bindings(bindings):
@@ -625,6 +640,8 @@ class PaperExecutor:
         return predictions
 
     def entries(self, name, equity, positions):
+        from .downgrade_guard import evaluate
+        guard = evaluate(self.ledger, persist=False) if name == 'ia_actions' else {}
         intents, observations, live = self.ledger.projection(name)
         seen = {l['lot_id'] for i in intents.values() if i['purpose'] == 'entry' for l in i['lots']}
         prices = {broker_symbol(p['symbol']): decimal(p['current_price']) for p in positions}
@@ -641,6 +658,8 @@ class PaperExecutor:
             weights[lot['symbol']] = weights.get(lot['symbol'], D(0)) + abs(weight)
         candidates = []
         for row, evidence, multiplier, tier in self.eligible_predictions(name):
+            if tier == HALF_DOWNGRADE and guard.get('state') == 'HALTED':
+                continue
             p = row['payload']
             if p['product'] not in self.grant.assets(name):
                 continue
@@ -725,6 +744,10 @@ class PaperExecutor:
             if not dry_run:
                 self.observe(name, intent, order)
             return
+        if name == 'ia_actions' and intent['purpose'] == 'entry' and any(l['variant'] == HALF_DOWNGRADE for l in intent['lots']):
+            from .downgrade_guard import evaluate
+            if evaluate(self.ledger, persist=not dry_run).get('state') == 'HALTED':
+                return
         if dry_run:
             return
         at = self.clock()
@@ -818,6 +841,33 @@ class PaperExecutor:
 
     def run_account(self, name, action, *, dry_run=False):
         client, account, positions = self.start(name)
+        from .downgrade_guard import evaluate
+        guard = evaluate(self.ledger, persist=not dry_run) if name == 'ia_actions' else {}
+        if guard.get('state') == 'HALTED':
+            # Cancel already accepted, still-open entry orders containing this
+            # tier. A mixed broker order cannot be edited without changing its
+            # registered intent, so cancellation covers that entire order.
+            intents, observed, _ = self.ledger.projection(name)
+            for key, intent in intents.items():
+                if (intent['purpose'] != 'entry' or observed.get(key, {}).get('status') in TERMINAL
+                        or not any(l['variant'] == HALF_DOWNGRADE for l in intent['lots'])):
+                    continue
+                order = client.lookup(key)
+                if order and order['status'] not in TERMINAL and not dry_run:
+                    client.request('DELETE', '/v2/orders/' + quote(str(order['id']), safe=''))
+                    self.ledger.append('cancel', name, client_id=key, reason='PAPER_DOWNGRADE_TIER_HALTED')
+                    order = client.lookup(key)
+                    if not order or order['status'] not in TERMINAL:
+                        raise TraderError('PAPER_DOWNGRADE_CANCEL_PENDING')
+                if order and not dry_run:
+                    self.observe(name, intent, order)
+                elif not order and not dry_run:
+                    self.ledger.append('order', name, client_id=key, status='not_submitted', filled_qty='0',
+                                       filled_avg_price=None, filled_at=None, broker_order_digest=None)
+                    self.outcomes(name, intent, self.ledger.projection(name)[1][key])
+            # Cancellations may change filled quantities and broker positions.
+            if not dry_run:
+                client, account, positions = self.start(name)
         if action != 'status' and self.expire_after_hours(client, name, dry_run=dry_run):
             client, account, positions = self.start(name)
         equity = decimal(account['equity'])
@@ -827,6 +877,7 @@ class PaperExecutor:
                   'pnl': str(equity - D(100000)), 'day_pnl': str(equity - decimal(account['last_equity'])),
                   'peak': str(peak), 'open_lots': sum(decimal(l['qty']) != 0 for l in lots.values()),
                   'halted': self.ledger.halted(name), 'planned_orders': []}
+        status['downgrade_guard'] = guard
         if action == 'status':
             return status
         if self.ledger.halted(name):
@@ -890,6 +941,11 @@ class PaperExecutor:
         if day_count + sum(p['client_id'] not in intents and decimal(p['order']['qty']) != 0 for p in plans) > 40:
             raise TraderError('PAPER_ORDER_CAP')
         for plan in plans:
+            if (plan['purpose'] == 'entry' and guard.get('state') == 'HALTED'
+                    and any(l['variant'] == HALF_DOWNGRADE for l in plan['lots'])):
+                # Includes durable intents that crashed before submission. Exits
+                # and full KEEP entries remain enabled, with original identities.
+                continue
             if plan['client_id'] not in intents and not dry_run:
                 self.ledger.reserve(name, plan)
             status['planned_orders'].append({k: v for k, v in plan['order'].items() if k != 'client_order_id'})
@@ -967,6 +1023,7 @@ class PaperExecutor:
         latest = {(e['client_id'], e['lot_id']): e for e in outcomes}
         result['execution_outcomes'] = list(latest.values())
         result['execution_scores'] = execution_scores(self.ledger)
+        result['downgrade_guard'] = next((a.get('downgrade_guard') for a in accounts if a['account'] == 'ia_actions'), None)
         result['limitations'] = ['After-hours paper fills in thin liquidity are optimistic.',
                                 'Crypto market entry follows the decision; its label uses the fixed 13:30Z anchor.',
                                 'Auction gaps and marked price changes can exceed reserved weights; entries stop if marked caps are breached.']

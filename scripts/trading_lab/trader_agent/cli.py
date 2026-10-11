@@ -65,8 +65,8 @@ def paper_executor(args, grant, runtime):
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
-                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend'))
+    parser.add_argument("action", choices=("run", "news", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
+                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
@@ -87,13 +87,14 @@ def main(argv=None):
         runtime = private_root(args.runtime)
         if args.paper_replay_at and (args.action != 'paper-execute' or not args.dry_run):
             parser.error('--paper-replay-at requires paper-execute --dry-run')
-        if args.action == 'paper-register-weekend':
+        if args.action in {'paper-register-weekend', 'paper-register-news-guard'}:
             if not args.operator_decision or args.dry_run:
-                parser.error('paper-register-weekend requires --operator-decision and forbids --dry-run')
+                parser.error(args.action + ' requires --operator-decision and forbids --dry-run')
             from .alpaca_paper import PaperAuthorization, PaperLedger
             paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
             paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
-            print(json.dumps({'state': 'REGISTERED', 'registration': paper.register_weekend(args.operator_decision)}, indent=2))
+            registration = paper.register_weekend(args.operator_decision) if args.action == 'paper-register-weekend' else paper.register_news_guard(args.operator_decision)
+            print(json.dumps({'state': 'REGISTERED', 'registration': registration}, indent=2))
             return 0
         if args.action == 'paper-rebind':
             if not args.operator_decision or args.dry_run:
@@ -147,7 +148,13 @@ def main(argv=None):
         service = TraderService(ledger, data, runner, clock=clock,
                                 fomc=None if args.dry_run else args.fomc_store,
                                 edgar=None if args.dry_run else args.edgar_store)
-        if args.action == 'recover':
+        if not args.dry_run and grant.news_decision is not None:
+            from .news_context import build_news_context
+            service.news_builder = lambda cutoff: build_news_context(Path.home() / 'private/radar-v1',
+                                                                     Path.home() / 'claude-book/veille.md', cutoff)
+        if args.action == 'news':
+            result = service.run_news()
+        elif args.action == 'recover':
             from .recovery import recover
             result = recover(service)
             # Close-entry recovery remains score-only. Only a fresh, successful
@@ -162,6 +169,8 @@ def main(argv=None):
                 except Exception:
                     ledger.alert('RECOVERY_PAPER_UNEXPECTED_FAILURE')
                     raise
+            if result.get('status') in {'COMPLETE', 'DEGRADED'} and grant.news_decision is not None:
+                result['news_arm'] = service.run_news()
         elif args.action in {"catchup", 'catchup-after-hours'}:
             result = service.run(catchup=True, after_hours=args.action == 'catchup-after-hours')
         elif args.action == "run":

@@ -373,6 +373,13 @@
     "execution_preregistration_hash": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
+    },
+    "arm": {
+      "const": "news"
+    },
+    "base_run_id": {
+      "type": "string",
+      "maxLength": 2000
     }
   },
   "required": [

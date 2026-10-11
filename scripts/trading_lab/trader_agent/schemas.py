@@ -51,6 +51,8 @@ DECISION = obj({"schema": {"const": "trader-decision-v1"}, "run_id": STRING, "se
 SCHEMAS = {"analyst": ANALYST, "reviewer": REVIEWER, "decision": DECISION}
 # Execution registration is additive; frozen pre-v3 decisions remain valid.
 DECISION['properties']['execution_preregistration_hash'] = HASH
+DECISION['properties']['arm'] = {'const': 'news'}
+DECISION['properties']['base_run_id'] = STRING
 
 # OpenAI strict structured outputs (Codex --output-schema) accept only a subset of JSON Schema: 'format: uri' and
 # 'maxLength' made the first real run fail with invalid_json_schema. GPT gets a derived schema; every local validator
@@ -118,7 +120,7 @@ def validate(kind, payload):
     return payload
 
 
-def validate_analyst(payload, assets, at):
+def validate_analyst(payload, assets, at, *, strict_before=False):
     validate("analyst", payload)
     keys = [(v["asset"], v["horizon"]) for v in payload["views"]]
     wanted = {(asset, h) for asset in assets for h in ("1d", "5d")}
@@ -131,7 +133,7 @@ def validate_analyst(payload, assets, at):
         if direction != "ABSTAIN" and not view["catalysts"]:
             raise TraderError("UNSUPPORTED_VIEW")
         for source in view["catalysts"]:
-            if instant(source["published_at"]) > at:
+            if instant(source["published_at"]) > at or strict_before and instant(source['published_at']) == at:
                 raise TraderError("FUTURE_SOURCE")
             if not source["url"].startswith("https://"):
                 raise TraderError("UNSAFE_SOURCE_URL")

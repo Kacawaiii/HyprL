@@ -118,6 +118,8 @@ def load_trader(store, scorecard=None, include_synthetic=False):
     for record in _scan(store, "replay-summary"):
         payload = record["payload"]
         if payload.get("schema") == "trader-context-evidence-v1":
+            if payload.get('arm') == 'news':
+                continue
             context = payload.get("context") or {}
             if not context.get("synthetic") or include_synthetic:
                 contexts.append(context)
@@ -378,7 +380,8 @@ def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS):
                    "models": runs[-1]["models"] if runs else {},
                    "preregistration_hash": runs[-1].get("preregistration_hash") if runs else None,
                    "predictive_quality": quality,
-                   "hypothesis_state": ((trader or {}).get("scorecard") or {}).get("hypothesis_state")},
+                   "hypothesis_state": ((trader or {}).get("scorecard") or {}).get("hypothesis_state"),
+                   "news_ab": ((trader or {}).get("scorecard") or {}).get("news_ab")},
         "regime": regime, "events": events}
     assert_clean(snapshot)
     return snapshot

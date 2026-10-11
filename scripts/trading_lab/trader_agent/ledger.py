@@ -14,6 +14,7 @@ class Ledger:
         self.budget_root = private_root(budget_root) if budget_root else self.root
         self.grant, self.clock = grant, clock
         self.budget_day = None
+        self.arm = 'base'
         self.path = self.budget_root / "dispatch.sqlite"
         with self.connect() as db:
             db.executescript("""
@@ -52,9 +53,15 @@ class Ledger:
         if self.paused:
             raise TraderError('PAUSED')
         at = self.clock()
-        day = self.budget_day or at.date().isoformat()
+        news = self.arm == 'news' and kind in {'run', *self.grant.payload['external_models']}
+        if news:
+            self.grant.check_news(at)
+            kind = 'news_' + kind
+        day = at.date().isoformat() if news else self.budget_day or at.date().isoformat()
         p = self.grant.payload
-        if kind == "run":
+        if news:
+            maximum = 1 if kind == 'news_run' else 2
+        elif kind == "run":
             maximum = p["budgets"]["max_runs_per_day"]
         elif kind == "catchup_run":
             maximum = 1   # one operator-approved recovery per day; the service requires a FAILED daily run
@@ -70,8 +77,10 @@ class Ledger:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             at = self.clock()
-            day = self.budget_day or at.date().isoformat()
+            day = at.date().isoformat() if news else self.budget_day or at.date().isoformat()
             self.grant.check(at)
+            if news:
+                self.grant.check_news(at)
             count = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind=?", (day, kind)).fetchone()[0]
             if count >= maximum:
                 raise TraderError("BUDGET_EXHAUSTED")
@@ -80,6 +89,11 @@ class Ledger:
                     (day, "analyst_claude", "analyst_gpt", "reviewer")).fetchone()[0]
                 if total >= p["budgets"]["max_llm_calls_per_day"]:
                     raise TraderError("BUDGET_EXHAUSTED")
+            if news and kind != 'news_run':
+                total = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind IN (?,?,?)",
+                    (day, 'news_analyst_claude', 'news_analyst_gpt', 'news_reviewer')).fetchone()[0]
+                if total >= 6:
+                    raise TraderError('BUDGET_EXHAUSTED')
             if kind == "gdelt_doc_api":
                 row = db.execute("SELECT at FROM dispatch WHERE kind=? ORDER BY seq DESC LIMIT 1", (kind,)).fetchone()
                 if row:
@@ -97,7 +111,8 @@ class Ledger:
     def counts(self, day=None):
         with self.connect() as db:
             return dict(db.execute("SELECT kind,count(*) FROM dispatch WHERE day=? GROUP BY kind",
-                                   (day or self.budget_day or self.clock().date().isoformat(),)))
+                                   (day or (self.clock().date().isoformat() if self.arm == 'news' else
+                                            self.budget_day or self.clock().date().isoformat()),)))
 
     def alert(self, code, *, role=None):
         payload = {"schema": "trader-alert-v1", "at": iso(self.clock()), "code": code, "role": role}

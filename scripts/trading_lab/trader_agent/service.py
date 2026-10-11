@@ -90,12 +90,13 @@ def views_with_review(analysts, reviewer, degraded=None):
 
 
 class TraderService:
-    def __init__(self, ledger, data, runner, *, clock=now, fomc=None, edgar=None):
+    def __init__(self, ledger, data, runner, *, clock=now, fomc=None, edgar=None, news_builder=None):
         self.ledger, self.data, self.runner, self.clock = ledger, data, runner, clock
         self.fomc, self.edgar = fomc, edgar
         self.store = ResearchStore(ledger.root / "evidence")
         self.entry_at = "open"
         self.crypto_only = False
+        self.news_builder = news_builder
 
     def summary(self, run_id, status, at, **extra):
         payload = {"schema": "trader-run-v1", "run_id": run_id, "status": status, "at": iso(at),
@@ -204,6 +205,7 @@ class TraderService:
                 if context["exclusions"]:
                     self.ledger.alert("PARTIAL_CONTEXT")
                 context_at = instant(context["decision_time"])
+                self.freeze_news(run_id, context_at)
                 entry_deadline = cutoff if after_hours else min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
                                      for a in context['universe'])
                 self.runner.deadline = min(self.runner.deadline, entry_deadline)
@@ -265,6 +267,122 @@ class TraderService:
         if self.clock() >= self.runner.deadline or self.ledger.paused:
             raise TraderError("MISSED_DECISION_DEADLINE_OR_PAUSED")
 
+    def freeze_news(self, run_id, cutoff):
+        """News failures cannot change the base decision or consume its budget."""
+        if self.ledger.grant.news_decision is None:
+            return
+        from . import news_spec
+        try:
+            self.ledger.grant.check_news(cutoff)
+            registration = news_spec.registration_target(self.ledger.grant)
+            self.store.append('replay-summary', {'schema': 'trader-news-registration-v1', **registration},
+                object_id='news-registration:' + news_spec.PREREG_HASH, recorded_at=iso(self.clock()))
+            if self.news_builder is None:
+                raise TraderError('NEWS_BUILDER_UNAVAILABLE')
+            context, identity = self.news_builder(cutoff)
+            if context['decision_time'] != iso(cutoff) or identity != sha256_canonical(context):
+                raise TraderError('NEWS_CONTEXT_BINDING_INVALID')
+            payload = {'state': 'AVAILABLE', 'news_context_hash': identity, 'news_context': context}
+        except Exception as error:
+            payload = {'state': 'FAILED', 'error': error.code if isinstance(error, TraderError) else 'NEWS_CONTEXT_FAILURE'}
+        self.store.append('replay-summary', {'schema': 'trader-news-snapshot-v1', 'base_run_id': run_id,
+            'decision_time': iso(cutoff), **payload}, object_id=run_id + ':news-snapshot', recorded_at=iso(self.clock()))
+
+    def run_news(self):
+        """Separate post-execution job over a frozen base snapshot; no data acquisition."""
+        from . import news_spec
+        with self.ledger.owner():
+            base_runs = [r['payload'] for r in rows(self.store, 'replay-summary')
+                if r['payload'].get('schema') == 'trader-run-v1'
+                and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}
+                and r['payload'].get('synthetic') == self.data.synthetic
+                and r['payload']['at'][:10] == self.clock().date().isoformat()]
+            if not base_runs:
+                return {'state': 'SKIPPED_NO_BASE_RUN'}
+            base = base_runs[-1]
+            run_id = base['run_id'] + ':news'
+            def summary(status, **extra):
+                at = iso(self.clock())
+                payload = {'schema': 'trader-news-run-v1', 'run_id': run_id, 'base_run_id': base['run_id'],
+                    'arm': 'news', 'status': status, 'at': at, 'synthetic': self.data.synthetic, **extra}
+                self.store.append('replay-summary', payload,
+                    object_id=run_id + ':' + status + (':' + at if status == 'FAILED' else ''), recorded_at=at)
+                return payload
+            if any(r['payload'].get('run_id') == run_id and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}
+                   for r in rows(self.store, 'replay-summary')):
+                return {'state': 'ALREADY_RECORDED', 'run_id': run_id}
+            prior_arm, prior_metadata = self.ledger.arm, self.runner.metadata
+            self.ledger.arm, self.runner.metadata = 'news', {}
+            try:
+                self.ledger.grant.check_news(self.clock())
+                self.ledger.reserve('run')
+                frozen = self.store.records('replay-summary', object_id=base['run_id'] + ':news-snapshot')
+                original = self.store.records('replay-summary', object_id=base['run_id'] + ':context')
+                if len(frozen) != 1 or len(original) != 1 or frozen[0]['payload']['state'] != 'AVAILABLE':
+                    raise TraderError('NEWS_SNAPSHOT_UNAVAILABLE')
+                snapshot = frozen[0]['payload']
+                context = {**original[0]['payload']['context'], 'news_data': snapshot['news_context']}
+                if (snapshot['news_context_hash'] != sha256_canonical(context['news_data'])
+                        or original[0]['payload']['context_hash'] != base['decision']['context_hash']
+                        or snapshot['decision_time'] != context['decision_time']):
+                    raise TraderError('NEWS_CONTEXT_BINDING_INVALID')
+                definition = next(r['payload']['signal']['label_definition'] for r in rows(self.store, 'prediction')
+                                  if r['payload']['signal']['run_id'] == base['run_id'])
+                variant = definition.get('variant')
+                self.crypto_only = variant == 'weekend_crypto_v1'
+                self.entry_at = 'after_hours' if variant == AFTER_HOURS_VARIANT else 'close' if variant == CATCHUP_VARIANT else 'open'
+                day = base['decision']['session']
+                session = calendar_session(day)
+                if self.entry_at == 'after_hours':
+                    from .alpaca_paper import after_hours_cutoff
+                    deadline = after_hours_cutoff(session)
+                else:
+                    deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
+                                   for a in context['universe'])
+                self.runner.deadline = deadline
+                texts, hashes = skills()
+                prereg_hash = news_spec.preregistration()
+                variants = list(news_spec.spec()['variants'].values())
+                summary('RUNNING', preregistration_hash=prereg_hash, multiple_testing_variants=variants)
+                identity = sha256_canonical(context)
+                self.store.append('replay-summary', {'schema': 'trader-context-evidence-v1', 'run_id': run_id,
+                    'arm': 'news', 'context_hash': identity, 'context': context}, object_id=run_id + ':context',
+                    recorded_at=iso(self.clock()))
+                analysts, degraded = {}, {}
+                for role in ROLES:
+                    self.before_call(session)
+                    try:
+                        analysts[role] = self.runner.infer(role, prompt(context, texts['TRADER_SKILL.md']),
+                            validator=lambda output: validate_analyst(output, context['universe'], instant(context['decision_time']), strict_before=True))
+                    except TraderError as error:
+                        if error.code in NEVER_DEGRADE:
+                            raise
+                        degraded[role] = error.code
+                if not analysts:
+                    raise TraderError('NEWS_ANALYSTS_FAILED')
+                self.before_call(session)
+                reviewer = self.runner.infer('reviewer', prompt(context, texts['REVIEWER_SKILL.md'], analysts=analysts),
+                    validator=lambda output: validate_reviewer(output, analysts))
+                self.before_call(session)
+                models = {role: {'model': self.ledger.grant.gpt_model if role == 'analyst_gpt' else
+                    self.ledger.grant.payload['external_models'][role]['model'], 'cli_version': 'NOT_RUN',
+                    'reported_version': 'NOT_RUN'} for role in degraded}
+                decision = {**base['decision'], 'run_id': run_id, 'arm': 'news', 'base_run_id': base['run_id'],
+                    'decision_at': iso(self.clock()), 'context_hash': identity, 'preregistration_hash': prereg_hash,
+                    'models': {**models, **self.runner.metadata}, 'skill_hashes': hashes,
+                    'views': views_with_review(analysts, reviewer, degraded)}
+                decision.pop('execution_preregistration_hash', None)
+                validate('decision', decision)
+                self.record(decision, context)
+                return summary('DEGRADED' if degraded else 'COMPLETE', decision=decision,
+                    degraded=degraded, multiple_testing_variants=variants, budget_counts=self.ledger.counts())
+            except Exception as error:
+                code = error.code if isinstance(error, TraderError) else 'UNEXPECTED_FAILURE'
+                self.ledger.alert('NEWS_' + code)
+                return summary('FAILED', error=code, budget_counts=self.ledger.counts())
+            finally:
+                self.ledger.arm, self.runner.metadata = prior_arm, prior_metadata
+
     def record(self, decision, context):
         recorded = iso(self.clock())
         crypto = self.ledger.grant.payload["universe"]["crypto"]
@@ -307,6 +425,10 @@ class TraderService:
                 limits={"paper_only": True, "model_versions": decision["models"]},
                 implementation_version="trader-agent-v1", synthetic=decision["synthetic"])
             # Horizon is the exact elapsed time from decision to the target endpoint, including weekends.
+            news = decision.get('arm') == 'news'
+            from .news_spec import spec as news_spec
+            news_variant = news_spec()['variants']['weekend' if self.crypto_only else 'after_hours' if self.entry_at == 'after_hours'
+                                                   else 'catchup' if self.entry_at == 'close' else 'weekday'] if news else None
             prediction = PredictionRecord(prediction_id=identity, model_id="trader:" + view["analyst"],
                 model_contract_hash=contract.identity, artifact_hash=decision["preregistration_hash"],
                 product=view["asset"], decision_at=decision["decision_at"], horizon_seconds=seconds,
@@ -317,7 +439,10 @@ class TraderService:
                                          "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"],
                                          **({"entry_price": "alpaca_actual_fill", "variant": AFTER_HOURS_VARIANT} if self.entry_at == 'after_hours'
                                             else {"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close"
-                                            else {'variant': 'weekend_crypto_v1'} if self.crypto_only else {})},
+                                            else {'variant': 'weekend_crypto_v1'} if self.crypto_only else {}),
+                                         **({'variant': news_variant} if news else {})},
+                    **({'arm': 'news', 'base_run_id': decision['base_run_id'],
+                        'frozen_decision_time': context['decision_time']} if news else {}),
                     "models": decision["models"], "skill_hashes": decision["skill_hashes"], "run_id": decision["run_id"]},
                 risk={"mode": "PAPER_SHADOW_ONLY", "verdict": view["verdict"]},
                 proposed_position={"weight": proposals[view['analyst']][view["horizon"]]["unhedged"].get(view["asset"], 0)
@@ -339,6 +464,7 @@ class TraderService:
                 split="PROSPECTIVE_SYNTHETIC" if decision["synthetic"] else "PROSPECTIVE", provenance={
                     "authorization_hash": decision["authorization_hash"], "skill_hashes": decision["skill_hashes"],
                     "context_hash":decision['context_hash'], 'context_record_hash':context_record_hash,
+                    **({'news_context_hash': sha256_canonical(context['news_data']), 'arm': 'news'} if news else {}),
                     "sources": {'context_record_hash':context_record_hash, 'count':len(context['sources']),
                                 'sources_hash':sha256_canonical(context['sources'])}, "model_contract": contract.to_dict(),
                     "preregistration_hash": decision["preregistration_hash"]})

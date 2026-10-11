@@ -50,7 +50,10 @@ class TraderViews:
                 if path == "/api/v1/trader/today":
                     runs = [r for r in rows(store, "replay-summary") if r["payload"].get("schema") == "trader-run-v1"
                             and r["payload"]["at"][:10] == day]
-                    return {"schema": "trader-today-v1", "date": day, "runs": runs[-limit:]}
+                    news = [{k: r['payload'][k] for k in ('run_id', 'base_run_id', 'status', 'at', 'error', 'budget_counts')
+                             if k in r['payload']} for r in rows(store, 'replay-summary')
+                            if r['payload'].get('schema') == 'trader-news-run-v1' and r['payload']['at'][:10] == day]
+                    return {"schema": "trader-today-v1", "date": day, "runs": runs[-limit:], 'news_runs': news[-limit:]}
                 if path == "/api/v1/trader/runs":
                     return self.runs(store, after, limit)
                 if path == "/api/v1/trader/labels":
@@ -89,7 +92,8 @@ class TraderViews:
 
     @staticmethod
     def contexts(store):
-        return [r for r in rows(store, "replay-summary") if r["payload"].get("schema") == "trader-context-evidence-v1"]
+        return [r for r in rows(store, "replay-summary") if r["payload"].get("schema") == "trader-context-evidence-v1"
+                and r['payload'].get('arm') != 'news']
 
     def runs(self, store, after, limit):
         """Run summaries without their (large) decision body: status, reason and budgets only."""
