@@ -1,0 +1,51 @@
+{
+  "schema": "trader-news-ab-spec-v2",
+  "revision": 2,
+  "effective_from": "2026-10-11T18:10:00Z",
+  "operator_decision_hash": "101b2cabfe50ab9e00f86c0db3f50ff7b31083a5a0007734dbf62f4c8c466004",
+  "mode": "SHADOW_ONLY",
+  "context": {
+    "lookback_hours": 48,
+    "max_bytes": 48000,
+    "max_events": 40,
+    "max_sources_per_event": 6,
+    "max_veille_lines": 40,
+    "max_veille_bytes": 8000,
+    "cutoff": "Evidence appended and received strictly before frozen base context decision_time; publication, when known, strictly earlier too. No later reports/digests. Receipts snapshotted under radar shared owner lock and SQLite read transaction; regime/anomalies/priced-in recomputed after releasing that lock.",
+    "veille": "Explicit timestamp/date in a line or inherited dated section/note; date-only means end of UTC day; timestamp must precede cutoff. File mtime must precede cutoff. Snapshot frozen before base inference.",
+    "data": "Headlines, source URLs, levels, scores and measured numbers only; no article bodies or runtime paths."
+  },
+  "budgets": {
+    "news_run": 1,
+    "analyst_claude": 2,
+    "analyst_gpt": 2,
+    "reviewer": 2,
+    "aggregate": 6,
+    "bank": "Separate durable news_ kinds, per actual UTC dispatch day, including failed attempts; never borrow base budgets."
+  },
+  "variants": {
+    "weekday": "news_context_v1",
+    "weekend": "news_context_weekend_crypto_v1",
+    "catchup": "news_context_catchup_v1",
+    "after_hours": "news_context_after_hours_v1"
+  },
+  "promotion": {
+    "minimum_directional_per_arm": 30,
+    "target": "SPY_relative",
+    "comparison": "Same prospective A/B sessions/universe, per analyst/reviewed role, population and horizon; historical pre-A/B base excluded. News hit_rate strictly greater AND Brier strictly lower. No pooling roles, horizons or populations.",
+    "execution": "Operator approval and a new execution registration required even when eligible. Crypto has no SPY-relative target: descriptive raw scores only, never automatic eligibility."
+  },
+  "downgrade_breaker": {
+    "tier": "half_size_downgrade_v1",
+    "minimum_realized": 20,
+    "positive_rate_below": "0.45",
+    "unit": "Completely closed entry lot with terminal entry observation and nonzero allocated fill, cumulative exits deduped by client/lot. Partial/unfilled/pending lots excluded. All horizons/populations of this tier pooled for the safety decision only.",
+    "cost_roundtrip": "0.0015",
+    "cost_basis": "Actual filled entry/exit prices include slippage; deduct additional preregistered conservative 15bp of absolute filled entry notional (5bp per side + 2.5bp half spread per side). Broker fees not separately observed.",
+    "evaluation": "Every prefix of completed lots in realization order; crossing latches permanently. Register additive safety contract explicitly before use; original execution v3 bindings are not migrated. Refuse new entries and crashed unsubmitted intents containing the tier; mark unknown-at-broker intents NOT_TRADED. Cancel known accepted open entry orders containing the tier (whole order if mixed). Enforce again at submission. Scheduled exits and research scoring continue. Resume requires a new operator decision."
+  },
+  "previous_spec_hash": "e677c1874c2d549e80bc8dcdf48f8302593407b0560f2c29ca803c5d66d89a0a",
+  "revision_reason": "Correct decision identity using the shared repository canonical serialization before first production use. Earlier context and safety registrations remain rejected; no implicit migration.",
+  "canonical_serialization": "scripts.trading_lab.sources.canonical.sha256_canonical; sorted compact JSON with ASCII escaping, UTF-8 bytes",
+  "canonical_sha256": "dab1476046f1be8d8f8ceeb9ab8757558a83b27c9c6844a9817f8eb8a1635b16"
+}

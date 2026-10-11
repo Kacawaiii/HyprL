@@ -1,11 +1,14 @@
 # Prospective news A/B and downgrade safety stop
 
-Preregistration v5 (revision 8) binds the new `trader_news_ab_spec_v1.json` to
+Preregistration v6 (revision 9) binds the new `trader_news_ab_spec_v2.json` to
 the operator decision digest. This is an additive contract: research v2,
 weekend research v3 and execution v3 keep their frozen identities. Existing
 paper bindings are not migrated. `paper-register-news-guard` explicitly journals
 the extra safety contract under the paper owner lock; a mismatched registration
-refuses new execution.
+refuses new execution. Spec revision 2 binds the operator decision with the shared
+repository canonical serialization (ASCII escaping). Revision 1 and its
+preregistration remain preserved; their contexts and guard registrations stay
+rejected, with no implicit migration.
 
 The base run freezes the optional news input before inference. Radar is opened
 with SQLite `mode=ro`, a read transaction and a nonblocking shared lock on the

@@ -6,9 +6,9 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 from .config import TraderError
 
 DECISION_NAME = 'trader-operator-decisions-2026-10-11.json'
-DECISION_HASH = '9e51bea823f5d29d4eafd183e79fa9668b33c152131988e7350cdf58554221e9'
-SPEC_HASH = 'e677c1874c2d549e80bc8dcdf48f8302593407b0560f2c29ca803c5d66d89a0a'
-PREREG_HASH = 'e34839a11adbb3ff7aae52f311c190a2200dc6df5c51233422619ed060909b53'
+DECISION_HASH = '101b2cabfe50ab9e00f86c0db3f50ff7b31083a5a0007734dbf62f4c8c466004'
+SPEC_HASH = 'dab1476046f1be8d8f8ceeb9ab8757558a83b27c9c6844a9817f8eb8a1635b16'
+PREREG_HASH = 'eb39435cafa050c497699223c2de80c5d0d6cce44673eb9b55ca4b489b911ec1'
 ARTIFACTS = Path(__file__).resolve().parents[3] / 'docs/artifacts'
 
 
@@ -20,11 +20,11 @@ def bound_artifact(name, expected):
 
 
 def spec():
-    return bound_artifact('trader_news_ab_spec_v1.json', SPEC_HASH)
+    return bound_artifact('trader_news_ab_spec_v2.json', SPEC_HASH)
 
 
 def preregistration():
-    value = bound_artifact('trader_agent_preregistration_v5.json', PREREG_HASH)
+    value = bound_artifact('trader_agent_preregistration_v6.json', PREREG_HASH)
     if value['news_spec_hash'] != SPEC_HASH or value['operator_decision_hash'] != DECISION_HASH:
         raise TraderError('NEWS_SPEC_BINDING_MISMATCH')
     spec()

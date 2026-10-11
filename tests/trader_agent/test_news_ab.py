@@ -208,6 +208,52 @@ def test_unauthorized_news_reservation_fails_closed(ledger):
     assert ledger.counts() == {}
 
 
+def test_unicode_operator_decision_uses_shared_canonical_serialization(grant, tmp_path, monkeypatch):
+    from scripts.trading_lab.trader_agent import news_spec
+    decision = {'schema': 'synthetic-operator-decision', 'note': 'Synthetic café context'}
+    grant_path = tmp_path / 'grant.json'
+    grant_path.write_text(json.dumps(grant.payload))
+    decision_path = tmp_path / news_spec.DECISION_NAME
+    decision_path.write_text(json.dumps(decision, ensure_ascii=False))
+    monkeypatch.setattr(news_spec, 'DECISION_HASH', sha256_canonical(decision))
+    loaded = Authorization.load(grant_path)
+    loaded.check_news(instant('2026-10-12T12:00:00Z'))
+    assert loaded.news_decision == decision
+    unescaped = hashlib.sha256(json.dumps(decision, sort_keys=True, separators=(',', ':'),
+                                        ensure_ascii=False).encode()).hexdigest()
+    assert unescaped != sha256_canonical(decision)
+    monkeypatch.setattr(news_spec, 'DECISION_HASH', unescaped)
+    with pytest.raises(TraderError, match='NEWS_OPERATOR_DECISION_HASH_MISMATCH'):
+        Authorization.load(grant_path)
+
+
+@pytest.mark.parametrize('previous_snapshot', [False, True])
+def test_previous_spec_context_is_rejected_without_implicit_migration(news_service, monkeypatch, previous_snapshot):
+    service = news_service
+    builder = service.news_builder
+    def earlier_context(cutoff):
+        context, _ = builder(cutoff)
+        context['spec_hash'] = 'e677c1874c2d549e80bc8dcdf48f8302593407b0560f2c29ca803c5d66d89a0a'
+        return context, sha256_canonical(context)
+    if previous_snapshot:
+        # Reproduce an immutable snapshot left by the earlier producer.
+        def earlier_freeze(run_id, cutoff):
+            context, identity = earlier_context(cutoff)
+            service.store.append('replay-summary', {'schema': 'trader-news-snapshot-v1',
+                'base_run_id': run_id, 'decision_time': iso(cutoff), 'state': 'AVAILABLE',
+                'news_context': context, 'news_context_hash': identity},
+                object_id=run_id + ':news-snapshot', recorded_at=iso(service.clock()))
+        monkeypatch.setattr(service, 'freeze_news', earlier_freeze)
+    else:
+        service.news_builder = earlier_context
+    assert service.run()['status'] == 'COMPLETE'
+    before = service.store.records('prediction')
+    result = service.run_news()
+    assert result['error'] == ('NEWS_CONTEXT_BINDING_INVALID' if previous_snapshot else 'NEWS_SNAPSHOT_UNAVAILABLE')
+    assert service.store.records('prediction') == before
+    assert not any(k.startswith('news_') and k != 'news_run' for k in service.ledger.counts())
+
+
 def test_promotion_requires_thirty_each_strictly_better_hit_and_brier():
     predictions, labels = [], {}
     for arm in ('base', 'news'):

@@ -280,7 +280,8 @@ class TraderService:
             if self.news_builder is None:
                 raise TraderError('NEWS_BUILDER_UNAVAILABLE')
             context, identity = self.news_builder(cutoff)
-            if context['decision_time'] != iso(cutoff) or identity != sha256_canonical(context):
+            if (context['decision_time'] != iso(cutoff) or identity != sha256_canonical(context)
+                    or context.get('spec_hash') != news_spec.SPEC_HASH):
                 raise TraderError('NEWS_CONTEXT_BINDING_INVALID')
             payload = {'state': 'AVAILABLE', 'news_context_hash': identity, 'news_context': context}
         except Exception as error:
@@ -323,6 +324,7 @@ class TraderService:
                 snapshot = frozen[0]['payload']
                 context = {**original[0]['payload']['context'], 'news_data': snapshot['news_context']}
                 if (snapshot['news_context_hash'] != sha256_canonical(context['news_data'])
+                        or context['news_data'].get('spec_hash') != news_spec.SPEC_HASH
                         or original[0]['payload']['context_hash'] != base['decision']['context_hash']
                         or snapshot['decision_time'] != context['decision_time']):
                     raise TraderError('NEWS_CONTEXT_BINDING_INVALID')

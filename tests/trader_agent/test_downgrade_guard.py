@@ -86,7 +86,8 @@ def test_repeated_exit_outcome_dedupes_and_halt_survives_restart_and_improved_ra
     assert len(reopened.events('ia_actions', 'alert')) == 1
 
 
-def test_guard_registration_is_required_no_implicit_rebinding(environment, monkeypatch):
+@pytest.mark.parametrize('invalid_hash', ['0' * 64, 'e677c1874c2d549e80bc8dcdf48f8302593407b0560f2c29ca803c5d66d89a0a'])
+def test_guard_registration_is_required_no_implicit_rebinding(environment, monkeypatch, invalid_hash):
     executor, _, grant, clock = environment
     monkeypatch.setattr(Authorization, 'check_news', lambda self, at: self.check(at))
     grant = replace(grant, parent=replace(grant.parent, news_decision={'schema': 'synthetic-operator-decision'}))
@@ -95,7 +96,7 @@ def test_guard_registration_is_required_no_implicit_rebinding(environment, monke
     with pytest.raises(TraderError, match='PAPER_NEWS_GUARD_REGISTRATION_REQUIRED'):
         evaluate(executor.ledger)
     assert executor.ledger.events(event='binding') == before
-    executor.ledger.append('news_guard_registration', None, **(registration_target(grant) | {'news_spec_hash': '0' * 64}))
+    executor.ledger.append('news_guard_registration', None, **(registration_target(grant) | {'news_spec_hash': invalid_hash}))
     with pytest.raises(TraderError, match='PAPER_NEWS_GUARD_REGISTRATION_REQUIRED'):
         evaluate(executor.ledger)
 
