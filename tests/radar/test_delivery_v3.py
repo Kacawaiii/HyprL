@@ -138,7 +138,7 @@ def test_official_deployment_enables_only_radar_units_and_delivery():
     from scripts.radar.deploy import unit_texts
     units = unit_texts('/synthetic/bin/python', '/synthetic/worktree', official=True)
     assert len(units) == 8 and all(name.startswith('hyprl-radar-') for name in units)
-    assert '*:00/5:00 UTC' in units['hyprl-radar-official.timer']
+    assert '*:02/5:00 UTC' in units['hyprl-radar-official.timer']
     assert 'scripts.radar.service official' in units['hyprl-radar-official.service']
     assert ' --telegram' in units['hyprl-radar-morning.service']
     assert ' --telegram' in units['hyprl-radar-evening.service']

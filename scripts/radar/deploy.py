@@ -24,7 +24,8 @@ def unit_texts(python, repo, *, claude=None, official=False):
                  'morning': 'Mon..Fri *-*-* 12:20:00 UTC\nOnCalendar=Sat,Sun *-*-* 11:30:00 UTC',
                  'evening': 'Mon..Fri *-*-* 21:20:00 UTC\nOnCalendar=Sat,Sun *-*-* 19:30:00 UTC'}
     if official:
-        schedules['official'] = '*-*-* *:00/5:00 UTC'
+        # :02 keeps the 5-minute official poll off the :05 collect minute and its owner lock
+        schedules['official'] = '*-*-* *:02/5:00 UTC'
     for action, schedule in schedules.items():
         name = 'hyprl-radar-' + action
         arguments = action if action in ('collect', 'official') else 'run --slot ' + action + ' --publish-book'
