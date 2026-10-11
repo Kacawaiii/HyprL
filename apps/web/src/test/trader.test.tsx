@@ -237,3 +237,18 @@ describe('trader derivations', () => {
     expect(line.complete + line.pending).toBe(cohorts.filter((c: { analyst: string; horizon: string }) => c.analyst === 'consensus' && c.horizon === '1d').length);
   });
 });
+
+describe('Prospective news A/B', () => {
+  it('shows separate counts, SPY-relative scores, promotion rule and too early state', async () => {
+    open('/trader?date=2026-10-07', 'realized');
+    const section = await screen.findByRole('region', { name: 'Base versus news arm' });
+    expect(within(section).getByText('NEWS · SHADOW ONLY')).toBeInTheDocument();
+    const table = within(section).getByRole('table', { name: 'News A/B comparison' });
+    expect(table.textContent).toContain('SPY_relative');
+    expect(within(table).getAllByText('Too early')).toHaveLength(5);
+    expect(section.textContent).toContain('≥ 30 realized directional views in each arm');
+    expect(section.textContent).toContain('strictly lower Brier');
+    expect(section.textContent).toContain('Operator approval');
+    expect(section.textContent).toContain('earlier base history is excluded');
+  });
+});

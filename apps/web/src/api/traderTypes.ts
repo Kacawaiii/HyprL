@@ -43,7 +43,8 @@ export interface RunSummary {
   };
 }
 
-export interface TraderToday { schema: 'trader-today-v1'; date: string; runs: Array<Chained<RunSummary>> }
+export interface TraderToday { schema: 'trader-today-v1'; date: string; runs: Array<Chained<RunSummary>>;
+  news_runs?: Array<{ run_id: string; base_run_id: string; status: string; at: string; error?: string }> }
 
 export interface RunRow {
   sequence: number; recorded_at: string; run_id: string; status: string; at: string; synthetic: boolean;
@@ -95,6 +96,18 @@ export interface TraderScorecard {
   schema: 'trader-scorecard-v1'; synthetic: boolean; scores: Record<string, ScoreEntry>; hypothesis_state: string;
   portfolio_cohorts: Cohort[]; limitations: string[];
   multiple_testing: { attempted_runs: number; count: number; model_configuration_count: number };
+  news_ab?: NewsAbScorecard;
+}
+
+export interface NewsArmScore {
+  n: number; issued: number; realized: number; pending: number;
+  hit_rate: number | null; brier: number | null; abstention_rate: number | null;
+}
+export interface NewsAbScorecard {
+  mode: 'SHADOW_ONLY'; paired_base_runs: number; complete_news_runs: number;
+  promotion_rule: { minimum_directional_per_arm: number; target: string; comparison: string; execution: string };
+  comparisons: Array<{ population: string; asset_class: string; horizon: Horizon; target: string; role: string;
+    state: string; base: NewsArmScore; news: NewsArmScore }>;
 }
 
 export interface TraderAlerts { schema: 'trader-alerts-v1'; alerts: Array<{ schema: string; at: string; code: string; role: string | null }> }
