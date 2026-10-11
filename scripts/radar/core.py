@@ -11,8 +11,10 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 
 UTC = timezone.utc
+OWNER_WAIT_SECONDS = 120
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -127,13 +129,20 @@ class Store:
             db.close()
 
     @contextmanager
-    def owner(self):
+    def owner(self, *, timeout=OWNER_WAIT_SECONDS, poll=1.0, sleep=time.sleep, monotonic=time.monotonic):
+        """Exclusive owner lock; waits up to `timeout` seconds for a concurrent unit, then fails closed."""
+        deadline = monotonic() + timeout
         with (self.root / 'owner.lock').open('a') as stream:
             os.chmod(stream.name, 0o600)
-            try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise RadarError('OWNER_BUSY') from None
+            while True:
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise RadarError('OWNER_BUSY') from None
+                    sleep(min(poll, remaining))
             yield
 
     def append(self, kind, key, body, *, at=None):

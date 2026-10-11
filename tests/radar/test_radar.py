@@ -765,3 +765,31 @@ def test_full_live_pipeline_with_synthetic_transports_and_llm(state, tmp_path, m
     assert store.counts()['gdelt'] == 3
     again = radar(store, grant, live=True, client=Client(store, grant, send=send, credentials=keys), llm_runner=llm, publish_book=book)
     assert again == report and store.counts()['llm'] == 1
+
+
+def test_owner_lock_waits_for_a_concurrent_unit_then_fails_closed(state):
+    store = state[0] if isinstance(state, tuple) else state
+    waits = []
+    with store.owner():
+        other = Store(store.root, clock=store.clock)
+
+        def release(seconds):
+            waits.append(seconds)
+
+        with pytest.raises(RadarError, match='OWNER_BUSY'):
+            with other.owner(timeout=3, poll=1, sleep=release, monotonic=iter([0, 0, 1, 2, 3, 4]).__next__):
+                pass
+    assert waits == [1, 1, 1]
+
+
+def test_owner_lock_is_acquired_once_the_holder_releases(state):
+    store = state[0] if isinstance(state, tuple) else state
+    holder = store.owner()
+    holder.__enter__()
+    other = Store(store.root, clock=store.clock)
+
+    def release(_seconds):
+        holder.__exit__(None, None, None)
+
+    with other.owner(timeout=5, poll=1, sleep=release):
+        pass
