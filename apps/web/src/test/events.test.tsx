@@ -88,7 +88,7 @@ function mockApi(overrides: Record<string, unknown> = {}) {
 function renderEvents(overrides?: Record<string, unknown>) {
   const fetch = mockApi(overrides);
   vi.stubGlobal('fetch', fetch);
-  render(<MemoryRouter initialEntries={['/events']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/events?mode=expert']}><App /></MemoryRouter>);
   return fetch;
 }
 

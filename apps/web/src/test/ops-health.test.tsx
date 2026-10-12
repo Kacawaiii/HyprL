@@ -22,7 +22,7 @@ function open(health: unknown, status = 200) {
     return reply({ error: 'no such endpoint' }, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
-  render(<MemoryRouter initialEntries={['/system']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/system?mode=expert']}><App /></MemoryRouter>);
   return fetchMock;
 }
 

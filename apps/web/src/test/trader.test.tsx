@@ -57,6 +57,13 @@ function open(path: string, state: State | 'empty', overrides?: Record<string, u
 }
 
 beforeEach(() => invalidate());
+
+/** Beginner lists five rows at a time; expand them all. */
+async function expandAll() {
+  for (let button = screen.queryByRole('button', { name: /Voir plus/ }); button; button = screen.queryByRole('button', { name: /Voir plus/ })) {
+    await userEvent.click(button);
+  }
+}
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('fixtures are what the API serves', () => {
@@ -75,6 +82,10 @@ describe('Agent trader, Beginner', () => {
     expect(screen.getByText('PAPER ONLY · NO PROVEN EDGE')).toBeInTheDocument();
     expect(await screen.findByText('SYNTHETIC DEMO DATA')).toBeInTheDocument();
     const table = await screen.findByRole('table', { name: 'Views per asset' });
+    expect(within(table).getAllByRole('row').length).toBe(1 + 5);
+    // Directional views come first, so the first five rows are decisions rather than "no view".
+    expect(within(table).getAllByRole('row').slice(1).some((r) => /Up|Down/.test(r.textContent ?? ''))).toBe(true);
+    await expandAll();
     expect(within(table).getAllByRole('row').length).toBe(1 + 10);
     const row = within(table).getAllByRole('row').find((r) => r.textContent?.startsWith('AAPL1d'));
     expect(row?.textContent).toMatch(/Up/);
@@ -84,17 +95,21 @@ describe('Agent trader, Beginner', () => {
 
   it('shows what the reviewer rejected or lowered, and disagreement as no view', async () => {
     open('/trader?date=2026-10-07', 'realized');
+    await userEvent.click(await screen.findByRole('tab', { name: 'Relecture' }));
     const section = await screen.findByRole('region', { name: 'Rejected by the reviewer' });
     expect(within(section).getByText(/Rejected:/)).toBeInTheDocument();
     expect(within(section).getByText(/Lowered:/)).toBeInTheDocument();
     expect(section.textContent).toMatch(/does not support the claim/);
+    await userEvent.click(screen.getByRole('tab', { name: 'Vues du jour' }));
     const table = await screen.findByRole('table', { name: 'Views per asset' });
+    await expandAll();
     const msft = within(table).getAllByRole('row').filter((r) => r.textContent?.startsWith('MSFT'));
     expect(msft.every((r) => /No view/.test(r.textContent ?? ''))).toBe(true);
   });
 
   it('separates finished paper results from waiting ones', async () => {
     open('/trader?date=2026-10-07', 'partial');
+    await userEvent.click(await screen.findByRole('tab', { name: 'Résultats papier' }));
     const results = await screen.findByRole('table', { name: 'Paper results' });
     expect(results.textContent).toMatch(/waiting for the first outcome|\d+ ?%/);
     expect(await screen.findByText(/recorded predictions have a measured outcome/)).toBeInTheDocument();
@@ -149,7 +164,7 @@ describe('Agent trader, Expert', () => {
     open('/trader?mode=expert&date=2026-10-07', 'issued');
     const ledger = await screen.findByRole('table', { name: 'Ledger' });
     expect(within(ledger).queryByText(/^REALIZED/)).not.toBeInTheDocument();
-    expect(await screen.findByText(/0 realized/)).toBeInTheDocument();
+    expect(await screen.findByText(/· 0 realized ·/)).toBeInTheDocument();
   });
 
   it('shows baselines with sample sizes, kept vs rejected, calibration with no claim, and run health', async () => {
@@ -261,6 +276,7 @@ describe('Weekend crypto cohorts', () => {
 describe('Prospective news A/B', () => {
   it('shows separate counts, SPY-relative scores, promotion rule and too early state', async () => {
     open('/trader?date=2026-10-07', 'realized');
+    await userEvent.click(await screen.findByRole('tab', { name: 'Avec ou sans news' }));
     const section = await screen.findByRole('region', { name: 'Base versus news arm' });
     expect(within(section).getByText('NEWS · SHADOW ONLY')).toBeInTheDocument();
     const table = within(section).getByRole('table', { name: 'News A/B comparison' });

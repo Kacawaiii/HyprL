@@ -15,6 +15,9 @@ import { ReadForm, readKey } from '../components/ReadForm';
 import type { Read } from '../components/ReadForm';
 import { EdgarPanel } from './EdgarPanel';
 import type { FomcItemSummary, FomcSourceStatus } from '../api/types';
+import { NEWS_TABS, PageIntro, PageTabs } from '../components/Simple';
+import { OfficialSimple } from './OfficialSimple';
+import { useCockpit } from '../state/useCockpit';
 
 function StoreCard({ status }: { status: FomcSourceStatus }) {
   return (
@@ -244,8 +247,23 @@ const SOURCES = [
 
 export function EventsPage() {
   const [source, setSource] = useState<'fomc' | 'edgar'>('fomc');
+  const expert = useCockpit().selection.mode === 'expert';
+  const [technical, setTechnical] = useState(false);
+  if (!expert && !technical) {
+    return (
+      <div className="stack">
+        <PageTabs label="Actualités" links={NEWS_TABS} />
+        <PageIntro id="events" question="Qu’ont publié la Fed et la SEC ?">
+          Ce sont les sources officielles que les IA peuvent lire, telles qu’elles ont été enregistrées (pas de lecture en direct).
+        </PageIntro>
+        <OfficialSimple />
+        <button className="more" onClick={() => setTechnical(true)}>Voir le détail technique</button>
+      </div>
+    );
+  }
   return (
     <div className="stack">
+      <PageTabs label="Actualités" links={NEWS_TABS} />
       <div role="tablist" aria-label="Event source" className="kv">
         {SOURCES.map((item) => (
           <button

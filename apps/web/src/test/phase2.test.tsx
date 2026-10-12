@@ -74,7 +74,7 @@ describe('markets overlays', () => {
 });
 
 it('shows net sample sizes, small-sample caution, seeded random baseline and missing ablation', async () => {
-  render(<MemoryRouter initialEntries={['/news-value']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/news-value?mode=expert']}><App /></MemoryRouter>);
   await screen.findByRole('heading', { name: 'Est-ce que l’actualité aide ?' });
   const book = screen.getByRole('table', { name: 'Actualité versus technique après coûts' });
   expect(within(book).getAllByText('Trop tôt')).toHaveLength(2);

@@ -12,6 +12,7 @@ import { RunBanner, SyntheticBadge } from './trader/shared';
 import { useTraderData } from './trader/useTraderData';
 import { TraderDecisionCards } from './trader/TraderDecisionCards';
 import { NewsComparison } from './trader/NewsComparison';
+import { AI_TABS, PageIntro, PageTabs } from '../components/Simple';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -26,6 +27,7 @@ export function TraderPage() {
     return next;
   });
   const onProduct = (product: string | null) => update({ product });
+  const expert = selection.mode === 'expert';
   const date = requested ?? new Date().toISOString().slice(0, 10);
   const data = useTraderData(date);
   const run = [...(data.today.data?.runs ?? [])].reverse().find((r) => r.payload.status === 'COMPLETE' || r.payload.status === 'DEGRADED')?.payload ?? null;
@@ -36,6 +38,13 @@ export function TraderPage() {
   const asset = selection.product && choices.includes(selection.product) ? selection.product : choices[0] ?? null;
   return (
     <div className="stack">
+      <PageTabs label="IA" links={AI_TABS} />
+      {!expert && (
+        <PageIntro id="trader" question="Qu’ont décidé les IA, et pourquoi ?">
+          Chaque jour, deux IA donnent un avis par actif, un relecteur les contrôle, et les comptes papier n’exécutent que
+          les avis retenus.
+        </PageIntro>
+      )}
       <section className="card" aria-label="Agent trader">
         <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'space-between' }}>
           <h1 className="card-title" style={{ margin: 0 }}>Agent trader</h1>
@@ -52,11 +61,13 @@ export function TraderPage() {
         <p role="note" style={{ margin: '8px 0 0' }}><strong>Read this first.</strong> {NOT_A_CLAIM}</p>
       </section>
       {data.today.error && data.today.data === undefined ? <ErrorState error={data.today.error} onRetry={data.today.refetch} /> : <RunBanner state={state} date={date} />}
-      {run && <TraderDecisionCards run={run} rows={data.rows} asset={asset} />}
-      {data.scorecard.data?.news_ab && <NewsComparison card={data.scorecard.data.news_ab} />}
-      {selection.mode === 'expert'
+      {expert && run && <TraderDecisionCards run={run} rows={data.rows} asset={asset} />}
+      {expert && data.scorecard.data?.news_ab && <NewsComparison card={data.scorecard.data.news_ab} />}
+      {expert
         ? <ExpertTrader data={data} run={run} asset={asset} />
-        : <BeginnerTrader data={data} run={run} asset={asset} />}
+        : <BeginnerTrader data={data} run={run} asset={asset}
+          detail={run ? <TraderDecisionCards run={run} rows={data.rows} asset={asset} /> : null}
+          news={data.scorecard.data?.news_ab ? <NewsComparison card={data.scorecard.data.news_ab} /> : null} />}
     </div>
   );
 }

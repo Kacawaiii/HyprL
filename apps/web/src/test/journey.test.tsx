@@ -108,6 +108,8 @@ describe('main journey', () => {
 
     // Health panel and API docs.
     await userEvent.click(screen.getByRole('link', { name: 'Système' }));
+    // The Lab links do not carry the mode, so Système opens in Beginner: operations live in its Application tab.
+    await userEvent.click(await screen.findByRole('tab', { name: 'Application' }));
     const panel = await screen.findByRole('region', { name: 'Operations health' });
     expect(await within(panel).findByTestId('ops-status')).toHaveTextContent('OBSERVED');
     await userEvent.click(screen.getByRole('link', { name: 'API docs' }));

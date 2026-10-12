@@ -6,6 +6,9 @@ import type { HealthState } from '../api/types';
 import { bytes, duration } from '../lib/ops';
 import { OpsHealthPanel } from './OpsHealthPanel';
 import { RadarHealthPanel } from './RadarHealthPanel';
+import { PageIntro, Tabs } from '../components/Simple';
+import { useCockpit } from '../state/useCockpit';
+import { since } from '../lib/fr';
 
 const TONE: Record<HealthState, 'ok' | 'warn' | 'off'> = {
   HEALTHY: 'ok',
@@ -20,7 +23,7 @@ function StateBadge({ state }: { state: HealthState }) {
   return <Badge tone={TONE[state] ?? 'off'}>{state}</Badge>;
 }
 
-export function SystemPage() {
+function SystemDetail({ withRadar = true }: { withRadar?: boolean }) {
   const { data, status, error, refetch } = useQuery('system', (signal) =>
     apiClient.getSystem(signal),
   );
@@ -35,13 +38,13 @@ export function SystemPage() {
     apiClient.getHealthHistory(undefined, 25, signal),
   );
 
-  if (status === 'loading') return <div className="stack"><RadarHealthPanel /><LoadingState label="Loading system" /></div>;
-  if (status === 'error' && error) return <div className="stack"><RadarHealthPanel /><ErrorState error={error} onRetry={refetch} /></div>;
-  if (!data) return <RadarHealthPanel />;
+  if (status === 'loading') return <div className="stack">{withRadar && <RadarHealthPanel />}<LoadingState label="Loading system" /></div>;
+  if (status === 'error' && error) return <div className="stack">{withRadar && <RadarHealthPanel />}<ErrorState error={error} onRetry={refetch} /></div>;
+  if (!data) return withRadar ? <RadarHealthPanel /> : null;
 
   return (
     <div className="stack">
-      <RadarHealthPanel />
+      {withRadar && <RadarHealthPanel />}
       <section className="card">
         <h2 className="card-title">Application</h2>
         <dl style={{ margin: 0 }}>
@@ -259,6 +262,48 @@ export function SystemPage() {
           ))}
         </dl>
       </section>
+    </div>
+  );
+}
+
+const LIGHT_WORDS: Record<string, string> = {
+  green: 'Tout tourne normalement.', orange: 'À surveiller.', red: 'Quelque chose est en panne.',
+  unknown: 'Pas encore vérifié : la santé du trader et des tâches sera lue au prochain rafraîchissement (chaque heure).',
+};
+
+/** The light and the problems behind it, from the radar snapshot (scripts/radar/cockpit_today.py). */
+function Problems() {
+  const home = useQuery('radar-home', (signal) => apiClient.getRadarHome(signal), { staleMs: 60_000 });
+  const light = home.data?.system;
+  return (
+    <section className="panel" aria-label="Problèmes">
+      <h2 className="row">
+        <span className="light" data-level={light?.level ?? 'unknown'}><span className="light-dot" aria-hidden="true" /></span>
+        {light ? LIGHT_WORDS[light.level] : home.status === 'loading' ? 'Vérification…' : 'État inconnu : le résumé n’est pas publié.'}
+      </h2>
+      {light && (light.problems.length === 0
+        ? light.level !== 'unknown' && <p className="muted">Aucun problème détecté. Contrôlé {since(light.checked_at)}.</p>
+        : <ul className="problems">{light.problems.map((p) => (
+          <li key={p.text} data-level={p.level}><span className="light-dot" aria-hidden="true" />{p.text}</li>
+        ))}</ul>)}
+    </section>
+  );
+}
+
+export function SystemPage() {
+  const expert = useCockpit().selection.mode === 'expert';
+  if (expert) return <div className="stack"><Problems /><SystemDetail /></div>;
+  return (
+    <div className="simple-page">
+      <PageIntro id="system" question="Est-ce que tout tourne ?">
+        Une pastille verte veut dire que les tâches automatiques (actualités, IA, comptes) fonctionnent. Le détail technique
+        est dans les onglets.
+      </PageIntro>
+      <Problems />
+      <Tabs label="Détails du système" tabs={[
+        { id: 'radar', label: 'Sources et tâches', content: () => <RadarHealthPanel /> },
+        { id: 'app', label: 'Application', content: () => <SystemDetail withRadar={false} /> },
+      ]} />
     </div>
   );
 }

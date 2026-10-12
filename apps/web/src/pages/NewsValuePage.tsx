@@ -5,6 +5,8 @@ import { DecisionCard } from '../components/DecisionCard';
 import { analystLabel, instant, pct, signedNumber, signedPct } from '../lib/radar';
 import { useQuery } from '../state/useQuery';
 import type { NewsGroup } from '../api/analysisTypes';
+import { AI_TABS, PageIntro, PageTabs, ShowMore, Tabs } from '../components/Simple';
+import { useCockpit } from '../state/useCockpit';
 
 const GROUPS: Record<string, string> = { news: 'Actualité', technical: 'Technique', unclassified: 'Non classé' };
 function NewsRows({ rows }: { rows: NewsGroup[] }) {
@@ -16,23 +18,28 @@ function NewsRows({ rows }: { rows: NewsGroup[] }) {
   </table></div>;
 }
 export function NewsValuePage() {
+  const expert = useCockpit().selection.mode === 'expert';
   const query = useQuery('radar-analysis', (signal) => apiClient.getRadarAnalysis(signal), { staleMs: 60_000 });
   const [population, setPopulation] = useState('equity_etf');
   const [horizon, setHorizon] = useState('1d');
   const [variant, setVariant] = useState('primary');
   const data = query.data;
-  if (!data) return <AnalysisState status={query.status} error={query.error} retry={query.refetch} />;
+  const tabs = <PageTabs label="IA" links={AI_TABS} />;
+  if (!data) return <div className="stack">{tabs}<AnalysisState status={query.status} error={query.error} retry={query.refetch} /></div>;
   const keys = Object.keys(data.news.ai_scores);
   const variants = ['primary', ...new Set(keys.map((key) => key.split('/')[0]!).filter((name) => name.includes(':')).map((name) => name.slice(0, name.lastIndexOf(':'))))];
   const target = population === 'crypto' ? 'raw' : 'SPY_relative';
   const names = ['analyst_claude', 'analyst_gpt', 'reviewer_claude', 'reviewer_gpt', 'consensus', 'always_up', 'momentum20', 'random', 'spy_relative_zero'];
   const cohort = data.book_trades;
-  return <div className="stack news-comparison">
+  const parts = {
+    intro: (
     <section className="card">
       <h1 className="radar-title">Est-ce que l’actualité aide ?</h1>
       <p className="muted">Comparer les décisions après coûts, avec leurs effectifs. Snapshot {instant(data.generated_at)}.</p>
       <p>Un petit échantillon ne permet pas de conclure. Le seuil d’affichage de {data.news.minimum_n} résultats est une précaution descriptive, pas une preuve statistique.</p>
     </section>
+    ),
+    book: (
     <section className="card stack" aria-label="Claude book par tag">
       <h2 className="card-title">Claude book : actualité et technique</h2>
       <NewsRows rows={data.news.groups} />
@@ -41,11 +48,15 @@ export function NewsValuePage() {
       {data.news.by_tag && <><h3 className="card-title">Détail par tag</h3><NewsRows rows={data.news.by_tag} /></>}
       <p className="metric-sub">{Object.entries(data.news.tag_counts).map(([tag, n]) => `${tag} : ${n}`).join(' · ') || 'Aucun tag enregistré.'}</p>
     </section>
+    ),
+    ab: (
     <section className="card stack" aria-label="IA avec ou sans actualité">
       <h2 className="card-title">IA : avec ou sans contexte d’actualité</h2>
       <p>Trop tôt : comparaison appariée indisponible.</p><p className="muted">{data.news.note}</p>
       <p className="metric-sub">Avec actualité : n apparié inconnu. Sans actualité : n apparié inconnu. Les variantes de calendrier ou d’exécution ne prouvent pas l’apport de l’actualité.</p>
     </section>
+    ),
+    scores: (
     <section className="card stack" aria-label="IA contre baselines">
       <h2 className="card-title">Scorecards IA contre baselines</h2>
       <div className="observation-controls">
@@ -70,10 +81,38 @@ export function NewsValuePage() {
       </table></div>
       <p className="metric-sub">Les effectifs peuvent différer à cause de l’abstention. Cette table ne démontre ni causalité ni avantage. Les cohortes chevauchantes ne sont pas indépendantes.</p>
     </section>
+    ),
+    journal: (
     <section className="card stack"><h2 className="card-title">Décisions du journal</h2>
       {cohort.length === 0 && <p>Aucune intention consignée.</p>}
       {[...cohort].reverse().slice(0, 30).map((t) => <details className="decision-detail" key={t.id}>
         <summary>{t.symbol} · {t.tag} · {instant(t.at)} · {t.state}</summary><DecisionCard decision={t.decision} /></details>)}
     </section>
+    ),
+  };
+  if (!expert) {
+    return <div className="stack news-comparison">
+      {tabs}
+      <PageIntro id="news-value" question="Est-ce que les news aident les IA à mieux décider ?">
+        On compare les résultats après coûts, avec et sans actualité. Sous {data.news.minimum_n} résultats, c’est « Trop tôt » : on ne conclut rien.
+      </PageIntro>
+      {parts.intro}
+      <Tabs label="Comparaisons" tabs={[
+        { id: 'scores', label: 'IA contre repères', content: () => parts.scores },
+        { id: 'book', label: 'Claude book', content: () => parts.book },
+        { id: 'ab', label: 'Avec ou sans news', content: () => parts.ab },
+        { id: 'journal', label: 'Journal', content: () => (
+    <section className="card stack" aria-label="Décisions du journal"><h2 className="card-title">Décisions du journal</h2>
+      <ShowMore items={[...cohort].reverse().slice(0, 30)} label="Décisions du journal" empty={<p>Aucune intention consignée.</p>}
+        render={(t) => <li key={t.id}><details className="decision-detail">
+          <summary>{t.symbol} · {t.tag} · {instant(t.at)} · {t.state} · voir le détail</summary><DecisionCard decision={t.decision} /></details></li>} />
+    </section>
+        ) },
+      ]} />
+    </div>;
+  }
+  return <div className="stack news-comparison">
+    {tabs}
+    {parts.intro}{parts.book}{parts.ab}{parts.scores}{parts.journal}
   </div>;
 }

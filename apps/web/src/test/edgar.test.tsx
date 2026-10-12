@@ -66,7 +66,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 async function openEdgar() {
-  render(<MemoryRouter initialEntries={['/events']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/events?mode=expert']}><App /></MemoryRouter>);
   await userEvent.click(await screen.findByRole('tab', { name: 'SEC EDGAR filings' }));
 }
 
@@ -117,7 +117,7 @@ describe('SEC EDGAR journey', () => {
   });
 
   it('verifies the replay and keeps FOMC as the default source', async () => {
-    render(<MemoryRouter initialEntries={['/events']}><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/events?mode=expert']}><App /></MemoryRouter>);
     expect(await screen.findByText('No FOMC store configured')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'SEC EDGAR filings' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Verify replay' }));
