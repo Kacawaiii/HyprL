@@ -67,9 +67,9 @@ def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=
         for action, follow in (('run', 'execute'), ('label', 'report')):
             name = f'hyprl-trader-{action}.service'
             hook = 'ExecStartPost=' if action == 'run' else 'ExecStopPost='
-            output[name] = output[name].replace('UMask=0077\n', hook + command(follow) + '\nUMask=0077\n')
+            output[name] = output[name].replace('UMask=0077\n', hook + command(follow, 'ia_crypto' if action == 'run' else None) + '\nUMask=0077\n')
         for account, calendars in (
-                ('ia_actions', ['Mon..Fri *-*-* 15:40:00 America/New_York', 'Mon..Fri *-*-* 12:40:00 America/New_York',
+                ('ia_actions', ['Mon..Fri *-*-* 15:55:00 America/New_York', 'Mon..Fri *-*-* 12:55:00 America/New_York',
                                 'Mon..Fri *-*-* 19:30:00 America/New_York']),
                 ('ia_crypto', ['*-*-* *:30:00 UTC'])):
             stem = 'hyprl-trader-paper-exit-' + account.replace('_', '-')
@@ -85,6 +85,23 @@ def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=
                 '[Unit]\nDescription=HyprL paper exit schedule ' + account + '\n[Timer]\n' +
                 ''.join('OnCalendar=' + c + '\n' for c in calendars) +
                 'AccuracySec=1s\nRandomizedDelaySec=0\nPersistent=false\n[Install]\nWantedBy=timers.target\n')
+        template = output['hyprl-trader-paper-exit-ia-actions.service']
+        for action, calendars in (
+                ('open', ['Mon..Fri *-*-* 09:30:30 America/New_York', 'Mon..Fri *-*-* 09:31:30 America/New_York']),
+                ('audit', ['*-*-* 16:05:00 America/New_York', 'Mon..Fri *-*-* 13:05:00 America/New_York',
+                           '*-*-* 19:35:00 America/New_York'])):
+            stem = 'hyprl-trader-paper-' + action
+            commands = (command('exit', 'ia_actions') + '\nExecStart=' + command('execute', 'ia_actions')
+                        if action == 'open' else command('audit'))
+            output[stem + '.service'] = template.replace(command('exit', 'ia_actions'), commands).replace(
+                'hyprl-trader-paper-exit-ia-actions', stem).replace('paper exits ia_actions', 'paper ' + action)
+            output[stem + '.timer'] = (
+                '[Unit]\nDescription=HyprL paper ' + action + '\n[Timer]\n' +
+                ''.join('OnCalendar=' + c + '\n' for c in calendars) +
+                'AccuracySec=1s\nRandomizedDelaySec=0\nPersistent=false\n[Install]\nWantedBy=timers.target\n')
+        # Hourly GET-only reconciliation catches expiry well before the close.
+        output['hyprl-trader-health.service'] = output['hyprl-trader-health.service'].replace(
+            'UMask=0077\n', 'ExecStartPost=' + command('audit') + '\nUMask=0077\n')
     return output
 
 

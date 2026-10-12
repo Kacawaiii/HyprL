@@ -23,7 +23,8 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 
 from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import calendar_session, label_window, protected
-from .paper_spec import SPEC_HASH, PREVIOUS_SPEC_HASH, OPERATOR_DECISION_HASH, execution_spec, execution_preregistration
+from .paper_spec import (SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH, V3_DECISION_HASH,
+                         OPERATOR_DECISION_HASH, execution_spec, execution_preregistration)
 from .execution_tiers import HALF_DOWNGRADE, selections, execution_scores
 from .scoring import rows
 
@@ -62,7 +63,7 @@ def allocated_quantities(intent, observation):
     filled = decimal(observation.get('filled_qty', 0))
     fraction = filled / total if total else D(1) if observation.get('status') == 'internal' else D(0)
     values = [decimal(lot['qty']) * fraction for lot in intent['lots']]
-    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH} else D('.00000001')
+    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH} else D('.00000001')
     unit = crypto_unit if '/USD' in intent['order']['symbol'] else D(1)
     rounded = [v.quantize(unit, rounding=ROUND_DOWN) for v in values]
     signed_total = sum((decimal(l['qty']) for l in intent['lots']), D(0))
@@ -284,13 +285,14 @@ class PaperLedger:
         for previous, current in zip(bindings, bindings[1:]):
             if ((previous.get('spec_hash'), current.get('spec_hash')) not in {
                     ('c07ae3243d0b130c4ba9972158a2081ac3ff7fa5f280879a003915b98af5b386', PREVIOUS_SPEC_HASH),
-                    (PREVIOUS_SPEC_HASH, SPEC_HASH)}
+                    (PREVIOUS_SPEC_HASH, V3_SPEC_HASH), (V3_SPEC_HASH, SPEC_HASH)}
                     or current.get('previous_binding_hash') != sha256_canonical(previous)
                     or current.get('previous_spec_hash') != previous['spec_hash']
                     or current.get('previous_grant_hash') != previous['grant_hash']
                     or current.get('operator_decision_hash') != (
                         '0caee3e1145b4cc401cccaface8ca7ecc928c6337c335ab23cc1695a3677e7a9'
-                        if current.get('spec_hash') == PREVIOUS_SPEC_HASH else OPERATOR_DECISION_HASH)):
+                        if current.get('spec_hash') == PREVIOUS_SPEC_HASH else
+                        V3_DECISION_HASH if current.get('spec_hash') == V3_SPEC_HASH else OPERATOR_DECISION_HASH)):
                 raise TraderError('PAPER_LEDGER_BINDING_MISMATCH')
 
     @classmethod
@@ -307,12 +309,12 @@ class PaperLedger:
             ledger.store.verify()
             bindings = ledger.events(event='binding')
             ledger.validate_bindings(bindings)
-            if not bindings or bindings[-1]['grant_hash'] != grant.identity or bindings[-1]['spec_hash'] not in {PREVIOUS_SPEC_HASH, SPEC_HASH}:
+            if not bindings or bindings[-1]['grant_hash'] != grant.identity or bindings[-1]['spec_hash'] not in {V3_SPEC_HASH, SPEC_HASH}:
                 raise TraderError('PAPER_REBIND_PRIOR_BINDING_REFUSED')
             target = ledger.binding_target()
             if all(bindings[-1].get(k) == v for k, v in target.items()):
                 return ledger
-            if bindings[-1]['spec_hash'] != PREVIOUS_SPEC_HASH:
+            if bindings[-1]['spec_hash'] != V3_SPEC_HASH:
                 raise TraderError('PAPER_REBIND_PRIOR_BINDING_REFUSED')
             # This transition covers an empty ledger only; historical lots are never rebound.
             for name in ('ia_actions', 'ia_crypto'):
@@ -415,13 +417,14 @@ def order_terms(account, purpose, at, session, *, after_hours=False, bid=None, a
         return {'type': 'limit', 'time_in_force': 'day', 'extended_hours': True,
                 'limit_price': str(limit.quantize(D('.01'), rounding=rounding))}
     if purpose == 'entry':
-        if not session or at >= session.open_at - timedelta(minutes=2):
-            raise TraderError('PAPER_OPG_CUTOFF')
-        return {'type': 'market', 'time_in_force': 'opg'}
+        if not session or not session.open_at + timedelta(seconds=30) <= at < session.open_at + timedelta(minutes=5):
+            raise TraderError('PAPER_ENTRY_WINDOW')
+        return {'type': 'market', 'time_in_force': 'day'}
     if purpose == 'exit':
-        if not session or not session.close_at - timedelta(minutes=20) <= at < session.close_at - timedelta(minutes=10):
-            raise TraderError('PAPER_CLS_CUTOFF')
-        return {'type': 'market', 'time_in_force': 'cls'}
+        if not session or not (session.close_at - timedelta(minutes=5) <= at < session.close_at
+                or session.open_at + timedelta(seconds=30) <= at < session.open_at + timedelta(minutes=5)):
+            raise TraderError('PAPER_EXIT_WINDOW')
+        return {'type': 'market', 'time_in_force': 'day'}
     return {'type': 'market', 'time_in_force': 'day'}
 
 
@@ -476,8 +479,51 @@ class PaperExecutor:
         if not old or any(old[k] != v for k, v in event.items()):
             self.ledger.append('order', name, **event)
             self.outcomes(name, intent, event)
-            if order['status'] == 'rejected':
-                self.ledger.append('alert', name, code='PAPER_BROKER_REJECTED')
+        if order['status'] in {'expired', 'rejected'}:
+            self.order_alert(name, intent['client_id'], 'PAPER_ORDER_' + order['status'].upper())
+
+    def order_alert(self, name, key, code):
+        prior = [e for e in self.ledger.events(name, 'alert') if e.get('client_id') == key and e['code'] == code]
+        if not prior:
+            event = self.ledger.append('alert', name, client_id=key, code=code)
+        else:
+            event = prior[-1]
+        target = self.ledger.root / ('paper-alert-' + name + '.json')
+        if not prior or not target.exists():
+            temp = target.with_suffix('.tmp')
+            temp.write_text(json.dumps({k: event[k] for k in ('at', 'account', 'account_suffix', 'client_id', 'code')}))
+            temp.replace(target)
+
+    def audit(self, name):
+        """No mutations: account reconciliation plus a disposition for every intent."""
+        intents, observed, lots = self.ledger.projection(name)
+        cancellations = {e['client_id'] for e in self.ledger.events(name, 'cancel') if e.get('reason')}
+        orders = []
+        for key, intent in intents.items():
+            o = observed.get(key, {})
+            state = o.get('status')
+            if state == 'filled' or state == 'internal':
+                disposition = 'FILLED' if state == 'filled' else 'SETTLED_INTERNAL'
+            elif state in {'canceled', 'not_submitted'} and (key in cancellations or o.get('reason')):
+                disposition = 'CANCELED_BY_RULE'
+            else:
+                code = 'PAPER_ORDER_' + state.upper() if state in {'expired', 'rejected'} else 'PAPER_ORDER_UNRESOLVED'
+                self.order_alert(name, key, code)
+                disposition = 'ALERTED'
+            orders.append({'client_id': key, 'status': state, 'disposition': disposition})
+        if name == 'ia_actions':
+            seen = {l['prediction_hash'] for i in intents.values() if i['purpose'] == 'entry' for l in i['lots']}
+            for row, _, _, _ in self.eligible_predictions(name):
+                p = row['payload']
+                definition = p['signal']['label_definition']
+                session = calendar_session(p['signal']['session'])
+                if (definition.get('variant') != 'alpaca_after_hours_v1' and session
+                        and self.clock() >= session.open_at + timedelta(minutes=5) and row['identity'] not in seen):
+                    self.order_alert(name, row['identity'], 'PAPER_ELIGIBLE_ENTRY_NOT_DISPATCHED')
+            for lot in lots.values():
+                if decimal(lot['qty']) and instant(lot['exit_at']) <= self.clock():
+                    self.order_alert(name, lot['lot_id'], 'PAPER_LOT_PAST_HORIZON')
+        return self.ledger.append('order_audit', name, orders=orders, checked=len(orders))
 
     def outcomes(self, name, intent, observation):
         allocations = allocated_quantities(intent, observation)
@@ -624,6 +670,9 @@ class PaperExecutor:
             if (instant(definition['exit_at']) != expected_exit or
                     ((not definition.get('variant') or is_weekend) and instant(definition['entry_at']) != expected_entry)):
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
+            if (name == 'ia_actions' and not definition.get('variant')
+                    and (instant(p['decision_at']) >= expected_entry or instant(row['recorded_at']) >= expected_entry)):
+                continue
             if is_weekend and (instant(p['decision_at']) >= expected_entry or instant(row['recorded_at']) >= expected_entry):
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             if instant(p['decision_at']) > self.clock() or instant(row['recorded_at']) > self.clock():
@@ -665,6 +714,10 @@ class PaperExecutor:
                 continue
             if name == 'ia_crypto' and (self.clock() - instant(p['decision_at'])).total_seconds() > 300:
                 continue
+            if name == 'ia_actions' and p['signal']['label_definition'].get('variant') != 'alpaca_after_hours_v1':
+                session = calendar_session(p['signal']['session'])
+                if not session or not session.open_at + timedelta(seconds=30) <= self.clock() < session.open_at + timedelta(minutes=5):
+                    continue
             v, definition = p['signal']['view'], p['signal']['label_definition']
             probability = decimal(v['p_outperform'])
             direction = 1 if v['view'] == 'UP' else -1
@@ -723,7 +776,16 @@ class PaperExecutor:
         for asset, group in sorted(groups.items()):
             net = sum((decimal(l['qty']) for l in group), D(0)) * (1 if purpose == 'entry' else -1)
             run = group[0]['run_id'] if purpose == 'entry' else ':'.join(sorted(l['lot_id'] for l in group))
-            key = sha256_canonical({'run_id': run, 'symbol': asset, 'purpose': purpose})[:40]
+            identity = {'run_id': run, 'symbol': asset, 'purpose': purpose}
+            if name == 'ia_actions' and purpose == 'exit':
+                intents, observed, _ = self.ledger.projection(name)
+                lot_ids = {l['lot_id'] for l in group}
+                previous = sorted(k for k, i in intents.items() if i['purpose'] != 'entry'
+                                  and observed.get(k, {}).get('status') in TERMINAL
+                                  and lot_ids.intersection(l['lot_id'] for l in i['lots']))
+                if previous:
+                    identity['previous_exits'] = previous
+            key = sha256_canonical(identity)[:40]
             side = 'buy' if net >= 0 else 'sell'
             after = purpose == 'entry' and any(l.get('population') == 'after_hours' or l['variant'] in {'alpaca_after_hours_v1', 'alpaca_after_hours_v2'} for l in group)
             session = calendar_session(group[0]['session'] if after else at.astimezone(NY).date().isoformat())
@@ -752,7 +814,7 @@ class PaperExecutor:
             return
         at = self.clock()
         if intent['purpose'] in {'entry', 'exit'}:
-            session_day = intent['lots'][0]['session'] if intent['purpose'] == 'entry' else instant(intent['lots'][0]['exit_at']).astimezone(NY).date().isoformat()
+            session_day = intent['lots'][0]['session'] if intent['purpose'] == 'entry' else instant(intent['at']).astimezone(NY).date().isoformat()
             session = calendar_session(session_day)
             after = bool(intent['order'].get('extended_hours'))
             if name == 'ia_actions':
@@ -762,11 +824,15 @@ class PaperExecutor:
                     q = self.quotes.get(intent['order']['symbol'], at) if after else None
                     terms = order_terms(name, intent['purpose'], at, session, after_hours=after,
                         bid=q['bid'] if q else None, ask=q['ask'] if q else None, side=intent['order']['side'])
+                    if intent['purpose'] == 'exit' and any(instant(l['exit_at']) > at + timedelta(minutes=5) for l in intent['lots']):
+                        raise TraderError('PAPER_EXIT_BEFORE_HORIZON')
+                    if not after and intent['order']['time_in_force'] != 'day':
+                        raise TraderError('PAPER_LEGACY_AUCTION_INTENT')
                     if after and terms != {k: intent['order'][k] for k in terms}:
                         raise TraderError('PAPER_QUOTE_MOVED_REPLAN_REQUIRED')
                 except TraderError as error:
                     self.ledger.append('order', name, client_id=intent['client_id'], status='not_submitted', filled_qty='0',
-                                       filled_avg_price=None, filled_at=None, broker_order_digest=None)
+                                       filled_avg_price=None, filled_at=None, broker_order_digest=None, reason=error.code)
                     self.outcomes(name, intent, self.ledger.projection(name)[1][intent['client_id']])
                     raise error
             elif intent['purpose'] == 'entry' and (at - instant(intent['at'])).total_seconds() > 300:
@@ -839,11 +905,42 @@ class PaperExecutor:
                 changed = True
         return changed
 
+    def cancel_stale_regular(self, client, name, *, dry_run):
+        """Finish old reservations before any exit or replacement can be planned."""
+        if name != 'ia_actions' or dry_run:
+            return False
+        intents, observed, _ = self.ledger.projection(name)
+        changed = False
+        for key, intent in intents.items():
+            if intent['order'].get('extended_hours') or observed.get(key, {}).get('status') in TERMINAL:
+                continue
+            session = calendar_session(intent['lots'][0]['session'] if intent['purpose'] == 'entry'
+                                       else instant(intent['at']).astimezone(NY).date().isoformat())
+            deadline = session.open_at + timedelta(minutes=5) if intent['purpose'] == 'entry' else session.close_at
+            if self.clock() < deadline:
+                continue
+            order = client.lookup(key)
+            if order and order['status'] not in TERMINAL:
+                client.request('DELETE', '/v2/orders/' + quote(str(order['id']), safe=''))
+                self.ledger.append('cancel', name, client_id=key, reason='REGULAR_ORDER_WINDOW_ENDED')
+                order = client.lookup(key)
+                if not order or order['status'] not in TERMINAL:
+                    raise TraderError('PAPER_STALE_CANCEL_PENDING')
+            if order:
+                self.observe(name, intent, order)
+            else:
+                self.ledger.append('order', name, client_id=key, status='not_submitted', filled_qty='0',
+                                   filled_avg_price=None, filled_at=None, broker_order_digest=None,
+                                   reason='REGULAR_ORDER_WINDOW_ENDED')
+                self.outcomes(name, intent, self.ledger.projection(name)[1][key])
+            changed = True
+        return changed
+
     def run_account(self, name, action, *, dry_run=False):
         client, account, positions = self.start(name)
         from .downgrade_guard import evaluate
         guard = evaluate(self.ledger, persist=not dry_run) if name == 'ia_actions' else {}
-        if guard.get('state') == 'HALTED':
+        if guard.get('state') == 'HALTED' and action not in {'status', 'audit'}:
             # Cancel already accepted, still-open entry orders containing this
             # tier. A mixed broker order cannot be edited without changing its
             # registered intent, so cancellation covers that entire order.
@@ -868,7 +965,9 @@ class PaperExecutor:
             # Cancellations may change filled quantities and broker positions.
             if not dry_run:
                 client, account, positions = self.start(name)
-        if action != 'status' and self.expire_after_hours(client, name, dry_run=dry_run):
+        if action not in {'status', 'audit'} and self.expire_after_hours(client, name, dry_run=dry_run):
+            client, account, positions = self.start(name)
+        if action not in {'status', 'audit'} and self.cancel_stale_regular(client, name, dry_run=dry_run):
             client, account, positions = self.start(name)
         equity = decimal(account['equity'])
         intents, observations, lots = self.ledger.projection(name)
@@ -878,6 +977,10 @@ class PaperExecutor:
                   'peak': str(peak), 'open_lots': sum(decimal(l['qty']) != 0 for l in lots.values()),
                   'halted': self.ledger.halted(name), 'planned_orders': []}
         status['downgrade_guard'] = guard
+        if action == 'audit':
+            if not dry_run:
+                status['audit'] = self.audit(name)
+            return status
         if action == 'status':
             return status
         if self.ledger.halted(name):
@@ -900,7 +1003,8 @@ class PaperExecutor:
             for key, intent in intents.items():
                 if intent['purpose'] == 'entry' and observations.get(key, {}).get('status') not in TERMINAL:
                     prospective.update({l['lot_id']: l for l in intent['lots']})
-            due_symbols = {l['symbol'] for l in prospective.values() if decimal(l['qty']) and l['exit_at'][:10] == today}
+            due_symbols = {l['symbol'] for l in prospective.values() if decimal(l['qty']) and
+                           (l['exit_at'][:10] <= today if name == 'ia_actions' else l['exit_at'][:10] == today)}
             already_reserved = {i['order']['symbol'] for key, i in intents.items() if i['purpose'] != 'entry'
                                 and i['at'][:10] == today and observations.get(key, {}).get('status') not in TERMINAL}
             due_symbols -= already_reserved
@@ -914,6 +1018,8 @@ class PaperExecutor:
                     due_symbols |= extra_due
                 else:
                     skipped.append(plan['order']['symbol'])
+                    if not dry_run:
+                        self.order_alert(name, plan['client_id'], 'PAPER_ENTRY_ORDER_BUDGET_SKIPPED')
             plans = selected
             status['budget_skipped_symbols'] = skipped
             status['orders_reserved_for_close'] = len(due_symbols)
@@ -924,15 +1030,21 @@ class PaperExecutor:
                         raise TraderError('PAPER_SHORT_NOT_ALLOWED')
         else:
             due = [l for l in lots.values() if decimal(l['qty']) and instant(l['exit_at']) -
-                   (timedelta(minutes=20) if name == 'ia_actions' else timedelta()) <= self.clock()]
+                   (timedelta(minutes=5) if name == 'ia_actions' else timedelta()) <= self.clock()]
             reserved_exits = {l['lot_id'] for k, i in intents.items() if i['purpose'] != 'entry'
                               and observations.get(k, {}).get('status') not in TERMINAL for l in i['lots']}
             due = [l for l in due if l['lot_id'] not in reserved_exits]
-            if name == 'ia_actions' and any(self.clock() >= instant(l['exit_at']) - timedelta(minutes=10) for l in due):
-                self.ledger.halt(name, 'PAPER_MISSED_EXIT_CUTOFF')
-                raise TraderError('PAPER_MISSED_EXIT_CUTOFF')
+            if name == 'ia_actions':
+                session = calendar_session(self.clock().astimezone(NY).date().isoformat())
+                in_window = session and (session.close_at - timedelta(minutes=5) <= self.clock() < session.close_at
+                    or session.open_at + timedelta(seconds=30) <= self.clock() < session.open_at + timedelta(minutes=5))
+                if not in_window:
+                    for lot in due:
+                        if instant(lot['exit_at']) <= self.clock():
+                            self.order_alert(name, lot['lot_id'], 'PAPER_LOT_PAST_HORIZON')
+                    due = []
             plans = self.plans(name, due, 'exit')
-        # Resume durable intents after submit/record crashes. Never silently reschedule a missed auction.
+        # Resume durable dispatches within their registered window; stale equity exits get explicit retry identities.
         recover_purpose = 'kill' if self.ledger.halted(name) else 'entry' if action == 'execute' else 'exit'
         pending = [i for k, i in intents.items() if k not in observations and i['purpose'] == recover_purpose]
         plans = pending + [p for p in plans if p['client_id'] not in intents]
@@ -972,7 +1084,7 @@ class PaperExecutor:
             self.replay_prior_registration = False
 
     def _run(self, action, *, dry_run=False, accounts=None):
-        if action not in {'status', 'execute', 'exit'}:
+        if action not in {'status', 'execute', 'exit', 'audit'}:
             raise TraderError('PAPER_UNKNOWN_ACTION')
         with self.ledger.owner():
             self.grant.check(self.dispatch_clock())
@@ -1023,10 +1135,12 @@ class PaperExecutor:
         latest = {(e['client_id'], e['lot_id']): e for e in outcomes}
         result['execution_outcomes'] = list(latest.values())
         result['execution_scores'] = execution_scores(self.ledger)
+        from .execution_gaps import execution_gaps
+        result['execution_gap_scores'] = execution_gaps(self.ledger, self.research, self.clock())
         result['downgrade_guard'] = next((a.get('downgrade_guard') for a in accounts if a['account'] == 'ia_actions'), None)
         result['limitations'] = ['After-hours paper fills in thin liquidity are optimistic.',
                                 'Crypto market entry follows the decision; its label uses the fixed 13:30Z anchor.',
-                                'Auction gaps and marked price changes can exceed reserved weights; entries stop if marked caps are breached.']
+                                'DAY fills can differ from label open/close; marked risk caps remain enforced before entries.']
         returns = {s: b.get('return_since_paper_start') for s, b in result['benchmarks'].items()}
         result['versus'] = {a['account']: {s: str(decimal(a['return_since_paper_start']) - decimal(value)) if value is not None else None
                            for s, value in returns.items()} for a in accounts}

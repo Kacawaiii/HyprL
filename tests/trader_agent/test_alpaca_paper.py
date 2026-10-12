@@ -81,7 +81,7 @@ class MockBroker:
 
 @pytest.fixture
 def environment(tmp_path, grant, clock, monkeypatch):
-    clock.at = instant('2026-10-12T12:00:00Z')
+    clock.at = instant('2026-10-12T13:30:30Z')
     monkeypatch.setenv('HOME', str(tmp_path))
     # No holdout prices are read. Synthetic broker tests model an authorized, unprotected universe.
     monkeypatch.setattr(paper, 'protected', lambda *a: None)
@@ -109,6 +109,10 @@ def environment(tmp_path, grant, clock, monkeypatch):
 def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', probability=.80,
           status='COMPLETE', verdict='KEEP', tainted=False, reviewer=True, variant=None, peer_direction=None, peer_verdict=None, artifact_hash=PREREG_HASH):
     at = executor.clock()
+    if not variant and any(a not in executor.grant.parent.payload['universe']['crypto'] for a in assets):
+        session = calendar_session(at.date().isoformat())
+        if session and session.open_at <= at < session.close_at:
+            at -= timedelta(hours=2)  # Model the real preopen decision at the open dispatch.
     day, run_id = at.date().isoformat(), 'synthetic-test:' + iso(at)
     views = []
     for asset in assets:
@@ -192,7 +196,7 @@ def test_degraded_with_review_and_valid_consensus_trades(environment):
     assert executor.run('execute')['state'] == 'COMPLETE'
     assert len(broker.posts('ia_actions')) == 1
     order = broker.posts()[0][3]
-    assert order['time_in_force'] == 'opg' and order['type'] == 'market' and 'extended_hours' not in order
+    assert order['time_in_force'] == 'day' and order['type'] == 'market' and 'extended_hours' not in order
     assert len(executor.ledger.events('ia_actions', 'intent')[0]['lots']) == 2
     executor.run('execute')
     assert len(broker.posts()) == 1
@@ -276,11 +280,11 @@ def test_partial_fill_projection_and_due_cls_delta(environment):
     assert sum(paper.decimal(l['qty']) for l in executor.ledger.projection('ia_actions')[2].values()) == paper.D('21')
     assert all(paper.decimal(l['qty']) == paper.decimal(l['qty']).quantize(paper.D(1)) for l in executor.ledger.projection('ia_actions')[2].values())
     broker.fill('ia_actions', intent['client_id'])
-    clock.at = instant('2026-10-12T19:40:00Z')
+    clock.at = instant('2026-10-12T19:55:00Z')
     result = executor.run('exit', accounts=['ia_actions'])
     assert result['state'] == 'COMPLETE'
     exit_order = broker.posts()[-1][3]
-    assert exit_order['qty'] == '36' and exit_order['side'] == 'sell' and exit_order['time_in_force'] == 'cls'
+    assert exit_order['qty'] == '36' and exit_order['side'] == 'sell' and exit_order['time_in_force'] == 'day'
     executor.run('exit', accounts=['ia_actions'])
     assert len(broker.posts()) == 2
     broker.fill('ia_actions', exit_order['client_order_id'])
@@ -316,21 +320,21 @@ def test_no_mutation_today_even_kill_switch(environment):
 
 
 @pytest.mark.parametrize('day,open_at,cls_at,cutoff', [
-    ('2026-10-12', '13:30', '19:40', '23:30'), ('2026-11-02', '14:30', '20:40', '00:30')])
+    ('2026-10-12', '13:30', '19:55', '23:30'), ('2026-11-02', '14:30', '20:55', '00:30')])
 def test_auction_and_after_hours_dst(day, open_at, cls_at, cutoff):
     session = calendar_session(day)
     assert iso(session.open_at)[11:16] == open_at
     at = instant(day + 'T' + cls_at + ':00Z')
-    assert paper.order_terms('ia_actions', 'exit', at, session)['time_in_force'] == 'cls'
+    assert paper.order_terms('ia_actions', 'exit', at, session)['time_in_force'] == 'day'
     assert iso(paper.after_hours_cutoff(session))[11:16] == cutoff
-    with pytest.raises(TraderError, match='PAPER_CLS_CUTOFF'):
-        paper.order_terms('ia_actions', 'exit', session.close_at - timedelta(minutes=10), session)
+    with pytest.raises(TraderError, match='PAPER_EXIT_WINDOW'):
+        paper.order_terms('ia_actions', 'exit', session.close_at, session)
 
 
 def test_early_close_cls_uses_calendar():
     session = calendar_session('2026-11-27')
     assert iso(session.close_at) == '2026-11-27T18:00:00Z'
-    assert paper.order_terms('ia_actions', 'exit', instant('2026-11-27T17:40:00Z'), session)['time_in_force'] == 'cls'
+    assert paper.order_terms('ia_actions', 'exit', instant('2026-11-27T17:55:00Z'), session)['time_in_force'] == 'day'
 
 
 @pytest.mark.parametrize('side', ['buy', 'sell'])
@@ -378,15 +382,15 @@ def test_schedule_chains_execute_report_and_uses_dst_and_crypto_anchor(tmp_path)
                    path='/synthetic/bin', paper_authorization='/synthetic/paper-grant')
     assert 'ExecStartPost=' in units['hyprl-trader-run.service'] and 'paper-execute' in units['hyprl-trader-run.service']
     assert 'paper-report' in units['hyprl-trader-label.service']
-    assert '15:40:00 America/New_York' in units['hyprl-trader-paper-exit-ia-actions.timer']
-    assert '12:40:00 America/New_York' in units['hyprl-trader-paper-exit-ia-actions.timer']
+    assert '15:55:00 America/New_York' in units['hyprl-trader-paper-exit-ia-actions.timer']
+    assert '12:55:00 America/New_York' in units['hyprl-trader-paper-exit-ia-actions.timer']
     assert '*:30:00 UTC' in units['hyprl-trader-paper-exit-ia-crypto.timer']
     assert all('Persistent=false' in v for k, v in units.items() if k.endswith('.timer'))
 
 
 def test_registered_execution_spec_and_private_store_binding(environment):
     executor, _, grant, clock = environment
-    assert execution_spec()['revision'] == 3 and len(SPEC_HASH) == 64
+    assert execution_spec()['revision'] == 4 and len(SPEC_HASH) == 64
     assert executor.ledger.events(event='binding')[0]['spec_hash'] == SPEC_HASH
     grant = paper.PaperAuthorization({**grant.payload}, 'e' * 64, grant.parent)
     with pytest.raises(TraderError, match='PAPER_LEDGER_BINDING_MISMATCH'):
@@ -402,7 +406,7 @@ def test_close_order_budget_reserved_before_entries(environment):
     assert len(result['accounts'][0]['budget_skipped_symbols']) == 6
     for (name, key) in list(broker.orders):
         broker.fill(name, key)
-    clock.at = instant('2026-10-12T19:40:00Z')
+    clock.at = instant('2026-10-12T19:55:00Z')
     assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 40
 
@@ -415,9 +419,9 @@ def test_stale_unsubmitted_intent_never_reschedules_next_open(environment):
         executor.run('execute', accounts=['ia_actions'])
     # Model an unacknowledged dispatch that never reached the broker.
     broker.orders.clear()
-    clock.at = instant('2026-10-12T13:29:00Z')
+    clock.at = instant('2026-10-12T13:35:00Z')
     result = executor.run('execute', accounts=['ia_actions'])
-    assert result['accounts'][0]['reason'] == 'PAPER_OPG_CUTOFF'
+    assert result['state'] == 'COMPLETE'
     assert len(broker.posts()) == 1
     assert executor.ledger.events('ia_actions', 'order')[-1]['status'] == 'not_submitted'
 
@@ -575,7 +579,7 @@ def test_reviewed_union_plans_kept_or_downgraded_view_and_refuses_raw_conflict(e
 
 
 def test_explicit_rebind_refuses_old_store_until_operator_approved_and_preserves_history(environment, tmp_path, monkeypatch):
-    from scripts.trading_lab.trader_agent.paper_spec import PREVIOUS_SPEC_HASH
+    from scripts.trading_lab.trader_agent.paper_spec import V3_SPEC_HASH as PREVIOUS_SPEC_HASH
     executor, broker, grant, clock = environment
     root = tmp_path / 'old-paper'
     store = ResearchStore(root / 'paper-evidence')

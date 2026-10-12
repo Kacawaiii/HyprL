@@ -11,7 +11,7 @@ from scripts.trading_lab.trader_agent import alpaca_paper as paper, config
 from scripts.trading_lab.trader_agent.config import Authorization, TraderError, instant, iso
 from scripts.trading_lab.trader_agent.data import PublicData
 from scripts.trading_lab.trader_agent.ledger import Ledger
-from scripts.trading_lab.trader_agent.paper_spec import PREVIOUS_SPEC_HASH
+from scripts.trading_lab.trader_agent.paper_spec import V3_SPEC_HASH as PREVIOUS_SPEC_HASH
 from scripts.trading_lab.trader_agent.service import TraderService, views_with_review
 from scripts.trading_lab.trader_agent.synthetic import SyntheticData, SyntheticRunner
 from test_alpaca_paper import environment, issue
@@ -215,7 +215,7 @@ def test_every_directional_keep_equity_view_is_sized_under_literal_union(environ
     issue(executor, horizons=('1d',), probability=.53, peer_direction='ABSTAIN')
     result = executor.run('execute', dry_run=True, accounts=['ia_actions'])
     assert result['accounts'][0]['planned_orders'] == [
-        {'symbol': 'AAPL', 'qty': '3', 'side': 'buy', 'type': 'market', 'time_in_force': 'opg'}]
+        {'symbol': 'AAPL', 'qty': '3', 'side': 'buy', 'type': 'market', 'time_in_force': 'day'}]
     assert not broker.posts()
 
 

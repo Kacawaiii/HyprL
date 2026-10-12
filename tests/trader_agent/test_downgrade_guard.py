@@ -124,7 +124,7 @@ def test_halted_tier_cancels_accepted_unfilled_entries(guarded):
     assert executor.run('execute', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 1
     seed(executor.ledger, clock, 19, -1)
-    result = executor.run('status', accounts=['ia_actions'])
+    result = executor.run('execute', accounts=['ia_actions'])
     assert result['state'] == 'COMPLETE'
     assert result['accounts'][0]['downgrade_guard']['state'] == 'HALTED'
     assert any(c[1] == 'DELETE' for c in broker.calls)
@@ -143,11 +143,11 @@ def test_halted_tier_preserves_scheduled_exits_and_outcomes(guarded):
     broker.fill('ia_actions', key)
     executor.run('status', accounts=['ia_actions'])
     seed(executor.ledger, clock, 19, -1)
-    clock.at = clock.at.replace(hour=19, minute=40, second=0)
+    clock.at = clock.at.replace(hour=19, minute=55, second=0)
     result = executor.run('exit', accounts=['ia_actions'])
     assert result['state'] == 'COMPLETE'
     assert result['accounts'][0]['downgrade_guard']['state'] == 'HALTED'
-    assert broker.posts()[-1][3]['time_in_force'] == 'cls'
+    assert broker.posts()[-1][3]['time_in_force'] == 'day'
     exit_key = list(broker.orders)[-1][1]
     broker.fill('ia_actions', exit_key)
     assert executor.run('status', accounts=['ia_actions'])['state'] == 'COMPLETE'

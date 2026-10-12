@@ -117,7 +117,7 @@ def test_offline_replay_uses_recorded_inputs_and_leaves_both_journals_unchanged(
     research_before, paper_before = executor.research.verify(), executor.ledger.store.verify()
     result = replay(executor.research, grant, clock().date().isoformat())
     actions = result['accounts'][0]
-    assert actions['orders'] == [{'symbol': 'AAPL', 'qty': '1', 'side': 'buy', 'type': 'market', 'time_in_force': 'opg'}]
+    assert actions['orders'] == [{'symbol': 'AAPL', 'qty': '1', 'side': 'buy', 'type': 'market', 'time_in_force': 'day'}]
     assert [(l['horizon'], l['qty'], l['variant']) for l in actions['lots']] == [('1d', '1', HALF_DOWNGRADE)]
     assert result['network_requests'] == 0 and result['no_order']
     assert executor.research.verify() == research_before and executor.ledger.store.verify() == paper_before
@@ -135,7 +135,7 @@ def test_scored_pnl_keeps_full_and_half_tiers_apart_without_double_counting(envi
     executor.run('execute', accounts=['ia_actions'])
     second = list(broker.orders)[-1][1]
     broker.fill('ia_actions', second)
-    clock.at = instant('2026-10-12T19:40:00Z')
+    clock.at = instant('2026-10-12T19:55:00Z')
     executor.run('exit', accounts=['ia_actions'])
     exit_key = list(broker.orders)[-1][1]
     broker.fill('ia_actions', exit_key)
@@ -166,7 +166,10 @@ def test_rebind_retains_immutable_v1_v2_chain_and_weekend_registration(environme
               'operator_decision_hash': '0caee3e1145b4cc401cccaface8ca7ecc928c6337c335ab23cc1695a3677e7a9'}
     registration = {**first, 'event': 'weekend_registration', 'event_id': 'synthetic-weekend',
                     **weekend.registration_target(grant)}
-    for event in (first, second, registration):
+    third = {**second, 'event_id': 'synthetic-v3', 'spec_hash': paper.V3_SPEC_HASH,
+             'previous_binding_hash': sha256_canonical(second), 'previous_spec_hash': second['spec_hash'],
+             'operator_decision_hash': paper.V3_DECISION_HASH}
+    for event in (first, second, third, registration):
         store.append('replay-summary', event, object_id=event['event_id'], recorded_at=event['at'])
     # Synthetic decision with the real approved shape, no broker acquisition.
     decision = {'schema': 'synthetic-operator-decision', 'decided_at': paper.iso(clock())}
@@ -176,7 +179,7 @@ def test_rebind_retains_immutable_v1_v2_chain_and_weekend_registration(environme
     with patch.object(paper, 'OPERATOR_DECISION_HASH', sha256_canonical(decision)):
         factory = lambda g, name, **kw: paper.PaperClient(g, name, transport=broker.transport(name), **kw)
         rebound = paper.PaperLedger.rebind(root, grant, decision_path, clock=clock, client_factory=factory)
-        assert rebound.events(event='binding')[:2] == [first, second]
+        assert rebound.events(event='binding')[:3] == [first, second, third]
         assert rebound.events(event='weekend_registration') == [registration]
         assert rebound.events(event='binding')[-1]['preregistration_hash'] == execution_preregistration()
         assert rebound.store.verify()['verified']

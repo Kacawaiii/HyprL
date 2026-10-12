@@ -40,6 +40,8 @@ def replay(research, grant, day, *, equity='100000'):
         for account in ('ia_actions', 'ia_crypto'):
             if account == 'ia_actions' and calendar_session(day) is None:
                 continue
+            session = calendar_session(day)
+            executor.clock = (lambda: max(available_at, session.open_at + timedelta(seconds=30))) if account == 'ia_actions' else clock
             lots = executor.entries(account, decimal(equity), [])
             plans = executor.plans(account, lots, 'entry')
             accounts.append({'account': account,
@@ -50,7 +52,7 @@ def replay(research, grant, day, *, equity='100000'):
         raise TraderError('PAPER_REPLAY_RESEARCH_CHANGED')
     return {'state': 'COMPLETE', 'counterfactual': True, 'no_order': True, 'network_requests': 0,
             'at': iso(clock()), 'run_id': run['run_id'], 'run_status': run['status'],
-            'assumption': 'Flat account, fixed equity; original decision inputs only; v3 rule replay, no performance claim.',
+            'assumption': 'Flat account, fixed equity; original decision inputs only; v4 equity open dispatch, no performance claim.',
             'equity_per_account': str(decimal(equity)), 'research_head_hash': chain['head_hash'], 'accounts': accounts}
 
 

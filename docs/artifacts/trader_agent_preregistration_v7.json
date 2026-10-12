@@ -1,0 +1,21 @@
+{
+  "schema": "trader-agent-preregistration-v7",
+  "revision": 10,
+  "registered_on": "2026-10-12",
+  "scope": "Execution timing, fill accounting and safety only. Selection/sizing tiers, crypto timing, original research labels, weekday/weekend/news registrations unchanged. Existing decisions may be executed only within their original session window.",
+  "previous_execution_preregistration_hash": "7b134cdaf0cb1b6d750ada86a9a8cd365745ad4dab1f14053354cbaa863a9adc",
+  "execution_spec_hash": "92b00b05a4971f64bdea39f723c95ecbd28f4468592a908fd16f79ccccaa5cc6",
+  "operator_decision_hash": "4e332a0b31b8bd28bd26dddc2a59fd2b19ab5b5ea2233c4b1464ff197ef05a1f",
+  "variants": [
+    "alpaca_open_entry_v1",
+    "alpaca_after_hours_v1",
+    "alpaca_open_entry_v2",
+    "alpaca_after_hours_v2",
+    "weekend_crypto_v1",
+    "half_size_downgrade_v1",
+    "crypto_single_kept_half_v1"
+  ],
+  "confirmatory": false,
+  "execution_gap": "Research open-to-close labels unchanged. Actual entry and exit fill prices, timestamps and signed gap versus label open/close are separate from primary label scores. Gaps remain PENDING until a causal research label with open/close prices is recorded; no price requests added.",
+  "canonical_sha256": "bcee03f1f9136c72bc2663a653b3ecd9e6f4d5454c4f7ce7957fc21c95271c65"
+}

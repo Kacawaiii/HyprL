@@ -66,7 +66,7 @@ def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "news", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
-                                          'paper-execute', 'paper-exit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard'))
+                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--fomc-store")
