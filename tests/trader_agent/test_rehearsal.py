@@ -468,3 +468,21 @@ def test_new_checkpoints_do_not_repeat_known_order_alerts_but_new_orders_do(tmp_
     labels = [{'code': 'LABELS_MISSING', 'identity': str(i)} for i in range(200)]
     assert alert_issues(state, labels, send)['new_issues'] == 200
     assert len(messages) == 3
+
+
+def test_newly_appended_backdated_radar_receipts_cannot_prove_freshness(live_checks):
+    from scripts.radar.core import Store
+    from scripts.radar.sources import item
+    from scripts.trading_lab.trader_agent.config import iso
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, _, _ = live_checks
+    clock.at += timedelta(hours=3)
+    checks.configuration()
+    store = Store(checks.args.radar_root, clock=clock)
+    old = clock() - timedelta(hours=3)
+    record = item('rss:synthetic', 'example.invalid', 'https://example.invalid/backdated',
+                  'Synthetic older receipt', 'Synthetic summary', iso(old), old, symbols=['AAPL'])
+    store.append('news', record['id'], record, at=clock() - timedelta(seconds=1))
+    result = rehearse(state, [('radar_veille', checks.news)], clock=clock,
+                       notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['steps'][0]['error'] == 'REHEARSAL_RADAR_STALE_OR_EMPTY'

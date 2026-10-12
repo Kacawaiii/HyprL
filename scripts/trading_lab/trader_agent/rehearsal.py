@@ -379,7 +379,8 @@ class LiveChecks:
         # is not a collector freshness clock. Check all causal input receipts.
         with radar_snapshot(self.args.radar_root, cutoff) as snapshot:
             receipts = snapshot.rows('news', since=cutoff - timedelta(hours=2))
-        receipts = [s for s in receipts if not s.get('published_at') or instant(s['published_at']) < cutoff]
+        receipts = [s for s in receipts if cutoff - timedelta(hours=2) <= instant(s['received_at']) < cutoff
+                    and (not s.get('published_at') or instant(s['published_at']) < cutoff)]
         if not receipts:
             raise TraderError('REHEARSAL_RADAR_STALE_OR_EMPTY')
         return {'events': len(context['events']), 'veille_lines': len(context['veille']['lines']),
