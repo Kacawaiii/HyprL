@@ -65,6 +65,8 @@ class Authorization:
     amendment: dict | None = None
     weekend_decision: dict | None = None
     news_decision: dict | None = None
+    pm_amendment: dict | None = None
+    pm_identity: str | None = None
 
     @classmethod
     def load(cls, path, *, amendment_path=None):
@@ -102,6 +104,8 @@ class Authorization:
         return amended.load_weekend(Path(path).parent)
 
     def load_weekend(self, folder):
+        from .slots import load_amendment
+        self = load_amendment(self, folder)
         from .news_spec import DECISION_NAME, DECISION_HASH
         news_path = folder / DECISION_NAME
         if news_path.exists():
@@ -116,6 +120,16 @@ class Authorization:
         if sha256_canonical(decision) != WEEKEND_DECISION_HASH:
             raise TraderError('WEEKEND_OPERATOR_DECISION_HASH_MISMATCH')
         return replace(self, weekend_decision=decision)
+
+    def check_slot(self, slot, at, *, preflight=False):
+        self.check(at)
+        if slot == 'am':
+            return
+        if slot != 'pm' or not self.pm_amendment or not self.pm_identity:
+            raise TraderError('PM_SLOT_NOT_AUTHORIZED')
+        start = self.pm_amendment['granted_at'] if preflight else self.pm_amendment['effective_from']
+        if not instant(start) <= at < instant(self.pm_amendment['not_after']):
+            raise TraderError('PM_SLOT_NOT_STARTED_OR_EXPIRED')
 
     def check_news(self, at):
         from .news_spec import DECISION_HASH, spec

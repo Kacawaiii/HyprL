@@ -22,41 +22,50 @@ def unit_quote(value):
 
 
 def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=None, paper_authorization=None, paper_quotes=None,
-           data_authorization=None):
+           data_authorization=None, include_pm=False):
     unit_quote(repo)  # Validate path; WorkingDirectory takes an unquoted whole path value.
     output = {}
-    for action, calendar in CALENDARS.items():
+    calendars = dict(CALENDARS)
+    if include_pm:
+        calendars.update({'run-pm': '*-*-* 16:00:00 UTC',
+                          'recover-pm': '*-*-* 16..23:05/10:00 UTC'})
+    for name, calendar in calendars.items():
+        action = name.removesuffix('-pm')
         argv = [python, "-m", "scripts.trading_lab.trader_agent.cli", action,
                 "--authorization", authorization, "--runtime", runtime]
+        if name.endswith('-pm'):
+            argv.extend(('--slot', 'pm'))
         if action in {"run", "recover"}:
             for flag, root in (("--fomc-store", fomc), ("--edgar-store", edgar)):
                 if root:
                     argv.extend((flag, root))
-        if action == 'recover' and paper_authorization:
+        if (action == 'recover' or name == 'run-pm') and paper_authorization:
             argv.extend(('--paper-authorization', paper_authorization))
             if data_authorization:
                 argv.extend(('--data-authorization', data_authorization))
             if paper_quotes:
                 argv.extend(('--paper-quotes', paper_quotes))
-        output[f"hyprl-trader-{action}.service"] = (
+        output[f"hyprl-trader-{name}.service"] = (
             "[Unit]\nDescription=HyprL paper trader " + action + "\n"
             "[Service]\nType=oneshot\nWorkingDirectory=" + str(repo) + "\n"
             "Environment=" + unit_quote("PATH=" + path) + "\n"
             "ExecStart=" + " ".join(unit_quote(arg) for arg in argv) + "\n"
             "UMask=0077\nNice=10\nMemoryMax=900M\nCPUQuota=75%\nNoNewPrivileges=yes\n"
             "TimeoutStartSec=90min\nTimeoutStopSec=20s\nKillMode=control-group\n"
-            "StandardOutput=append:" + str(runtime / (action + ".log")) + "\n"
-            "StandardError=append:" + str(runtime / (action + ".error.log")) + "\n")
-        output[f"hyprl-trader-{action}.timer"] = (
+            "StandardOutput=append:" + str(runtime / (name + ".log")) + "\n"
+            "StandardError=append:" + str(runtime / (name + ".error.log")) + "\n")
+        output[f"hyprl-trader-{name}.timer"] = (
             "[Unit]\nDescription=HyprL paper trader " + action + " schedule\n"
             "[Timer]\nOnCalendar=" + calendar + "\nAccuracySec=1s\nRandomizedDelaySec=0\nPersistent=false\n"
             "[Install]\nWantedBy=timers.target\n")
     if paper_authorization:
         from .paper_spec import execution_spec
         execution_spec()
-        def command(action, account=None):
+        def command(action, account=None, slot='am'):
             argv = [python, '-m', 'scripts.trading_lab.trader_agent.cli', 'paper-' + action,
                     '--authorization', authorization, '--paper-authorization', paper_authorization, '--runtime', runtime]
+            if slot == 'pm':
+                argv.extend(('--slot', 'pm'))
             if account:
                 argv.extend(('--paper-account', account))
             if paper_quotes:
@@ -117,6 +126,7 @@ def main(argv=None):
     parser.add_argument('--paper-quotes')
     parser.add_argument('--data-authorization')
     parser.add_argument("--install", action="store_true")
+    parser.add_argument("--include-pm", action="store_true")
     args = parser.parse_args(argv)
     grant = Authorization.load(args.authorization)
     grant.check(now())
@@ -136,7 +146,7 @@ def main(argv=None):
     units = render(repo, sys.executable, Path(args.authorization).resolve(), root,
                    fomc=args.fomc_store, edgar=args.edgar_store, path=os.environ["PATH"],
                    paper_authorization=args.paper_authorization, paper_quotes=args.paper_quotes,
-                   data_authorization=args.data_authorization)
+                   data_authorization=args.data_authorization, include_pm=args.include_pm)
     if not args.install:
         for name, body in units.items():
             print(name + "\n" + body)

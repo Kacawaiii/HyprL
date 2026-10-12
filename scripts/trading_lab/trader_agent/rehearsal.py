@@ -120,9 +120,10 @@ def error_code(error):
     return 'UNEXPECTED_' + type(error).__name__.upper()
 
 
-def write_report(state, reports, day):
+def write_report(state, reports, day, run_slot="am"):
     reports = private_root(reports)
-    attempts = [state.get(day, slot) for slot in ('primary', 'retry')]
+    prefix = 'pm-' if run_slot == 'pm' else ''
+    attempts = [state.get(day, prefix + slot) for slot in ('primary', 'retry')]
     attempts = [a for a in attempts if a]
     lines = ['STATUS: ' + ('DONE' if attempts and attempts[-1]['state'] == 'GREEN' else 'BLOCKED'),
              '', 'Daily full-chain rehearsal ' + day, '',
@@ -138,18 +139,19 @@ def write_report(state, reports, day):
         lines += ['', 'Alerts: ' + json.dumps(attempt.get('alerts', [])), '']
     lines += ['Unproven: a GET-only probe cannot establish that the broker will accept or fill a future order.',
               'Next: inspect the next entry, exit and label checkpoints; failures alert independently.', '']
-    target = reports / ('rehearsal-' + day + '.md')
+    target = reports / ('rehearsal-' + day + ('-pm' if run_slot == 'pm' else '') + '.md')
     temp = target.with_suffix('.tmp')
     temp.write_text('\n'.join(lines))
     temp.replace(target)
     return target
 
 
-def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports):
-    at, slot = clock(), 'retry' if retry else 'primary'
+def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports, run_slot="am"):
+    prefix = 'pm-' if run_slot == 'pm' else ''
+    at, slot = clock(), prefix + ('retry' if retry else 'primary')
     day = at.date().isoformat()
     with state.owner():
-        previous = state.get(day, 'primary')
+        previous = state.get(day, prefix + 'primary')
         if retry and (not previous or previous['state'] == 'GREEN'):
             return {'state': 'NO_RETRY_NEEDED'}
         if retry and previous.get('retry_at') and at < instant(previous['retry_at']):
@@ -157,7 +159,7 @@ def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports):
         if state.get(day, slot):
             return {'state': 'ALREADY_ATTEMPTED'}
         result = {'schema': 'trader-rehearsal-v1', 'at': iso(at), 'slot': slot,
-                  'state': 'RUNNING', 'steps': [], 'alerts': [], 'retry_at': None}
+                  'run_slot': run_slot, 'state': 'RUNNING', 'steps': [], 'alerts': [], 'retry_at': None}
         # Reserve the whole attempt before calling anything. OnFailure sees RUNNING after a crash.
         state.save(day, slot, result)
         for name, check in steps:
@@ -174,12 +176,18 @@ def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports):
             result['steps'].append(step)
             state.save(day, slot, result)
         result['state'] = 'BLOCKED' if result['alerts'] else 'GREEN'
+        if run_slot == 'pm' and result['state'] == 'GREEN':
+            result['notification'] = state.alert(day + ':' + slot + ':green',
+                'Trader pm pre-flight GREEN: data, model probes, executor GET and cockpit checks passed.', notify)
+            if result['notification'] != 'DELIVERED':
+                result['state'] = 'BLOCKED'
+                result['steps'].append({'step': 'notification', 'state': 'BLOCKED', 'error': 'TELEGRAM_DELIVERY_FAILED'})
         if result['state'] == 'BLOCKED' and not retry:
-            scheduled = at.replace(hour=11, minute=15, second=0, microsecond=0)
+            scheduled = at.replace(hour=15 if run_slot == 'pm' else 11, minute=45 if run_slot == 'pm' else 15, second=0, microsecond=0)
             result['retry_at'] = iso(scheduled if at < scheduled else at + timedelta(minutes=30))
         result['finished_at'] = iso(clock())
         state.save(day, slot, result)
-        write_report(state, reports, day)
+        write_report(state, reports, day, run_slot)
         return result
 
 
@@ -281,7 +289,7 @@ class LiveChecks:
     def require(self):
         if not self.ready:
             raise TraderError('REHEARSAL_CONFIGURATION_UNAVAILABLE')
-        self.grant.check(self.clock())
+        self.grant.check_slot(getattr(self.args, 'slot', 'am'), self.clock(), preflight=True)
 
     def configuration(self):
         from .alpaca_paper import PaperAuthorization
@@ -289,21 +297,24 @@ class LiveChecks:
         from .service import preregistration, skills
         from .paper_spec import execution_spec
         self.grant = Authorization.load(self.args.authorization)
+        slot = getattr(self.args, 'slot', 'am')
+        self.grant.check_slot(slot, self.clock(), preflight=True)
         self.mode = population(self.grant, self.clock())
         self.paper_grant = PaperAuthorization.load(self.args.paper_authorization, self.grant)
         self.paper_grant.check(self.clock())
         self.data_grant = DataAuthorization.load(self.args.data_authorization, self.paper_grant)
         self.data_grant.check(self.clock())
-        self.ledger = Ledger(self.args.runtime, self.grant, clock=self.clock, budget_root=self.args.budget_root)
+        self.ledger = Ledger(self.args.runtime, self.grant, clock=self.clock, budget_root=self.args.budget_root, slot=slot, preflight=True)
         if self.ledger.paused:
             raise TraderError('PAUSED')
         self.research = ResearchStore(Path(self.args.runtime) / 'evidence', read_only=True)
         self.research.verify()
         self.paper = SnapshotPaperLedger(self.args.paper_runtime, self.paper_grant, self.clock)
         with self.paper.owner():
-            pass
+            if slot == 'pm':
+                self.paper.check_pm_registration()
         data_ledger = Ledger(self.state.root / 'sources', self.grant, clock=self.clock,
-                             budget_root=self.args.budget_root)
+                             budget_root=self.args.budget_root, slot=slot, preflight=True)
         self.public = PublicData(data_ledger, clock=self.clock)
         skills()
         preregistration()
@@ -353,7 +364,20 @@ class LiveChecks:
         if failures:
             # Asset identities and codes are safe; never propagate broker/source bodies.
             raise TraderError('REHEARSAL_PRICE_FAILURE', evidence=failures)
-        return {'assets_checked': len(checked), 'configured_assets': universe_count, 'cache_hits': reused, 'latest_due': iso(latest),
+        intraday = []
+        if not crypto and getattr(self.args, 'slot', 'am') == 'pm':
+            from .slots import label_window
+            for asset in assets:
+                anchor, _ = label_window(asset, latest.date().isoformat(), '1d', [])
+                if protected(asset, anchor, latest):
+                    raise TraderError('REHEARSAL_PROTECTED_PRICE')
+                bars, source = self.public.yahoo(asset, anchor - timedelta(minutes=5), latest + timedelta(seconds=1), interval='5m')
+                if (sum(b['bar_open_at'] == anchor for b in bars) != 1 or
+                        sum(b['bar_open_at'] == latest - timedelta(minutes=5) for b in bars) != 1):
+                    raise TraderError('REHEARSAL_PM_INTRADAY_ANCHOR_MISSING')
+                intraday.append({'asset': asset, 'digest': source['digest']})
+        return {'pm_intraday_paths': len(intraday), 'pm_intraday_hash': sha256_canonical(intraday),
+                'assets_checked': len(checked), 'configured_assets': universe_count, 'cache_hits': reused, 'latest_due': iso(latest),
                 'identities_hash': sha256_canonical(checked)}
 
     def gdelt(self):
@@ -546,6 +570,14 @@ class LiveChecks:
                     terms = order_terms(name, 'entry', session.close_at, session, after_hours=True, bid='100', ask='100.01')
                     if terms['type'] != 'limit' or terms['time_in_force'] != 'day' or not terms['extended_hours']:
                         raise TraderError('REHEARSAL_EXTENDED_ORDER_TYPE')
+                    if getattr(self.args, 'slot', 'am') == 'pm':
+                        from . import slots
+                        at = slots.start_at(session.session_date, 'pm')
+                        terms = order_terms(name, 'entry', at, session, pm=True)
+                        planner.clock = lambda: at
+                        lot['slot'] = 'pm'
+                        if any(plan['order'][k] != v for plan in planner.plans(name, [lot], 'entry') for k, v in terms.items()):
+                            raise TraderError('REHEARSAL_PM_PLANNER_ORDER_TYPE')
                 elif name == 'ia_crypto':
                     for purpose in ('entry', 'exit'):
                         planner.clock = self.clock
@@ -601,6 +633,7 @@ class LiveChecks:
 def arguments(parser):
     home = Path.home()
     parser.add_argument('--authorization', required=True)
+    parser.add_argument('--slot', choices=('am', 'pm'), default='am')
     parser.add_argument('--paper-authorization', required=True)
     parser.add_argument('--data-authorization', required=True)
     parser.add_argument('--runtime', required=True)
@@ -626,21 +659,22 @@ def main(argv=None):
     notify = telegram(args.telegram_env)
     if args.failure_hook:
         day = now().date().isoformat()
-        for slot in ('primary', 'retry'):
+        prefix = 'pm-' if args.slot == 'pm' else ''
+        for slot in (prefix + 'primary', prefix + 'retry'):
             result = state.get(day, slot)
             if result and result['state'] == 'RUNNING':
                 result['state'] = 'BLOCKED'
                 result['steps'].append({'step': 'service', 'state': 'BLOCKED', 'error': 'REHEARSAL_SERVICE_INTERRUPTED'})
                 result['alerts'].append({'step': 'service', 'delivery': state.alert(
                     day + ':' + slot + ':service', 'Trader rehearsal failed: service interrupted', notify)})
-                if slot == 'primary':
+                if slot == prefix + 'primary':
                     at = now()
-                    due = at.replace(hour=11, minute=15, second=0, microsecond=0)
+                    due = at.replace(hour=15 if args.slot == 'pm' else 11, minute=45 if args.slot == 'pm' else 15, second=0, microsecond=0)
                     result['retry_at'] = iso(due if at < due else at + timedelta(minutes=30))
                 state.save(day, slot, result)
-                write_report(state, args.reports, day)
+                write_report(state, args.reports, day, args.slot)
         return 0
-    result = rehearse(state, LiveChecks(args, state).steps(args.retry), retry=args.retry, notify=notify, reports=args.reports)
+    result = rehearse(state, LiveChecks(args, state).steps(args.retry), retry=args.retry, notify=notify, reports=args.reports, run_slot=args.slot)
     print(json.dumps(result, indent=2))
     return 1 if result['state'] == 'BLOCKED' else 0
 

@@ -33,15 +33,24 @@ class SyntheticData:
         return {"url": "https://example.invalid/synthetic/" + source, "received_at": iso(self.clock()),
                 "digest": sha256_canonical(payload), "dispatch": seq}
 
-    def yahoo(self, asset, start, end):
+    def yahoo(self, asset, start, end, *, interval="1d"):
         sessions = equity_calendar(end.year).sessions_between(start, end)
         base = 90 + sum(ord(c) for c in asset) % 50
-        values = [base + (s.open_at.toordinal() % 29) * .1 for s in sessions]
+        stamps = [s.open_at for s in sessions]
+        if interval == '5m':
+            stamps = []
+            for session in sessions:
+                stamp = session.open_at
+                while stamp < session.close_at:
+                    if start <= stamp < end:
+                        stamps.append(stamp)
+                    stamp += timedelta(minutes=5)
+        values = [base + (stamp.toordinal() % 29) * .1 for stamp in stamps]
         payload = {"chart": {"error": None, "result": [{"meta": {"symbol": asset, "currency": "USD",
             "exchangeTimezoneName": "America/New_York", "exchangeName": "NMS", "instrumentType":
                 "ETF" if asset in self.ledger.grant.payload['universe']['sector_etfs'] +
                                     self.ledger.grant.payload['universe']['benchmarks_not_predicted'] else "EQUITY"},
-            "timestamp": [int(s.open_at.timestamp()) for s in sessions], "indicators": {"quote": [{
+            "timestamp": [int(stamp.timestamp()) for stamp in stamps], "indicators": {"quote": [{
                 "open": values, "close": [v + .2 for v in values], "high": [v + 1 for v in values],
                 "low": [v - 1 for v in values], "volume": [1000 for _ in values]}]}}]}}
         return adapt_chart_rows(payload, instrument_id="xnas:" + asset), self.source("yahoo_chart", payload)

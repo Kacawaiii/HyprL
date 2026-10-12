@@ -51,6 +51,10 @@ DECISION = obj({"schema": {"const": "trader-decision-v1"}, "run_id": STRING, "se
 SCHEMAS = {"analyst": ANALYST, "reviewer": REVIEWER, "decision": DECISION}
 # Execution registration is additive; frozen pre-v3 decisions remain valid.
 DECISION['properties']['execution_preregistration_hash'] = HASH
+DECISION['properties']['pm_label_anchor'] = TIME
+DECISION['properties']['pm_recovery_started_at'] = TIME
+DECISION['properties']['pm_amendment_hash'] = HASH
+DECISION['properties']['slot'] = {'enum': ['am', 'pm']}
 DECISION['properties']['arm'] = {'const': 'news'}
 DECISION['properties']['base_run_id'] = STRING
 

@@ -107,13 +107,16 @@ def environment(tmp_path, grant, clock, monkeypatch):
 
 
 def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', probability=.80,
-          status='COMPLETE', verdict='KEEP', tainted=False, reviewer=True, variant=None, peer_direction=None, peer_verdict=None, artifact_hash=PREREG_HASH):
+          status='COMPLETE', verdict='KEEP', tainted=False, reviewer=True, variant=None, peer_direction=None, peer_verdict=None, artifact_hash=PREREG_HASH, slot='am'):
     at = executor.clock()
-    if not variant and any(a not in executor.grant.parent.payload['universe']['crypto'] for a in assets):
+    from scripts.trading_lab.trader_agent import slots
+    if slot == 'pm':
+        variant, artifact_hash = 'pm_slot_v1' if calendar_session(at.date().isoformat()) else 'pm_weekend_crypto_v1', slots.PREREG_HASH
+    if slot != 'pm' and not variant and any(a not in executor.grant.parent.payload['universe']['crypto'] for a in assets):
         session = calendar_session(at.date().isoformat())
         if session and session.open_at <= at < session.close_at:
             at -= timedelta(hours=2)  # Model the real preopen decision at the open dispatch.
-    day, run_id = at.date().isoformat(), 'synthetic-test:' + iso(at)
+    day, run_id = at.date().isoformat(), 'synthetic-test:' + iso(at) + (':pm' if slot == 'pm' else '')
     views = []
     for asset in assets:
         for horizon in horizons:
@@ -128,8 +131,9 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
                                       1 - probability if role == 'analyst_gpt' and peer_direction == 'DOWN' else probability}
                    for role in ('analyst_claude', 'analyst_gpt')]
             views.extend(raw)
-            entry, exit_at = label_window(asset, day, horizon, executor.grant.parent.payload['universe']['crypto'],
-                                         'close' if variant and variant != 'weekend_crypto_v1' else 'open')
+            window = slots.label_window if slot == 'pm' else label_window
+            entry, exit_at = window(asset, day, horizon, executor.grant.parent.payload['universe']['crypto'],
+                                         *([] if slot == 'pm' else ['close' if variant and variant != 'weekend_crypto_v1' else 'open']))
             definition = {'entry_at': iso(entry), 'exit_at': iso(exit_at), 'horizon': horizon}
             if variant:
                 definition['variant'] = variant
@@ -140,14 +144,14 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
                     snapshot_hash=sha256_canonical({'price': {'recent_closes': [100]}}), features_hash=sha256_canonical([]), event_ids=(),
                     outputs={'return': None, 'target_price': None, 'class': selected['view'], 'probabilities': {'outperform': selected['p_outperform']},
                              'quantiles': None, 'scenarios': None},
-                    signal={'run_id': run_id, 'session': day, 'view': selected, 'label_definition': definition}, risk={'tainted': tainted}, synthetic=False)
+                    signal={'run_id': run_id, 'slot': slot, 'session': day, 'view': selected, 'label_definition': definition}, risk={'tainted': tainted}, synthetic=False)
                 evidence = PredictionEvidence(prediction_id=identity, prediction_hash=p.identity, recorded_at=iso(at),
                     features=(), snapshot={'price': {'recent_closes': [100]}}, baselines={}, input_quality={'state': 'AVAILABLE'},
                     split='SYNTHETIC_HTTP_TEST', provenance={'method': 'synthetic'})
                 executor.research.issue(p, evidence)
     executor.research.append('replay-summary', {'schema': 'trader-run-v1', 'run_id': run_id, 'at': iso(at),
-        'status': status, 'synthetic': False, 'tainted': tainted,
-        'decision': {'execution_preregistration_hash': paper.execution_preregistration(), 'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
+        'status': status, 'slot': slot, 'synthetic': False, 'tainted': tainted,
+        'decision': {'slot': slot, **({'pm_amendment_hash': executor.grant.parent.pm_identity} if slot == 'pm' else {}), 'execution_preregistration_hash': slots.preregistration() if slot == 'pm' else paper.execution_preregistration(), 'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
 
 
 def test_live_url_refused_before_even_get(environment):

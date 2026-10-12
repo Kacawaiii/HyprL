@@ -9,12 +9,16 @@ from .config import TraderError, iso, now, private_root
 
 
 class Ledger:
-    def __init__(self, root, grant, *, clock=now, budget_root=None):
+    def __init__(self, root, grant, *, clock=now, budget_root=None, slot='am', preflight=False):
         self.root = private_root(root)
         self.budget_root = private_root(budget_root) if budget_root else self.root
         self.grant, self.clock = grant, clock
         self.budget_day = None
         self.arm = 'base'
+        if slot not in {'am', 'pm'}:
+            raise TraderError('INVALID_SLOT')
+        self.slot = slot
+        self.preflight = preflight
         self.path = self.budget_root / "dispatch.sqlite"
         with self.connect() as db:
             db.executescript("""
@@ -53,6 +57,9 @@ class Ledger:
         if self.paused:
             raise TraderError('PAUSED')
         at = self.clock()
+        self.grant.check_slot(self.slot, at, preflight=self.preflight or kind.startswith(('rehearsal_', 'gpt_preflight')))
+        if self.arm == 'news' and kind in self.grant.payload['data_sources']:
+            raise TraderError('NEWS_ACQUISITION_FORBIDDEN')
         news = self.arm == 'news' and kind in {'run', *self.grant.payload['external_models']}
         if news:
             self.grant.check_news(at)
@@ -76,34 +83,39 @@ class Ledger:
             maximum = p["data_sources"][kind]["max_requests_per_day"]
         else:
             raise TraderError("UNAUTHORIZED_DISPATCH")
+        logical_kind = kind
+        if self.slot == 'pm':
+            kind = 'pm_' + kind
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             at = self.clock()
             day = at.date().isoformat() if news else self.budget_day or at.date().isoformat()
-            self.grant.check(at)
+            self.grant.check_slot(self.slot, at, preflight=self.preflight or logical_kind.startswith(('rehearsal_', 'gpt_preflight')))
             if news:
                 self.grant.check_news(at)
             count = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind=?", (day, kind)).fetchone()[0]
             if count >= maximum:
                 raise TraderError("BUDGET_EXHAUSTED")
-            if kind in p["external_models"]:
+            if logical_kind in p["external_models"]:
+                prefix = 'pm_' if self.slot == 'pm' else ''
                 total = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind IN (?,?,?)",
-                    (day, "analyst_claude", "analyst_gpt", "reviewer")).fetchone()[0]
+                    (day, prefix + "analyst_claude", prefix + "analyst_gpt", prefix + "reviewer")).fetchone()[0]
                 if total >= p["budgets"]["max_llm_calls_per_day"]:
                     raise TraderError("BUDGET_EXHAUSTED")
-            if news and kind != 'news_run':
+            if news and logical_kind != 'news_run':
+                prefix = 'pm_' if self.slot == 'pm' else ''
                 total = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind IN (?,?,?)",
-                    (day, 'news_analyst_claude', 'news_analyst_gpt', 'news_reviewer')).fetchone()[0]
+                    (day, prefix + 'news_analyst_claude', prefix + 'news_analyst_gpt', prefix + 'news_reviewer')).fetchone()[0]
                 if total >= 6:
                     raise TraderError('BUDGET_EXHAUSTED')
-            if kind == "gdelt_doc_api":
-                row = db.execute("SELECT at FROM dispatch WHERE kind=? ORDER BY seq DESC LIMIT 1", (kind,)).fetchone()
+            if logical_kind == "gdelt_doc_api":
+                row = db.execute("SELECT at FROM dispatch WHERE kind IN (?,?) ORDER BY seq DESC LIMIT 1", ('gdelt_doc_api', 'pm_gdelt_doc_api')).fetchone()
                 if row:
                     from .config import instant
-                    if (at - instant(row[0])).total_seconds() < p["data_sources"][kind]["min_spacing_seconds"]:
+                    if (at - instant(row[0])).total_seconds() < p["data_sources"][logical_kind]["min_spacing_seconds"]:
                         raise TraderError("SOURCE_SPACING")
             cursor = db.execute("INSERT INTO dispatch(day,kind,at,grant_hash) VALUES(?,?,?,?)",
-                                (day, kind, iso(at), self.grant.identity))
+                                (day, kind, iso(at), self.grant.pm_identity if self.slot == 'pm' else self.grant.identity))
             return cursor.lastrowid
 
     @property
@@ -112,9 +124,11 @@ class Ledger:
 
     def counts(self, day=None):
         with self.connect() as db:
-            return dict(db.execute("SELECT kind,count(*) FROM dispatch WHERE day=? GROUP BY kind",
+            counts = dict(db.execute("SELECT kind,count(*) FROM dispatch WHERE day=? GROUP BY kind",
                                    (day or (self.clock().date().isoformat() if self.arm == 'news' else
                                             self.budget_day or self.clock().date().isoformat()),)))
+            return {k.removeprefix('pm_'): v for k, v in counts.items() if k.startswith('pm_')} if self.slot == 'pm' else {
+                k: v for k, v in counts.items() if not k.startswith('pm_')}
 
     def alert(self, code, *, role=None):
         payload = {"schema": "trader-alert-v1", "at": iso(self.clock()), "code": code, "role": role}

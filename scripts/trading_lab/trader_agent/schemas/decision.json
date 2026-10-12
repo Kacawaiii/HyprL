@@ -374,6 +374,24 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
+    "pm_label_anchor": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pm_recovery_started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pm_amendment_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "slot": {
+      "enum": [
+        "am",
+        "pm"
+      ]
+    },
     "arm": {
       "const": "news"
     },

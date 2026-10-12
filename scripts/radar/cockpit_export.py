@@ -127,7 +127,7 @@ def load_trader(store, scorecard=None, include_synthetic=False):
         if payload.get("schema") != "trader-run-v1" or (payload.get("synthetic") and not include_synthetic):
             continue
         decision = payload.get("decision") or {}
-        runs.append({"run_id": payload["run_id"], "at": payload["at"], "status": payload.get("status"),
+        runs.append({"slot": payload.get("slot", "pm" if ":pm" in payload["run_id"] else "am"), "run_id": payload["run_id"], "at": payload["at"], "status": payload.get("status"),
                      "error": payload.get("error"),
                      "recorded_at": record.get("recorded_at"), "synthetic": bool(payload.get("synthetic")),
                      "preregistration_hash": decision.get("preregistration_hash"),
@@ -143,6 +143,7 @@ def load_trader(store, scorecard=None, include_synthetic=False):
         predictions[p["prediction_id"]] = {"model_id": p["model_id"], "asset": p["product"],
                                            "horizon": (p.get("signal") or {}).get("label_definition", {}).get("horizon"),
                                            "run_id": (p.get("signal") or {}).get("run_id"),
+                                           "slot": (p.get("signal") or {}).get("slot", "am"),
                                            "decision_at": p.get("decision_at"), "view": view.get("view")}
         definition = (p.get("signal") or {}).get("label_definition") or {}
         predictions[p["prediction_id"]].update({"entry_at": definition.get("entry_at"), "exit_at": definition.get("exit_at")})
@@ -228,7 +229,7 @@ def _views_by_asset(runs, labels=None):
                 "catalysts": [{"url": clean_url(c.get("url")), "published_at": c.get("published_at")}
                               for c in (raw.get("catalysts") or [])[:3] if clean_url(c.get("url"))]})
         for asset, views in by_asset.items():
-            table[asset].append({"run_id": run["run_id"], "at": run["at"], "status": run["status"], "views": views})
+            table[asset].append({"slot": run.get("slot", "am"), "run_id": run["run_id"], "at": run["at"], "status": run["status"], "views": views})
     return table
 
 
@@ -239,13 +240,13 @@ def _anticipation(asset, table, runs):
     latest = history[-1]
     timeline = []
     for entry in history[-MAX_TIMELINE:]:
-        point = {"run_id": entry["run_id"], "at": entry["at"], "by_analyst": {}}
+        point = {"slot": entry.get("slot", "am"), "run_id": entry["run_id"], "at": entry["at"], "by_analyst": {}}
         for v in entry["views"]:
             if v["horizon"] == "1d" or v["analyst"] not in point["by_analyst"]:
                 point["by_analyst"][v["analyst"]] = {"view": v["view"], "p_outperform": v["p_outperform"],
                                                      "verdict": v["verdict"], "horizon": v["horizon"]}
         timeline.append(point)
-    return {"state": "COVERED", "latest": {"run_id": latest["run_id"], "at": latest["at"], "views": latest["views"]},
+    return {"state": "COVERED", "latest": {"run_id": latest["run_id"], "slot": latest.get("slot", "am"), "at": latest["at"], "views": latest["views"]},
             "timeline": timeline}
 
 
@@ -377,6 +378,9 @@ def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS):
                   "limitations": [text(x, 200) for x in radar.get("limitations", [])][:8]},
         "trader": {"runs": len(runs), "labels": len(labels), "latest_run": runs[-1]["run_id"] if runs else None,
                    "latest_run_at": runs[-1]["at"] if runs else None,
+                   "slot": runs[-1].get("slot", "am") if runs else None,
+                   "by_slot": ((trader or {}).get("scorecard") or {}).get("by_slot"),
+                   "combined": ((trader or {}).get("scorecard") or {}).get("combined"),
                    "models": runs[-1]["models"] if runs else {},
                    "preregistration_hash": runs[-1].get("preregistration_hash") if runs else None,
                    "predictive_quality": quality,

@@ -103,7 +103,7 @@ class TraderViews:
                 page.append(r)
                 if len(page) > limit:
                     break
-        keep = ("run_id", "status", "at", "error", "synthetic", "budget_counts")
+        keep = ("run_id", "slot", "status", "at", "error", "synthetic", "budget_counts")
         records = [{"sequence": r["sequence"], "recorded_at": r["recorded_at"],
                     **{k: r["payload"][k] for k in keep if k in r["payload"]}} for r in page[:limit]]
         return {"schema": "trader-runs-page-v1", "records": records,
@@ -116,7 +116,7 @@ class TraderViews:
             return {"schema": "trader-context-view-v1", "date": day, "context": None}
         c = found[-1]["payload"]["context"]
         return {"schema": "trader-context-view-v1", "date": day, "context": {
-            "decision_time": c["decision_time"], "price_cutoff": c["price_cutoff"], "synthetic": c["synthetic"],
+            "slot": c.get("slot", "am"), "decision_time": c["decision_time"], "price_cutoff": c["price_cutoff"], "synthetic": c["synthetic"],
             "universe": c["universe"], "prices": c["prices"], "exclusions": c["exclusions"],
             "limitations": c["limitations"],
             "sources": [{k: s.get(k) for k in ("url", "received_at", "digest")} for s in c["sources"]]}}

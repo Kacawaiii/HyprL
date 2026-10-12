@@ -25,11 +25,16 @@ def checkpoints(grant, research, events, at, last_label=None):
         entry = session.open_at + timedelta(seconds=30) if session else at.replace(hour=13, minute=30, second=0, microsecond=0)
         result['session-entry:' + day] = entry + timedelta(minutes=10)
         result['label-deadline:' + day] = at.replace(hour=21, minute=40, second=0, microsecond=0)
+    if grant.pm_amendment and at >= instant(grant.pm_amendment['effective_from']):
+        from .slots import deadline
+        result['slot-entry:pm:' + day] = deadline(day, session is None) + timedelta(minutes=10)
     for row in rows(research, 'prediction'):
         p = row['payload']
         if p.get('synthetic', True):
             continue
         definition = p['signal']['label_definition']
+        if p['signal'].get('slot') == 'pm':
+            result['pm-plan:' + p['signal']['run_id']] = instant(p['decision_at']) + timedelta(minutes=10)
         exit_at = instant(definition['exit_at'])
         equity = p['product'] not in grant.payload['universe']['crypto']
         due = exit_at + timedelta(minutes=5 if equity else 10)
@@ -43,7 +48,7 @@ def checkpoints(grant, research, events, at, last_label=None):
     return {key: due for key, due in result.items() if due <= at}
 
 
-def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_label_job=False, last_label=None):
+def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_label_job=False, last_label=None, require_pm_run=False):
     from .alpaca_paper import decimal
     errors, accounts, issues = [], [], []
     def problem(code, identity):
@@ -88,7 +93,7 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                     if name == 'ia_actions':
                         session = calendar_session(p['signal']['session'])
                         after_hours = definition.get('variant') == 'alpaca_after_hours_v1'
-                        dispatch_at = instant(p['decision_at']) + timedelta(seconds=1) if after_hours else session.open_at + timedelta(seconds=30)
+                        dispatch_at = instant(p['decision_at']) + timedelta(seconds=1) if after_hours or p['signal'].get('slot') == 'pm' else session.open_at + timedelta(seconds=30)
                     else:
                         dispatch_at = instant(p['decision_at']) + timedelta(seconds=1)
                     if dispatch_at + timedelta(minutes=10) > original():
@@ -111,9 +116,17 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
     if require_daily_run:
         runs = [r['payload'] for r in rows(executor.research, 'replay-summary')
                 if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
+                and r['payload'].get('slot', 'am') == 'am'
                 and r['payload']['at'][:10] == day and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}]
         if not runs:
             problem('MISSING_DAILY_RUN', day)
+    if require_pm_run:
+        runs = [r['payload'] for r in rows(executor.research, 'replay-summary')
+                if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
+                and r['payload'].get('slot') == 'pm' and r['payload']['at'][:10] == day
+                and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}]
+        if not runs:
+            problem('MISSING_PM_RUN', day)
     if require_label_job and (not last_label or last_label.get('at', '')[:10] != day or last_label.get('state') != 'COMPLETE'):
         problem('MISSING_OR_FAILED_LABEL_JOB', day)
     if label_at and last_label and last_label.get('state') != 'COMPLETE':
@@ -159,6 +172,7 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
                 executor = readonly_executor(paper, research, clock=clock, client_factory=client_factory)
                 result = inspect_audit(executor,
                     require_daily_run=any(k.startswith('session-entry:') for k in due),
+                    require_pm_run=any(k.startswith('slot-entry:pm:') for k in due),
                     require_label_job=any(k.startswith('label-deadline:') for k in due),
                     label_at=instant(last_label['at']) if label_check and last_label else None, last_label=last_label)
                 result['checkpoints'] = sorted(due)
@@ -216,20 +230,23 @@ def main(argv=None):
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args(argv)
     state = MonitorState(args.monitor_runtime)
-    request_retry = False
+    request_retries = []
     try:
         with state.owner():
             at = now()
-            first = state.get(at.date().isoformat(), 'primary')
-            request_retry = bool(first and first['state'] == 'BLOCKED' and first.get('retry_at')
-                and instant(first['retry_at']) <= at and not state.get(at.date().isoformat(), 'retry'))
+            for prefix, unit in (('', 'hyprl-trader-rehearsal-retry.service'),
+                                 ('pm-', 'hyprl-trader-rehearsal-pm-retry.service')):
+                first = state.get(at.date().isoformat(), prefix + 'primary')
+                if (first and first['state'] == 'BLOCKED' and first.get('retry_at')
+                        and instant(first['retry_at']) <= at and not state.get(at.date().isoformat(), prefix + 'retry')):
+                    request_retries.append(unit)
             result = audit(args, state, force=args.force, notify=telegram(args.telegram_env))
     except TraderError as error:
         if error.code != 'REHEARSAL_OWNER_BUSY':
             raise
         result = {'state': 'REHEARSAL_IN_PROGRESS'}
-    if request_retry:
-        subprocess.run(['systemctl', '--user', 'start', '--no-block', 'hyprl-trader-rehearsal-retry.service'],
+    for unit in request_retries:
+        subprocess.run(['systemctl', '--user', 'start', '--no-block', unit],
                        check=True, timeout=15, capture_output=True)
     print(json.dumps(result, indent=2))
     return 1 if result['state'] == 'BLOCKED' else 0

@@ -42,7 +42,7 @@ def selections(views, account):
     return result
 
 
-def execution_scores(ledger):
+def execution_scores(ledger, *, slot=None):
     """Cumulative outcome scores; partial exit observations are not double counted."""
     scores = {}
     for account in ('ia_actions', 'ia_crypto'):
@@ -52,6 +52,8 @@ def execution_scores(ledger):
             if intent['purpose'] != 'entry':
                 continue
             for lot in intent['lots']:
+                if slot is not None and lot.get('slot', 'am') != slot:
+                    continue
                 population = lot.get('population', 'weekend_crypto_v1' if lot['variant'] == 'weekend_crypto_v1'
                                      else 'after_hours' if lot['variant'].startswith('alpaca_after_hours') else 'weekday')
                 key = '/'.join((account, population, lot['variant'], lot['horizon']))

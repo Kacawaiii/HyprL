@@ -18,12 +18,15 @@ from .synthetic import Clock, SyntheticData, SyntheticRunner
 
 def health(ledger):
     at = ledger.clock()
+    slot_states = {}
     try:
         ledger.grant.check(at)
         with ResearchStore(ledger.root / "evidence", read_only=True).connect() as db:
             rows = db.execute("SELECT payload FROM records WHERE kind='replay-summary' ORDER BY sequence DESC LIMIT 100").fetchall()
         runs = [json.loads(r[0]) for r in rows if json.loads(r[0]).get("schema") == "trader-run-v1"]
-        today = [r for r in runs if r["at"][:10] == at.date().isoformat() and not r["synthetic"]]
+        all_today = [r for r in runs if r["at"][:10] == at.date().isoformat() and not r["synthetic"]]
+        from .slots import slot_of
+        today = [r for r in all_today if slot_of(r) == "am"]
         session = calendar_session(at.date().isoformat())
         crypto_day = session is None and ledger.grant.weekend_decision is not None
         if crypto_day:
@@ -37,6 +40,22 @@ def health(ledger):
         if (not ledger.paused and any(r["status"] in {"FAILED", "SKIPPED_QUOTA"} for r in today)
                 and not any(r['status'] in {'COMPLETE', 'DEGRADED'} for r in today)):
             state = "FAILED_DAILY_RUN"
+        slot_states['am'] = state
+        from .slots import deadline as pm_deadline
+        pm_state = 'NOT_SCHEDULED'
+        if ledger.grant.pm_amendment and at >= instant(ledger.grant.pm_amendment['effective_from']):
+            pm_today = [r for r in all_today if slot_of(r) == 'pm']
+            if any(r['status'] in {'COMPLETE', 'DEGRADED'} for r in pm_today):
+                pm_state = 'HEALTHY'
+            elif any(r['status'] in {'FAILED', 'SKIPPED_QUOTA'} for r in pm_today):
+                pm_state = 'FAILED_PM_RUN'
+            elif at >= pm_deadline(at.date().isoformat(), crypto_day):
+                pm_state = 'MISSING_PM_RUN'
+            else:
+                pm_state = 'WAITING'
+            if pm_state in {'FAILED_PM_RUN', 'MISSING_PM_RUN'} and state == 'HEALTHY':
+                state = pm_state
+        slot_states['pm'] = pm_state
         label_path = ledger.root / 'last-label.json'
         if not ledger.paused and started and (session or crypto_day) and at >= at.replace(hour=22, minute=0, second=0, microsecond=0):
             if not label_path.is_file() or json.loads(label_path.read_text()).get('at', '')[:10] != at.date().isoformat():
@@ -44,7 +63,7 @@ def health(ledger):
     except (TraderError, FileNotFoundError):
         state = "EXPIRED_OR_UNAVAILABLE"
     ledger.alert_state('health', state, initial=state not in {'HEALTHY', 'PAUSED'})
-    payload = {"schema": "trader-health-v1", "at": iso(at), "state": state, "budget_counts": ledger.counts()}
+    payload = {"schema": "trader-health-v1", "at": iso(at), "state": state, "slots": slot_states, "budget_counts": ledger.counts()}
     temp = ledger.root / "health.tmp"
     temp.write_text(json.dumps(payload))
     temp.replace(ledger.root / "health.json")
@@ -59,16 +78,17 @@ def paper_executor(args, grant, runtime):
     paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
     evidence = ResearchStore(runtime / 'evidence', read_only=True)
     return PaperExecutor(paper, evidence, quotes=QuoteFeed(paper_grant, args.data_authorization, args.paper_quotes),
-                         pause_paths=(runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED'))
+                         slot=args.slot, pause_paths=(runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED'))
 
 
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "news", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
-                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard'))
+                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
+    parser.add_argument("--slot", choices=("am", "pm"), default="am")
     parser.add_argument("--fomc-store")
     parser.add_argument("--edgar-store")
     parser.add_argument('--paper-authorization')
@@ -87,13 +107,13 @@ def main(argv=None):
         runtime = private_root(args.runtime)
         if args.paper_replay_at and (args.action != 'paper-execute' or not args.dry_run):
             parser.error('--paper-replay-at requires paper-execute --dry-run')
-        if args.action in {'paper-register-weekend', 'paper-register-news-guard'}:
+        if args.action in {'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm'}:
             if not args.operator_decision or args.dry_run:
                 parser.error(args.action + ' requires --operator-decision and forbids --dry-run')
             from .alpaca_paper import PaperAuthorization, PaperLedger
             paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
             paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
-            registration = paper.register_weekend(args.operator_decision) if args.action == 'paper-register-weekend' else paper.register_news_guard(args.operator_decision)
+            registration = paper.register_pm(args.operator_decision) if args.action == 'paper-register-pm' else paper.register_weekend(args.operator_decision) if args.action == 'paper-register-weekend' else paper.register_news_guard(args.operator_decision)
             print(json.dumps({'state': 'REGISTERED', 'registration': registration}, indent=2))
             return 0
         if args.action == 'paper-rebind':
@@ -126,7 +146,7 @@ def main(argv=None):
         runtime = private_root(runtime / "synthetic")
     # One production budget bank/owner across runtime paths: changing --runtime never refunds grants.
     bank = None if args.dry_run else Path.home() / '.local/share/hyprl/trader-agent-budget'
-    ledger = Ledger(runtime, grant, clock=clock, budget_root=bank)
+    ledger = Ledger(runtime, grant, clock=clock, budget_root=bank, slot=args.slot)
     if args.action == 'gpt-preflight':
         if args.dry_run:
             parser.error('gpt-preflight requires the real GPT/web boundary; use offline tests for a synthetic CLI')
@@ -159,9 +179,9 @@ def main(argv=None):
             result = recover(service)
             # Close-entry recovery remains score-only. Only a fresh, successful
             # after-hours recovery may invoke the existing paper executor.
-            if result.get('mode') == 'after_hours' and result.get('status') in {'COMPLETE', 'DEGRADED'} and args.paper_authorization and not args.dry_run:
+            if result.get('mode') in {'after_hours', 'pm'} and result.get('status') in {'COMPLETE', 'DEGRADED'} and args.paper_authorization and not args.dry_run:
                 try:
-                    result['paper_execution'] = paper_executor(args, grant, runtime).run('execute', accounts=['ia_actions'])
+                    result['paper_execution'] = paper_executor(args, grant, runtime).run('execute', accounts=['ia_actions'] if result.get('mode') == 'after_hours' else None)
                     ledger.alert('RECOVERY_PAPER_' + result['paper_execution']['state'])
                 except TraderError as error:
                     ledger.alert('RECOVERY_PAPER_' + error.code)
@@ -175,6 +195,15 @@ def main(argv=None):
             result = service.run(catchup=True, after_hours=args.action == 'catchup-after-hours')
         elif args.action == "run":
             result = service.run()
+            if args.slot == 'pm' and not args.dry_run and result['status'] in {'COMPLETE', 'DEGRADED'}:
+                if args.paper_authorization:
+                    try:
+                        result['paper_execution'] = paper_executor(args, grant, runtime).run('execute')
+                    except TraderError as error:
+                        ledger.alert('PM_PAPER_' + error.code)
+                        result['paper_execution'] = {'state': 'BLOCKED', 'reason': error.code}
+                if grant.news_decision is not None:
+                    result['news_arm'] = service.run_news()
             if args.dry_run and result["status"] in {"COMPLETE", "DEGRADED"}:
                 initial_labels = service.store.records("label")
                 # Advance to after every 5d endpoint: all are future at issue time.
@@ -190,7 +219,7 @@ def main(argv=None):
         if args.action == "label":
             (runtime / "last-label.json").write_text(json.dumps({"at": iso(clock()), "state": result["state"]}))
     print(json.dumps(result, indent=2))
-    if result.get("status") == "FAILED" or result.get("state") == "BLOCKED" or result.get('paper_execution', {}).get('state') == 'BLOCKED':
+    if result.get("status") == "FAILED" or result.get("state") == "BLOCKED" or result.get('paper_execution', {}).get('state') == 'BLOCKED' or result.get('news_arm', {}).get('status') == 'FAILED':
         return 1
     return 0
 

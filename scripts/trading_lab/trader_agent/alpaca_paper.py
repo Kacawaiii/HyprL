@@ -23,6 +23,7 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 
 from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import calendar_session, label_window, protected
+from . import slots
 from .paper_spec import (SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH, V3_DECISION_HASH,
                          OPERATOR_DECISION_HASH, execution_spec, execution_preregistration)
 from .execution_tiers import HALF_DOWNGRADE, selections, execution_scores
@@ -63,7 +64,7 @@ def allocated_quantities(intent, observation):
     filled = decimal(observation.get('filled_qty', 0))
     fraction = filled / total if total else D(1) if observation.get('status') == 'internal' else D(0)
     values = [decimal(lot['qty']) * fraction for lot in intent['lots']]
-    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH} else D('.00000001')
+    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH, slots.SPEC_HASH} else D('.00000001')
     unit = crypto_unit if '/USD' in intent['order']['symbol'] else D(1)
     rounded = [v.quantize(unit, rounding=ROUND_DOWN) for v in values]
     signed_total = sum((decimal(l['qty']) for l in intent['lots']), D(0))
@@ -239,6 +240,27 @@ class PaperLedger:
                 'weekend_preregistration_hash': weekend_prereg, 'weekend_spec_hash': weekend_spec,
                 'operator_decision_hash': OPERATOR_DECISION_HASH}
 
+    def register_pm(self, decision_path):
+        decision = strict_json(Path(decision_path).read_text())
+        if sha256_canonical(decision) != slots.DECISION_HASH or instant(decision['decided_at']) > self.clock():
+            raise TraderError('PM_OPERATOR_DECISION_REFUSED')
+        self.grant.parent.check_slot('pm', self.clock(), preflight=True)
+        with self.owner():
+            target = slots.registration_target(self.grant)
+            previous = self.events(event='pm_registration')
+            if previous:
+                if any(previous[-1].get(k) != v for k, v in target.items()):
+                    raise TraderError('PM_PAPER_REGISTRATION_MISMATCH')
+                return previous[-1]
+            return self.append('pm_registration', None, **target,
+                               reason='OPERATOR_APPROVED_ADDITIVE_PM_SLOT')
+
+    def check_pm_registration(self):
+        target = slots.registration_target(self.grant)
+        previous = self.events(event='pm_registration')
+        if not previous or any(previous[-1].get(k) != v for k, v in target.items()):
+            raise TraderError('PM_PAPER_REGISTRATION_REQUIRED')
+
     def register_weekend(self, decision_path):
         """Explicit additive registration; no grant/spec migration or broker request."""
         from .config import WEEKEND_DECISION_HASH
@@ -400,7 +422,7 @@ def after_hours_cutoff(session):
     return session.close_at.astimezone(NY).replace(hour=19, minute=30, second=0, microsecond=0).astimezone(session.close_at.tzinfo)
 
 
-def order_terms(account, purpose, at, session, *, after_hours=False, bid=None, ask=None, side='buy'):
+def order_terms(account, purpose, at, session, *, after_hours=False, pm=False, bid=None, ask=None, side='buy'):
     if account == 'ia_crypto':
         return {'type': 'market', 'time_in_force': 'gtc'}
     if after_hours:
@@ -416,6 +438,10 @@ def order_terms(account, purpose, at, session, *, after_hours=False, bid=None, a
         rounding = 'ROUND_FLOOR' if side == 'buy' else 'ROUND_CEILING'
         return {'type': 'limit', 'time_in_force': 'day', 'extended_hours': True,
                 'limit_price': str(limit.quantize(D('.01'), rounding=rounding))}
+    if purpose == 'entry' and pm:
+        if not session or not session.open_at <= at < session.close_at - timedelta(minutes=15):
+            raise TraderError('PAPER_PM_ENTRY_WINDOW')
+        return {'type': 'market', 'time_in_force': 'day'}
     if purpose == 'entry':
         if not session or not session.open_at + timedelta(seconds=30) <= at < session.open_at + timedelta(minutes=5):
             raise TraderError('PAPER_ENTRY_WINDOW')
@@ -451,8 +477,9 @@ class PrivateQuotes:
 
 
 class PaperExecutor:
-    def __init__(self, ledger, research, *, client_factory=PaperClient, quotes=None, clock=now, pause_paths=()):
+    def __init__(self, ledger, research, *, client_factory=PaperClient, quotes=None, clock=now, pause_paths=(), slot=None):
         self.ledger, self.grant, self.research = ledger, ledger.grant, research
+        self.slot = slot
         self.clock, self.dispatch_clock, self.client_factory = clock, clock, client_factory
         from .alpaca_data import QuoteFeed
         self.quotes = quotes or QuoteFeed(self.grant, clock=clock)
@@ -517,8 +544,14 @@ class PaperExecutor:
                 p = row['payload']
                 definition = p['signal']['label_definition']
                 session = calendar_session(p['signal']['session'])
-                if (definition.get('variant') != 'alpaca_after_hours_v1' and session
-                        and self.clock() >= session.open_at + timedelta(minutes=5) and row['identity'] not in seen):
+                pm = p['signal'].get('slot') == 'pm'
+                intent_assets = {(l['run_id'], l['asset']) for i in intents.values() if i['purpose'] == 'entry' for l in i['lots']}
+                occupied = {l['asset'] for l in lots.values() if decimal(l['qty'])}
+                collision = slots.collision_policy(self.grant.parent, self.clock()) and (
+                    (p['signal']['run_id'], p['product']) in intent_assets or p['product'] in occupied)
+                due = instant(p['decision_at']) + timedelta(minutes=10) if pm else session.open_at + timedelta(minutes=5) if session else None
+                if (not collision and definition.get('variant') != 'alpaca_after_hours_v1' and due
+                        and self.clock() >= due and row['identity'] not in seen):
                     self.order_alert(name, row['identity'], 'PAPER_ELIGIBLE_ENTRY_NOT_DISPATCHED')
             for lot in lots.values():
                 if decimal(lot['qty']) and instant(lot['exit_at']) <= self.clock():
@@ -534,7 +567,7 @@ class PaperExecutor:
             entry = observed.get(entry_intent['client_id'], {})
             data = {'lot_id': lot['lot_id'], 'prediction_hash': lot['prediction_hash'], 'horizon': lot['horizon'],
                     'variant': lot['variant'], 'symbol': lot['symbol'], 'client_id': intent['client_id'],
-                    'purpose': intent['purpose'], 'cumulative_lot_qty': str(quantity), 'broker_status': observation['status']}
+                    'slot': lot.get('slot', 'am'), 'purpose': intent['purpose'], 'cumulative_lot_qty': str(quantity), 'broker_status': observation['status']}
             data['broker_fill'] = observation['status'] != 'internal' and bool(quantity)
             if intent['purpose'] == 'entry':
                 data['state'] = 'FILLED' if quantity else 'NOT_TRADED' if observation['status'] in TERMINAL else 'PENDING'
@@ -618,18 +651,23 @@ class PaperExecutor:
         summaries = [r['payload'] for r in rows(self.research, 'replay-summary')
                      if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
                      and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}
+                     and (self.slot is None or slots.slot_of(r['payload']) == self.slot)
                      and (r['payload']['at'][:10] == day or
                           r['payload'].get('decision', {}).get('session') == self.clock().astimezone(NY).date().isoformat())]
         if not summaries:
             return []
         run = summaries[-1]
+        pm = slots.slot_of(run) == 'pm'
+        if pm:
+            self.grant.parent.check_slot('pm', self.clock())
+            self.ledger.check_pm_registration()
         decision = run.get('decision', {})
         reviewer = decision.get('models', {}).get('reviewer', {})
         if (run.get('tainted') or decision.get('tainted') or 'TAINTED_RUN' in run.get('degraded', {}).values()
                 or not reviewer or reviewer.get('cli_version') == 'NOT_RUN'):
             return []
         views = selections(decision.get('views', []), name)
-        if not self.replay_prior_registration and decision.get('execution_preregistration_hash') != execution_preregistration():
+        if not self.replay_prior_registration and decision.get('execution_preregistration_hash') != (slots.preregistration() if pm else execution_preregistration()):
             return []
         predictions = []
         for row in rows(self.research, 'prediction'):
@@ -639,8 +677,12 @@ class PaperExecutor:
                 continue
             from .service import preregistration
             from . import weekend
-            is_weekend = definition.get('variant') == weekend.VARIANT
-            expected_registration = weekend.preregistration() if is_weekend else preregistration()
+            is_weekend = definition.get('variant') in {weekend.VARIANT, 'pm_weekend_crypto_v1', 'pm_weekend_crypto_recovery_v1'}
+            if pm and (p['signal'].get('slot') != 'pm' or definition.get('variant') !=
+                       slots.variant(is_weekend, 'pm_label_anchor' in decision) or
+                       decision.get('slot') != 'pm' or decision.get('pm_amendment_hash') != self.grant.parent.pm_identity):
+                raise TraderError('PAPER_PM_PREDICTION_BINDING_MISMATCH')
+            expected_registration = slots.preregistration() if pm else weekend.preregistration() if is_weekend else preregistration()
             if is_weekend:
                 if name != 'ia_crypto' or calendar_session(p['signal']['session']) is not None:
                     continue
@@ -660,15 +702,23 @@ class PaperExecutor:
             if (view['view'] not in {'UP', 'DOWN'} or view['verdict'] not in ({'KEEP', 'DOWNGRADE'} if name == 'ia_actions' else {'KEEP'})
                     or p['risk'].get('tainted') or definition.get('variant') == 'catchup_close_entry_v1'):
                 continue
-            if definition.get('variant') not in {None, 'alpaca_after_hours_v1', weekend.VARIANT}:
+            if definition.get('variant') not in {None, 'alpaca_after_hours_v1', weekend.VARIANT, 'pm_slot_v1', 'pm_weekend_crypto_v1', 'pm_slot_recovery_v1', 'pm_weekend_crypto_recovery_v1'}:
                 continue
             if definition['horizon'] not in {'1d', '5d'}:
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             session_day = p['signal'].get('session', instant(p['decision_at']).astimezone(NY).date().isoformat())
-            expected_entry, expected_exit = label_window(p['product'], session_day, definition['horizon'],
-                self.grant.parent.payload['universe']['crypto'], 'close' if definition.get('variant') == 'alpaca_after_hours_v1' else 'open')
+            anchor = None
+            if pm and 'pm_label_anchor' in decision:
+                started = instant(decision['pm_recovery_started_at'])
+                anchor = slots.recovery_anchor(session_day, started, is_weekend)
+                if (instant(decision['pm_label_anchor']) != anchor or
+                        not slots.start_at(session_day, 'pm') <= started <= instant(p['decision_at']) < anchor):
+                    raise TraderError('PAPER_PM_RECOVERY_ANCHOR_MISMATCH')
+            window = slots.label_window if pm else label_window
+            expected_entry, expected_exit = window(p['product'], session_day, definition['horizon'],
+                self.grant.parent.payload['universe']['crypto'], *([] if pm else ['close' if definition.get('variant') == 'alpaca_after_hours_v1' else 'open']), **({'anchor': anchor} if pm else {}))
             if (instant(definition['exit_at']) != expected_exit or
-                    ((not definition.get('variant') or is_weekend) and instant(definition['entry_at']) != expected_entry)):
+                    ((pm or not definition.get('variant') or is_weekend) and instant(definition['entry_at']) != expected_entry)):
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             if (name == 'ia_actions' and not definition.get('variant')
                     and (instant(p['decision_at']) >= expected_entry or instant(row['recorded_at']) >= expected_entry)):
@@ -706,6 +756,8 @@ class PaperExecutor:
             short += max(-weight, D(0))
             weights[lot['symbol']] = weights.get(lot['symbol'], D(0)) + abs(weight)
         candidates = []
+        occupied = {l['symbol'] for l in reserved.values() if decimal(l['qty'])}
+        collisions = slots.collision_policy(self.grant.parent, self.clock())
         for row, evidence, multiplier, tier in self.eligible_predictions(name):
             if tier == HALF_DOWNGRADE and guard.get('state') == 'HALTED':
                 continue
@@ -714,7 +766,14 @@ class PaperExecutor:
                 continue
             if name == 'ia_crypto' and (self.clock() - instant(p['decision_at'])).total_seconds() > 300:
                 continue
-            if name == 'ia_actions' and p['signal']['label_definition'].get('variant') != 'alpaca_after_hours_v1':
+            pm = p['signal'].get('slot') == 'pm' or ':pm' in p['signal']['run_id']
+            if collisions and symbol(p['product']) in occupied:
+                continue
+            if name == 'ia_actions' and pm:
+                session = calendar_session(p['signal']['session'])
+                if not session or not session.open_at <= self.clock() < session.close_at - timedelta(minutes=15):
+                    continue
+            if name == 'ia_actions' and not pm and p['signal']['label_definition'].get('variant') != 'alpaca_after_hours_v1':
                 session = calendar_session(p['signal']['session'])
                 if not session or not session.open_at + timedelta(seconds=30) <= self.clock() < session.open_at + timedelta(minutes=5):
                     continue
@@ -742,10 +801,10 @@ class PaperExecutor:
                                'session': p['signal'].get('session', instant(p['decision_at']).astimezone(NY).date().isoformat()),
                                'horizon': definition['horizon'], 'exit_at': definition['exit_at'], 'entry_at': definition['entry_at'],
                                'prediction_hash': row['identity'], 'reference_price': str(price), 'weight': weight,
-                               'direction': direction, 'size_multiplier': str(multiplier),
-                               'population': 'weekend_crypto_v1' if definition.get('variant') == 'weekend_crypto_v1'
+                               'direction': direction, 'size_multiplier': str(multiplier), 'slot': 'pm' if pm else 'am',
+                               'population': 'weekend_crypto_v1' if definition.get('variant') in {'weekend_crypto_v1', 'pm_weekend_crypto_v1', 'pm_weekend_crypto_recovery_v1'}
                                else 'after_hours' if definition.get('variant') == 'alpaca_after_hours_v1' else 'weekday',
-                               'variant': tier or (('alpaca_after_hours_v2' if definition.get('variant') else 'alpaca_open_entry_v2')
+                               'variant': tier or ((definition['variant'] if pm else 'alpaca_after_hours_v2' if definition.get('variant') else 'alpaca_open_entry_v2')
                                if name == 'ia_actions' else definition.get('variant', 'alpaca_open_entry_v1'))})
         candidates.sort(key=lambda l: (l['asset'], l['horizon']))
         total = sum((l['weight'] for l in candidates), D(0))
@@ -755,6 +814,8 @@ class PaperExecutor:
             scale = min(scale, max(D(0), decimal(LIMITS[name]['max_short_gross']) - short) / short_total)
         result = []
         for lot in candidates:
+            if collisions and lot['symbol'] in occupied:
+                continue
             cap = decimal(LIMITS[name].get('max_weight_per_name', LIMITS[name].get('max_weight_per_asset')))
             remaining = max(D(0), cap - weights.get(lot['symbol'], D(0)))
             weight = min(lot.pop('weight') * scale, remaining)
@@ -765,6 +826,7 @@ class PaperExecutor:
             lot['qty'] = str(qty * lot.pop('direction'))
             if qty:
                 result.append(lot)
+                occupied.add(lot['symbol'])
         return result
 
     def plans(self, name, lots, purpose):
@@ -790,13 +852,13 @@ class PaperExecutor:
             after = purpose == 'entry' and any(l.get('population') == 'after_hours' or l['variant'] in {'alpaca_after_hours_v1', 'alpaca_after_hours_v2'} for l in group)
             session = calendar_session(group[0]['session'] if after else at.astimezone(NY).date().isoformat())
             q = self.quotes.get(asset, at) if after else None
-            terms = order_terms(name, purpose, at, session, after_hours=after,
+            terms = order_terms(name, purpose, at, session, after_hours=after, pm=any(l.get('slot') == 'pm' for l in group),
                                 bid=q['bid'] if q else None, ask=q['ask'] if q else None, side=side)
             if after:
                 for lot in group:
                     lot['reference_price'] = str((decimal(q['bid']) + decimal(q['ask'])) / 2)
             plans.append({'client_id': key, 'run_id': run, 'purpose': purpose, 'lots': group,
-                          'spec_hash': SPEC_HASH, 'order': {'symbol': asset, 'qty': str(abs(net)), 'side': side,
+                          'spec_hash': slots.SPEC_HASH if any(l.get('slot') == 'pm' for l in group) else SPEC_HASH, 'order': {'symbol': asset, 'qty': str(abs(net)), 'side': side,
                                                          **terms, 'client_order_id': key}})
         return plans
 
@@ -813,6 +875,10 @@ class PaperExecutor:
         if dry_run:
             return
         at = self.clock()
+        pm = any(l.get('slot') == 'pm' for l in intent['lots'])
+        if pm:
+            self.grant.parent.check_slot('pm', at)
+            self.ledger.check_pm_registration()
         if intent['purpose'] in {'entry', 'exit'}:
             session_day = intent['lots'][0]['session'] if intent['purpose'] == 'entry' else instant(intent['at']).astimezone(NY).date().isoformat()
             session = calendar_session(session_day)
@@ -822,7 +888,7 @@ class PaperExecutor:
                     if at.astimezone(NY).date().isoformat() != session_day:
                         raise TraderError('PAPER_STALE_INTENT')
                     q = self.quotes.get(intent['order']['symbol'], at) if after else None
-                    terms = order_terms(name, intent['purpose'], at, session, after_hours=after,
+                    terms = order_terms(name, intent['purpose'], at, session, after_hours=after, pm=pm,
                         bid=q['bid'] if q else None, ask=q['ask'] if q else None, side=intent['order']['side'])
                     if intent['purpose'] == 'exit' and any(instant(l['exit_at']) > at + timedelta(minutes=5) for l in intent['lots']):
                         raise TraderError('PAPER_EXIT_BEFORE_HORIZON')
@@ -916,7 +982,9 @@ class PaperExecutor:
                 continue
             session = calendar_session(intent['lots'][0]['session'] if intent['purpose'] == 'entry'
                                        else instant(intent['at']).astimezone(NY).date().isoformat())
-            deadline = session.open_at + timedelta(minutes=5) if intent['purpose'] == 'entry' else session.close_at
+            deadline = (min(instant(intent['at']) + timedelta(minutes=5), session.close_at - timedelta(minutes=15))
+                        if intent['purpose'] == 'entry' and any(l.get('slot') == 'pm' for l in intent['lots']) else
+                        session.open_at + timedelta(minutes=5) if intent['purpose'] == 'entry' else session.close_at)
             if self.clock() < deadline:
                 continue
             order = client.lookup(key)
@@ -1135,11 +1203,13 @@ class PaperExecutor:
         latest = {(e['client_id'], e['lot_id']): e for e in outcomes}
         result['execution_outcomes'] = list(latest.values())
         result['execution_scores'] = execution_scores(self.ledger)
+        result['execution_scores_by_slot'] = {slot: execution_scores(self.ledger, slot=slot) for slot in ('am', 'pm')}
+        result['execution_scores_combined'] = result['execution_scores']
         from .execution_gaps import execution_gaps
         result['execution_gap_scores'] = execution_gaps(self.ledger, self.research, self.clock())
         result['downgrade_guard'] = next((a.get('downgrade_guard') for a in accounts if a['account'] == 'ia_actions'), None)
         result['limitations'] = ['After-hours paper fills in thin liquidity are optimistic.',
-                                'Crypto market entry follows the decision; its label uses the fixed 13:30Z anchor.',
+                                'Crypto market entry follows the decision; its label uses the registered am/pm anchor.',
                                 'DAY fills can differ from label open/close; marked risk caps remain enforced before entries.']
         returns = {s: b.get('return_since_paper_start') for s, b in result['benchmarks'].items()}
         result['versus'] = {a['account']: {s: str(decimal(a['return_since_paper_start']) - decimal(value)) if value is not None else None

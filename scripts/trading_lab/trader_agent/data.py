@@ -76,9 +76,11 @@ class PublicData:
             # Plain-text error pages (e.g. GDELT "The specified phrase is too short.") are not JSON.
             raise TraderError("SOURCE_NOT_JSON", digest) from None
 
-    def yahoo(self, asset, start, end):
+    def yahoo(self, asset, start, end, *, interval="1d"):
+        if interval not in {"1d", "5m"} or interval == "5m" and end - start > timedelta(days=30):
+            raise TraderError("UNAUTHORIZED_PRICE_INTERVAL")
         payload, source = self.fetch("yahoo_chart", chart_path(asset), {
-            "period1": int(start.timestamp()), "period2": int(end.timestamp()), "interval": "1d", "events": "div,split"})
+            "period1": int(start.timestamp()), "period2": int(end.timestamp()), "interval": interval, "events": "div,split"})
         parse_chart_meta(payload)
         rows = adapt_chart_rows(payload, instrument_id=asset)
         for row in rows:
@@ -229,14 +231,18 @@ def archived(root, kind, at):
         views.close()
 
 
-def build_context(grant, data, *, at, fomc=None, edgar=None, crypto_only=False):
+def build_context(grant, data, *, at, fomc=None, edgar=None, crypto_only=False, freeze_cutoff=False, label_anchor=None):
     start = at.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=70)
     crypto_assets = grant.payload["universe"]["crypto"]
     prices, sources, headlines, exclusions = {}, [], {}, []
     population = crypto_assets if crypto_only else grant.universe
     assets = population if crypto_only else population + grant.payload['universe']['benchmarks_not_predicted']
     for asset in assets:
-        _, last = label_window(asset, at.date().isoformat(), "5d", crypto_assets)
+        if freeze_cutoff:
+            from .slots import label_window as pm_window
+            _, last = pm_window(asset, at.date().isoformat(), "5d", crypto_assets, anchor=label_anchor)
+        else:
+            _, last = label_window(asset, at.date().isoformat(), "5d", crypto_assets)
         binding = None if data.synthetic else protected(asset, start, last)
         if binding:
             prices[asset] = {"asset": asset, "state": "PROTECTED", "protection_hash": binding}
@@ -275,7 +281,7 @@ def build_context(grant, data, *, at, fomc=None, edgar=None, crypto_only=False):
             if error.evidence:
                 headlines[asset]["evidence_digest"] = error.evidence
     # The decision clock is after every durable input acquisition. The price cut stays at run start.
-    decision_at = max([at] + [instant(s["received_at"]) for s in sources])
+    decision_at = at if freeze_cutoff else max([at] + [instant(s["received_at"]) for s in sources])
     context = {"schema": "trader-context-v1", "session": at.date().isoformat(), "decision_time": iso(decision_at),
                "price_cutoff": iso(at), "universe": eligible, "prices": prices, "headlines": headlines,
                "archives": {k: archived(root, k, decision_at) for k, root in

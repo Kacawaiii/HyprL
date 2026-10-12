@@ -15,6 +15,7 @@ from .portfolio import portfolios
 from .runners import HERE, prompt
 from .schemas import validate, validate_analyst, validate_reviewer
 from .scoring import rows
+from . import slots
 
 # Operator-approved same-day recovery (2026-10-06), extended 2026-10-07 ~12:45Z:
 # "on peut pas reprendre le run mtn on perd trop" authorizes recovery after FAILED even if models were called.
@@ -96,11 +97,19 @@ class TraderService:
         self.store = ResearchStore(ledger.root / "evidence")
         self.entry_at = "open"
         self.crypto_only = False
+        self.pm_anchor = None
+        self.pm_recovery = False
         self.news_builder = news_builder
+
+    def window(self, asset, day, horizon):
+        if self.ledger.slot == 'pm':
+            return slots.label_window(asset, day, horizon, self.ledger.grant.payload['universe']['crypto'], anchor=self.pm_anchor)
+        return label_window(asset, day, horizon, self.ledger.grant.payload['universe']['crypto'],
+                            'close' if self.entry_at == 'after_hours' else self.entry_at)
 
     def summary(self, run_id, status, at, **extra):
         payload = {"schema": "trader-run-v1", "run_id": run_id, "status": status, "at": iso(at),
-                   "synthetic": self.data.synthetic, **extra}
+                   "synthetic": self.data.synthetic, "slot": self.ledger.slot, **extra}
         # RUNNING/COMPLETE happen once per run; failures and skips can repeat (e.g. a refused catch-up), each kept.
         suffix = status if status in {"RUNNING", "COMPLETE", "DEGRADED"} else f"{status}:{iso(at)}"
         self.store.append("replay-summary", payload, object_id=run_id + ":" + suffix, recorded_at=iso(at))
@@ -134,17 +143,22 @@ class TraderService:
         MISSING; decide before close minus 80 minutes, enter at the close, and score CATCHUP_VARIANT separately."""
         if after_hours and not catchup:
             raise TraderError('AFTER_HOURS_REQUIRES_CATCHUP')
-        self.entry_at = 'after_hours' if after_hours else "close" if catchup else "open"
+        pm = self.ledger.slot == 'pm'
+        if pm and after_hours:
+            raise TraderError('PM_AFTER_HOURS_DISABLED')
+        self.entry_at = 'pm' if pm else 'after_hours' if after_hours else 'close' if catchup else 'open'
         with self.ledger.owner():
             at = self.clock()
             from zoneinfo import ZoneInfo
             day = (at.astimezone(ZoneInfo('America/New_York')) if after_hours else at).date().isoformat()
+            self.pm_recovery = pm and catchup
+            self.pm_anchor = None
             previous_budget_day = self.ledger.budget_day
             if after_hours:
                 self.ledger.budget_day = day
-            run_id = "trader:" + day + (":synthetic" if self.data.synthetic else ":real") + (":catchup" if catchup else "")
+            run_id = slots.run_id(day, self.data.synthetic, self.ledger.slot) + (':catchup' if catchup else '')
             try:
-                self.ledger.grant.check(at)
+                self.ledger.grant.check_slot(self.ledger.slot, at)
                 if not self.data.synthetic and at < instant(json.loads(ARTIFACT.read_text())['effective_from']):
                     return self.summary(run_id, 'NOT_STARTED', at)
                 if self.ledger.paused:
@@ -158,13 +172,22 @@ class TraderService:
                         return self.summary(run_id, "SKIPPED_HOLIDAY", at)
                     from . import weekend
                     weekend.check(self.ledger.grant, at)
-                    if catchup:
+                    if catchup and not pm:
                         raise TraderError('WEEKEND_CRYPTO_RECOVERY_DISABLED')
                     if at < instant(day + 'T12:00:00Z'):
                         return self.summary(run_id, 'NOT_STARTED', at)
-                deadline = session.open_at if session else instant(day + 'T13:30:00Z')
+                if pm and at < slots.start_at(day, 'pm'):
+                    return self.summary(run_id, 'NOT_STARTED', at)
+                if self.pm_recovery:
+                    self.pm_anchor = slots.recovery_anchor(day, at, self.crypto_only)
+                deadline = (self.pm_anchor or slots.deadline(day, self.crypto_only)) if pm else session.open_at if session else instant(day + 'T13:30:00Z')
                 degraded = {}
-                if catchup:
+                if catchup and pm:
+                    degraded = self.catchup_missing(run_id.removesuffix(':catchup'))
+                    cutoff = deadline
+                    if at >= deadline:
+                        raise TraderError('MISSED_DECISION_DEADLINE')
+                elif catchup:
                     degraded = self.catchup_missing(run_id.removesuffix(':catchup'))
                     from .alpaca_paper import after_hours_cutoff
                     cutoff = after_hours_cutoff(session) if after_hours else session.close_at - timedelta(minutes=80)
@@ -173,24 +196,24 @@ class TraderService:
                 elif at >= deadline:
                     raise TraderError("MISSED_DECISION_DEADLINE")
                 self.runner.deadline = cutoff if catchup else deadline
-                prereg_hash = weekend.preregistration() if self.crypto_only else preregistration()
+                prereg_hash = slots.preregistration() if pm else weekend.preregistration() if self.crypto_only else preregistration()
                 texts, hashes = skills()
                 self.ledger.reserve("catchup_run" if catchup else "run")
-                variants = weekend.variants() if self.crypto_only else VARIANTS
+                variants = list(slots.pinned('trader_agent_preregistration_v8.json', slots.PREREG_HASH)['variants']) if pm else weekend.variants() if self.crypto_only else VARIANTS
                 from .paper_spec import execution_spec, execution_preregistration
                 execution_registration = None
                 if at >= instant(execution_spec()['effective_from']):
-                    execution_registration = execution_preregistration()
+                    execution_registration = slots.preregistration() if pm else execution_preregistration()
                     variants = list(dict.fromkeys([*variants, *execution_spec()['variants']]))
                 self.summary(run_id, "RUNNING", at, preregistration_hash=prereg_hash, multiple_testing_variants=variants)
-                context, context_hash = build_context(self.ledger.grant, self.data, at=at, fomc=self.fomc,
-                                                      edgar=self.edgar, crypto_only=self.crypto_only)
-                if self.crypto_only:
+                context, context_hash = build_context(self.ledger.grant, self.data, at=slots.start_at(day, 'pm') if pm else at, fomc=self.fomc,
+                                                      edgar=self.edgar, crypto_only=self.crypto_only, freeze_cutoff=pm, label_anchor=self.pm_anchor)
+                if self.crypto_only and not pm:
                     context['label_convention'] = {'variant': weekend.VARIANT, 'entry': day + 'T13:30:00Z',
                         '1d_exit': 'entry + 24 hours', '5d_exit': 'entry + 120 hours',
                         'execution': 'market immediately after decision; actual entry differs from fixed label anchor'}
                     context_hash = sha256_canonical(context)
-                if catchup:   # equities only (crypto has no session close); the analysts are told when positions enter and exit
+                if catchup and not pm:   # equities only (crypto has no session close); the analysts are told when positions enter and exit
                     crypto_assets = self.ledger.grant.payload["universe"]["crypto"]
                     context = {**context, "universe": [a for a in context["universe"] if a not in crypto_assets],
                                "exclusions": context["exclusions"] + [{"asset": a, "reason": "CATCHUP_EQUITIES_ONLY"}
@@ -199,14 +222,18 @@ class TraderService:
                                "entry": "actual after-hours paper fill; unfilled is not traded" if after_hours else "today's session close",
                                "1d_exit": "close of the next session", "5d_exit": "close five sessions later"}}
                     context_hash = sha256_canonical(context)
-                self.store.append('replay-summary', {'schema':'trader-context-evidence-v1', 'run_id':run_id,
+                if pm:
+                    context['slot'] = 'pm'
+                    context['label_convention'] = slots.spec()['labels']
+                    context_hash = sha256_canonical(context)
+                self.store.append('replay-summary', {'schema':'trader-context-evidence-v1', 'run_id':run_id, 'slot':self.ledger.slot,
                     'context_hash':context_hash, 'context':context}, object_id=run_id + ':context',
-                    recorded_at=context['decision_time'])
+                    recorded_at=iso(self.clock()) if pm else context['decision_time'])
                 if context["exclusions"]:
                     self.ledger.alert("PARTIAL_CONTEXT")
                 context_at = instant(context["decision_time"])
                 self.freeze_news(run_id, context_at)
-                entry_deadline = cutoff if after_hours else min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
+                entry_deadline = cutoff if after_hours else min(self.window(a, day, '1d')[0]
                                      for a in context['universe'])
                 self.runner.deadline = min(self.runner.deadline, entry_deadline)
                 analysts, last = {}, None
@@ -233,10 +260,12 @@ class TraderService:
                 if decision_at >= self.runner.deadline:
                     raise TraderError("MISSED_DECISION_DEADLINE")
                 decision = {"schema": "trader-decision-v1", "run_id": run_id, "session": day,
-                    "decision_at": iso(decision_at), "context_hash": context_hash,
+                    "decision_at": iso(decision_at), "slot": self.ledger.slot, "context_hash": context_hash,
                     "authorization_hash": self.ledger.grant.identity, "preregistration_hash": prereg_hash,
                     **({'execution_preregistration_hash': execution_registration} if execution_registration else {}),
                     "skill_hashes": hashes, "synthetic": self.data.synthetic,
+                    **({"pm_amendment_hash": self.ledger.grant.pm_identity,
+                        **({"pm_label_anchor": iso(self.pm_anchor), "pm_recovery_started_at": iso(at)} if self.pm_recovery else {})} if pm else {}),
                     "models": {**{role: {"model": self.ledger.grant.gpt_model if role == "analyst_gpt" else
                                         self.ledger.grant.payload["external_models"][role]["model"],
                                         "cli_version": "NOT_RUN", "reported_version": "NOT_RUN"} for role in degraded},
@@ -297,7 +326,8 @@ class TraderService:
                 if r['payload'].get('schema') == 'trader-run-v1'
                 and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}
                 and r['payload'].get('synthetic') == self.data.synthetic
-                and r['payload']['at'][:10] == self.clock().date().isoformat()]
+                and r['payload']['at'][:10] == self.clock().date().isoformat()
+                and slots.slot_of(r['payload']) == self.ledger.slot]
             if not base_runs:
                 return {'state': 'SKIPPED_NO_BASE_RUN'}
             base = base_runs[-1]
@@ -305,7 +335,7 @@ class TraderService:
             def summary(status, **extra):
                 at = iso(self.clock())
                 payload = {'schema': 'trader-news-run-v1', 'run_id': run_id, 'base_run_id': base['run_id'],
-                    'arm': 'news', 'status': status, 'at': at, 'synthetic': self.data.synthetic, **extra}
+                    'arm': 'news', 'slot': self.ledger.slot, 'status': status, 'at': at, 'synthetic': self.data.synthetic, **extra}
                 self.store.append('replay-summary', payload,
                     object_id=run_id + ':' + status + (':' + at if status == 'FAILED' else ''), recorded_at=at)
                 return payload
@@ -331,20 +361,22 @@ class TraderService:
                 definition = next(r['payload']['signal']['label_definition'] for r in rows(self.store, 'prediction')
                                   if r['payload']['signal']['run_id'] == base['run_id'])
                 variant = definition.get('variant')
-                self.crypto_only = variant == 'weekend_crypto_v1'
-                self.entry_at = 'after_hours' if variant == AFTER_HOURS_VARIANT else 'close' if variant == CATCHUP_VARIANT else 'open'
+                self.crypto_only = variant in {'weekend_crypto_v1', 'pm_weekend_crypto_v1', 'pm_weekend_crypto_recovery_v1'}
+                self.pm_recovery = 'pm_label_anchor' in base['decision']
+                self.pm_anchor = instant(base['decision']['pm_label_anchor']) if self.pm_recovery else None
+                self.entry_at = 'pm' if self.ledger.slot == 'pm' else 'after_hours' if variant == AFTER_HOURS_VARIANT else 'close' if variant == CATCHUP_VARIANT else 'open'
                 day = base['decision']['session']
                 session = calendar_session(day)
                 if self.entry_at == 'after_hours':
                     from .alpaca_paper import after_hours_cutoff
                     deadline = after_hours_cutoff(session)
                 else:
-                    deadline = min(label_window(a, day, '1d', self.ledger.grant.payload['universe']['crypto'], self.entry_at)[0]
+                    deadline = min(self.window(a, day, '1d')[0]
                                    for a in context['universe'])
                 self.runner.deadline = deadline
                 texts, hashes = skills()
-                prereg_hash = news_spec.preregistration()
-                variants = list(news_spec.spec()['variants'].values())
+                prereg_hash = slots.preregistration() if self.ledger.slot == 'pm' else news_spec.preregistration()
+                variants = ['news_pm_slot_v1', 'news_pm_weekend_crypto_v1'] if self.ledger.slot == 'pm' else list(news_spec.spec()['variants'].values())
                 summary('RUNNING', preregistration_hash=prereg_hash, multiple_testing_variants=variants)
                 identity = sha256_canonical(context)
                 self.store.append('replay-summary', {'schema': 'trader-context-evidence-v1', 'run_id': run_id,
@@ -396,8 +428,7 @@ class TraderService:
         for view in decision["views"]:
             if view["verdict"] == "MISSING":
                 continue   # a failed analyst has no forecast: it stays visible in the decision, never predicted or scored
-            entry, exit_at = label_window(view["asset"], decision["session"], view["horizon"], crypto,
-                                          'close' if self.entry_at == 'after_hours' else self.entry_at)
+            entry, exit_at = self.window(view["asset"], decision["session"], view["horizon"])
             at = instant(decision["decision_at"])
             if self.entry_at == 'after_hours':
                 from .alpaca_paper import after_hours_cutoff
@@ -431,17 +462,21 @@ class TraderService:
             from .news_spec import spec as news_spec
             news_variant = news_spec()['variants']['weekend' if self.crypto_only else 'after_hours' if self.entry_at == 'after_hours'
                                                    else 'catchup' if self.entry_at == 'close' else 'weekday'] if news else None
+            pm_variant = slots.variant(self.crypto_only, self.pm_recovery)
+            if self.ledger.slot == 'pm' and news:
+                news_variant = 'news_' + pm_variant
             prediction = PredictionRecord(prediction_id=identity, model_id="trader:" + view["analyst"],
                 model_contract_hash=contract.identity, artifact_hash=decision["preregistration_hash"],
                 product=view["asset"], decision_at=decision["decision_at"], horizon_seconds=seconds,
                 snapshot_hash=sha256_canonical(snapshot), features_hash=sha256_canonical(features), event_ids=(),
                 outputs={"return": None, "target_price": None, "class": view["view"], "probabilities": {"outperform": probability},
                          "quantiles": None, "scenarios": None}, signal={"view": view, "session": decision["session"],
-                    "label_definition": {"entry_at": iso(entry), "exit_at": iso(exit_at), "horizon": view["horizon"],
+                    "slot": self.ledger.slot, "label_definition": {"entry_at": iso(entry), "exit_at": iso(exit_at), "horizon": view["horizon"],
                                          "targets": ["raw", "SPY_relative"] if view["asset"] not in crypto else ["raw"],
                                          **({"entry_price": "alpaca_actual_fill", "variant": AFTER_HOURS_VARIANT} if self.entry_at == 'after_hours'
                                             else {"entry_price": "close", "variant": CATCHUP_VARIANT} if self.entry_at == "close"
                                             else {'variant': 'weekend_crypto_v1'} if self.crypto_only else {}),
+                                         **({'variant': pm_variant, **({'entry_price': 'intraday_5m_open'} if view['asset'] not in crypto else {})} if self.ledger.slot == 'pm' else {}),
                                          **({'variant': news_variant} if news else {})},
                     **({'arm': 'news', 'base_run_id': decision['base_run_id'],
                         'frozen_decision_time': context['decision_time']} if news else {}),

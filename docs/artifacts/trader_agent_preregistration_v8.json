@@ -1,0 +1,24 @@
+{
+  "schema": "trader-agent-preregistration-v8",
+  "revision": 11,
+  "registered_on": "2026-10-12",
+  "effective_from": "2026-10-13T16:00:00Z",
+  "previous_execution_preregistration_hash": "bcee03f1f9136c72bc2663a653b3ecd9e6f4d5454c4f7ce7957fc21c95271c65",
+  "pm_slot_spec_hash": "3866c2cfffac99991312044c088ff478ede0c8e53e2d0d43e09e2fffaa2e6c30",
+  "execution_spec_hash": "92b00b05a4971f64bdea39f723c95ecbd28f4468592a908fd16f79ccccaa5cc6",
+  "operator_decision_hash": "530c2d6a5d6e9e3b16cda77ad3060ffb8b827a7c269eec17ce4439495d8439a3",
+  "amendment_hash": "0f0ae85b2becb7e95c5237250215c6c5ec106cef5d260a92c479210ba9f6f61e",
+  "scope": "Separate pm slot and collision policy; immutable am predictions and label conventions retained.",
+  "confirmatory": false,
+  "variants": [
+    "pm_slot_v1",
+    "pm_weekend_crypto_v1",
+    "news_pm_slot_v1",
+    "news_pm_weekend_crypto_v1",
+    "pm_slot_recovery_v1",
+    "pm_weekend_crypto_recovery_v1",
+    "news_pm_slot_recovery_v1",
+    "news_pm_weekend_crypto_recovery_v1"
+  ],
+  "canonical_sha256": "eef176adfdd071c3bc1edb7f73439bf9e4b5c414afa8d24279e7599d884c75bb"
+}

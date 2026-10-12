@@ -55,6 +55,14 @@ def repair_missing_executions(store):
 
 
 def realize(store, ledger, data, *, at=None):
+    previous_slot = ledger.slot
+    try:
+        return _realize(store, ledger, data, at=at)
+    finally:
+        ledger.slot = previous_slot
+
+
+def _realize(store, ledger, data, *, at=None):
     at = at or now()
     with ledger.owner():
         ledger.grant.check(at)
@@ -66,6 +74,7 @@ def realize(store, ledger, data, *, at=None):
         cache, realized, pending = {}, 0, 0
         for row in predictions:
             p = PredictionRecord.from_dict(row["payload"])
+            ledger.slot = p.signal.get("slot", "am")
             definition = p.signal["label_definition"]
             if definition.get('entry_price') == 'alpaca_actual_fill':
                 # Broker outcomes use actual fills and remain in the paper execution journal.
@@ -94,19 +103,23 @@ def realize(store, ledger, data, *, at=None):
                     raw, relative, spy_return = prices[1] / prices[0] - 1, None, None
                 else:
                     prices, sources = {}, []
+                    intraday = definition.get("entry_price") == "intraday_5m_open"
                     for asset in (p.product, "SPY"):
-                        if asset not in cache:
+                        key = (asset, ledger.slot, "5m" if intraday else "1d")
+                        if key not in cache:
                             relevant = [instant(r["payload"]["signal"]["label_definition"]["entry_at"]) for r in predictions
-                                        if r["payload"]["product"] == asset or asset == "SPY"]
+                                        if (r["payload"]["product"] == asset or asset == "SPY")
+                                        and r["payload"]["signal"].get("slot", "am") == ledger.slot]
                             first = min(relevant) - timedelta(days=1)
                             if not data.synthetic and protected(asset, first, at):
                                 raise TraderError("PROTECTED_LABEL")
-                            cache[asset] = data.yahoo(asset, first, at)
-                        bars, source = cache[asset]
+                            cache[key] = data.yahoo(asset, first, at, **({"interval": "5m"} if intraday else {}))
+                        bars, source = cache[key]
                         sources.append(source)
                         close_entry = definition.get("entry_price") == "close"
                         opening = [b for b in bars if (b["bar_open_at"].date() == entry.date() if close_entry else b["bar_open_at"] == entry)]
-                        closing = [b for b in bars if b["bar_open_at"].date() == exit_at.date()]
+                        closing = [b for b in bars if (b["bar_open_at"] == exit_at - timedelta(minutes=5) if intraday
+                                                     else b["bar_open_at"].date() == exit_at.date())]
                         session = calendar_session(exit_at.date().isoformat())
                         if len(opening) != 1 or len(closing) != 1 or session.close_at != exit_at:
                             raise TraderError("MISSING_LABEL_PRICES")
@@ -129,7 +142,7 @@ def realize(store, ledger, data, *, at=None):
                 label = LabelRecord(label_id=p.prediction_id + ":label", prediction_id=p.prediction_id,
                     prediction_hash=p.identity, product=p.product, horizon_seconds=p.horizon_seconds,
                     realized_at=iso(exit_at), available_at=iso(available), recorded_at=iso(recorded),
-                    target="trader_open_to_endpoint_v1", value=value, provenance={"sources": sources, "definition": dict(definition)},
+                    target="trader_pm_anchor_to_endpoint_v1" if ledger.slot == "pm" else "trader_open_to_endpoint_v1", value=value, provenance={"sources": sources, "definition": dict(definition)},
                     version="1")
                 # Label and shadow execution are recorded in one transaction (both or neither).
                 store.append_label_and_execution(label, shadow_execution(p, entry=iso(entry), available=iso(available),
@@ -183,12 +196,18 @@ def scorecard(store, *, synthetic=False, include_samples=False):
     labels = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "label")}
     inputs = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "inputs")}
     samples, issued, cohort_views = defaultdict(list), defaultdict(int), defaultdict(list)
+    slot_samples, slot_issued = defaultdict(list), defaultdict(int)
     predictions = [r for r in rows(store, "prediction") if r["payload"]["synthetic"] == synthetic]
     # Climatology uses only earlier, already observed asset/horizon outcomes at each decision.
     historical = defaultdict(list)
     for row in predictions:
         p = row["payload"]
         view, definition = p["signal"]["view"], p["signal"]["label_definition"]
+        slot = p["signal"].get("slot", "am")
+        arm_prefix = "news:" if p["signal"].get("arm") == "news" else ""
+        def aggregate_key(key):
+            group, remainder = key.split("/", 1)
+            return arm_prefix + group.split(":")[-1] + "/" + remainder
         population = "crypto" if p["product"] in CRYPTO_PRODUCTS else "equity_etf"
         horizon = definition["horizon"]
         groups = [view["analyst"]]
@@ -207,24 +226,32 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             keys += [f"{g}/{population}/{horizon}/{target}" for g in baselines]
             for key in keys:
                 issued[key] += 1
+                for bucket in (slot, "combined"):
+                    slot_issued[(bucket, aggregate_key(key))] += 1
             if row["identity"] not in labels:
                 continue
             label = labels[row["identity"]]
             value = label["value"]
             r = value["raw_return"] if target == "raw" else value["spy_relative_return"]
             # Preserve existing weekday climatology; the new population has its own history.
-            history_key = (population, horizon, target, 'weekend_crypto' in (variant or ''), p['signal'].get('arm', 'base'))
+            history_key = (population, horizon, target, 'weekend_crypto' in (variant or ''), p['signal'].get('arm', 'base'), slot)
             prior = [v for a, v in historical[history_key] if a < p["decision_at"]]
             climate = statistics.mean(prior) if prior else .5
             sample = {"p": view["p_outperform"], "view": view["view"], "y": int(r > 0), "return": r,
                       "pnl": value["net_unit_pnl"], "session": p["signal"]["session"], "climatology": climate}
             for group in groups:
-                samples[f"{group}/{population}/{horizon}/{target}"].append(sample)
+                key = f"{group}/{population}/{horizon}/{target}"
+                samples[key].append(sample)
+                for bucket in (slot, "combined"):
+                    slot_samples[(bucket, aggregate_key(key))].append(sample)
             for group, probability in baselines.items():
                 sign = 1 if probability > .5 else -1 if probability < .5 else 0
                 baseline = {**sample, "p": probability, "view": "UP" if sign > 0 else "DOWN" if sign < 0 else "ABSTAIN",
                             "pnl": sign * value["raw_return"] - value["cost_roundtrip"] if sign else 0}
-                samples[f"{group}/{population}/{horizon}/{target}"].append(baseline)
+                key = f"{group}/{population}/{horizon}/{target}"
+                samples[key].append(baseline)
+                for bucket in (slot, "combined"):
+                    slot_samples[(bucket, aggregate_key(key))].append(baseline)
             if view["analyst"] == "consensus":
                 historical[history_key].append((label["recorded_at"], int(r > 0)))
     scores = {key: metrics(samples[key], count) for key, count in sorted(issued.items())}
@@ -268,6 +295,15 @@ def scorecard(store, *, synthetic=False, include_samples=False):
                             "Climatology prequential from earlier observed consensus asset-days, initial 0.50",
                             "Fixed modeled equity half-spread 2.5bp each side; not measured spread",
                             "No LLM backtest on pre-cutoff outcomes; no calibration or edge claim"]}
+    def bucket(name):
+        selected = [r for r in predictions if name == 'combined' or r['payload']['signal'].get('slot', 'am') == name]
+        return {'issued_predictions': len(selected),
+                'realized_predictions': sum(r['identity'] in labels for r in selected),
+                'scores': {key: metrics(slot_samples[(name, key)], count)
+                           for (slot_name, key), count in sorted(slot_issued.items()) if slot_name == name},
+                'hypothesis_state': 'DESCRIPTIVE_ONLY'}
+    card['by_slot'] = {name: bucket(name) for name in ('am', 'pm')}
+    card['combined'] = bucket('combined')
     if include_samples:
         card['_primary_samples'] = samples['consensus/equity_etf/5d/SPY_relative']
     from .news_scoring import comparison

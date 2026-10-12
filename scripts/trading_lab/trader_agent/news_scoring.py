@@ -16,13 +16,17 @@ def comparison(predictions, labels, summaries, metric):
         p = row['payload']
         signal = p['signal']
         arm = 'news' if signal.get('arm') == 'news' else 'base'
-        if (arm == 'news' and (signal['run_id'] not in complete or p['artifact_hash'] != PREREG_HASH)
+        from .slots import PREREG_HASH as pm_hash
+        expected = pm_hash if signal.get('slot') == 'pm' else PREREG_HASH
+        if (arm == 'news' and (signal['run_id'] not in complete or p['artifact_hash'] != expected)
                 or arm == 'base' and signal['run_id'] not in base_ids):
             continue
         definition, view = signal['label_definition'], signal['view']
         variant = definition.get('variant', '')
         population = ('weekend_crypto' if 'weekend_crypto' in variant else
                       'after_hours' if 'after_hours' in variant else 'catchup' if 'catchup' in variant else 'weekday')
+        if signal.get('slot') == 'pm':
+            population = 'pm_' + population
         target = 'raw' if p['product'] in CRYPTO_PRODUCTS else 'SPY_relative'
         key = (population, 'crypto' if target == 'raw' else 'equity_etf', definition['horizon'], target, view['analyst'])
         issued[(key, arm)] += 1
