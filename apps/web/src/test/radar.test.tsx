@@ -29,6 +29,14 @@ async function firstArticle(): Promise<HTMLElement> {
   return articles[0] as HTMLElement;
 }
 
+/** Beginner: the list shows one line per news; the full card opens in a side drawer. */
+async function openFirstNews(): Promise<HTMLElement> {
+  const list = await screen.findByRole('list', { name: 'Actualités classées' });
+  await userEvent.click(within(list).getAllByRole('button')[0] as HTMLElement);
+  const dialog = await screen.findByRole('dialog');
+  return within(dialog).getByRole('article');
+}
+
 function renderAt(url: string) {
   return render(<MemoryRouter initialEntries={[url]}><App /></MemoryRouter>);
 }
@@ -39,8 +47,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('radar home', () => {
   beforeEach(() => vi.stubGlobal('fetch', mock({ '/api/v1/radar/home': radarHome })));
 
-  it('is the index route and ranks events by importance', async () => {
-    renderAt('/');
+  it('ranks events by importance in Expert mode', async () => {
+    renderAt('/radar?mode=expert');
     const articles = await screen.findAllByRole('article');
     expect(articles).toHaveLength(2);
     expect(within(articles[0] as HTMLElement).getByRole('heading', { name: 'Synthetic oil supply shock' })).toBeInTheDocument();
@@ -48,9 +56,20 @@ describe('radar home', () => {
     expect(within(articles[1] as HTMLElement).getByLabelText('Rank 2')).toBeInTheDocument();
   });
 
+  it('lists one line per news in Beginner mode and keeps the chain out of the list', async () => {
+    renderAt('/radar');
+    const list = await screen.findByRole('list', { name: 'Actualités classées' });
+    const lines = within(list).getAllByRole('button');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]?.textContent).toContain('Synthetic oil supply shock');
+    expect(lines[0]?.textContent).toContain('82');
+    expect(within(list).queryByText('Fait sourcé')).not.toBeInTheDocument();
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  });
+
   it('shows five separate score badges, never one merged number', async () => {
-    renderAt('/');
-    const first = await firstArticle();
+    renderAt('/radar');
+    const first = await openFirstNews();
     const scores = within(first).getByLabelText(/five separate measures/i);
     for (const name of ['Event importance', 'Evidence strength', 'Model conviction', 'Predictive quality', 'After-cost performance']) {
       expect(within(scores).getByText(name)).toBeInTheDocument();
@@ -61,8 +80,8 @@ describe('radar home', () => {
   });
 
   it('beginner reads watch, why, how long, risk, result', async () => {
-    renderAt('/');
-    const first = await firstArticle();
+    renderAt('/radar');
+    const first = await openFirstNews();
     for (const label of ['What to watch', 'Why', 'For how long', 'Risk', 'Result']) {
       expect(within(first).getByText(label)).toBeInTheDocument();
     }
@@ -71,7 +90,7 @@ describe('radar home', () => {
   });
 
   it('expert adds provenance, availability and run identity on the same data', async () => {
-    renderAt('/?mode=expert');
+    renderAt('/radar?mode=expert');
     const first = await firstArticle();
     expect(within(first).getByText('Provenance and availability')).toBeInTheDocument();
     expect(within(first).getByText('Available at T')).toBeInTheDocument();
@@ -81,8 +100,8 @@ describe('radar home', () => {
   });
 
   it('lists each model per concerned asset with its probability, review and the evolution across runs', async () => {
-    renderAt('/');
-    const first = await firstArticle();
+    renderAt('/radar');
+    const first = await openFirstNews();
     const table = within(first).getByRole('table', { name: /1d horizon/ });
     const rows = within(table).getAllByRole('row');
     expect(within(rows[1] as HTMLElement).getByText('Claude')).toBeInTheDocument();
@@ -92,8 +111,8 @@ describe('radar home', () => {
   });
 
   it('says plainly when no model covers an asset and when an outcome is realised', async () => {
-    renderAt('/');
-    const first = await firstArticle();
+    renderAt('/radar');
+    const first = await openFirstNews();
     expect(within(first).getByText(/No model run covers this asset/)).toBeInTheDocument();
     const outcome = within(first).getByRole('table', { name: 'Realised outcomes' });
     expect(within(outcome).getByText('+1.00 %')).toBeInTheDocument();
@@ -101,20 +120,32 @@ describe('radar home', () => {
   });
 
   it('filters to events whose assets a model covers', async () => {
-    renderAt('/');
-    await screen.findAllByRole('article');
-    await userEvent.click(screen.getByLabelText(/only events whose assets a model covers/i));
-    await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(1));
+    renderAt('/radar');
+    await screen.findByRole('list', { name: 'Actualités classées' });
+    await userEvent.click(screen.getByLabelText(/actifs suivis par les IA/i));
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Actualités classées' })).getAllByRole('button')).toHaveLength(1));
+  });
+
+  it('closes the drawer with Escape and gives focus back to the line', async () => {
+    renderAt('/radar');
+    const list = await screen.findByRole('list', { name: 'Actualités classées' });
+    const line = within(list).getAllByRole('button')[0] as HTMLElement;
+    await userEvent.click(line);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(line);
   });
 
   it('keeps links to the other pages carrying the selection', async () => {
-    renderAt('/?mode=expert');
+    renderAt('/radar?mode=expert');
     const nav = await screen.findByRole('navigation', { name: 'Go deeper' });
     expect(within(nav).getByRole('link', { name: 'Paper accounts' })).toHaveAttribute('href', '/paper?mode=expert');
   });
 
   it('opens headline links in a new context without leaking the referrer', async () => {
-    renderAt('/');
+    renderAt('/radar');
+    await openFirstNews();
     const link = await screen.findByRole('link', { name: 'Synthetic oil supply shock' });
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
     expect(link).toHaveAttribute('target', '_blank');
@@ -124,15 +155,22 @@ describe('radar home', () => {
     vi.stubGlobal('fetch', mock({ '/api/v1/overview': new Error('x') }));
     renderAt('/overview');
     expect(await screen.findByRole('alert')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Radar/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Actualités/ })).toBeInTheDocument();
   });
 });
 
 describe('radar home without a snapshot', () => {
   it('explains how to publish one instead of failing', async () => {
     vi.stubGlobal('fetch', mock({ '/api/v1/radar/home': new Error('radar snapshot unavailable') }));
-    renderAt('/');
+    renderAt('/radar');
     expect(await screen.findByText('No radar snapshot is published yet')).toBeInTheDocument();
+  });
+
+  it('keeps the home usable and says the summary is not published', async () => {
+    vi.stubGlobal('fetch', mock({ '/api/v1/radar/home': new Error('radar snapshot unavailable') }));
+    renderAt('/');
+    expect(await screen.findByText('Le résumé du jour n’est pas encore publié')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Système/ })).toBeInTheDocument();
   });
 });
 
@@ -160,9 +198,12 @@ describe('paper accounts', () => {
     expect(within(btc as HTMLElement).getByText('no policy')).toBeInTheDocument();
   });
 
-  it('charts equity against SPY and BTC and lists the journal with reasons', async () => {
+  it('charts equity against SPY and BTC and lists the journal with reasons, one tab at a time', async () => {
     renderAt('/paper');
+    await userEvent.click(await screen.findByRole('tab', { name: 'Courbe' }));
     expect(await screen.findByRole('img', { name: /re-based to 100 against SPY and BTC/ })).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'Claude book' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Journal' }));
     const journal = screen.getByRole('list', { name: 'Trade journal' });
     expect(within(journal).getByText('BAT breaks its 20-day high')).toBeInTheDocument();
     expect(within(journal).getByText(/Invalidation: stop/)).toBeInTheDocument();

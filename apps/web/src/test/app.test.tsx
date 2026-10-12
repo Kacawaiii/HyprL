@@ -5,7 +5,7 @@
  * that break on every copy change. The most important ones check that the UI
  * displays backend values verbatim and never derives a trading decision.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -117,12 +117,32 @@ afterEach(() => {
 });
 
 describe('app shell', () => {
-  it('renders the brand and every section link', async () => {
+  it('renders the brand and the five beginner sections, without the July lab', async () => {
     renderAt('/');
     expect(screen.getByText('HyprL')).toBeInTheDocument();
-    for (const label of ['Overview', 'Markets', 'Signals', 'Risk', 'Research', 'System']) {
+    const nav = screen.getByRole('navigation', { name: 'Sections' });
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent))
+      .toEqual(['◉Aujourd’hui', '◌Actualités', '◐Comptes', '◎IA', '⚙Système']);
+    expect(screen.queryByRole('button', { name: 'Archives (labo de juillet)' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'API docs' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('folds the July lab pages under one collapsed group in Expert mode', async () => {
+    renderAt('/?mode=expert');
+    const toggle = screen.getByRole('button', { name: 'Archives (labo de juillet)' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('link', { name: 'Markets' })).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    for (const label of ['Overview', 'Markets', 'Signals', 'Risk', 'Research', 'Lab']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     }
+  });
+
+  it('opens the archive group by itself on an archived page', async () => {
+    renderAt('/markets?mode=expert');
+    expect(screen.getByRole('button', { name: 'Archives (labo de juillet)' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Markets' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('exposes the navigation toggle to assistive technology', async () => {
@@ -145,7 +165,7 @@ describe('app shell', () => {
     renderAt('/overview');
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     // navigation survives a failed data request
-    expect(screen.getByRole('link', { name: 'Markets' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Système' })).toBeInTheDocument();
   });
 });
 
@@ -247,7 +267,7 @@ describe('research', () => {
 
 describe('system', () => {
   it('shows the engine hashes and reserved holdout', async () => {
-    renderAt('/system');
+    renderAt('/system?mode=expert');
     expect(await screen.findByText('Market corpus')).toBeInTheDocument();
     expect(screen.getByText('coinbase_history_v1')).toBeInTheDocument();
     expect(screen.getByText('2026-09-01 → 2026-11-30')).toBeInTheDocument();
@@ -255,7 +275,7 @@ describe('system', () => {
   });
 
   it('never renders a filesystem path or hostname', async () => {
-    const { container } = renderAt('/system');
+    const { container } = renderAt('/system?mode=expert');
     await screen.findByText('Market corpus');
     expect(container.textContent).not.toMatch(/\/home\//);
     expect(container.textContent).not.toMatch(/localhost:\d/);
@@ -304,7 +324,7 @@ describe('Backtests', () => {
 
 describe('Paper', () => {
   it('says shadow mode and no real money before any number', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     expect(await screen.findByText('SHADOW MODE')).toBeInTheDocument();
     expect(screen.getByText('NO REAL MONEY')).toBeInTheDocument();
     expect(screen.getByText('SHARED CAPITAL')).toBeInTheDocument();
@@ -313,7 +333,7 @@ describe('Paper', () => {
   });
 
   it('offers no way to place or override a trade', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('SHADOW MODE');
     const buttons = screen.queryAllByRole('button');
     for (const button of buttons) {
@@ -325,14 +345,14 @@ describe('Paper', () => {
   });
 
   it('shows the reserved holdout as unobserved', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('SHADOW MODE');
     expect(screen.getByText('UNOBSERVED')).toBeInTheDocument();
     expect(screen.getByText('2026-09-01 → 2026-11-30')).toBeInTheDocument();
   });
 
   it('states the paper fill latency instead of hiding it', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('SHADOW MODE');
     expect(
       screen.getByText('recorded-when-the-fill-bar-closes-v1'),
@@ -340,7 +360,7 @@ describe('Paper', () => {
   });
 
   it('shows one shared cash ledger and one equity', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('Shared paper portfolio');
     expect(screen.getByText('99,872.55')).toBeInTheDocument();   // equity
     expect(screen.getByText('74,981.22')).toBeInTheDocument();   // shared cash
@@ -348,7 +368,7 @@ describe('Paper', () => {
   });
 
   it('renders one card per instrument from backend state', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('Shared paper portfolio');
     expect(screen.getByText('coinbase:BTC-USD')).toBeInTheDocument();
     expect(screen.getByText('coinbase:ETH-USD')).toBeInTheDocument();
@@ -358,7 +378,7 @@ describe('Paper', () => {
   it('says a batch is waiting rather than implying a trade happened', async () => {
     /* The runtime routinely holds one instrument's target while the other is
        outstanding, and a target exposure reads like a position. */
-    renderAt('/paper', {
+    renderAt('/paper?mode=expert', {
       '/api/v1/paper/portfolio/pending': fixtures.paperPortfolioPendingWaiting,
     });
     expect(
@@ -371,7 +391,7 @@ describe('Paper', () => {
   });
 
   it('says no batch is open when nothing is pending', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     expect(
       await screen.findByText(/No batch is open/),
     ).toBeInTheDocument();
@@ -379,7 +399,7 @@ describe('Paper', () => {
   });
 
   it('tells the reader the cockpit cannot start a session', async () => {
-    renderAt('/paper', { '/api/v1/paper/portfolio': fixtures.paperPortfolioEmpty });
+    renderAt('/paper?mode=expert', { '/api/v1/paper/portfolio': fixtures.paperPortfolioEmpty });
     expect(
       await screen.findByText('No shared portfolio session recorded'),
     ).toBeInTheDocument();
@@ -387,7 +407,7 @@ describe('Paper', () => {
   });
 
   it('keeps the legacy per-product sessions apart and never sums them', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('Shared paper portfolio');
     expect(screen.getByText('PRE-SHARED-PORTFOLIO')).toBeInTheDocument();
     expect(
@@ -398,13 +418,13 @@ describe('Paper', () => {
   });
 
   it('reports the portfolio event chain as verified', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('Shared paper portfolio');
     expect(screen.getByText('VERIFIED')).toBeInTheDocument();
   });
 
   it('shows the gross cap and allocation rule of the frozen spec', async () => {
-    renderAt('/paper');
+    renderAt('/paper?mode=expert');
     await screen.findByText('Shared paper portfolio');
     expect(
       screen.getByText(/proportional-gross-cap-v1/),
@@ -417,14 +437,14 @@ describe('Paper', () => {
 
 describe('system operations', () => {
   it('reports a healthy startup without alarming the user', async () => {
-    renderAt('/system');
+    renderAt('/system?mode=expert');
     expect(await screen.findByText('HEALTHY STARTUP')).toBeInTheDocument();
     expect(screen.queryByText(/RECOVERED AFTER UNCLEAN SHUTDOWN/)).toBeNull();
     expect(screen.getAllByText('VERIFIED').length).toBe(2);
   });
 
   it('states an unclean restart calmly once the chain still verifies', async () => {
-    renderAt('/system', {
+    renderAt('/system?mode=expert', {
       '/api/v1/ops/recovery': fixtures.opsRecoveryUnclean,
     });
     expect(
@@ -435,7 +455,7 @@ describe('system operations', () => {
   });
 
   it('surfaces a broken event chain as a product error with a next step', async () => {
-    renderAt('/system', { '/api/v1/ops/recovery': fixtures.opsRecoveryBroken });
+    renderAt('/system?mode=expert', { '/api/v1/ops/recovery': fixtures.opsRecoveryBroken });
     expect(await screen.findByText('PAPER_EVENT_CHAIN_INVALID')).toBeInTheDocument();
     expect(screen.getByText('INVALID')).toBeInTheDocument();
     expect(screen.getByText(/Do not delete the log/)).toBeInTheDocument();
@@ -444,7 +464,7 @@ describe('system operations', () => {
   });
 
   it('shows runtime storage in human units and states the retention rule', async () => {
-    renderAt('/system');
+    renderAt('/system?mode=expert');
     expect(await screen.findByText('Runtime storage')).toBeInTheDocument();
     expect(screen.getByText('4.9 MiB')).toBeInTheDocument();
     expect(
@@ -453,13 +473,13 @@ describe('system operations', () => {
   });
 
   it('shows snapshot pressure per product', async () => {
-    renderAt('/system');
+    renderAt('/system?mode=expert');
     expect(await screen.findByText('Snapshots')).toBeInTheDocument();
     expect(screen.getByText(/198 events since last/)).toBeInTheDocument();
   });
 
   it('paints an active embargo amber rather than red', async () => {
-    renderAt('/system');
+    renderAt('/system?mode=expert');
     expect(await screen.findByText('EMBARGOED')).toBeInTheDocument();
     const badge = screen.getByText('EMBARGOED');
     expect(badge.getAttribute('data-tone')).toBe('warn');
@@ -468,14 +488,14 @@ describe('system operations', () => {
   });
 
   it('keeps declaring the holdout unobserved and trading disabled', async () => {
-    renderAt('/system');
+    renderAt('/system?mode=expert');
     expect(await screen.findByText('UNOBSERVED')).toBeInTheDocument();
     expect(screen.getByText('NOT CONNECTED')).toBeInTheDocument();
     expect(screen.getByText('NO')).toBeInTheDocument();
   });
 
   it('never renders an absolute path or a process id-bearing path', async () => {
-    const { container } = renderAt('/system');
+    const { container } = renderAt('/system?mode=expert');
     await screen.findByText('Runtime storage');
     expect(container.textContent).not.toMatch(/\/home\//);
     expect(container.textContent).not.toMatch(/\/var\/trading_lab/);
@@ -538,7 +558,7 @@ describe('settings', () => {
 
 describe('startup behaviour', () => {
   it('stays usable when the operations endpoints fail', async () => {
-    renderAt('/system', {
+    renderAt('/system?mode=expert', {
       '/api/v1/ops/runtime': new Error('ops unavailable'),
       '/api/v1/ops/storage': new Error('ops unavailable'),
       '/api/v1/ops/health-history': new Error('ops unavailable'),
@@ -560,7 +580,7 @@ describe('startup behaviour', () => {
       </MemoryRouter>,
     );
     // navigation is available before any request resolves
-    expect(screen.getByRole('link', { name: /Overview/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Aujourd’hui/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
   });
 });
@@ -621,10 +641,10 @@ describe('instruments', () => {
     // still labelled as market data, because that is all a market-data key
     // buys. Both providers appear: one per instrument panel on the page.
     expect(await screen.findByText('KEYED MARKET DATA')).toBeInTheDocument();
-    // No badge claiming live trading. The shell's "No live trading"
-    // disclaimer is the opposite claim and must stay.
+    // No badge claiming live trading. The shell's paper-only disclaimer
+    // is the opposite claim and must stay.
     expect(screen.queryByText('LIVE TRADING')).toBeNull();
-    expect(screen.getByText('No live trading')).toBeInTheDocument();
+    expect(screen.getByText('Comptes papier, pas d’argent réel')).toBeInTheDocument();
     expect(screen.getAllByText(/no ticks/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/no order book/).length).toBeGreaterThan(0);
     // Every provider panel denies holding account data, keyed or not.
@@ -762,8 +782,9 @@ describe('identity boundaries', () => {
 });
 
 describe('portfolio', () => {
-  it('is reachable from the sidebar', async () => {
-    renderAt('/');
+  it('is reachable from the sidebar archives in Expert mode', async () => {
+    renderAt('/?mode=expert');
+    await userEvent.click(screen.getByRole('button', { name: 'Archives (labo de juillet)' }));
     expect(await screen.findByRole('link', { name: /Portfolio/ })).toBeInTheDocument();
   });
 
@@ -812,7 +833,7 @@ describe('portfolio', () => {
   it('stays usable when the portfolio endpoints fail', async () => {
     renderAt('/portfolio', { '/api/v1/portfolio': new Error('portfolio down') });
     expect(await screen.findByText('Could not load')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Overview/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Système/ })).toBeInTheDocument();
   });
 });
 

@@ -1,7 +1,7 @@
 /** The cockpit frame: sidebar, topbar, scrolling content.
  *  It stays usable when a request fails -- navigation must never depend on data. */
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useSearchParams } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useQuery } from '../state/useQuery';
 import { PerfOverlay } from '../components/PerfOverlay';
@@ -10,25 +10,30 @@ import type { ThemePreference } from '../lib/theme';
 import { carrySelection, parseSelection, writeSelection } from '../lib/cockpit';
 import type { Mode } from '../lib/cockpit';
 
+// Five entries a beginner needs. The July lab study (BTC/ETH research cockpit) is kept, but only in Expert mode and
+// folded under one group so its frozen prices are never mistaken for today's market.
 const NAV = [
-  { to: '/', label: 'Radar', icon: '◌', end: true },
-  { to: '/events', label: 'Events', icon: '◆' },
+  { to: '/', label: 'Aujourd’hui', icon: '◉', end: true },
+  { to: '/radar', label: 'Actualités', icon: '◌', also: ['/events'] },
+  { to: '/paper', label: 'Comptes', icon: '◐' },
+  { to: '/trader', label: 'IA', icon: '◎', also: ['/news-value'] },
+  { to: '/system', label: 'Système', icon: '⚙' },
+];
+const ARCHIVES = [
   { to: '/cockpit', label: 'Cockpit', icon: '◉' },
   { to: '/overview', label: 'Overview', icon: '◫' },
   { to: '/markets', label: 'Markets', icon: '◪' },
-  { to: '/news-value', label: 'L’actualité aide ?', icon: '◍' },
   { to: '/signals', label: 'Signals', icon: '⌁' },
   { to: '/risk', label: 'Risk', icon: '⚖' },
   { to: '/policies', label: 'Calibration / TP / SL', icon: '◇' },
-  { to: '/paper', label: 'Paper', icon: '◐' },
   { to: '/backtests', label: 'Backtests', icon: '◷' },
   { to: '/portfolio', label: 'Portfolio', icon: '◈' },
   { to: '/research', label: 'Research', icon: '⌕' },
   { to: '/lab', label: 'Lab', icon: '⚗' },
-  { to: '/trader', label: 'Agent trader', icon: '◎' },
-  { to: '/system', label: 'System', icon: '⚙' },
-  { to: '/api-docs', label: 'API docs', icon: '❯' },
-  { to: '/settings', label: 'Settings', icon: '⚒' },
+];
+const FOOTER = [
+  { to: '/api-docs', label: 'API docs' },
+  { to: '/settings', label: 'Settings' },
 ];
 
 export function AppShell() {
@@ -37,7 +42,11 @@ export function AppShell() {
   // paint the wrong one first and flash.
   const [theme, setTheme] = useState<ThemePreference>(() => readTheme());
   const [params, setParams] = useSearchParams();
+  const { pathname } = useLocation();
   const mode = parseSelection(params).mode;
+  const inArchive = ARCHIVES.some((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
+  const [archivesOpen, setArchivesOpen] = useState(inArchive);
+  useEffect(() => { if (inArchive) setArchivesOpen(true); }, [inArchive]);
   // The mode, product, period and model ride in the URL; links carry them to every page.
   const carry = carrySelection(params);
   const setMode = (value: Mode) => setParams((current) => writeSelection(current, { mode: value }));
@@ -66,17 +75,37 @@ export function AppShell() {
               key={item.to}
               to={{ pathname: item.to, search: carry }}
               end={item.end}
-              className="nav-link"
+              // /events and /news-value are tabs of Actualités and IA: their entry stays lit there.
+              className={item.also?.includes(pathname) ? 'nav-link is-current' : 'nav-link'}
               onClick={() => setOpen(false)}
             >
               <span className="nav-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
             </NavLink>
           ))}
+          {mode === 'expert' && (
+            <div className="nav-group">
+              <button className="nav-group-toggle" aria-expanded={archivesOpen} onClick={() => setArchivesOpen((value) => !value)}>
+                <span className="nav-icon" aria-hidden="true">{archivesOpen ? '▾' : '▸'}</span>
+                <span>Archives (labo de juillet)</span>
+              </button>
+              {archivesOpen && ARCHIVES.map((item) => (
+                <NavLink key={item.to} to={{ pathname: item.to, search: carry }} className="nav-link nav-link-sub"
+                  onClick={() => setOpen(false)}>
+                  <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          )}
         </nav>
         <div className="sidebar-footer">
-          <div>Research cockpit</div>
-          <div>No live trading</div>
+          <div>Comptes papier, pas d’argent réel</div>
+          <nav className="footer-links" aria-label="Outils">
+            {FOOTER.map((item) => (
+              <NavLink key={item.to} to={{ pathname: item.to, search: carry }} onClick={() => setOpen(false)}>{item.label}</NavLink>
+            ))}
+          </nav>
         </div>
       </aside>
 

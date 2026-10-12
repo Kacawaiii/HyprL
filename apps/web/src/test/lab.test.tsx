@@ -473,7 +473,8 @@ describe('hypotheses', () => {
 
 describe('navigation', () => {
   it('reaches the Lab from the sidebar and lands on datasets', async () => {
-    open('/');
+    open('/?mode=expert');
+    await userEvent.click(await screen.findByRole('button', { name: 'Archives (labo de juillet)' }));
     await userEvent.click(await screen.findByRole('link', { name: /Lab/ }));
     expect(await screen.findByRole('navigation', { name: 'Lab views' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Dataset builder')).toBeInTheDocument();

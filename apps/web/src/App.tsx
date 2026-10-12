@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './layouts/AppShell';
 import { OverviewPage } from './pages/OverviewPage';
 import { RadarHomePage } from './pages/RadarHomePage';
+import { TodayPage } from './pages/TodayPage';
 import { LoadingState } from './components/States';
 
 // Route-level splitting: the chart and research views should not weigh on a
@@ -56,7 +57,8 @@ export function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<RadarHomePage />} />
+        <Route index element={<TodayPage />} />
+        <Route path="radar" element={<RadarHomePage />} />
         <Route path="overview" element={<OverviewPage />} />
         <Route path="news-value" element={<Suspense fallback={<LoadingState />}><NewsValuePage /></Suspense>} />
         <Route

@@ -20,6 +20,7 @@ import { LineChart } from '../components/LineChart';
 import type { PaperPortfolioPosition, PendingBatch } from '../api/types';
 import { PaperReplaySection } from './PaperReplaySection';
 import { PaperAccounts } from './paper/PaperAccounts';
+import { useCockpit } from '../state/useCockpit';
 
 function money(value: string | null | undefined): string {
   if (!value) return '—';
@@ -230,5 +231,19 @@ function LivePaperSession() {
 export function PaperPage() {
   // The accounts read the cockpit mode from the URL; a bare render of this page (no router) shows the rest.
   const routed = useInRouterContext();
-  return <div className="stack">{routed && <PaperAccounts />}<LivePaperSession /><PaperReplaySection /></div>;
+  if (!routed) return <div className="stack"><LivePaperSession /><PaperReplaySection /></div>;
+  return <RoutedPaperPage />;
+}
+
+/** The July BTC/ETH shared-portfolio study is lab history: Expert only, after the three live paper accounts. */
+function RoutedPaperPage() {
+  const expert = useCockpit().selection.mode === 'expert';
+  return (
+    <div className="stack">
+      <PaperAccounts />
+      {expert && <h2 className="card-title">Archives : portefeuille partagé BTC/ETH du labo de juillet</h2>}
+      {expert && <LivePaperSession />}
+      {expert && <PaperReplaySection />}
+    </div>
+  );
 }

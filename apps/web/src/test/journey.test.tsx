@@ -63,7 +63,7 @@ function mount() {
     return payload === undefined ? reply({ error: 'no such endpoint' }, 404) : reply(payload);
   });
   vi.stubGlobal('fetch', fetchMock);
-  render(<MemoryRouter initialEntries={['/events']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/events?mode=expert']}><App /></MemoryRouter>);
   return fetchMock;
 }
 
@@ -79,6 +79,7 @@ describe('main journey', () => {
     expect(screen.getByText('622 · 606')).toBeInTheDocument();
 
     // Dataset: admissible decisions and explicit exclusions.
+    await userEvent.click(screen.getByRole('button', { name: 'Archives (labo de juillet)' }));
     await userEvent.click(screen.getByRole('link', { name: 'Lab' }));
     await userEvent.type(await screen.findByLabelText(/Operator token \(/), TOKEN);
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
@@ -106,7 +107,7 @@ describe('main journey', () => {
     expect(diagnosis.querySelectorAll('[data-category]').length).toBe(4);
 
     // Health panel and API docs.
-    await userEvent.click(screen.getByRole('link', { name: 'System' }));
+    await userEvent.click(screen.getByRole('link', { name: 'Système' }));
     const panel = await screen.findByRole('region', { name: 'Operations health' });
     expect(await within(panel).findByTestId('ops-status')).toHaveTextContent('OBSERVED');
     await userEvent.click(screen.getByRole('link', { name: 'API docs' }));

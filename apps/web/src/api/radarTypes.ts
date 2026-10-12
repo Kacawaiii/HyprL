@@ -73,6 +73,24 @@ export interface RadarHome {
     preregistration_hash: string | null; predictive_quality: Record<string, ScoreEntry>; hypothesis_state: string | null;
   };
   regime: Record<string, RegimeItem>; events: RadarEvent[];
+  /** Home blocks (scripts/radar/cockpit_today.py); absent from snapshots written before they existed. */
+  calendar?: CalendarEntry[]; ai_today?: AiToday | null; system?: SystemLight | null;
+}
+
+export interface CalendarEntry {
+  /** UTC instant, or null when only the day is confirmed. */
+  at: string | null; date: string; time_known: boolean; title: string;
+  kind: 'cpi' | 'fed' | 'earnings' | 'election' | 'other'; verification: 'OFFICIEL' | 'FIL' | 'NON VERIFIE';
+  assets: string[]; origin: 'calendar' | 'watchlist';
+}
+export type AiLineStatus = 'executed' | 'sent' | 'planned' | 'blocked' | 'skipped' | 'expired';
+export interface AiLine {
+  account: 'ia_actions' | 'ia_crypto'; asset: string; horizon: string; slot: string; direction: string;
+  size: 'full' | 'half'; analyst: string; verdict: string; status: AiLineStatus;
+}
+export interface AiToday { run_id: string | null; at: string | null; session: string | null; lines: AiLine[] }
+export interface SystemLight {
+  level: 'green' | 'orange' | 'red' | 'unknown'; problems: Array<{ level: 'orange' | 'red'; text: string }>; checked_at: string;
 }
 
 export interface PaperPosition {
@@ -95,6 +113,8 @@ export interface PaperAccount {
   observed_at?: string;
   account: string; suffix: string; label: string; equity: number | null; return_since_start: number | null;
   start_equity?: number | null; cash?: number | null; peak: number | null; pnl?: number | null; day_pnl?: number | null;
+  /** Claude book only: broker previous-close equity read by the paper report (day P&L base). */
+  last_equity?: number | null; day_base_at?: string | null;
   open_lots?: number; halted?: boolean; planned_orders?: number;
   positions: PaperPosition[]; open_orders?: PaperOrder[]; tags?: string[]; journal: JournalRow[];
 }

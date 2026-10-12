@@ -3,7 +3,7 @@
  * that anticipation moved. Beginner and Expert read the same snapshot; Expert adds provenance, availability
  * at T, versions and metrics. The page shows snapshot values verbatim and computes no score of its own.
  */
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiClient, ApiError } from '../api/client';
 import { carrySelection } from '../lib/cockpit';
@@ -11,6 +11,10 @@ import { useQuery } from '../state/useQuery';
 import { useCockpit } from '../state/useCockpit';
 import { EmptyState, ErrorState, Hash, LoadingState } from '../components/States';
 import { EventCard } from '../components/radar/EventCard';
+import { NewsDrawer, NewsLine } from '../components/radar/NewsLine';
+import { NEWS_TABS, PageIntro, PageTabs, ShowMore } from '../components/Simple';
+import type { RadarEvent } from '../api/radarTypes';
+import { since } from '../lib/fr';
 import { instant, signedNumber } from '../lib/radar';
 
 const PAGE = 10;
@@ -23,6 +27,8 @@ export function RadarHomePage() {
   const [covered, setCovered] = useState(false);
   const [shown, setShown] = useState(PAGE);
   const home = useQuery('radar-home', (signal) => apiClient.getRadarHome(signal), { staleMs: 60_000 });
+  const [open, setOpen] = useState<RadarEvent | null>(null);
+  const close = useCallback(() => setOpen(null), []);
 
   const events = useMemo(() => {
     const all = home.data?.events ?? [];
@@ -44,8 +50,34 @@ export function RadarHomePage() {
   if (!data) return null;
   const regime = REGIME_ORDER.flatMap((key) => { const item = data.regime[key]; return item ? [item] : []; });
 
+  if (!expert) {
+    return (
+      <div className="simple-page">
+        <PageTabs label="Actualités" links={NEWS_TABS} />
+        <PageIntro id="radar" question="Quelles nouvelles peuvent faire bouger nos actifs ?">
+          Classées par importance (sur 100). Cliquez une ligne pour voir d’où vient l’info, les 5 mesures et ce que les IA en
+          attendent. Mise à jour {since(data.radar.cutoff)}.
+        </PageIntro>
+        <section className="panel" aria-label="Fil d’actualité">
+          <div className="row radar-filter">
+            <label>
+              <input type="checkbox" checked={covered} onChange={(e) => setCovered(e.target.checked)} />{' '}
+              Seulement les news sur des actifs suivis par les IA
+            </label>
+            <span className="muted">{events.length} news</span>
+          </div>
+          <ShowMore key={String(covered)} items={events} label="Actualités classées"
+            empty={<p className="muted">Aucune news ne correspond : décochez le filtre.</p>}
+            render={(event) => <NewsLine key={event.id} event={event} onOpen={setOpen} />} />
+        </section>
+        {open && <NewsDrawer event={open} onClose={close} />}
+      </div>
+    );
+  }
+
   return (
     <div className="stack radar-home">
+      <PageTabs label="Actualités" links={NEWS_TABS} />
       <section className="card radar-status" aria-label="Radar status">
         <div>
           <h1 className="radar-title">Radar {data.radar.date} · {data.radar.slot}</h1>
