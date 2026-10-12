@@ -66,7 +66,9 @@ class Ledger:
         elif kind == "catchup_run":
             maximum = 1   # one operator-approved recovery per day; the service requires a FAILED daily run
         elif kind == 'gpt_preflight':
-            maximum = 1   # task-authorized synthetic health probe; separate from analyst/reviewer budgets
+            maximum = 2   # preflight + one rehearsal retry; separate from decision budgets
+        elif kind in {'rehearsal_analyst_claude', 'rehearsal_reviewer'}:
+            maximum = 2   # daily rehearsal + one retry; failures never refund calls
         elif kind in p["external_models"]:
             m = p["external_models"][kind]
             maximum = m["calls_per_day"] + m["retries_per_day"]

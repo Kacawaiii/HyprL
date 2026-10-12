@@ -13,7 +13,7 @@ PROMPT = ('Infrastructure health probe only. No market context or trading decisi
           'The analyst-shaped output schema is used only to test structured output; views must be empty.')
 
 
-def preflight(ledger, runner):
+def preflight(ledger, runner, *, retry=False):
     base = {'schema': 'trader-gpt-preflight-v1', 'at': iso(ledger.clock()),
             'day': ledger.clock().date().isoformat(), 'synthetic_prompt': True}
     attempted = False
@@ -22,7 +22,7 @@ def preflight(ledger, runner):
             ledger.grant.check(ledger.clock())
             if ledger.paused:
                 raise TraderError('PAUSED')
-            if ledger.counts().get('gpt_preflight'):
+            if ledger.counts().get('gpt_preflight', 0) >= (2 if retry else 1):
                 return {**base, 'state': 'ALREADY_ATTEMPTED'}
             schema = strict_json((HERE / 'schemas/analyst.gpt.json').read_text())
             if schema != GPT_SCHEMAS['analyst'] or openai_strict_problems(schema):

@@ -162,8 +162,10 @@ class ModelRunner:
                     raise
         raise TraderError("MODEL_FAILED")  # pragma: no cover
 
-    def once(self, role, prompt, *, preflight=False):
+    def once(self, role, prompt, *, preflight=False, probe=False):
         if preflight and role != 'analyst_gpt':
+            raise TraderError('UNAUTHORIZED_DISPATCH')
+        if probe and (preflight or role not in {'analyst_claude', 'reviewer'}):
             raise TraderError('UNAUTHORIZED_DISPATCH')
         deadline = getattr(self, 'deadline', None)
         if deadline and self.clock() >= deadline:
@@ -176,8 +178,8 @@ class ModelRunner:
         version = subprocess.run([args[0], "--version"], capture_output=True, text=True, timeout=15, check=True).stdout.strip()
         folder = self.ledger.root / "transcripts"
         folder.mkdir(exist_ok=True, mode=0o700)
-        seq = self.ledger.reserve('gpt_preflight' if preflight else role)
-        transcript_role = 'gpt_preflight' if preflight else role
+        transcript_role = 'gpt_preflight' if preflight else 'rehearsal_' + role if probe else role
+        seq = self.ledger.reserve(transcript_role)
         with tempfile.TemporaryDirectory(prefix="trader-empty-") as cwd:
             env = dict(os.environ)
             for key in ("CLAUDECODE", "CODEX_THREAD_ID"):
@@ -190,7 +192,7 @@ class ModelRunner:
                                         text=True, start_new_session=True)
                 try:
                     timeout = self.ledger.grant.payload["external_models"][role]["timeout_minutes"] * 60
-                    if preflight:
+                    if preflight or probe:
                         timeout = min(timeout, 120)
                     if deadline:
                         timeout = min(timeout, max(.1, (deadline - self.clock()).total_seconds()))
@@ -201,7 +203,7 @@ class ModelRunner:
                     raise TraderError("MODEL_TIMEOUT") from None
                 out.seek(0)
                 err.seek(0)
-                output_limit = 64_000 if preflight else 8_000_000
+                output_limit = 64_000 if preflight or probe else 8_000_000
                 raw, errors = out.read(output_limit + 1), err.read(200_001)
                 if len(raw) > output_limit or len(errors) > 200_000:
                     raise TraderError("MODEL_OUTPUT_TOO_LARGE")

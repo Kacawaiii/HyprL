@@ -28,8 +28,10 @@ still precede quota handling. The regression uses synthetic web envelopes and
 35 synthetic assets (70 abstentions), through `ModelRunner.infer` and the full
 analyst validator, without changing any source fixture shapes.
 
-The task authorizes a separate `gpt_preflight` dispatch, capped durably at one
-model call per UTC day in the shared production budget bank. It has no retry,
+The task authorizes a separate `gpt_preflight` dispatch, normally dispatched once
+per UTC day in the shared production budget bank. The October 12 rehearsal
+task authorizes one separate retry of a failed probe, for a durable cap of two.
+A successful daily preflight is reused by the rehearsal. It has
 a maximum 120-second model timeout, low reasoning effort and a 64,000-character
 stdout limit. It does not consume the six analyst/reviewer calls. Grant expiry,
 pause, the global owner lock and the restricted GPT command still apply. A failed
@@ -46,7 +48,8 @@ search hits as `text_result` entries. Transcripts and the latest
 records predictions, or invokes paper execution.
 
 Install the paired user units in `deploy/systemd/hyprl-trader-gpt-preflight.*`
-alongside the other trader units. The timer runs Monday–Friday at **10:30 UTC**,
+alongside the other trader units. The timer runs every day at **10:30 UTC**, covering the approved closed-day
+crypto population as well as weekdays,
 before the 12:00 run and the deployment deadline. It does not catch up missed
 timers. The service loads the operator's login environment, uses the existing
 deployed worktree and private grant/runtime, and has a three-minute unit timeout.
