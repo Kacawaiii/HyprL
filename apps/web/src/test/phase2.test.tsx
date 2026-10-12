@@ -85,7 +85,7 @@ it('shows net sample sizes, small-sample caution, seeded random baseline and mis
 });
 
 it('renders radar health independently when system research data is unavailable', async () => {
-  render(<MemoryRouter initialEntries={['/system']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/system?mode=expert']}><App /></MemoryRouter>);
   await screen.findByRole('table', { name: 'Sources radar' });
   expect(screen.getByText('DAILY_BUDGET')).toBeInTheDocument();
   expect(screen.getByText(/OWNER_BUSY/)).toBeInTheDocument();

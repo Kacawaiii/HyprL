@@ -88,7 +88,11 @@ def test_system_light_counts_failures_and_staleness_but_not_sources_blocked_by_d
               "sources": [{"source": "x", "status": "BLOCKED"}]}
     light = today.system_light(system, radar_cutoff="2026-10-12T20:00:00Z", now=NOW)
     assert light["level"] == "red" and len(light["problems"]) == 2
-    assert "MISSING_ANCHOR_PRICE" in light["problems"][1]["text"] and "OLD" not in light["problems"][1]["text"]
+    units, incidents = light["problems"]
+    # Beginner text is a plain sentence; names and codes stay in `detail` for Expert mode.
+    assert units["text"] == "1 tâche automatique en échec (voir l’onglet Tâches)."
+    assert units["detail"] == "hyprl-radar-collect.service"
+    assert "MISSING" not in incidents["text"] and incidents["detail"] == "MISSING_ANCHOR_PRICE"
     calm = today.system_light({"trader": {"health": {"state": "HEALTHY"}}}, radar_cutoff="2026-10-12T20:00:00Z", now=NOW)
     assert calm == {"level": "green", "problems": [], "checked_at": "2026-10-12T21:00:00Z"}
     stale = today.system_light({}, radar_cutoff="2026-10-12T01:00:00Z", now=NOW)

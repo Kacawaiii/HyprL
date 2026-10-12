@@ -272,7 +272,7 @@ const LIGHT_WORDS: Record<string, string> = {
 };
 
 /** The light and the problems behind it, from the radar snapshot (scripts/radar/cockpit_today.py). */
-function Problems() {
+function Problems({ expert }: { expert: boolean }) {
   const home = useQuery('radar-home', (signal) => apiClient.getRadarHome(signal), { staleMs: 60_000 });
   const light = home.data?.system;
   return (
@@ -284,7 +284,8 @@ function Problems() {
       {light && (light.problems.length === 0
         ? light.level !== 'unknown' && <p className="muted">Aucun problème détecté. Contrôlé {since(light.checked_at)}.</p>
         : <ul className="problems">{light.problems.map((p) => (
-          <li key={p.text} data-level={p.level}><span className="light-dot" aria-hidden="true" />{p.text}</li>
+          <li key={p.text} data-level={p.level}><span className="light-dot" aria-hidden="true" />
+            <span>{p.text}{expert && p.detail && <span className="muted"> ({p.detail})</span>}</span></li>
         ))}</ul>)}
     </section>
   );
@@ -292,16 +293,17 @@ function Problems() {
 
 export function SystemPage() {
   const expert = useCockpit().selection.mode === 'expert';
-  if (expert) return <div className="stack"><Problems /><SystemDetail /></div>;
+  if (expert) return <div className="stack"><Problems expert /><SystemDetail /></div>;
   return (
     <div className="simple-page">
       <PageIntro id="system" question="Est-ce que tout tourne ?">
         Une pastille verte veut dire que les tâches automatiques (actualités, IA, comptes) fonctionnent. Le détail technique
         est dans les onglets.
       </PageIntro>
-      <Problems />
+      <Problems expert={false} />
       <Tabs label="Détails du système" tabs={[
-        { id: 'radar', label: 'Sources et tâches', content: () => <RadarHealthPanel /> },
+        { id: 'units', label: 'Tâches', content: () => <RadarHealthPanel part="units" /> },
+        { id: 'sources', label: 'Sources', content: () => <RadarHealthPanel part="sources" /> },
         { id: 'app', label: 'Application', content: () => <SystemDetail withRadar={false} /> },
       ]} />
     </div>

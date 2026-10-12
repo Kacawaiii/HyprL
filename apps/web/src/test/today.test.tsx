@@ -35,14 +35,14 @@ const home: RadarHome = {
     ],
   },
   system: { level: 'orange', checked_at: '2026-10-10T12:00:00Z',
-    problems: [{ level: 'orange', text: 'Incidents du trader sur 24 h : MISSING_ANCHOR_PRICE' }] },
+    problems: [{ level: 'orange', text: 'Le trader IA a signalé 1 type d’incident en 24 h.', detail: 'MISSING_ANCHOR_PRICE' }] },
 };
 
 function respond(payload: unknown, status = 200) {
   return Promise.resolve({ ok: status < 400, status, text: () => Promise.resolve(JSON.stringify(payload)) } as Response);
 }
 
-function mount(radar: unknown = home, paper: unknown = paperSnapshot) {
+function mount(radar: unknown = home, paper: unknown = paperSnapshot, path = '/') {
   const fetchMock = vi.fn((input: string, init?: RequestInit) => {
     expect(init?.method ?? 'GET').toBe('GET');
     const path = String(input).split('?')[0] ?? '';
@@ -52,7 +52,7 @@ function mount(radar: unknown = home, paper: unknown = paperSnapshot) {
     return respond({ error: 'not found' }, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
-  render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
   return fetchMock;
 }
 
@@ -151,5 +151,22 @@ describe('Aujourd’hui', () => {
     const text = document.body.textContent ?? '';
     expect(text).not.toMatch(/[0-9a-f]{16,}/);
     expect(text).not.toContain('trader:2026');
+  });
+});
+
+describe('Système', () => {
+  it('shows the light and plain problems first, codes only in Expert mode', async () => {
+    mount(home, paperSnapshot, '/system');
+    const problems = await screen.findByRole('region', { name: 'Problèmes' });
+    expect(within(problems).getByText('À surveiller.')).toBeInTheDocument();
+    expect(problems).toHaveTextContent('1 type d’incident');
+    expect(problems).not.toHaveTextContent('MISSING_ANCHOR_PRICE');
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Tâches', 'Sources', 'Application']);
+  });
+
+  it('adds the codes behind each problem in Expert mode', async () => {
+    mount(home, paperSnapshot, '/system?mode=expert');
+    const problems = await screen.findByRole('region', { name: 'Problèmes' });
+    await waitFor(() => expect(problems).toHaveTextContent('MISSING_ANCHOR_PRICE'));
   });
 });

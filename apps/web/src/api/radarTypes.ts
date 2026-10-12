@@ -90,7 +90,9 @@ export interface AiLine {
 }
 export interface AiToday { run_id: string | null; at: string | null; session: string | null; lines: AiLine[] }
 export interface SystemLight {
-  level: 'green' | 'orange' | 'red' | 'unknown'; problems: Array<{ level: 'orange' | 'red'; text: string }>; checked_at: string;
+  level: 'green' | 'orange' | 'red' | 'unknown';
+  /** `text` is plain French; `detail` keeps unit names and codes for Expert mode (absent in older snapshots). */
+  problems: Array<{ level: 'orange' | 'red'; text: string; detail?: string | null }>; checked_at: string;
 }
 
 export interface PaperPosition {

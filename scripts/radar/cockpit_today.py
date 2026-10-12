@@ -158,26 +158,35 @@ def ai_today(runs, report=None):
 
 
 def system_light(system=None, *, radar_cutoff=None, now: datetime):
-    """Problems a beginner should know about, each with a level; the light is the worst level, or `unknown`."""
+    """Problems a beginner should know about, each with a level; the light is the worst level, or `unknown`.
+
+    `text` is a plain sentence for Beginner pages; `detail` keeps the unit names and codes for Expert mode.
+    """
     system = system or {}
     problems = []
-    for unit in system.get("units") or []:
-        if unit.get("state") == "failed" or (unit.get("result") or "") in FAILED_UNIT_RESULTS:
-            problems.append({"level": "red", "text": f"Tâche en échec : {_text(unit.get('unit'), 80)}"})
+    failed = [_text(u.get("unit"), 80) for u in system.get("units") or []
+              if u.get("state") == "failed" or (u.get("result") or "") in FAILED_UNIT_RESULTS]
+    if failed:
+        problems.append({"level": "red", "detail": ", ".join(failed),
+                         "text": f"{len(failed)} tâche{'s' if len(failed) > 1 else ''} automatique{'s' if len(failed) > 1 else ''} "
+                                 f"en échec (voir l’onglet Tâches)."})
     trader = system.get("trader") or {}
     health = (trader.get("health") or {}).get("state")
     if health and health != "HEALTHY":
-        problems.append({"level": "orange" if health in ("DEGRADED", "EMBARGOED") else "red",
-                         "text": f"Santé du trader IA : {health}"})
+        problems.append({"level": "orange" if health in ("DEGRADED", "EMBARGOED") else "red", "detail": health,
+                         "text": "Le trader IA signale un état dégradé." if health in ("DEGRADED", "EMBARGOED")
+                         else "Le trader IA signale une erreur."})
     if trader.get("paused"):
-        problems.append({"level": "orange", "text": "Le trader IA est en pause."})
+        problems.append({"level": "orange", "text": "Le trader IA est en pause.", "detail": None})
     recent = sorted({f.get("code") for f in trader.get("failures") or []
                      if _instant(f.get("at")) and now - _instant(f.get("at")) <= timedelta(hours=24) and f.get("code")})
     if recent:
-        problems.append({"level": "orange", "text": "Incidents du trader sur 24 h : " + ", ".join(recent[:4])})
+        problems.append({"level": "orange", "detail": ", ".join(recent),
+                         "text": f"Le trader IA a signalé {len(recent)} type{'s' if len(recent) > 1 else ''} d’incident en 24 h."})
     cutoff = _instant(radar_cutoff)
     if cutoff is None or now - cutoff > timedelta(hours=14):
-        problems.append({"level": "orange", "text": "Les actualités n’ont pas été mises à jour depuis plus de 14 h."})
+        problems.append({"level": "orange", "text": "Les actualités n’ont pas été mises à jour depuis plus de 14 h.",
+                         "detail": radar_cutoff})
     level = "red" if any(p["level"] == "red" for p in problems) else "orange" if problems else "green"
     if level == "green" and not health and not system.get("units"):
         # Without trader health or unit states (the one-shot CLI export reads neither) nothing was checked: no green.
