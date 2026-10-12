@@ -352,7 +352,8 @@ def _paper_after_cost(paper):
     return out
 
 
-def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS):
+def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS, calendar=None, ai_today=None,
+               system=None):
     runs = trader.get("runs", []) if trader else []
     labels = trader.get("labels", []) if trader else []
     quality = _quality((trader or {}).get("scorecard"))
@@ -386,7 +387,9 @@ def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS):
                    "predictive_quality": quality,
                    "hypothesis_state": ((trader or {}).get("scorecard") or {}).get("hypothesis_state"),
                    "news_ab": ((trader or {}).get("scorecard") or {}).get("news_ab")},
-        "regime": regime, "events": events}
+        "regime": regime, "events": events,
+        # Home blocks (cockpit_today); absent inputs give an empty list or no light, never a guess.
+        "calendar": calendar or [], "ai_today": ai_today, "system": system}
     assert_clean(snapshot)
     return snapshot
 
@@ -487,17 +490,28 @@ def append_history(path: Path, point: dict, keep=2000):
     return rows[-keep:]
 
 
+def book_day(book, report):
+    """The Claude book's previous-close equity as the paper report read it from the broker, and today's P&L."""
+    last = number((report.get("claude_book") or {}).get("last_equity"), 2)
+    book["last_equity"] = last
+    book["day_pnl"] = number(book["equity"] - last, 2) if last and book.get("equity") is not None else None
+    book["day_base_at"] = report.get("at") if last else None
+    return book
+
+
+def spy_benchmark(report):
+    spy = (report.get("benchmarks") or {}).get("SPY") or {}
+    return {"price": number(spy.get("price"), 2), "return_since_paper_start": number(spy.get("return_since_paper_start")),
+            "base_at": spy.get("base_at")}
+
+
 def build_paper(report, book_status, journal, *, sleeve=None, history=None, radar=None, generated_at=None):
     at = generated_at or utc_now()
     accounts = build_ai_accounts(report)
-    book = build_claude_book(book_status, journal, sleeve)
+    book = book_day(build_claude_book(book_status, journal, sleeve), report)
     accounts.append(book)
-    bench = report.get("benchmarks") or {}
     btc = ((radar or {}).get("regime") or {}).get("BTC") or {}
-    benchmarks = {"SPY": {"price": number((bench.get("SPY") or {}).get("price"), 2),
-                          "return_since_paper_start": number((bench.get("SPY") or {}).get("return_since_paper_start")),
-                          "base_at": (bench.get("SPY") or {}).get("base_at")},
-                  "BTC": {"price": number(btc.get("last"), 2), "at": btc.get("at")}}
+    benchmarks = {"SPY": spy_benchmark(report), "BTC": {"price": number(btc.get("last"), 2), "at": btc.get("at")}}
     curve = [{"at": h["at"], "equity": h.get("equity", {}), "spy": h.get("spy"), "btc": h.get("btc")}
              for h in (history or [])][-MAX_EQUITY_POINTS:]
     snapshot = {"schema": PAPER_SCHEMA, "generated_at": at, "report_at": report.get("at"),
@@ -556,6 +570,8 @@ def main(argv=None):  # pragma: no cover - thin CLI over the functions above
     parser.add_argument("--book-sleeve", help="claude book sleeve.json")
     parser.add_argument("--history", help="private equity history jsonl (appended)")
     parser.add_argument("--out", required=True, help="private output directory, outside Git")
+    parser.add_argument("--calendar", help="private operator calendar JSON (cockpit-calendar-v1)")
+    parser.add_argument("--book-watchlist", help="claude book watchlist.json (dated entries join the calendar)")
     parser.add_argument("--include-synthetic", action="store_true")
     args = parser.parse_args(argv)
     out = Path(args.out).resolve()
@@ -585,9 +601,19 @@ def main(argv=None):  # pragma: no cover - thin CLI over the functions above
                               for h in history][-MAX_EQUITY_POINTS:]
         write_snapshot(out, "paper.json", paper)
     from .cockpit_analysis import build_analysis
+    from . import cockpit_today as today
     journal = read_jsonl(args.book_journal) if args.book_journal else []
-    write_snapshot(out, "radar-home.json", build_home(radar, trader, paper))
-    write_snapshot(out, "analysis.json", build_analysis(radar, trader, paper, journal))
+    analysis = build_analysis(radar, trader, paper, journal)
+    now = datetime.now(timezone.utc)
+    report = read_json(args.paper_report) if args.paper_report else None
+    home = build_home(radar, trader, paper,
+                      calendar=today.calendar_entries(read_json(args.calendar) if args.calendar else None,
+                                                      read_json(args.book_watchlist) if args.book_watchlist else None,
+                                                      now=now),
+                      ai_today=today.ai_today((trader or {}).get("runs"), report),
+                      system=today.system_light(analysis.get("system"), radar_cutoff=radar.get("cutoff"), now=now))
+    write_snapshot(out, "radar-home.json", home)
+    write_snapshot(out, "analysis.json", analysis)
     print(json.dumps({"written": ["radar-home.json", "analysis.json"] + (["paper.json"] if paper else [])}))
 
 

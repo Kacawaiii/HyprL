@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 
 from . import cockpit_export as export
+from . import cockpit_today as today
 from .cockpit_analysis import build_analysis
 
 UNIT_NAME = 'hyprl-cockpit-refresh'
@@ -157,7 +158,9 @@ def refresh(config, *, at=None, read_units=True):
                     accounts = export.build_ai_accounts(report)
                     for account in accounts:
                         account['observed_at'] = report['at']
-                    paper['accounts'] = accounts + [a for a in paper['accounts'] if a['account'] == 'claude_book']
+                    paper['accounts'] = accounts + [export.book_day(a, report) for a in paper['accounts']
+                                                    if a['account'] == 'claude_book']
+                    paper['benchmarks']['SPY'] = export.spy_benchmark(report)
                     paper['report_at'] = report['at']
             paper['generated_at'] = stamp
             export.assert_clean(paper)
@@ -178,7 +181,12 @@ def refresh(config, *, at=None, read_units=True):
             except (sqlite3.Error, OSError, ValueError):
                 analysis['limitations'].append('Santé du ledger radar indisponible; dernier rapport conservé avec sa date.')
         export.assert_clean(analysis)
-        home = export.build_home(radar, trader, paper, generated_at=stamp)
+        optional = {key: export.read_json(config[key]) if config.get(key) and Path(config[key]).is_file() else None
+                    for key in ('calendar', 'book_watchlist', 'paper_report')}
+        home = export.build_home(radar, trader, paper, generated_at=stamp,
+                                 calendar=today.calendar_entries(optional['calendar'], optional['book_watchlist'], now=at),
+                                 ai_today=today.ai_today(trader['runs'], optional['paper_report']),
+                                 system=today.system_light(analysis['system'], radar_cutoff=radar.get('cutoff'), now=at))
         # Validate all outputs before replacing any published file.
         for name, snapshot in [('radar-home.json', home), ('analysis.json', analysis), ('paper.json', paper)]:
             if snapshot:
