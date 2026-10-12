@@ -8,6 +8,7 @@ import statistics
 import time
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.error import HTTPError
 
 from scripts.trading_lab.equity_calendar import USEquityRegularCalendar
 from scripts.trading_lab.research_protection import crypto_interval, equity_interval
@@ -57,6 +58,8 @@ class PublicData:
                     raise TraderError("SOURCE_TOO_LARGE")
         except TraderError:
             raise
+        except HTTPError as error:
+            raise TraderError('SOURCE_HTTP_' + str(error.code)) from None
         except Exception:
             raise TraderError("SOURCE_UNAVAILABLE") from None
         received = self.clock()

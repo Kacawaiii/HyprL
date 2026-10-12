@@ -1,0 +1,208 @@
+"""Read-only order/lot/label checkpoints, ten minutes after planned and actual execution."""
+import argparse
+from datetime import timedelta
+import json
+import os
+from pathlib import Path
+import subprocess
+
+from scripts.trading_lab.research.store import ResearchStore
+from scripts.trading_lab.sources.canonical import sha256_canonical
+
+from .config import Authorization, TraderError, instant, iso, now, strict_json
+from .data import calendar_session
+from .scoring import rows
+from .rehearsal import (MonitorState, SnapshotPaperLedger, arguments, error_code, get_only_client,
+                        population, readonly_executor, telegram)
+
+
+def checkpoints(grant, research, events, at, last_label=None):
+    """Scheduled checkpoints catch a completely missing run/order as well as existing intents."""
+    day = at.date().isoformat()
+    session = calendar_session(day)
+    result = {}
+    if population(grant, at) != 'closed':
+        entry = session.open_at + timedelta(seconds=30) if session else at.replace(hour=13, minute=30, second=0, microsecond=0)
+        result['session-entry:' + day] = entry + timedelta(minutes=10)
+        result['label-deadline:' + day] = at.replace(hour=21, minute=40, second=0, microsecond=0)
+    for row in rows(research, 'prediction'):
+        p = row['payload']
+        if p.get('synthetic', True):
+            continue
+        definition = p['signal']['label_definition']
+        exit_at = instant(definition['exit_at'])
+        equity = p['product'] not in grant.payload['universe']['crypto']
+        due = exit_at + timedelta(minutes=5 if equity else 10)
+        result['planned-exit:' + iso(due)] = due
+    for event in events:
+        if event.get('event') == 'intent':
+            result['intent:' + event['client_id']] = instant(event['at']) + timedelta(minutes=10)
+    if last_label:
+        result['after-label:' + sha256_canonical(last_label)] = instant(last_label['at'])
+    # Historical checkpoints are audited at adoption, not silently discarded after a restart.
+    return {key: due for key, due in result.items() if due <= at}
+
+
+def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_label_job=False, last_label=None):
+    from .alpaca_paper import decimal
+    errors, accounts = [], []
+    executor.grant.check(executor.dispatch_clock())
+    executor.research.verify()
+    for name in ('ia_actions', 'ia_crypto'):
+        try:
+            _, account, positions = executor.start(name)
+            intents, observed, lots = executor.ledger.projection(name)
+            canceled = {e['client_id'] for e in executor.ledger.events(name, 'cancel') if e.get('reason')}
+            dispositions = {}
+            for key, intent in intents.items():
+                order = observed.get(key, {})
+                status = order.get('status')
+                if instant(intent['at']) + timedelta(minutes=10) > executor.clock():
+                    continue
+                if status == 'filled' and decimal(order.get('filled_qty', 0)) == decimal(intent['order']['qty']):
+                    disposition = 'FILLED'
+                elif status == 'internal' or decimal(intent['order']['qty']) == 0:
+                    disposition = 'SETTLED_INTERNAL_RULE'
+                elif status in {'canceled', 'not_submitted'} and (key in canceled or order.get('reason')):
+                    disposition = 'CANCELED_BY_RULE'
+                else:
+                    disposition = 'ALERTED'
+                    errors.append('PAPER_ORDER_' + status.upper() if status in {'expired', 'rejected'} else 'PAPER_ORDER_UNRESOLVED')
+                dispositions[disposition] = dispositions.get(disposition, 0) + 1
+            for lot in lots.values():
+                grace = timedelta(minutes=5 if name == 'ia_actions' else 10)
+                if decimal(lot['qty']) and instant(lot['exit_at']) + grace <= executor.clock():
+                    errors.append('PAPER_LOT_PAST_HORIZON')
+            # Reconstruct the executor's actual selection at the planned entry clock.
+            # This catches eligible plans never reserved without guessing from all analyst views.
+            original = executor.clock
+            try:
+                candidates = executor.eligible_predictions(name)
+                for row, _, _, _ in candidates:
+                    p = row['payload']
+                    definition = p['signal']['label_definition']
+                    if name == 'ia_actions':
+                        session = calendar_session(p['signal']['session'])
+                        after_hours = definition.get('variant') == 'alpaca_after_hours_v1'
+                        dispatch_at = instant(p['decision_at']) + timedelta(seconds=1) if after_hours else session.open_at + timedelta(seconds=30)
+                    else:
+                        dispatch_at = instant(p['decision_at']) + timedelta(seconds=1)
+                    if dispatch_at + timedelta(minutes=10) > original():
+                        continue
+                    executor.clock = lambda dispatch_at=dispatch_at: dispatch_at
+                    planned = executor.entries(name, decimal(account['equity']), positions)
+                    if planned:
+                        errors.append('PAPER_ELIGIBLE_ENTRY_NOT_DISPATCHED')
+                        break
+            finally:
+                executor.clock = original
+            accounts.append({'account': name, 'suffix': executor.grant.payload['accounts'][name]['account_suffix'],
+                             'reconciled': True, 'open_lots': sum(bool(decimal(l['qty'])) for l in lots.values()),
+                             'orders': dispositions})
+        except Exception as error:
+            errors.append(error_code(error))
+            accounts.append({'account': name, 'reconciled': False})
+    at = executor.clock()
+    day = at.date().isoformat()
+    if require_daily_run:
+        runs = [r['payload'] for r in rows(executor.research, 'replay-summary')
+                if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
+                and r['payload']['at'][:10] == day and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}]
+        if not runs:
+            errors.append('MISSING_DAILY_RUN')
+    if require_label_job and (not last_label or last_label.get('at', '')[:10] != day or last_label.get('state') != 'COMPLETE'):
+        errors.append('MISSING_OR_FAILED_LABEL_JOB')
+    if label_at and last_label and last_label.get('state') != 'COMPLETE':
+        errors.append('LABEL_JOB_FAILED')
+    if label_at:
+        labeled = {r['payload']['prediction_hash'] for r in rows(executor.research, 'label')}
+        missing = [r for r in rows(executor.research, 'prediction') if not r['payload'].get('synthetic', True)
+                   and instant(r['payload']['signal']['label_definition']['exit_at']) <= label_at and r['identity'] not in labeled]
+        if missing:
+            errors.append('LABELS_MISSING')
+    else:
+        missing = []
+    return {'schema': 'trader-post-audit-v1', 'at': iso(at), 'state': 'BLOCKED' if errors else 'GREEN',
+            'errors': sorted(set(errors)), 'accounts': accounts, 'labels_missing': len(missing),
+            'broker_methods': ['GET'], 'production_writes': 0}
+
+
+def audit(args, state, *, clock=now, force=False, notify=None, client_factory=get_only_client):
+    at = clock()
+    key = 'audit-infrastructure:' + at.date().isoformat()
+    try:
+        grant = Authorization.load(args.authorization)
+        grant.check(at)
+        from .alpaca_paper import PaperAuthorization
+        paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+        research = ResearchStore(Path(args.runtime) / 'evidence', read_only=True)
+        paper = SnapshotPaperLedger(args.paper_runtime, paper_grant, clock)
+        try:
+            with paper.owner():
+                path = Path(args.runtime) / 'last-label.json'
+                last_label = strict_json(path.read_text()) if path.exists() else None
+                due = checkpoints(grant, research, paper.events(), at, last_label)
+                with state.connect() as db:
+                    done = {r[0] for r in db.execute('SELECT id FROM checkpoints')}
+                due = {k: v for k, v in due.items() if k not in done}
+                if force:
+                    due['forced:' + iso(at)] = at
+                if not due:
+                    return {'state': 'NO_CHECKPOINT_DUE'}
+                label_check = any(k.startswith(('after-label:', 'label-deadline:', 'forced:')) for k in due)
+                executor = readonly_executor(paper, research, clock=clock, client_factory=client_factory)
+                result = inspect_audit(executor,
+                    require_daily_run=any(k.startswith('session-entry:') for k in due),
+                    require_label_job=any(k.startswith('label-deadline:') for k in due),
+                    label_at=instant(last_label['at']) if label_check and last_label else None, last_label=last_label)
+                result['checkpoints'] = sorted(due)
+                if not paper.unchanged():
+                    return {'state': 'PAPER_EXECUTION_IN_PROGRESS'}
+                key = 'audit:' + sha256_canonical(sorted(due))
+                with state.connect() as db:
+                    for checkpoint in due:
+                        db.execute('INSERT OR IGNORE INTO checkpoints VALUES(?,?)', (checkpoint, json.dumps(result)))
+        finally:
+            research.close()
+            paper.store.close()
+    except Exception as error:
+        if isinstance(error, TraderError) and error.code == 'PAPER_OWNER_BUSY':
+            return {'state': 'PAPER_EXECUTION_IN_PROGRESS'}
+        result = {'schema': 'trader-post-audit-v1', 'at': iso(at), 'state': 'BLOCKED', 'errors': [error_code(error)]}
+    if result['state'] == 'BLOCKED':
+        result['alert'] = state.alert(key, 'Trader post-run audit failed: ' + ', '.join(result['errors']), notify)
+    root = Path(args.reports)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = root / ('trader-post-audit-' + at.strftime('%Y-%m-%dT%H%M%S') + '.json')
+    target.write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
+
+def main(argv=None):
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    arguments(parser)
+    parser.add_argument('--force', action='store_true')
+    args = parser.parse_args(argv)
+    state = MonitorState(args.monitor_runtime)
+    request_retry = False
+    try:
+        with state.owner():
+            at = now()
+            first = state.get(at.date().isoformat(), 'primary')
+            request_retry = bool(first and first['state'] == 'BLOCKED' and first.get('retry_at')
+                and instant(first['retry_at']) <= at and not state.get(at.date().isoformat(), 'retry'))
+            result = audit(args, state, force=args.force, notify=telegram(args.telegram_env))
+    except TraderError as error:
+        if error.code != 'REHEARSAL_OWNER_BUSY':
+            raise
+        result = {'state': 'REHEARSAL_IN_PROGRESS'}
+    if request_retry:
+        subprocess.run(['systemctl', '--user', 'start', '--no-block', 'hyprl-trader-rehearsal-retry.service'],
+                       check=True, timeout=15, capture_output=True)
+    print(json.dumps(result, indent=2))
+    return 1 if result['state'] == 'BLOCKED' else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

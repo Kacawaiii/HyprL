@@ -1,0 +1,453 @@
+"""Synthetic health probes, read-only broker calls and durable retry/audit boundaries."""
+import json
+from datetime import timedelta
+
+import pytest
+
+from scripts.trading_lab.trader_agent.config import TraderError, instant
+
+
+def test_failure_continues_chain_alerts_and_reserves_second_rehearsal(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
+    state = MonitorState(tmp_path / 'monitor')
+    calls, alerts = [], []
+    def bad():
+        calls.append('yahoo')
+        raise TraderError('SOURCE_UNAVAILABLE')
+    def good():
+        calls.append('coinbase')
+        return {'assets_checked': 5}
+    clock.at = instant('2026-10-12T10:45:00Z')
+    result = rehearse(state, [('yahoo', bad), ('coinbase', good)], clock=clock,
+                       notify=lambda key, text: alerts.append(text) or 'DELIVERED', reports=tmp_path / 'reports')
+    assert result['state'] == 'BLOCKED'
+    assert calls == ['yahoo', 'coinbase'] and 'yahoo' in alerts[0]
+    assert result['retry_at'] == '2026-10-12T11:15:00Z'
+    assert (tmp_path / 'reports/rehearsal-2026-10-12.md').exists()
+    assert rehearse(state, [], clock=clock, notify=None, reports=tmp_path / 'reports')['state'] == 'ALREADY_ATTEMPTED'
+    clock.at += timedelta(minutes=30)
+    again = rehearse(state, [('yahoo', good)], clock=clock, retry=True,
+                     notify=lambda *args: 'DELIVERED', reports=tmp_path / 'reports')
+    assert again['state'] == 'GREEN' and again['retry_at'] is None
+    assert 'SOURCE_UNAVAILABLE' in (tmp_path / 'reports/rehearsal-2026-10-12.md').read_text()
+
+
+def test_retry_reuses_successful_probes_and_never_spends_trader_model_calls(ledger, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from scripts.trading_lab.trader_agent.rehearsal import LiveChecks, MonitorState
+    from tests.trader_agent.test_gpt_protocol import cli
+    state = MonitorState(tmp_path / 'monitor')
+    checks = LiveChecks(SimpleNamespace(), state, clock=ledger.clock)
+    checks.ready, checks.grant, checks.ledger = True, ledger.grant, ledger
+    calls = cli(monkeypatch, json.dumps({'subtype': 'success', 'structured_output': {'regime': ['PREFLIGHT_OK'], 'views': []}}))
+    assert checks.model('analyst_claude')['model']['model'] == 'opus'
+    assert checks.model('analyst_claude', retry=True)['cached']
+    assert len(calls) == 1 and ledger.counts() == {'rehearsal_analyst_claude': 1}
+    ledger.reserve('rehearsal_analyst_claude')
+    with pytest.raises(TraderError, match='BUDGET_EXHAUSTED'):
+        ledger.reserve('rehearsal_analyst_claude')
+    assert calls[0]['timeout'] <= 120
+
+
+def test_gpt_failed_preflight_has_exactly_one_separate_retry(ledger, monkeypatch):
+    from scripts.trading_lab.trader_agent.preflight import preflight
+    from scripts.trading_lab.trader_agent.runners import ModelRunner
+    from tests.trader_agent.test_gpt_protocol import cli, stream, WEB_COMPLETED
+    cli(monkeypatch, 'bad-json')
+    assert preflight(ledger, ModelRunner(ledger, clock=ledger.clock))['state'] == 'BLOCKED'
+    calls = cli(monkeypatch, stream({'regime': ['PREFLIGHT_OK'], 'views': []}, WEB_COMPLETED))
+    assert preflight(ledger, ModelRunner(ledger, clock=ledger.clock), retry=True)['state'] == 'GREEN'
+    assert preflight(ledger, ModelRunner(ledger, clock=ledger.clock), retry=True)['state'] == 'ALREADY_ATTEMPTED'
+    assert len(calls) == 1 and ledger.counts() == {'gpt_preflight': 2}
+
+
+def test_exception_bodies_and_telegram_tokens_never_enter_report(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
+    def secret_failure():
+        raise OSError('https://secret.invalid/botTOKEN/private-account-body')
+    result = rehearse(MonitorState(tmp_path / 'monitor'), [('executor', secret_failure)], clock=clock,
+                       notify=lambda *args: (_ for _ in ()).throw(OSError('TOKEN')), reports=tmp_path / 'reports')
+    text = json.dumps(result) + (tmp_path / 'reports/rehearsal-2026-10-06.md').read_text()
+    assert 'TOKEN' not in text and 'private-account-body' not in text
+    assert result['steps'][0]['error'] == 'UNEXPECTED_OSERROR'
+    assert result['alerts'][0]['delivery'] == 'FAILED'
+
+
+def test_audit_alerts_expiry_missing_labels_and_overdue_lots_without_submissions(environment):
+    from scripts.trading_lab.trader_agent.post_audit import inspect_audit
+    from scripts.trading_lab.trader_agent.rehearsal import SnapshotPaperLedger, readonly_executor, get_only_client
+    from tests.trader_agent.test_alpaca_paper import issue
+    executor, broker, grant, clock = environment
+    issue(executor, horizons=('1d',))
+    clock.at = instant('2026-10-12T13:30:30Z')
+    executor.run('execute', accounts=['ia_actions'])
+    key = broker.posts()[0][3]['client_order_id']
+    broker.fill('ia_actions', key)
+    original_events = executor.ledger.events()
+    snapshot = SnapshotPaperLedger(executor.ledger.root, grant, clock)
+    def client_factory(grant, name, *, clock):
+        return get_only_client(grant, name, clock=clock, transport=broker.transport(name))
+    reader = readonly_executor(snapshot, executor.research, clock=clock, client_factory=client_factory)
+    clock.at = instant('2026-10-12T21:40:00Z')
+    with snapshot.owner():
+        result = inspect_audit(reader, label_at=clock())
+    assert result['state'] == 'BLOCKED'
+    assert {'PAPER_LOT_PAST_HORIZON', 'LABELS_MISSING'} <= set(result['errors'])
+    assert executor.ledger.events() == original_events and len(broker.posts()) == 1
+    broker.orders[('ia_actions', key)]['status'] = 'expired'
+    with snapshot.owner():
+        result = inspect_audit(reader)
+    assert 'PAPER_ORDER_EXPIRED' in result['errors']
+
+
+# Existing execution fixtures are fully synthetic; importing does not call the network.
+from tests.trader_agent.test_execution_fill_fix import environment
+
+
+@pytest.mark.parametrize('day,entry,exit_at', [
+    ('2026-10-12', '13:40:30', '20:05:00'),
+    ('2026-11-02', '14:40:30', '21:05:00'),
+    ('2026-11-27', '14:40:30', '18:05:00'),
+])
+def test_audit_entry_checkpoint_follows_dst_and_half_days(grant, service, day, entry, exit_at):
+    from scripts.trading_lab.trader_agent.post_audit import checkpoints
+    due = checkpoints(grant, service.store, [], instant(day + 'T23:00:00Z'))
+    assert due['session-entry:' + day] == instant(day + 'T' + entry + 'Z')
+
+
+def test_weekend_holiday_populations_follow_approved_crypto_calendar(grant):
+    from dataclasses import replace
+    from scripts.trading_lab.trader_agent.rehearsal import population
+    assert population(grant, instant('2026-10-12T10:45:00Z')) == 'weekday'
+    assert population(grant, instant('2026-10-17T10:45:00Z')) == 'closed'
+    assert population(grant, instant('2026-12-25T10:45:00Z')) == 'closed'
+
+
+def test_rendered_rehearsals_run_every_day_with_durable_retry_and_minute_audits(tmp_path):
+    from scripts.trading_lab.trader_agent.rehearsal_schedule import render
+    units = render(tmp_path, '/python', '/grant', tmp_path / 'runtime', '/paper', '/data', path='/bin')
+    assert len(units) == 7
+    assert '*-*-* 10:45:00 UTC' in units['hyprl-trader-rehearsal.timer']
+    assert '*-*-* 11:15:00 UTC' in units['hyprl-trader-rehearsal-retry.timer']
+    assert 'OnFailure=hyprl-trader-rehearsal-failure.service' in units['hyprl-trader-rehearsal.service']
+    assert '*-*-* *:*:30 UTC' in units['hyprl-trader-post-audit.timer']
+    assert 'Persistent=false' in units['hyprl-trader-rehearsal.timer']
+    assert 'paper-execute' not in ''.join(units.values())
+
+
+@pytest.mark.parametrize('method', ['POST', 'DELETE', 'PATCH', 'PUT'])
+def test_readonly_broker_boundary_refuses_all_mutations_and_claude_account(environment, method):
+    from scripts.trading_lab.trader_agent.rehearsal import get_only_client
+    executor, broker, grant, clock = environment
+    client = get_only_client(grant, 'ia_actions', clock=clock, transport=broker.transport('ia_actions'))
+    client.start()
+    before = len(broker.calls)
+    with pytest.raises(TraderError, match='REHEARSAL_GET_ONLY'):
+        client.request(method, '/v2/orders')
+    with pytest.raises(TraderError, match='REHEARSAL_AI_ACCOUNTS_ONLY'):
+        get_only_client(grant, 'momentum', clock=clock)
+    assert len(broker.calls) == before
+
+
+def test_reviewer_rehearsal_uses_the_real_verdict_schema(ledger, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from scripts.trading_lab.trader_agent.rehearsal import LiveChecks, MonitorState
+    from tests.trader_agent.test_gpt_protocol import cli
+    checks = LiveChecks(SimpleNamespace(), MonitorState(tmp_path / 'monitor'), clock=ledger.clock)
+    checks.ready, checks.grant, checks.ledger = True, ledger.grant, ledger
+    calls = cli(monkeypatch, json.dumps({'subtype': 'success', 'structured_output': {'verdicts': []}}))
+    assert checks.model('reviewer')['model']['model'] == 'sonnet'
+    assert ledger.counts() == {'rehearsal_reviewer': 1}
+    assert 'verdicts' in calls[0]['prompt'] and 'market data' in calls[0]['prompt']
+
+
+@pytest.fixture
+def live_checks(environment, tmp_path, monkeypatch):
+    """Real coordinator/providers/validators/stores, synthetic HTTP and inference processes."""
+    from types import SimpleNamespace
+    from urllib.parse import urlparse, parse_qs, unquote
+    from urllib.request import OpenerDirector
+    from scripts.radar.core import Store
+    from scripts.radar.sources import item
+    from scripts.trading_lab.research.store import ResearchStore
+    from scripts.trading_lab.trader_agent.config import iso
+    from scripts.trading_lab.trader_agent.data import equity_calendar
+    from scripts.trading_lab.trader_agent.rehearsal import LiveChecks, MonitorState
+    from tests.trader_agent.test_gpt_protocol import stream, WEB_COMPLETED
+    executor, broker, paper_grant, clock = environment
+    clock.at = instant('2026-10-12T10:45:00Z')
+    with executor.ledger.owner():
+        pass
+    runtime = tmp_path / 'runtime'
+    ResearchStore(runtime / 'evidence').close()
+    data = tmp_path / 'data-grant.json'
+    data.write_text(json.dumps({'authorization': 'trader-alpaca-data-v1', 'extends': 'trader-alpaca-paper-v1',
+        'granted_at': '2026-01-01T00:00:00Z', 'not_after': '2027-01-01T00:00:00Z',
+        'data_endpoint': {'origin': 'https://data.alpaca.markets', 'methods': ['GET'], 'credentials': 'ia_actions keys'}}))
+    radar = Store(tmp_path / 'radar', clock=clock)
+    with radar.owner():
+        pass
+    stamp = clock() - timedelta(minutes=5)
+    record = item('rss:synthetic', 'example.invalid', 'https://example.invalid/synthetic',
+                  'Synthetic market update', 'Synthetic summary', iso(stamp), stamp, symbols=['AAPL'])
+    radar.append('news', record['id'], record, at=stamp)
+    veille = tmp_path / 'veille.md'
+    veille.write_text('2026-10-11T00:00:00Z\nSynthetic context\n')
+    import os
+    os.utime(veille, (stamp.timestamp(), stamp.timestamp()))
+    reports = tmp_path / 'reports'
+    (reports / 'radar').mkdir(parents=True)
+    (reports / 'radar/report.json').write_text(json.dumps({'schema': 'news-radar-report-v1', 'events': [],
+                                                       'status': 'COMPLETE', 'cutoff': iso(stamp)}))
+    args = SimpleNamespace(authorization=str(tmp_path / 'synthetic-grant.json'),
+        paper_authorization=str(tmp_path / 'paper-grant.json'), data_authorization=str(data),
+        runtime=str(runtime), budget_root=str(tmp_path / 'budget'), paper_runtime=str(executor.ledger.root),
+        radar_root=str(radar.root), veille=str(veille), fomc_store=None, edgar_store=None, reports=str(reports))
+    state = MonitorState(tmp_path / 'monitor')
+    checks = LiveChecks(args, state, clock=clock)
+    calls = []
+    faults = {}
+    monkeypatch.setattr('scripts.trading_lab.trader_agent.rehearsal.protected', lambda *args: None)
+    monkeypatch.setattr('scripts.trading_lab.trader_agent.alpaca_data.protected', lambda *args: None)
+    for name in ('ia_actions', 'ia_crypto'):
+        from pathlib import Path
+        credentials = Path(paper_grant.payload['accounts'][name]['credentials'])
+        credentials.write_text(credentials.read_text().replace('synthetic-key', 'synthetic-' + name))
+    class Response:
+        def __init__(self, body):
+            self.body = json.dumps(body).encode()
+        def read(self, size):
+            return self.body[:size]
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+    def http(self, request, **kwargs):
+        parsed = urlparse(request.full_url)
+        host, path, query = parsed.hostname, unquote(parsed.path), parse_qs(parsed.query)
+        calls.append((host, request.get_method(), path))
+        if host in faults:
+            raise OSError('Synthetic provider unavailable')
+        assert request.get_method() == 'GET'
+        if host == 'query1.finance.yahoo.com':
+            asset = path.split('/')[-1]
+            sessions = equity_calendar(2026).sessions_between(clock() - timedelta(days=70), clock())
+            return Response({'chart': {'error': None, 'result': [{'meta': {'symbol': asset, 'currency': 'USD',
+                'exchangeTimezoneName': 'America/New_York', 'exchangeName': 'NMS',
+                'instrumentType': 'ETF' if asset in ['XLK', 'SPY'] else 'EQUITY'},
+                'timestamp': [int(s.open_at.timestamp()) for s in sessions], 'indicators': {'quote': [{
+                    'open': [100] * len(sessions), 'close': [101] * len(sessions),
+                    'high': [102] * len(sessions), 'low': [99] * len(sessions), 'volume': [1000] * len(sessions)}]}}]}})
+        if host == 'api.exchange.coinbase.com':
+            start = instant(query['start'][0])
+            end = instant(query['end'][0])
+            days = int((end - start).total_seconds() // 86400)
+            return Response([[int((start + timedelta(days=i)).timestamp()), 99, 102, 100, 101, 1000] for i in range(days)])
+        if host == 'api.gdeltproject.org':
+            return Response({'articles': [{'url': 'https://example.invalid/news', 'title': 'Synthetic fresh news',
+                                          'seendate': stamp.strftime('%Y%m%dT%H%M%SZ'), 'domain': 'example.invalid'}]})
+        if host == 'data.alpaca.markets':
+            symbols = query['symbols'][0].split(',')
+            crypto = 'crypto' in path
+            quote_at = stamp if crypto else instant('2026-10-09T19:59:59Z')
+            if crypto:
+                quote_at = clock() - timedelta(seconds=1)
+            if 'quotes' in path:
+                return Response({'quotes': {s: {'bp': 100, 'ap': 100.01, 't': iso(quote_at)} for s in symbols}})
+            return Response({'trades': {s: {'p': 100, 't': iso(quote_at)} for s in symbols}})
+        if host == 'paper-api.alpaca.markets':
+            name = request.get_header('Apca-api-key-id').removeprefix('synthetic-')
+            if path == '/v2/account':
+                account = dict(broker.accounts[name], buying_power='100000')
+                return Response(account)
+            if path == '/v2/clock':
+                return Response({'timestamp': iso(clock()), 'is_open': False,
+                                 'next_open': '2026-10-12T13:30:00Z', 'next_close': '2026-10-12T20:00:00Z'})
+            if path == '/v2/calendar':
+                return Response([{'date': '2026-10-12', 'open': '09:30', 'close': '16:00'}])
+            if path.startswith('/v2/assets/'):
+                return Response({'class': 'crypto' if '/USD' in path else 'us_equity', 'status': 'active',
+                                 'tradable': True, 'shortable': '/USD' not in path})
+            if path in ('/v2/positions', '/v2/orders'):
+                return Response([])
+        raise AssertionError('Unexpected synthetic URL: ' + host + path)
+    monkeypatch.setattr(OpenerDirector, 'open', http)
+    monkeypatch.setattr('subprocess.run', lambda *args, **kw: SimpleNamespace(stdout='synthetic-cli'))
+    class Process:
+        returncode = 0
+        def __init__(self, args, **kw):
+            self.args, self.out = args, kw['stdout']
+        def communicate(self, prompt, **kw):
+            reviewer = 'sonnet' in self.args
+            output = {'verdicts': []} if reviewer else {'regime': ['PREFLIGHT_OK'], 'views': []}
+            if self.args[0] == 'codex':
+                self.out.write(stream(output, WEB_COMPLETED))
+            else:
+                self.out.write(json.dumps({'subtype': 'success', 'structured_output': output}))
+            self.out.flush()
+    monkeypatch.setattr('subprocess.Popen', Process)
+    return checks, state, clock, calls, faults
+
+
+def test_full_chain_uses_real_configuration_with_only_gets_and_zero_decisions(live_checks):
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, calls, _ = live_checks
+    result = rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['state'] == 'GREEN', [s for s in result['steps'] if s['state'] != 'GREEN']
+    assert len(result['steps']) == 14
+    assert all(method == 'GET' for _, method, _ in calls)
+    assert checks.research.records('prediction') == []
+    assert checks.ledger.counts() == {'yahoo_chart': 3, 'coinbase_exchange_public': 2, 'gdelt_doc_api': 1,
+                                      'gpt_preflight': 1, 'rehearsal_analyst_claude': 1, 'rehearsal_reviewer': 1}
+    assert (state.root / 'cockpit-probe/analysis.json').exists()
+
+
+@pytest.mark.parametrize('host,step', [('query1.finance.yahoo.com', 'yahoo'),
+    ('api.exchange.coinbase.com', 'coinbase'), ('api.gdeltproject.org', 'gdelt'),
+    ('data.alpaca.markets', 'alpaca_data'), ('paper-api.alpaca.markets', 'executor')])
+def test_each_source_failure_is_attributed_and_other_steps_still_run(live_checks, host, step):
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, _, faults = live_checks
+    faults[host] = True
+    result = rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['state'] == 'BLOCKED'
+    assert next(s for s in result['steps'] if s['step'] == step)['state'] == 'BLOCKED'
+    assert result['steps'][-1]['step'] == 'cockpit_export'
+    assert result['retry_at'] == '2026-10-12T11:15:00Z'
+
+
+def test_retry_fresh_prices_and_successful_models_do_not_refund_or_repeat_calls(live_checks):
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, calls, faults = live_checks
+    faults['api.gdeltproject.org'] = True
+    assert rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)['state'] == 'BLOCKED'
+    faults.clear()
+    first = dict(checks.ledger.counts())
+    clock.at += timedelta(minutes=30)
+    result = rehearse(state, checks.steps(retry=True), clock=clock, retry=True,
+                       notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['state'] == 'GREEN', [s for s in result['steps'] if s['state'] != 'GREEN']
+    second = checks.ledger.counts()
+    assert second == {**first, 'gdelt_doc_api': 2}
+    assert next(s for s in result['steps'] if s['step'] == 'yahoo')['evidence']['cache_hits'] == 3
+
+
+@pytest.mark.parametrize('which', ['configuration', 'radar_veille', 'archives', 'scorer_labels', 'cockpit_export'])
+def test_non_network_chain_failures_reach_report_and_alert(live_checks, which):
+    from pathlib import Path
+    import fcntl
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, _, _ = live_checks
+    lock = None
+    if which == 'configuration':
+        grant = json.loads(Path(checks.args.authorization).read_text())
+        grant['not_after'] = '2026-10-11T00:00:00Z'
+        Path(checks.args.authorization).write_text(json.dumps(grant))
+    elif which == 'radar_veille':
+        lock = (Path(checks.args.radar_root) / 'owner.lock').open('rb')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    elif which == 'archives':
+        checks.args.fomc_store = str(state.root / 'missing-archive')
+    elif which == 'scorer_labels':
+        # Invalid synthetic prediction evidence reaches the actual scorer, not a mocked internal method.
+        # The append-only API rejects unsafe inputs; use an invalid store schema instead.
+        import sqlite3
+        path = Path(checks.args.runtime) / 'evidence/research.sqlite'
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE metadata SET schema='synthetic-corrupt-schema'")
+        which = 'configuration'  # integrity admission fails before scoring can read the store
+    else:
+        (Path(checks.args.reports) / 'radar/report.json').write_text('bad-json')
+    try:
+        result = rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    finally:
+        if lock:
+            lock.close()
+    assert result['state'] == 'BLOCKED'
+    assert any(s['step'] == which and s['state'] == 'BLOCKED' for s in result['steps'])
+    assert any(a['step'] == which and a['delivery'] == 'DELIVERED' for a in result['alerts'])
+
+
+def test_audit_missing_eligible_entry_is_not_a_successful_empty_ledger(environment):
+    from scripts.trading_lab.trader_agent.rehearsal import SnapshotPaperLedger, readonly_executor, get_only_client
+    from scripts.trading_lab.trader_agent.post_audit import inspect_audit
+    from tests.trader_agent.test_alpaca_paper import issue
+    executor, broker, grant, clock = environment
+    issue(executor, horizons=('1d',))
+    with executor.ledger.owner():
+        pass
+    clock.at += timedelta(minutes=10)
+    snapshot = SnapshotPaperLedger(executor.ledger.root, grant, clock)
+    def factory(grant, name, *, clock):
+        return get_only_client(grant, name, clock=clock, transport=broker.transport(name))
+    with snapshot.owner():
+        result = inspect_audit(readonly_executor(snapshot, executor.research, clock=clock, client_factory=factory))
+    assert result['state'] == 'BLOCKED' and 'PAPER_ELIGIBLE_ENTRY_NOT_DISPATCHED' in result['errors']
+    assert broker.posts() == []
+
+
+def test_audit_does_not_hold_execution_lock_during_broker_reads(environment):
+    from scripts.trading_lab.trader_agent.rehearsal import SnapshotPaperLedger
+    executor, _, grant, clock = environment
+    with executor.ledger.owner():
+        pass
+    snapshot = SnapshotPaperLedger(executor.ledger.root, grant, clock)
+    with snapshot.owner():
+        with executor.ledger.owner():
+            executor.ledger.append('alert', 'ia_actions', code='SYNTHETIC_CHANGE_DURING_HTTP')
+        assert not snapshot.unchanged()
+
+
+def test_scorer_failure_after_admission_is_reported(live_checks):
+    from pathlib import Path
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, _, _ = live_checks
+    checks.configuration()
+    path = Path(checks.args.runtime) / 'evidence/research.sqlite'
+    path.rename(path.with_suffix('.unavailable'))
+    result = rehearse(state, [('scorer_labels', checks.scoring)], clock=clock,
+                       notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['state'] == 'BLOCKED' and result['alerts'][0]['step'] == 'scorer_labels'
+
+
+def test_stale_quotes_fail_while_older_positive_trades_match_production_contract(live_checks, monkeypatch):
+    from urllib.request import OpenerDirector
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, _, _ = live_checks
+    checks.configuration()
+    original = OpenerDirector.open
+    def old_trades(self, request, **kw):
+        result = original(self, request, **kw)
+        if 'trades' in request.full_url:
+            body = json.loads(result.body)
+            for row in body.get('trades', {}).values():
+                row['t'] = '2026-10-09T19:59:00Z'
+            result.body = json.dumps(body).encode()
+        return result
+    monkeypatch.setattr(OpenerDirector, 'open', old_trades)
+    assert checks.alpaca_data()['trades_older_than_60s'] == 5
+    def stale_quotes(self, request, **kw):
+        result = original(self, request, **kw)
+        if '/crypto/' in request.full_url and 'quotes' in request.full_url:
+            body = json.loads(result.body)
+            for row in body['quotes'].values():
+                row['t'] = '2026-10-09T19:59:00Z'
+            result.body = json.dumps(body).encode()
+        return result
+    monkeypatch.setattr(OpenerDirector, 'open', stale_quotes)
+    result = rehearse(state, [('alpaca_data', checks.alpaca_data)], clock=clock,
+                       notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['steps'][0]['error'] == 'REHEARSAL_DATA_STALE'
+
+
+def test_approved_crypto_rehearsal_population_and_holiday_checkpoint(weekend_grant, service):
+    from scripts.trading_lab.trader_agent.rehearsal import population
+    from scripts.trading_lab.trader_agent.post_audit import checkpoints
+    for day in ('2026-10-17', '2026-12-25'):
+        at = instant(day + 'T23:00:00Z')
+        assert population(weekend_grant, at) == 'weekend_crypto'
+        assert checkpoints(weekend_grant, service.store, [], at)['session-entry:' + day] == instant(day + 'T13:40:00Z')
+
+
+from tests.trader_agent.test_weekend_crypto import weekend_grant
+from tests.trader_agent.test_execution_v2 import amended
