@@ -187,7 +187,7 @@ export function paperLines(cohorts: Cohort[]): PaperLine[] {
     if (c.state === 'COMPLETE' && c.variants.unhedged.capital_return !== null) {
       line.complete += 1;
       line.unhedged = (line.unhedged ?? 0) + c.variants.unhedged.capital_return;
-      line.hedged = (line.hedged ?? 0) + (c.variants.spy_hedged.capital_return ?? 0);
+      if (c.variants.spy_hedged) line.hedged = (line.hedged ?? 0) + (c.variants.spy_hedged.capital_return ?? 0);
     } else {
       line.pending += 1;
     }

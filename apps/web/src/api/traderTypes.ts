@@ -90,7 +90,8 @@ export interface ScoreEntry {
 export interface CohortVariant { weights: Record<string, number>; return_after_costs: number | null; capital_return: number | null }
 export interface Cohort {
   session: string; horizon: Horizon; analyst: string; capital_fraction: number; state: 'COMPLETE' | 'PENDING';
-  variants: { unhedged: CohortVariant; spy_hedged: CohortVariant };
+  /** A weekend crypto cohort has no SPY session to hedge against: the scorer writes no spy_hedged variant. */
+  variants: { unhedged: CohortVariant; spy_hedged?: CohortVariant };
 }
 export interface TraderScorecard {
   schema: 'trader-scorecard-v1'; synthetic: boolean; scores: Record<string, ScoreEntry>; hypothesis_state: string;

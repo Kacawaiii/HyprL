@@ -238,6 +238,26 @@ describe('trader derivations', () => {
   });
 });
 
+describe('Weekend crypto cohorts', () => {
+  // The scorer writes only an unhedged variant for a weekend crypto session (no SPY session to hedge against).
+  const weekend = (state: 'COMPLETE' | 'PENDING', capital: number | null) => ({
+    session: '2026-10-10:weekend_crypto', horizon: '1d', analyst: 'consensus', capital_fraction: 1, state,
+    variants: { unhedged: { weights: {}, return_after_costs: capital, capital_return: capital } },
+  });
+
+  it('sums an unhedged-only cohort and leaves its hedged sum unknown', () => {
+    const lines = paperLines([weekend('COMPLETE', 0.01), weekend('PENDING', null)] as never);
+    expect(lines).toEqual([{ analyst: 'consensus', horizon: '1d', complete: 1, pending: 1, unhedged: 0.01, hedged: null }]);
+  });
+
+  it('renders the Agent trader page when the scorecard holds one', async () => {
+    const card = fx.states.realized.scorecard;
+    open('/trader?date=2026-10-07&mode=expert', 'realized',
+      { scorecard: { ...card, portfolio_cohorts: [...card.portfolio_cohorts, weekend('COMPLETE', 0.01)] } });
+    expect(await screen.findByRole('table', { name: 'Paper results by analyst' })).toBeInTheDocument();
+  });
+});
+
 describe('Prospective news A/B', () => {
   it('shows separate counts, SPY-relative scores, promotion rule and too early state', async () => {
     open('/trader?date=2026-10-07', 'realized');
