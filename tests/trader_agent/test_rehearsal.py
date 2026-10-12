@@ -451,3 +451,20 @@ def test_approved_crypto_rehearsal_population_and_holiday_checkpoint(weekend_gra
 
 from tests.trader_agent.test_weekend_crypto import weekend_grant
 from tests.trader_agent.test_execution_v2 import amended
+
+
+def test_new_checkpoints_do_not_repeat_known_order_alerts_but_new_orders_do(tmp_path):
+    from scripts.trading_lab.trader_agent.post_audit import alert_issues
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    state = MonitorState(tmp_path / 'monitor')
+    messages = []
+    send = lambda key, text: messages.append(text) or 'DELIVERED'
+    old = {'code': 'PAPER_ORDER_EXPIRED', 'identity': 'a' * 64}
+    new = {'code': 'PAPER_ORDER_EXPIRED', 'identity': 'b' * 64}
+    assert alert_issues(state, [old], send)['delivery'] == 'DELIVERED'
+    assert alert_issues(state, [old], send)['delivery'] == 'ALREADY_NOTIFIED'
+    assert alert_issues(state, [old, new], send)['new_issues'] == 1
+    assert len(messages) == 2
+    labels = [{'code': 'LABELS_MISSING', 'identity': str(i)} for i in range(200)]
+    assert alert_issues(state, labels, send)['new_issues'] == 200
+    assert len(messages) == 3

@@ -87,8 +87,11 @@ unresolved orders fail. Broker positions must reconcile to every projected lot;
 overdue residual lots fail. The real selector/planner also catches eligible
 entries never reserved. At label checkpoints, every matured real prediction
 must have its immutable label. Checks never acquire label prices or touch
-holdouts. An unchanged failed checkpoint is reported and alerted once; a new
-entry, exit or label checkpoint independently audits the whole ledger.
+holdouts. Each checkpoint independently audits the whole ledger. Failed orders, lots
+and labels are notified once per immutable issue identity, so a historical
+expired order does not alert again at every new checkpoint. A new order with the
+same failure code still alerts. Newly missing labels are sent in one bounded
+batch rather than one message per prediction.
 
 Install the rehearsal units only after the owned branch's exact SHA has green
 CI and the full required local suites pass. Preserve existing trader units and

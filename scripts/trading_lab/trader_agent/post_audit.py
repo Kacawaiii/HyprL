@@ -45,7 +45,10 @@ def checkpoints(grant, research, events, at, last_label=None):
 
 def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_label_job=False, last_label=None):
     from .alpaca_paper import decimal
-    errors, accounts = [], []
+    errors, accounts, issues = [], [], []
+    def problem(code, identity):
+        errors.append(code)
+        issues.append({'code': code, 'identity': sha256_canonical([code, identity])})
     executor.grant.check(executor.dispatch_clock())
     executor.research.verify()
     for name in ('ia_actions', 'ia_crypto'):
@@ -67,12 +70,13 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                     disposition = 'CANCELED_BY_RULE'
                 else:
                     disposition = 'ALERTED'
-                    errors.append('PAPER_ORDER_' + status.upper() if status in {'expired', 'rejected'} else 'PAPER_ORDER_UNRESOLVED')
+                    problem('PAPER_ORDER_' + status.upper() if status in {'expired', 'rejected'} else 'PAPER_ORDER_UNRESOLVED',
+                            [name, key])
                 dispositions[disposition] = dispositions.get(disposition, 0) + 1
             for lot in lots.values():
                 grace = timedelta(minutes=5 if name == 'ia_actions' else 10)
                 if decimal(lot['qty']) and instant(lot['exit_at']) + grace <= executor.clock():
-                    errors.append('PAPER_LOT_PAST_HORIZON')
+                    problem('PAPER_LOT_PAST_HORIZON', [name, lot['lot_id']])
             # Reconstruct the executor's actual selection at the planned entry clock.
             # This catches eligible plans never reserved without guessing from all analyst views.
             original = executor.clock
@@ -92,7 +96,7 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                     executor.clock = lambda dispatch_at=dispatch_at: dispatch_at
                     planned = executor.entries(name, decimal(account['equity']), positions)
                     if planned:
-                        errors.append('PAPER_ELIGIBLE_ENTRY_NOT_DISPATCHED')
+                        problem('PAPER_ELIGIBLE_ENTRY_NOT_DISPATCHED', [name, row['identity']])
                         break
             finally:
                 executor.clock = original
@@ -100,7 +104,7 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                              'reconciled': True, 'open_lots': sum(bool(decimal(l['qty'])) for l in lots.values()),
                              'orders': dispositions})
         except Exception as error:
-            errors.append(error_code(error))
+            problem(error_code(error), [name, executor.clock().date().isoformat()])
             accounts.append({'account': name, 'reconciled': False})
     at = executor.clock()
     day = at.date().isoformat()
@@ -109,21 +113,23 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                 if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
                 and r['payload']['at'][:10] == day and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}]
         if not runs:
-            errors.append('MISSING_DAILY_RUN')
+            problem('MISSING_DAILY_RUN', day)
     if require_label_job and (not last_label or last_label.get('at', '')[:10] != day or last_label.get('state') != 'COMPLETE'):
-        errors.append('MISSING_OR_FAILED_LABEL_JOB')
+        problem('MISSING_OR_FAILED_LABEL_JOB', day)
     if label_at and last_label and last_label.get('state') != 'COMPLETE':
-        errors.append('LABEL_JOB_FAILED')
+        problem('LABEL_JOB_FAILED', last_label['at'])
     if label_at:
         labeled = {r['payload']['prediction_hash'] for r in rows(executor.research, 'label')}
         missing = [r for r in rows(executor.research, 'prediction') if not r['payload'].get('synthetic', True)
                    and instant(r['payload']['signal']['label_definition']['exit_at']) <= label_at and r['identity'] not in labeled]
         if missing:
-            errors.append('LABELS_MISSING')
+            for row in missing:
+                problem('LABELS_MISSING', row['identity'])
     else:
         missing = []
     return {'schema': 'trader-post-audit-v1', 'at': iso(at), 'state': 'BLOCKED' if errors else 'GREEN',
             'errors': sorted(set(errors)), 'accounts': accounts, 'labels_missing': len(missing),
+            'issues': issues,
             'broker_methods': ['GET'], 'production_writes': 0}
 
 
@@ -158,7 +164,6 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
                 result['checkpoints'] = sorted(due)
                 if not paper.unchanged():
                     return {'state': 'PAPER_EXECUTION_IN_PROGRESS'}
-                key = 'audit:' + sha256_canonical(sorted(due))
                 with state.connect() as db:
                     for checkpoint in due:
                         db.execute('INSERT OR IGNORE INTO checkpoints VALUES(?,?)', (checkpoint, json.dumps(result)))
@@ -170,12 +175,38 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
             return {'state': 'PAPER_EXECUTION_IN_PROGRESS'}
         result = {'schema': 'trader-post-audit-v1', 'at': iso(at), 'state': 'BLOCKED', 'errors': [error_code(error)]}
     if result['state'] == 'BLOCKED':
-        result['alert'] = state.alert(key, 'Trader post-run audit failed: ' + ', '.join(result['errors']), notify)
+        issues = result.get('issues', [{'code': code, 'identity': sha256_canonical([key, code])}
+                                       for code in result['errors']])
+        result['alert'] = alert_issues(state, issues, notify)
     root = Path(args.reports)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     target = root / ('trader-post-audit-' + at.strftime('%Y-%m-%dT%H%M%S') + '.json')
     target.write_text(json.dumps(result, indent=2) + '\n')
     return result
+
+
+def alert_issues(state, issues, notify):
+    """New checkpoints must not repeatedly notify an already reported expired intent.
+
+    Reserve individual issue identities, then send one bounded batch. A new order
+    with the same error still alerts; hundreds of missing labels do not spam.
+    """
+    fresh = {}
+    with state.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        for issue in issues:
+            key = 'audit-issue:' + issue['identity']
+            if db.execute('INSERT OR IGNORE INTO notifications VALUES(?,?)', (key, 'RESERVED')).rowcount:
+                fresh[key] = issue['code']
+    if not fresh:
+        return {'delivery': 'ALREADY_NOTIFIED', 'new_issues': 0}
+    delivery = state.alert('audit-batch:' + sha256_canonical(sorted(fresh)),
+        'Trader post-run audit failed: ' + ', '.join(sorted(set(fresh.values()))) +
+        ' (' + str(len(fresh)) + ' new issues)', notify)
+    with state.connect() as db:
+        for key in fresh:
+            db.execute('UPDATE notifications SET state=? WHERE id=?', (delivery, key))
+    return {'delivery': delivery, 'new_issues': len(fresh)}
 
 
 def main(argv=None):
