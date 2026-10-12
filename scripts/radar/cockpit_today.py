@@ -158,7 +158,7 @@ def ai_today(runs, report=None):
 
 
 def system_light(system=None, *, radar_cutoff=None, now: datetime):
-    """Problems a beginner should know about, each with a level; the light is the worst level."""
+    """Problems a beginner should know about, each with a level; the light is the worst level, or `unknown`."""
     system = system or {}
     problems = []
     for unit in system.get("units") or []:
@@ -179,4 +179,7 @@ def system_light(system=None, *, radar_cutoff=None, now: datetime):
     if cutoff is None or now - cutoff > timedelta(hours=14):
         problems.append({"level": "orange", "text": "Les actualités n’ont pas été mises à jour depuis plus de 14 h."})
     level = "red" if any(p["level"] == "red" for p in problems) else "orange" if problems else "green"
+    if level == "green" and not health and not system.get("units"):
+        # Without trader health or unit states (the one-shot CLI export reads neither) nothing was checked: no green.
+        level = "unknown"
     return {"level": level, "problems": problems, "checked_at": _iso(now)}

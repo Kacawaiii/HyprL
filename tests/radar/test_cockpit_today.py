@@ -93,6 +93,8 @@ def test_system_light_counts_failures_and_staleness_but_not_sources_blocked_by_d
     assert calm == {"level": "green", "problems": [], "checked_at": "2026-10-12T21:00:00Z"}
     stale = today.system_light({}, radar_cutoff="2026-10-12T01:00:00Z", now=NOW)
     assert stale["level"] == "orange"
+    unchecked = today.system_light({"trader": {}, "units": []}, radar_cutoff="2026-10-12T20:00:00Z", now=NOW)
+    assert unchecked["level"] == "unknown" and unchecked["problems"] == []
 
 
 def test_home_carries_the_blocks_and_the_book_gets_its_previous_close():
