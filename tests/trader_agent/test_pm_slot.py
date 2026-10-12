@@ -47,6 +47,7 @@ def test_pm_run_freezes_slot_start_and_labels_follow_full_next_session(tmp_path,
     context = service.store.records('replay-summary', object_id=result['run_id'] + ':context')[0]['payload']['context']
     assert context['decision_time'] == '2026-10-13T16:00:00Z'
     assert result['decision']['slot'] == 'pm'
+    assert context['label_convention']['asset_windows']['AAPL']['entry_at'] == '2026-10-13T17:30:00Z'
     predictions = service.store.records('prediction')
     equity = next(r['payload'] for r in predictions if r['payload']['product'] == 'AAPL' and r['payload']['signal']['label_definition']['horizon'] == '1d')
     assert equity['signal']['label_definition']['entry_at'] == '2026-10-13T17:30:00Z'
@@ -355,3 +356,37 @@ def test_pm_recovery_after_original_anchor_stays_prospective_and_same_day(tmp_pa
     assert definition['entry_at'] == '2026-10-13T19:30:00Z'
     assert definition['exit_at'] == '2026-10-14T20:00:00Z'
     assert definition['variant'] == 'pm_slot_recovery_v1'
+
+
+@pytest.mark.parametrize('day,start,eq_anchor,crypto_anchor', [
+    ('2026-10-13', '2026-10-13T19:05:00Z', '2026-10-13T19:45:00Z', '2026-10-13T20:30:00Z'),
+    ('2026-11-27', '2026-11-27T17:05:00Z', '2026-11-27T17:45:00Z', '2026-11-27T18:30:00Z'),
+])
+def test_late_recovery_crypto_anchor_matches_hourly_exit_timer(day, start, eq_anchor, crypto_anchor):
+    from scripts.trading_lab.trader_agent.slots import label_window, recovery_anchor
+    from datetime import timedelta
+    anchor = recovery_anchor(day, instant(start))
+    assert anchor == instant(eq_anchor)
+    entry, exit_at = label_window('SOL-USD', day, '1d', ['SOL-USD'], anchor=anchor)
+    assert entry == instant(crypto_anchor)
+    assert exit_at == entry + timedelta(days=1)
+    assert exit_at.minute == 30
+    equity_entry, equity_exit = label_window('AAPL', day, '1d', ['SOL-USD'], anchor=anchor)
+    assert equity_entry == instant(eq_anchor)
+    assert equity_exit.date() > equity_entry.date()
+
+
+def test_prior_pm_registration_is_rejected_without_implicit_migration(environment):
+    from scripts.trading_lab.trader_agent import slots
+    executor, broker, _, clock = environment
+    executor.grant = executor.ledger.grant = replace(executor.grant, parent=pm_grant(executor.grant.parent))
+    target = slots.registration_target(executor.grant)
+    prior = {**target, 'pm_spec_hash': '3866c2cfffac99991312044c088ff478ede0c8e53e2d0d43e09e2fffaa2e6c30',
+             'pm_preregistration_hash': 'eef176adfdd071c3bc1edb7f73439bf9e4b5c414afa8d24279e7599d884c75bb'}
+    executor.ledger.append('pm_registration', None, **prior)
+    before = executor.ledger.events(event='pm_registration')
+    clock.at = instant('2026-10-13T16:05:00Z')
+    issue(executor, slot='pm')
+    assert executor.run('execute', accounts=['ia_actions'])['state'] == 'BLOCKED'
+    assert not broker.posts()
+    assert executor.ledger.events(event='pm_registration') == before

@@ -5,7 +5,7 @@ The October 12 operator decision authorizes `am` at 12:00 UTC and `pm` at
 identities, predictions, labels, prompts, source contracts, execution v4
 bindings and paper grant remain valid. No historical journal is rewritten.
 
-The new `trader_pm_slot_spec_v1.json` and preregistration v8 are additive.
+The new `trader_pm_slot_spec_v2.json` and preregistration v9 are additive.
 The private pm amendment binds the original grant and operator decision.
 An explicit `paper-register-pm` action appends the corresponding capability
 registration to the existing v4 paper ledger. Pm execution refuses an absent
@@ -45,7 +45,9 @@ One same-day recovery is permitted for a failed, interrupted or missed pm
 primary that has issued no prediction. It retains the original 16:00 cutoff
 and budget. Its separate recovery population uses a future :30 anchor in the
 following UTC hour, bounded by regular close minus fifteen minutes for
-stocks and 23:30 UTC on closed days. Recovery never enters equities after
+stocks and 23:30 UTC on closed days. A :45 equity recovery anchor rounds
+crypto forward to the next :30, preserving its existing hourly exit timer.
+Both arms retain the same anchor for each asset. Recovery never enters equities after
 hours. Exhausted analysts remain missing; exhausted reviewer/aggregate/data
 budgets leave the slot pending. Both base and news must finish before the
 same registered anchor.
@@ -67,4 +69,6 @@ Deployment requires the exact release SHA's branch and integrated CI,
 all local gates, idle trader services, consistent database/unit backups and
 an allowed operator window. The new capability is registered explicitly;
 old journal snapshots must never overwrite appended evidence during rollback.
-A live pre-flight or rehearsal must be GREEN after deployment.
+A live pre-flight or rehearsal must be GREEN after deployment. Pm spec v1
+and preregistration v8 remain frozen evidence; v2 refuses their registrations
+rather than migrating them implicitly.

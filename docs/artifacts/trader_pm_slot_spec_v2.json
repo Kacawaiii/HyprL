@@ -1,0 +1,44 @@
+{
+  "schema": "trader-pm-slot-spec-v2",
+  "revision": 2,
+  "registered_on": "2026-10-12",
+  "effective_from": "2026-10-13T16:00:00Z",
+  "operator_decision_hash": "530c2d6a5d6e9e3b16cda77ad3060ffb8b827a7c269eec17ce4439495d8439a3",
+  "amendment_hash": "0f0ae85b2becb7e95c5237250215c6c5ec106cef5d260a92c479210ba9f6f61e",
+  "base_execution_spec_hash": "92b00b05a4971f64bdea39f723c95ecbd28f4468592a908fd16f79ccccaa5cc6",
+  "slots": {
+    "am": "12:00:00Z",
+    "pm": "16:00:00Z"
+  },
+  "budget": {
+    "max_runs": 1,
+    "max_recoveries": 1,
+    "base_model_calls_including_retries": 6,
+    "news_model_calls_including_retries": 6,
+    "calls_per_role_including_retries": 2,
+    "data_requests": {
+      "yahoo_chart": 80,
+      "gdelt_doc_api": 80,
+      "coinbase_exchange_public": 40
+    }
+  },
+  "identity": "Legacy am identities remain valid. pm appends :pm before :catchup and :news; durable per-slot dispatch namespaces share one owner lock.",
+  "decision_cutoff": "pm input publication, completed price and archive cutoffs are 16:00 UTC, including recovery. Acquisition receipts and final plan timestamps remain actual, never backdated.",
+  "population": "Trading days: unchanged equities, ETFs and crypto. Weekends and US holidays: amended crypto only.",
+  "execution": "Paper only; same tiers/sizes/caps. pm equity DAY market immediately after base plan final during regular session, strictly before close minus 15 minutes. Crypto market/gtc unchanged.",
+  "collisions": "From pm activation, admit at most one new open or pending entry lot per asset/account across slots and directions. Existing lots remain unchanged and scored; prefer 1d to 5d, never refill a seen lot.",
+  "labels": {
+    "entry": "Prospective fixed pm anchor 17:30 UTC; on half days equity anchor is min(17:30 UTC, regular close minus 30 minutes). Base and news must finish before the same anchor. Execution fills and anchor gap scored separately as for am.",
+    "equity_exit": "Close of the nth complete following trading session (n=1 or 5); execution at that close minus five minutes, then overdue open sweep. Use exact 5-minute entry candle open and final 5-minute session candle close; never nearest-price fallback.",
+    "crypto_exit": "17:30 UTC entry anchor plus 24/120 hours, same fixed-anchor elapsed-day convention as am; hourly :30 UTC exit timer.",
+    "sources": "Yahoo chart interval 5m for pm equity labels, bounded to 30 days; native timestamp/quote-array shape; public grant budgets unchanged per slot. Coinbase exact minute anchors unchanged.",
+    "crypto_recovery": "A bounded equity recovery anchor at :45 rounds crypto forward to the next UTC :30. Both arms finish before their earliest asset anchor. Every crypto 1d/5d exit remains on the existing hourly :30 timer; no early or late inferred candle."
+  },
+  "recovery": "One same-day retry for a FAILED or interrupted/missed pm primary without any decision/prediction. Frozen 16:00 input cutoff and original slot budget. A distinct recovery population uses a future :30 anchor in the following UTC hour, bounded by close minus 15 minutes for equities, or 23:30 UTC on closed days. Both arms must finish before that anchor. Equity exits still use nth full following session close; crypto anchor plus 24/120 hours. Exhausted budgets stay pending; no equity after-hours recovery.",
+  "monitoring": "15:15 UTC full-chain pm preflight, 15:45 conditional retry, daily successful model probes reused. Actual intents and plans audited after ten minutes, including missing pm run; failure alerts through existing notifier.",
+  "registration": "Additive pm execution registration binds v4 journal and unchanged paper grant. No implicit migration; am binding/decisions/specs stay valid. pm refuses absent or mismatched registration.",
+  "scoring": "am, pm and combined descriptive scores; existing am groups and primary test preserved. pm hypotheses exploratory; never pool am/pm in primary confirmatory test.",
+  "confirmatory": false,
+  "previous_spec_hash": "3866c2cfffac99991312044c088ff478ede0c8e53e2d0d43e09e2fffaa2e6c30",
+  "canonical_sha256": "f2e315f6040215683b56346c71b02d315283a4d31eb767f10c2ed7f07c5fc4fb"
+}

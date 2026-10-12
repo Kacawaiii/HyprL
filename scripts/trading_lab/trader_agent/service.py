@@ -199,7 +199,7 @@ class TraderService:
                 prereg_hash = slots.preregistration() if pm else weekend.preregistration() if self.crypto_only else preregistration()
                 texts, hashes = skills()
                 self.ledger.reserve("catchup_run" if catchup else "run")
-                variants = list(slots.pinned('trader_agent_preregistration_v8.json', slots.PREREG_HASH)['variants']) if pm else weekend.variants() if self.crypto_only else VARIANTS
+                variants = list(slots.pinned('trader_agent_preregistration_v9.json', slots.PREREG_HASH)['variants']) if pm else weekend.variants() if self.crypto_only else VARIANTS
                 from .paper_spec import execution_spec, execution_preregistration
                 execution_registration = None
                 if at >= instant(execution_spec()['effective_from']):
@@ -224,7 +224,11 @@ class TraderService:
                     context_hash = sha256_canonical(context)
                 if pm:
                     context['slot'] = 'pm'
-                    context['label_convention'] = slots.spec()['labels']
+                    context['label_convention'] = {**slots.spec()['labels'],
+                        'variant': slots.variant(self.crypto_only, self.pm_recovery),
+                        'asset_windows': {asset: {'entry_at': iso(self.window(asset, day, '1d')[0]),
+                            '1d_exit': iso(self.window(asset, day, '1d')[1]),
+                            '5d_exit': iso(self.window(asset, day, '5d')[1])} for asset in context['universe']}}
                     context_hash = sha256_canonical(context)
                 self.store.append('replay-summary', {'schema':'trader-context-evidence-v1', 'run_id':run_id, 'slot':self.ledger.slot,
                     'context_hash':context_hash, 'context':context}, object_id=run_id + ':context',

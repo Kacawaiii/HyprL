@@ -10,8 +10,8 @@ DECISION_NAME = 'trader-operator-decisions-2026-10-12.json'
 DECISION_HASH = '530c2d6a5d6e9e3b16cda77ad3060ffb8b827a7c269eec17ce4439495d8439a3'
 AMENDMENT_NAME = 'trader-agent-pm-slot-amendment-v1.json'
 AMENDMENT_HASH = '0f0ae85b2becb7e95c5237250215c6c5ec106cef5d260a92c479210ba9f6f61e'
-SPEC_HASH = '3866c2cfffac99991312044c088ff478ede0c8e53e2d0d43e09e2fffaa2e6c30'
-PREREG_HASH = 'eef176adfdd071c3bc1edb7f73439bf9e4b5c414afa8d24279e7599d884c75bb'
+SPEC_HASH = 'f2e315f6040215683b56346c71b02d315283a4d31eb767f10c2ed7f07c5fc4fb'
+PREREG_HASH = '25d6d41568029b51592ff8c6a463645ecf2e70e1834a43642c004b94aa2d85ef'
 ROOT = Path(__file__).resolve().parents[3] / 'docs/artifacts'
 
 
@@ -24,14 +24,14 @@ def pinned(name, expected):
 
 def spec():
     from .paper_spec import SPEC_HASH as base
-    value = pinned('trader_pm_slot_spec_v1.json', SPEC_HASH)
+    value = pinned('trader_pm_slot_spec_v2.json', SPEC_HASH)
     if value['base_execution_spec_hash'] != base or value['operator_decision_hash'] != DECISION_HASH:
         raise TraderError('PM_REGISTRATION_BINDING_MISMATCH')
     return value
 
 
 def preregistration():
-    value = pinned('trader_agent_preregistration_v8.json', PREREG_HASH)
+    value = pinned('trader_agent_preregistration_v9.json', PREREG_HASH)
     if value['pm_slot_spec_hash'] != SPEC_HASH or value['amendment_hash'] != AMENDMENT_HASH:
         raise TraderError('PM_REGISTRATION_BINDING_MISMATCH')
     spec()
@@ -75,6 +75,10 @@ def label_window(asset, day, horizon, crypto_assets, *, anchor=None):
     n = 1 if horizon == '1d' else 5
     entry = anchor or instant(day + 'T17:30:00Z')
     if asset in crypto_assets:
+        # A regular-session recovery may cap equities at close -15 (a :45
+        # anchor). Crypto retains the registered hourly :30 exit cadence.
+        if entry.minute != 30:
+            entry = (entry + timedelta(hours=1)).replace(minute=30, second=0, microsecond=0)
         return entry, entry + timedelta(days=n)
     session = calendar_session(day)
     if not session:
