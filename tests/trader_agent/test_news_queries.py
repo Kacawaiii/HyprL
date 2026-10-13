@@ -64,6 +64,21 @@ def test_text_answer_is_source_not_json_with_evidence_digest(ledger, clock, monk
     assert any(p.name.endswith(error.value.evidence + ".json") for p in (ledger.root / "raw").iterdir())
 
 
+def test_native_empty_gdelt_object_is_no_news_with_evidence_digest(ledger, clock, monkeypatch):
+    fake_network(monkeypatch, b'{}')
+    with pytest.raises(TraderError) as error:
+        PublicData(ledger, clock=clock).headlines(news_query('macro'), clock())
+    assert error.value.code == 'NEWS_EMPTY_RESPONSE'
+    assert error.value.evidence == hashlib.sha256(b'{}').hexdigest()
+
+
+@pytest.mark.parametrize('payload', [[], {'articles': None}, {'error': 'Synthetic invalid query'}])
+def test_other_malformed_gdelt_shapes_still_fail(ledger, clock, monkeypatch, payload):
+    fake_network(monkeypatch, json.dumps(payload).encode())
+    with pytest.raises(TraderError, match='NEWS_SHAPE_INVALID'):
+        PublicData(ledger, clock=clock).headlines(news_query('macro'), clock())
+
+
 def test_headline_failure_marks_asset_and_run_continues(ledger, clock):
     class TextNews(SyntheticData):
         def headlines(self, query, before):

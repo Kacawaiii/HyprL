@@ -125,7 +125,7 @@ def error_code(error):
 def gdelt_unavailable(code):
     # Availability mirrors PARTIAL_CONTEXT in the run. Admission, query and
     # budget failures remain blockers, even when they occur in this step.
-    return code in {'SOURCE_UNAVAILABLE', 'SOURCE_HTTP_429', 'SOURCE_HTTP_408',
+    return code in {'SOURCE_UNAVAILABLE', 'SOURCE_HTTP_429', 'SOURCE_HTTP_408', 'NEWS_EMPTY_RESPONSE',
                     'SOURCE_COOLDOWN', 'REHEARSAL_GDELT_STALE_OR_EMPTY'} or (
         code.startswith('SOURCE_HTTP_5') and code.removeprefix('SOURCE_HTTP_').isdigit())
 
@@ -441,6 +441,8 @@ class LiveChecks:
         try:
             headlines, source = self.public.headlines(news_query('macro'), self.clock())
         except TraderError as error:
+            if error.code == 'NEWS_EMPTY_RESPONSE':
+                raise TraderError(error.code, evidence={'digest': error.evidence, 'articles': 0, 'live_requests': 1}) from None
             if error.code == 'SOURCE_HTTP_429':
                 from .data import rate_limit_retry_at
                 failures = min(6, prior.get('failures', 0) + 1)

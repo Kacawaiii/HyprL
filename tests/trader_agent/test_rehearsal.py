@@ -62,6 +62,27 @@ def test_gdelt_degradation_cannot_hide_failed_alert_delivery(tmp_path, clock):
     assert result['steps'][-1]['error'] == 'TELEGRAM_DELIVERY_FAILED'
 
 
+@pytest.mark.parametrize('payload,state,code', [({}, 'GREEN', 'NEWS_EMPTY_RESPONSE'),
+    ({'articles': None}, 'BLOCKED', 'NEWS_SHAPE_INVALID'),
+    ({'error': 'Synthetic invalid query'}, 'BLOCKED', 'NEWS_SHAPE_INVALID')])
+def test_gdelt_native_empty_response_degrades_but_unknown_shapes_block(live_checks, monkeypatch, payload, state, code):
+    from urllib.request import OpenerDirector
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, monitor, clock, _, _ = live_checks
+    checks.configuration()
+    original = OpenerDirector.open
+    def native_shape(self, request, **kwargs):
+        response = original(self, request, **kwargs)
+        if 'api.gdeltproject.org' in request.full_url:
+            response.body = json.dumps(payload).encode()
+        return response
+    monkeypatch.setattr(OpenerDirector, 'open', native_shape)
+    result = rehearse(monitor, [('gdelt', checks.gdelt)], clock=clock,
+                      notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
+    assert result['state'] == state and result['steps'][0]['error'] == code
+    assert result['alerts'][0]['delivery'] == 'DELIVERED'
+
+
 def test_retry_reuses_successful_probes_and_never_spends_trader_model_calls(ledger, monkeypatch, tmp_path):
     from types import SimpleNamespace
     from scripts.trading_lab.trader_agent.rehearsal import LiveChecks, MonitorState

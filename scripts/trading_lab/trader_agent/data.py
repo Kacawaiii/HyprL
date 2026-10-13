@@ -129,6 +129,9 @@ class PublicData:
             "query": query, "mode": "ArtList", "format": "json", "maxrecords": 10,
             "sort": "DateDesc", "startdatetime": (before - timedelta(hours=72)).strftime("%Y%m%d%H%M%S"),
             "enddatetime": before.strftime("%Y%m%d%H%M%S")})
+        if payload == {}:
+            # Native empty responses supply no usable news, never an AVAILABLE input.
+            raise TraderError('NEWS_EMPTY_RESPONSE', source['digest'])
         if not isinstance(payload, dict) or not isinstance(payload.get("articles"), list):
             raise TraderError("NEWS_SHAPE_INVALID")
         output, seen = [], set()

@@ -46,6 +46,10 @@ degraded context. Query mappings, authorization, budget, order and label failure
 still BLOCK; a missing degradation alert also blocks. Optional context loss
 alone does not reserve a retry or repeat model probes. The pm GREEN notification
 states the context grade explicitly.
+The native GDELT empty object is reported as `NEWS_EMPTY_RESPONSE`, with its
+digest and zero articles. It remains an unavailable input in the real run and
+grades as DEGRADED / PARTIAL_CONTEXT in rehearsal. Other malformed shapes,
+including null article lists and nonempty error objects, still block.
 
 Inference prompts contain only synthetic empty input. Claude/Opus and
 Claude/Sonnet use the actual restricted runner and local schemas. GPT reuses the
