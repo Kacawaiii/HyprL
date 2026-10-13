@@ -144,17 +144,25 @@ batch rather than one message per prediction.
 
 An operator can record a historical disposition with `post_audit
 --acknowledge-issue CODE:SHA256 --acknowledge-reason REASON_CODE`, adding
-`--unlabelable` for a missing exact label anchor. Only exact `LABELS_MISSING` and
-`PAPER_ORDER_EXPIRED` identities can be acknowledged. Reasons and timestamps
+`--unlabelable` for a missing exact label anchor. Ordinary acknowledgements accept
+only exact `LABELS_MISSING` and `PAPER_ORDER_EXPIRED` identities. Reasons and timestamps
 persist in monitoring state without changing research labels, score denominators,
 paper events or orders. Audits keep these observations and reasons visible in
 `acknowledged_issues`; only active issues block and alert. New identities still
 block. Open lots, reconciliation failures and other safety checks cannot be muted.
 
+For an operator-disposed historical missing PM run, use its exact `MISSING_PM_RUN`
+identity with `--not-activated --decision-sha256 SHA256` and a reason code. This
+records `NOT_ACTIVATED` once, retaining the original timestamp, reason and canonical
+operator decision hash on repeated invocations. The decision hash is stored in
+monitoring metadata and exposed in `acknowledged_issues`; it does not modify any
+spec, grant, budget, horizon, research record or paper event. Only that day's
+identity is disposed; a missing PM run on another day still blocks and alerts.
+
 Install the rehearsal units only after the owned branch's exact SHA has green
 CI and the full required local suites pass. Preserve existing trader units and
 hooks, add the audit hook before the existing label report hook, and use the
-operator's guarded deployment: outside 11:30–13:50 and 19:45–20:10 UTC, all trader services idle,
+operator's guarded deployment: outside 11:30–13:50, 15:00–16:30 and 19:45–20:10 UTC, all trader services idle,
 owned timers stopped, saved units and consistent database backups, then a final
 idle check and timer restoration. Rollback restores code/unit bindings and
 holds mutation timers if needed; never restore an old backup over an appended
