@@ -36,6 +36,8 @@ class MonitorState:
                     id TEXT PRIMARY KEY, state TEXT);
                 CREATE TABLE IF NOT EXISTS checkpoints (
                     id TEXT PRIMARY KEY, body TEXT);
+                CREATE TABLE IF NOT EXISTS acknowledgements (
+                    identity TEXT PRIMARY KEY, code TEXT, reason TEXT, disposition TEXT, at TEXT);
             ''')
 
     @contextmanager
@@ -131,7 +133,8 @@ def gdelt_unavailable(code):
 def write_report(state, reports, day, run_slot="am"):
     reports = private_root(reports)
     prefix = 'pm-' if run_slot == 'pm' else ''
-    attempts = [state.get(day, prefix + slot) for slot in ('primary', 'retry')]
+    slots = ('primary', 'retry') if run_slot == 'pm' else ('early', 'primary', 'retry')
+    attempts = [state.get(day, prefix + slot) for slot in slots]
     attempts = [a for a in attempts if a]
     lines = ['STATUS: ' + ('DONE' if attempts and attempts[-1]['state'] == 'GREEN' else 'BLOCKED'),
              '', 'Daily full-chain rehearsal ' + day, '',
@@ -154,9 +157,11 @@ def write_report(state, reports, day, run_slot="am"):
     return target
 
 
-def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports, run_slot="am"):
+def rehearse(state, steps, *, clock=now, retry=False, early=False, notify=None, reports, run_slot="am"):
+    if early and (retry or run_slot != 'am'):
+        raise TraderError('REHEARSAL_EARLY_AM_ONLY')
     prefix = 'pm-' if run_slot == 'pm' else ''
-    at, slot = clock(), prefix + ('retry' if retry else 'primary')
+    at, slot = clock(), prefix + ('early' if early else 'retry' if retry else 'primary')
     day = at.date().isoformat()
     with state.owner():
         previous = state.get(day, prefix + 'primary')
@@ -203,7 +208,7 @@ def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports, run_
             if result['notification'] != 'DELIVERED':
                 result['state'] = 'BLOCKED'
                 result['steps'].append({'step': 'notification', 'state': 'BLOCKED', 'error': 'TELEGRAM_DELIVERY_FAILED'})
-        if result['state'] == 'BLOCKED' and not retry:
+        if result['state'] == 'BLOCKED' and not retry and not early:
             scheduled = at.replace(hour=15 if run_slot == 'pm' else 11, minute=45 if run_slot == 'pm' else 15, second=0, microsecond=0)
             result['retry_at'] = iso(scheduled if at < scheduled else at + timedelta(minutes=30))
         result['finished_at'] = iso(clock())
@@ -740,15 +745,20 @@ def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     arguments(parser)
-    parser.add_argument('--retry', action='store_true')
+    attempts = parser.add_mutually_exclusive_group()
+    attempts.add_argument('--retry', action='store_true')
+    attempts.add_argument('--early', action='store_true')
     parser.add_argument('--failure-hook', action='store_true')
     args = parser.parse_args(argv)
+    if args.early and args.slot != 'am':
+        parser.error('early rehearsal is for the morning slot')
     state = MonitorState(args.monitor_runtime)
     notify = telegram(args.telegram_env)
     if args.failure_hook:
         day = now().date().isoformat()
         prefix = 'pm-' if args.slot == 'pm' else ''
-        for slot in (prefix + 'primary', prefix + 'retry'):
+        slots = (prefix + 'primary', prefix + 'retry') if prefix else ('early', 'primary', 'retry')
+        for slot in slots:
             result = state.get(day, slot)
             if result and result['state'] == 'RUNNING':
                 result['state'] = 'BLOCKED'
@@ -762,7 +772,8 @@ def main(argv=None):
                 state.save(day, slot, result)
                 write_report(state, args.reports, day, args.slot)
         return 0
-    result = rehearse(state, LiveChecks(args, state).steps(args.retry), retry=args.retry, notify=notify, reports=args.reports, run_slot=args.slot)
+    result = rehearse(state, LiveChecks(args, state).steps(args.retry), retry=args.retry, early=args.early,
+                      notify=notify, reports=args.reports, run_slot=args.slot)
     print(json.dumps(result, indent=2))
     return 1 if result['state'] == 'BLOCKED' else 0
 

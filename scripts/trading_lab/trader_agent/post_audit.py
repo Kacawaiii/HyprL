@@ -4,6 +4,7 @@ from datetime import timedelta
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 
 from scripts.trading_lab.research.store import ResearchStore
@@ -146,8 +147,25 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
             'broker_methods': ['GET'], 'production_writes': 0}
 
 
+def execution_window(at, research=None):
+    """Leave the two-minute service budget clear of entry/exit and their retry minutes."""
+    anchors = [at.replace(hour=hour, minute=0, second=0, microsecond=0) for hour in (12, 16)]
+    anchors.append(at.replace(minute=30, second=0, microsecond=0))  # hourly crypto exit check
+    session = calendar_session(at.date().isoformat())
+    if session:
+        anchors.extend((session.open_at, session.close_at - timedelta(minutes=5)))
+    if research:
+        for row in rows(research, 'prediction'):
+            if not row['payload'].get('synthetic', True):
+                definition = row['payload']['signal']['label_definition']
+                anchors.extend(instant(definition[k]) for k in ('entry_at', 'exit_at'))
+    return any(anchor - timedelta(minutes=2) <= at < anchor + timedelta(minutes=3) for anchor in anchors)
+
+
 def audit(args, state, *, clock=now, force=False, notify=None, client_factory=get_only_client):
     at = clock()
+    if execution_window(at):
+        return {'state': 'PAPER_EXECUTION_WINDOW'}
     key = 'audit-infrastructure:' + at.date().isoformat()
     try:
         grant = Authorization.load(args.authorization)
@@ -157,6 +175,8 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
         research = ResearchStore(Path(args.runtime) / 'evidence', read_only=True)
         paper = SnapshotPaperLedger(args.paper_runtime, paper_grant, clock)
         try:
+            if execution_window(at, research):
+                return {'state': 'PAPER_EXECUTION_WINDOW'}
             with paper.owner():
                 path = Path(args.runtime) / 'last-label.json'
                 last_label = strict_json(path.read_text()) if path.exists() else None
@@ -188,6 +208,7 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
         if isinstance(error, TraderError) and error.code == 'PAPER_OWNER_BUSY':
             return {'state': 'PAPER_EXECUTION_IN_PROGRESS'}
         result = {'schema': 'trader-post-audit-v1', 'at': iso(at), 'state': 'BLOCKED', 'errors': [error_code(error)]}
+    apply_acknowledgements(state, result)
     if result['state'] == 'BLOCKED':
         issues = result.get('issues', [{'code': code, 'identity': sha256_canonical([key, code])}
                                        for code in result['errors']])
@@ -197,6 +218,42 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
     target = root / ('trader-post-audit-' + at.strftime('%Y-%m-%dT%H%M%S') + '.json')
     target.write_text(json.dumps(result, indent=2) + '\n')
     return result
+
+
+def acknowledge_issues(state, issues, *, reason, at, unlabelable=False):
+    """Explicit operator disposition of exact historical identities, never a code-wide mute."""
+    if not re.fullmatch(r'[A-Z][A-Z0-9_]{2,159}', reason):
+        raise TraderError('AUDIT_ACKNOWLEDGEMENT_REFUSED')
+    for issue in issues:
+        if (issue['code'] not in {'LABELS_MISSING', 'PAPER_ORDER_EXPIRED'}
+                or not re.fullmatch(r'[a-f0-9]{64}', issue['identity'])
+                or (unlabelable and issue['code'] != 'LABELS_MISSING')):
+            raise TraderError('AUDIT_ACKNOWLEDGEMENT_REFUSED')
+    with state.connect() as db:
+        for issue in issues:
+            db.execute('INSERT OR IGNORE INTO acknowledgements VALUES(?,?,?,?,?)',
+                       (issue['identity'], issue['code'], reason,
+                        'UNLABELABLE' if unlabelable else 'ACKNOWLEDGED', iso(at)))
+
+
+def apply_acknowledgements(state, result):
+    if 'issues' not in result:
+        return
+    active, known = [], []
+    with state.connect() as db:
+        for issue in result['issues']:
+            row = db.execute('SELECT reason,disposition,at FROM acknowledgements WHERE identity=? AND code=?',
+                             (issue['identity'], issue['code'])).fetchone()
+            if row:
+                known.append({**issue, 'reason': row[0], 'disposition': row[1], 'at': row[2]})
+            else:
+                active.append(issue)
+    result['observed_errors'] = result['errors']
+    result['acknowledged_issues'] = known
+    result['labels_unlabelable'] = sum(i['disposition'] == 'UNLABELABLE' for i in known)
+    result['issues'] = active
+    result['errors'] = sorted({i['code'] for i in active})
+    result['state'] = 'BLOCKED' if active else 'GREEN'
 
 
 def alert_issues(state, issues, notify):
@@ -209,6 +266,9 @@ def alert_issues(state, issues, notify):
     with state.connect() as db:
         db.execute('BEGIN IMMEDIATE')
         for issue in issues:
+            if db.execute('SELECT 1 FROM acknowledgements WHERE identity=? AND code=?',
+                          (issue['identity'], issue['code'])).fetchone():
+                continue
             key = 'audit-issue:' + issue['identity']
             if db.execute('INSERT OR IGNORE INTO notifications VALUES(?,?)', (key, 'RESERVED')).rowcount:
                 fresh[key] = issue['code']
@@ -228,8 +288,24 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     arguments(parser)
     parser.add_argument('--force', action='store_true')
+    parser.add_argument('--acknowledge-issue', action='append', default=[], metavar='CODE:SHA256')
+    parser.add_argument('--acknowledge-reason')
+    parser.add_argument('--unlabelable', action='store_true')
     args = parser.parse_args(argv)
     state = MonitorState(args.monitor_runtime)
+    if args.acknowledge_issue:
+        if not args.acknowledge_reason or args.force:
+            parser.error('acknowledgement requires a reason and cannot force an audit')
+        try:
+            issues = [dict(zip(('code', 'identity'), value.split(':', 1))) for value in args.acknowledge_issue]
+            with state.owner():
+                acknowledge_issues(state, issues, reason=args.acknowledge_reason, at=now(), unlabelable=args.unlabelable)
+        except (KeyError, TraderError):
+            parser.error('invalid historical acknowledgement')
+        print(json.dumps({'state': 'ACKNOWLEDGED', 'issues': len(issues), 'production_writes': 0}))
+        return 0
+    if args.acknowledge_reason or args.unlabelable:
+        parser.error('disposition requires an exact issue identity')
     request_retries = []
     try:
         with state.owner():

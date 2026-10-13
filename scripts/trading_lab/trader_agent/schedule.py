@@ -1,6 +1,8 @@
 """Render/install only these agent-owned systemd user units; never trigger a run."""
 import argparse
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -21,9 +23,19 @@ def unit_quote(value):
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+def runtime_path(path=None):
+    """Pin installed CLI directories and system tools, excluding session-only wrappers."""
+    search = path if path is not None else os.environ.get('PATH', os.defpath)
+    stable = [p for p in search.split(os.pathsep) if Path(p).is_absolute() and '/.codex/tmp/' not in p]
+    installed = [str(Path(executable).parent) for name in ('claude', 'codex', 'node')
+                 if (executable := shutil.which(name, path=os.pathsep.join(stable)))]
+    return os.pathsep.join(dict.fromkeys([*installed, *stable, *os.defpath.split(os.pathsep)]))
+
+
 def render(repo, python, authorization, runtime, *, fomc=None, edgar=None, path=None, paper_authorization=None, paper_quotes=None,
            data_authorization=None, include_pm=False):
     unit_quote(repo)  # Validate path; WorkingDirectory takes an unquoted whole path value.
+    path = runtime_path(path)
     output = {}
     calendars = dict(CALENDARS)
     if include_pm:

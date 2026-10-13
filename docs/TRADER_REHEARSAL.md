@@ -70,6 +70,9 @@ private. Reports contain only identities, suffixes, codes, counts and digests.
 Paper writers wait up to 120 seconds for the ledger owner lock before reporting
 PAPER_OWNER_BUSY. Waiting reserves no intent, sends no order and emits no alert;
 expiry fails closed through the existing service failure reporting.
+Radar readers also wait up to 120 seconds for the shared owner lock before
+taking the receipt-cutoff SQLite transaction required by the news spec. The
+collector keeps exclusive ownership; waiting never changes the store or cutoff.
 
 Broker calendar GETs must match the pinned NYSE session. Asset GETs validate
 class, active/tradable status, equity shortability and account short permission.
@@ -81,14 +84,21 @@ cannot establish broker acceptance or future fills. The report says so.
 
 `rehearsal_schedule.render` produces only trader user units:
 
-- 10:45 UTC every day: the primary rehearsal.
+- 07:30 UTC every day: an early rehearsal with an independent `early` reservation.
+- 10:45 UTC every day: the primary rehearsal and final gate.
 - 11:15 UTC every day: a second rehearsal only after primary failure/interruption.
-- Every minute at second 30: read-only post-run checkpoints and overdue manual retry dispatch.
+- Every ten minutes at minute 01/11/21/31/41/51, second 30: read-only checkpoints and overdue manual retry dispatch.
 - `OnFailure`: interrupted/timed-out rehearsals produce an alert and failure report.
 
+Generated model units pin the installed Claude/Codex/Node directories in
+`Environment=PATH` and exclude temporary Codex session wrappers. Model launches
+do not require a login shell. Verify the installed CLI paths when staging units.
+
 Timers use `Persistent=false` and no random delay. Attempt reservations survive
-restart and prevent more than primary plus retry. `rehearsal-<UTC-date>.md` keeps
-both results. A manual primary after 11:15 gets its second attempt 30 minutes
+restart and prevent more than early plus primary plus retry. `rehearsal-<UTC-date>.md` keeps
+all results. Early failure alerts without consuming the primary or reserving a retry;
+successful same-day model probes remain reusable within the existing budgets.
+A manual primary after 11:15 gets its second attempt 30 minutes
 later through the audit poller. Independent failures alert the operator through
 the private Telegram environment. Tokens, credential URLs, HTTP exception text
 and response bodies never enter reports or stdout. Notification delivery is
@@ -104,7 +114,12 @@ execution slot, and the completed label job. Equity entry checkpoints follow
 days and DST. Crypto horizon exits retain their existing fixed anchor. A missing
 run is checked at the session entry checkpoint; a missing/failed daily label job
 is checked at 21:40 UTC. Actual intent checkpoints cover recovery entries/exits
-and delayed decisions. Polling bounds normal dispatch delay to one minute.
+and delayed decisions. Polling bounds normal dispatch delay to ten minutes.
+Audits defer quietly from two minutes before until three minutes after scheduled
+entries/exits (including hourly crypto checks, DST and half days) and recorded
+prediction anchors. This covers the audit service's two-minute timeout and the
+writers' retry minutes. Busy paper ownership or a changed snapshot defers without
+completing checkpoints or alerting; the next safe poll retries them.
 
 Every due intent must be filled, internally settled at zero net quantity, or
 explicitly canceled/not submitted with a recorded rule. Expired, rejected and
@@ -117,6 +132,15 @@ and labels are notified once per immutable issue identity, so a historical
 expired order does not alert again at every new checkpoint. A new order with the
 same failure code still alerts. Newly missing labels are sent in one bounded
 batch rather than one message per prediction.
+
+An operator can record a historical disposition with `post_audit
+--acknowledge-issue CODE:SHA256 --acknowledge-reason REASON_CODE`, adding
+`--unlabelable` for a missing exact label anchor. Only exact `LABELS_MISSING` and
+`PAPER_ORDER_EXPIRED` identities can be acknowledged. Reasons and timestamps
+persist in monitoring state without changing research labels, score denominators,
+paper events or orders. Audits keep these observations and reasons visible in
+`acknowledged_issues`; only active issues block and alert. New identities still
+block. Open lots, reconciliation failures and other safety checks cannot be muted.
 
 Install the rehearsal units only after the owned branch's exact SHA has green
 CI and the full required local suites pass. Preserve existing trader units and

@@ -153,16 +153,64 @@ def test_weekend_holiday_populations_follow_approved_crypto_calendar(grant):
     assert population(grant, instant('2026-12-25T10:45:00Z')) == 'closed'
 
 
-def test_rendered_rehearsals_run_every_day_with_durable_retry_and_minute_audits(tmp_path):
+def test_rendered_early_and_final_rehearsals_and_ten_minute_audits(tmp_path):
     from scripts.trading_lab.trader_agent.rehearsal_schedule import render
     units = render(tmp_path, '/python', '/grant', tmp_path / 'runtime', '/paper', '/data', path='/bin')
-    assert len(units) == 7
+    assert len(units) == 9
+    assert '*-*-* 07:30:00 UTC' in units['hyprl-trader-rehearsal-early.timer']
+    assert '"--early"' in units['hyprl-trader-rehearsal-early.service']
     assert '*-*-* 10:45:00 UTC' in units['hyprl-trader-rehearsal.timer']
     assert '*-*-* 11:15:00 UTC' in units['hyprl-trader-rehearsal-retry.timer']
     assert 'OnFailure=hyprl-trader-rehearsal-failure.service' in units['hyprl-trader-rehearsal.service']
-    assert '*-*-* *:*:30 UTC' in units['hyprl-trader-post-audit.timer']
+    assert '*-*-* *:01/10:30 UTC' in units['hyprl-trader-post-audit.timer']
     assert 'Persistent=false' in units['hyprl-trader-rehearsal.timer']
     assert 'paper-execute' not in ''.join(units.values())
+
+
+def test_early_failure_does_not_consume_or_replace_the_final_gate(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
+    state = MonitorState(tmp_path / 'monitor')
+    clock.at = instant('2026-10-14T07:30:00Z')
+    def unavailable():
+        raise TraderError('SOURCE_UNAVAILABLE')
+    early = rehearse(state, [('yahoo', unavailable)], clock=clock, early=True,
+                     notify=lambda *a: 'DELIVERED', reports=tmp_path / 'reports')
+    assert early['state'] == 'BLOCKED' and early['slot'] == 'early' and early['retry_at'] is None
+    assert rehearse(state, [], clock=clock, early=True, reports=tmp_path / 'reports')['state'] == 'ALREADY_ATTEMPTED'
+    clock.at = instant('2026-10-14T10:45:00Z')
+    final = rehearse(state, [('yahoo', lambda: {'fresh': True})], clock=clock,
+                     reports=tmp_path / 'reports')
+    assert final['state'] == 'GREEN' and final['slot'] == 'primary'
+    report = (tmp_path / 'reports/rehearsal-2026-10-14.md').read_text()
+    assert 'early: BLOCKED' in report and 'primary: GREEN' in report
+    assert report.startswith('STATUS: DONE')
+
+
+def test_rendered_model_units_resolve_both_clis_without_a_login_shell(tmp_path):
+    import os
+    import shlex
+    import subprocess
+    from scripts.trading_lab.trader_agent.schedule import render
+    from scripts.trading_lab.trader_agent.rehearsal_schedule import render as monitoring
+    cli_dir = tmp_path / 'model-bin'
+    cli_dir.mkdir()
+    for name in ('claude', 'codex'):
+        executable = cli_dir / name
+        executable.write_text('#!/bin/sh\nexit 0\n')
+        executable.chmod(0o700)
+    transient = str(tmp_path / '.codex/tmp/arg0/expired')
+    path = transient + os.pathsep + str(cli_dir) + ':/usr/bin:/bin'
+    units = {**render(tmp_path, '/python', '/grant', tmp_path, path=path, include_pm=True),
+             **monitoring(tmp_path, '/python', '/grant', tmp_path, '/paper', '/data', path=path, include_pm=True)}
+    for name, body in units.items():
+        if not name.endswith('.service'):
+            continue
+        setting = next(line.removeprefix('Environment=') for line in body.splitlines()
+                       if line.startswith('Environment=') and 'PATH=' in line)
+        unit_path = shlex.split(setting)[0].removeprefix('PATH=')
+        assert transient not in unit_path
+        for cli in ('claude', 'codex'):
+            subprocess.run([cli], env={'PATH': unit_path}, check=True, timeout=5)
 
 
 @pytest.mark.parametrize('method', ['POST', 'DELETE', 'PATCH', 'PUT'])
@@ -447,8 +495,7 @@ def test_non_network_chain_failures_reach_report_and_alert(live_checks, which):
         grant['not_after'] = '2026-10-11T00:00:00Z'
         Path(checks.args.authorization).write_text(json.dumps(grant))
     elif which == 'radar_veille':
-        lock = (Path(checks.args.radar_root) / 'owner.lock').open('rb')
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        checks.args.radar_root = str(state.root / 'missing-radar')
     elif which == 'archives':
         checks.args.fomc_store = str(state.root / 'missing-archive')
     elif which == 'scorer_labels':
@@ -499,6 +546,22 @@ def test_audit_does_not_hold_execution_lock_during_broker_reads(environment):
         with executor.ledger.owner():
             executor.ledger.append('alert', 'ia_actions', code='SYNTHETIC_CHANGE_DURING_HTTP')
         assert not snapshot.unchanged()
+
+
+def test_audit_busy_writer_defers_quietly_without_marking_checkpoint_done(live_checks):
+    import fcntl
+    from pathlib import Path
+    from scripts.trading_lab.trader_agent.post_audit import audit
+    checks, state, clock, calls, _ = live_checks
+    clock.at = instant('2026-10-12T21:40:00Z')
+    with (Path(checks.args.paper_runtime) / 'paper-owner.lock').open('rb') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = len(calls)
+        result = audit(checks.args, state, clock=clock, force=True,
+                       notify=lambda *a: pytest.fail('busy audit alerted'))
+    assert result['state'] == 'PAPER_EXECUTION_IN_PROGRESS' and len(calls) == before
+    with state.connect() as db:
+        assert db.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0] == 0
 
 
 def test_scorer_failure_after_admission_is_reported(live_checks):
@@ -622,6 +685,47 @@ def test_new_checkpoints_do_not_repeat_known_order_alerts_but_new_orders_do(tmp_
     labels = [{'code': 'LABELS_MISSING', 'identity': str(i)} for i in range(200)]
     assert alert_issues(state, labels, send)['new_issues'] == 200
     assert len(messages) == 3
+
+
+def test_acknowledged_history_stays_visible_but_a_new_issue_blocks(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.post_audit import acknowledge_issues, apply_acknowledgements, alert_issues
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    state = MonitorState(tmp_path / 'monitor')
+    old = {'code': 'LABELS_MISSING', 'identity': 'a' * 64}
+    new = {'code': 'LABELS_MISSING', 'identity': 'b' * 64}
+    acknowledge_issues(state, [old], reason='EXACT_NATIVE_MINUTE_ANCHOR_UNAVAILABLE', at=clock(), unlabelable=True)
+    # A restart and a repeated acknowledgement cannot replace the original reason.
+    state = MonitorState(state.root)
+    acknowledge_issues(state, [old], reason='REPEATED_ACKNOWLEDGEMENT', at=clock())
+    result = {'state': 'BLOCKED', 'errors': ['LABELS_MISSING'], 'issues': [old], 'labels_missing': 1}
+    apply_acknowledgements(state, result)
+    assert result['state'] == 'GREEN' and result['errors'] == []
+    assert result['labels_missing'] == 1 and result['labels_unlabelable'] == 1
+    assert result['acknowledged_issues'][0]['reason'] == 'EXACT_NATIVE_MINUTE_ANCHOR_UNAVAILABLE'
+    assert alert_issues(state, [old], lambda *a: pytest.fail('known issue re-alerted'))['new_issues'] == 0
+    result = {'state': 'BLOCKED', 'errors': ['LABELS_MISSING'], 'issues': [old, new]}
+    apply_acknowledgements(state, result)
+    assert result['state'] == 'BLOCKED' and result['issues'] == [new]
+    assert alert_issues(state, result['issues'], lambda *a: 'DELIVERED')['new_issues'] == 1
+    with pytest.raises(TraderError, match='AUDIT_ACKNOWLEDGEMENT_REFUSED'):
+        acknowledge_issues(state, [{'code': 'PAPER_LOT_PAST_HORIZON', 'identity': 'c' * 64}],
+                           reason='STILL_OPEN', at=clock())
+
+
+@pytest.mark.parametrize('stamp', ['2026-10-14T11:59:00Z', '2026-10-14T13:30:30Z',
+    '2026-10-14T16:00:30Z', '2026-10-14T16:30:30Z', '2026-10-14T19:55:30Z',
+    '2026-11-02T14:31:30Z', '2026-11-27T17:55:30Z'])
+def test_audit_defers_even_forced_checks_before_touching_execution_or_http(tmp_path, clock, stamp):
+    from types import SimpleNamespace
+    from scripts.trading_lab.trader_agent.post_audit import audit
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    clock.at = instant(stamp)
+    state = MonitorState(tmp_path / 'monitor')
+    result = audit(SimpleNamespace(), state, clock=clock, force=True,
+                   client_factory=lambda *a, **kw: pytest.fail('broker request in execution window'))
+    assert result['state'] == 'PAPER_EXECUTION_WINDOW'
+    with state.connect() as db:
+        assert db.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0] == 0
 
 
 def test_newly_appended_backdated_radar_receipts_cannot_prove_freshness(live_checks):
