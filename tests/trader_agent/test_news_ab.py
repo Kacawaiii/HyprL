@@ -73,11 +73,24 @@ def test_regime_and_anomalies_use_only_prior_price_receipts(radar, tmp_path):
     assert not context['anomalies']
 
 
-def test_radar_lock_contention_refuses_without_creating_or_changing_store(radar, tmp_path):
+def test_radar_reader_waits_for_collector_without_changing_store(radar, tmp_path):
+    import threading
+    from scripts.trading_lab.trader_agent.news_context import radar_snapshot
+    cutoff = instant('2026-10-12T12:00:00Z')
+    story(radar, '2026-10-12T11:00:00Z')
+    expected = build_news_context(radar.root, tmp_path / 'missing', cutoff)
     with (radar.root / 'owner.lock').open('rb') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        release = threading.Timer(.05, lambda: fcntl.flock(lock, fcntl.LOCK_UN))
+        release.start()
+        try:
+            assert build_news_context(radar.root, tmp_path / 'missing', cutoff) == expected
+        finally:
+            release.join()
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(TraderError, match='NEWS_RADAR_OWNER_BUSY'):
-            build_news_context(radar.root, tmp_path / 'missing', instant('2026-10-12T12:00:00Z'))
+            with radar_snapshot(radar.root, cutoff, timeout=.02, poll=.005):
+                pytest.fail('busy snapshot admitted')
     missing = tmp_path / 'absent'
     with pytest.raises(TraderError, match='NEWS_RADAR_UNAVAILABLE'):
         build_news_context(missing, tmp_path / 'missing', instant('2026-10-12T12:00:00Z'))

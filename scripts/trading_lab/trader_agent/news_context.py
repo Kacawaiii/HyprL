@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import time
 
 from scripts.radar.analysis import (anomalies, bar_map, cluster, daily_observations,
                                     link_anomalies, priced_in, regime)
@@ -48,14 +49,20 @@ class RadarSnapshot:
 
 
 @contextmanager
-def radar_snapshot(root, cutoff):
+def radar_snapshot(root, cutoff, *, timeout=120, poll=1.0, sleep=time.sleep, monotonic=time.monotonic):
     root = Path(root).expanduser().resolve()
     try:
         with (root / 'owner.lock').open('rb') as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise TraderError('NEWS_RADAR_OWNER_BUSY') from None
+            deadline = monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise TraderError('NEWS_RADAR_OWNER_BUSY') from None
+                    sleep(min(poll, remaining))
             db = sqlite3.connect((root / 'radar.sqlite').as_uri() + '?mode=ro', uri=True, timeout=1)
             try:
                 db.execute('PRAGMA query_only=ON')
