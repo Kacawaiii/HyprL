@@ -12,6 +12,7 @@ import fcntl
 import json
 from pathlib import Path
 import shlex
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -36,6 +37,7 @@ TERMINAL = {'filled', 'canceled', 'expired', 'rejected', 'replaced', 'done_for_d
 LIMITS = {'ia_actions': {'max_weight_per_name': .08, 'max_gross': .80, 'max_short_gross': .30},
           'ia_crypto': {'max_weight_per_asset': .25, 'max_gross': .50, 'short': False}}
 D = Decimal
+OWNER_WAIT_SECONDS = 120
 
 
 def decimal(value):
@@ -358,12 +360,19 @@ class PaperLedger:
         return ledger
 
     @contextmanager
-    def owner(self):
+    def owner(self, *, timeout=OWNER_WAIT_SECONDS, poll=1.0, sleep=time.sleep, monotonic=time.monotonic):
+        """Wait for a concurrent paper job; fail closed only after the bounded wait."""
+        deadline = monotonic() + timeout
         with (self.root / 'paper-owner.lock').open('a') as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise TraderError('PAPER_OWNER_BUSY') from None
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise TraderError('PAPER_OWNER_BUSY') from None
+                    sleep(min(poll, remaining))
             yield
 
     def append(self, event, account, **data):

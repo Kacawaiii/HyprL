@@ -154,6 +154,32 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
         'decision': {'slot': slot, **({'pm_amendment_hash': executor.grant.parent.pm_identity} if slot == 'pm' else {}), 'execution_preregistration_hash': slots.preregistration() if slot == 'pm' else paper.execution_preregistration(), 'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
 
 
+@pytest.mark.parametrize('release', [True, False])
+def test_paper_owner_waits_for_another_job_and_only_fails_when_wait_expires(environment, release):
+    import fcntl
+    executor, broker, _, _ = environment
+    ledger = executor.ledger
+    before = ledger.events()
+    elapsed = [0]
+    with (ledger.root / 'paper-owner.lock').open('a') as other:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        def sleep(seconds):
+            assert ledger.events() == before and not broker.calls
+            elapsed[0] += seconds
+            if release and elapsed[0] == 2:
+                fcntl.flock(other, fcntl.LOCK_UN)
+        if release:
+            with ledger.owner(timeout=120, poll=1, sleep=sleep, monotonic=lambda: elapsed[0]):
+                ledger.append('alert', 'ia_actions', code='SYNTHETIC_LOCK_ACQUIRED')
+            assert elapsed[0] == 2
+            assert ledger.events()[-1]['code'] == 'SYNTHETIC_LOCK_ACQUIRED'
+        else:
+            with pytest.raises(TraderError, match='PAPER_OWNER_BUSY'):
+                with ledger.owner(timeout=2.5, poll=1, sleep=sleep, monotonic=lambda: elapsed[0]):
+                    pytest.fail('entered while another job owns the ledger')
+            assert elapsed[0] == 2.5 and ledger.events() == before
+
+
 def test_live_url_refused_before_even_get(environment):
     executor, broker, grant, _ = environment
     path = grant.payload['accounts']['ia_actions']['credentials']
