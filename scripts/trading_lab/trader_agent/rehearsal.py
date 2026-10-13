@@ -38,6 +38,8 @@ class MonitorState:
                     id TEXT PRIMARY KEY, body TEXT);
                 CREATE TABLE IF NOT EXISTS acknowledgements (
                     identity TEXT PRIMARY KEY, code TEXT, reason TEXT, disposition TEXT, at TEXT);
+                CREATE TABLE IF NOT EXISTS acknowledgement_decisions (
+                    identity TEXT PRIMARY KEY, sha256 TEXT NOT NULL);
             ''')
 
     @contextmanager

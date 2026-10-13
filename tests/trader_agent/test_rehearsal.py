@@ -803,6 +803,73 @@ def test_acknowledged_history_stays_visible_but_a_new_issue_blocks(tmp_path, clo
                            reason='STILL_OPEN', at=clock())
 
 
+def test_not_activated_pm_disposition_persists_once_and_future_missing_run_alerts(tmp_path, clock):
+    from scripts.trading_lab.sources.canonical import sha256_canonical
+    from scripts.trading_lab.trader_agent.post_audit import acknowledge_issues, apply_acknowledgements, alert_issues
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    state = MonitorState(tmp_path / 'monitor')
+    old = {'code': 'MISSING_PM_RUN', 'identity': sha256_canonical(['MISSING_PM_RUN', '2026-10-13'])}
+    tomorrow = {'code': 'MISSING_PM_RUN', 'identity': sha256_canonical(['MISSING_PM_RUN', '2026-10-14'])}
+    reason = 'ACTIVATION_HELD_UNTIL_GREEN_PREFLIGHT'
+    acknowledge_issues(state, [old], reason=reason, at=clock(), not_activated=True, decision_sha256='a' * 64)
+    recorded_at = clock().isoformat().replace('+00:00', 'Z')
+    state = MonitorState(state.root)
+    clock.at += timedelta(minutes=1)
+    acknowledge_issues(state, [old], reason='REPEATED_ACKNOWLEDGEMENT', at=clock(),
+                       not_activated=True, decision_sha256='b' * 64)
+    result = {'state': 'BLOCKED', 'errors': ['MISSING_PM_RUN'], 'issues': [old]}
+    apply_acknowledgements(state, result)
+    assert result['state'] == 'GREEN' and result['observed_errors'] == ['MISSING_PM_RUN']
+    assert result['acknowledged_issues'] == [{**old, 'reason': reason, 'disposition': 'NOT_ACTIVATED',
+                                            'at': recorded_at, 'decision_sha256': 'a' * 64}]
+    assert alert_issues(state, [old], lambda *a: pytest.fail('disposed PM slot re-alerted'))['new_issues'] == 0
+    result = {'state': 'BLOCKED', 'errors': ['MISSING_PM_RUN'], 'issues': [old, tomorrow]}
+    apply_acknowledgements(state, result)
+    assert result['state'] == 'BLOCKED' and result['issues'] == [tomorrow]
+    messages = []
+    assert alert_issues(state, result['issues'], lambda *a: messages.append(a) or 'DELIVERED')['new_issues'] == 1
+    assert len(messages) == 1
+
+
+@pytest.mark.parametrize('code,options', [
+    ('MISSING_PM_RUN', {}),
+    ('MISSING_PM_RUN', {'decision_sha256': 'a' * 64}),
+    ('MISSING_PM_RUN', {'not_activated': True}),
+    ('MISSING_PM_RUN', {'not_activated': True, 'decision_sha256': 'invalid'}),
+    ('MISSING_PM_RUN', {'not_activated': True, 'decision_sha256': 'a' * 64, 'unlabelable': True}),
+    ('LABELS_MISSING', {'not_activated': True, 'decision_sha256': 'a' * 64}),
+    ('PAPER_LOT_PAST_HORIZON', {'not_activated': True, 'decision_sha256': 'a' * 64}),
+])
+def test_not_activated_requires_exact_pm_issue_and_decision_hash(tmp_path, clock, code, options):
+    from scripts.trading_lab.trader_agent.post_audit import acknowledge_issues, apply_acknowledgements
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    state = MonitorState(tmp_path / 'monitor')
+    issue = {'code': code, 'identity': 'a' * 64}
+    with pytest.raises(TraderError, match='AUDIT_ACKNOWLEDGEMENT_REFUSED'):
+        acknowledge_issues(state, [issue], reason='OPERATOR_DECISION', at=clock(), **options)
+    result = {'state': 'BLOCKED', 'errors': [code], 'issues': [issue]}
+    apply_acknowledgements(state, result)
+    assert result['state'] == 'BLOCKED' and result['acknowledged_issues'] == []
+
+
+def test_not_activated_cli_records_without_opening_production_runtime(tmp_path, capsys):
+    from scripts.trading_lab.trader_agent.post_audit import main, apply_acknowledgements
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    issue = {'code': 'MISSING_PM_RUN', 'identity': 'a' * 64}
+    assert main(['--authorization', str(tmp_path / 'absent-grant'),
+                 '--paper-authorization', str(tmp_path / 'absent-paper-grant'),
+                 '--data-authorization', str(tmp_path / 'absent-data-grant'),
+                 '--runtime', str(tmp_path / 'absent-runtime'), '--monitor-runtime', str(tmp_path / 'monitor'),
+                 '--acknowledge-issue', 'MISSING_PM_RUN:' + issue['identity'],
+                 '--acknowledge-reason', 'ACTIVATION_HELD_UNTIL_GREEN_PREFLIGHT',
+                 '--not-activated', '--decision-sha256', 'b' * 64]) == 0
+    assert json.loads(capsys.readouterr().out) == {'state': 'NOT_ACTIVATED', 'issues': 1, 'production_writes': 0}
+    assert not (tmp_path / 'absent-runtime').exists()
+    result = {'state': 'BLOCKED', 'errors': ['MISSING_PM_RUN'], 'issues': [issue]}
+    apply_acknowledgements(MonitorState(tmp_path / 'monitor'), result)
+    assert result['state'] == 'GREEN' and result['acknowledged_issues'][0]['decision_sha256'] == 'b' * 64
+
+
 @pytest.mark.parametrize('stamp', ['2026-10-14T11:59:00Z', '2026-10-14T13:30:30Z',
     '2026-10-14T16:00:30Z', '2026-10-14T16:30:30Z', '2026-10-14T19:55:30Z',
     '2026-11-02T14:31:30Z', '2026-11-27T17:55:30Z'])
