@@ -1,4 +1,4 @@
-"""Private runtime entry points. Dry-run never constructs a network/model runner."""
+"""Private entry points: synthetic research dry runs and GET-only current-broker paper plans."""
 import argparse
 from datetime import timedelta
 import json
@@ -74,11 +74,18 @@ def paper_executor(args, grant, runtime):
     from .alpaca_paper import PaperAuthorization, PaperExecutor, PaperLedger
     from .alpaca_data import QuoteFeed
     paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
+    evidence = ResearchStore(runtime / 'evidence', read_only=True)
+    quotes = QuoteFeed(paper_grant, args.data_authorization, args.paper_quotes)
+    pause_paths = (runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED')
+    if args.dry_run and args.action in {'paper-execute', 'paper-exit', 'paper-audit'}:
+        from .rehearsal import SnapshotPaperLedger, readonly_executor
+        paper = SnapshotPaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant, now)
+        executor = readonly_executor(paper, evidence, quotes=quotes, pause_paths=pause_paths)
+        executor.slot = args.slot
+        return executor
     # Shared production bank: runtime paths never reset order caps or peak equity.
     paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
-    evidence = ResearchStore(runtime / 'evidence', read_only=True)
-    return PaperExecutor(paper, evidence, quotes=QuoteFeed(paper_grant, args.data_authorization, args.paper_quotes),
-                         slot=args.slot, pause_paths=(runtime / 'PAUSED', Path.home() / '.local/share/hyprl/trader-agent-budget/PAUSED'))
+    return PaperExecutor(paper, evidence, quotes=quotes, slot=args.slot, pause_paths=pause_paths)
 
 
 def main(argv=None):
@@ -138,6 +145,8 @@ def main(argv=None):
         else:
             result = executor.run(args.action.removeprefix('paper-'), dry_run=args.dry_run,
                                   accounts=[args.paper_account] if args.paper_account else None, replay_at=args.paper_replay_at)
+            if args.dry_run and args.action in {'paper-execute', 'paper-exit', 'paper-audit'}:
+                result.update(production_writes=0, broker_methods=['GET'], snapshot_unchanged=executor.ledger.unchanged())
         print(json.dumps(result, indent=2))
         return 1 if result.get('state') == 'BLOCKED' else 0
     clock = Clock(instant(args.synthetic_time)) if args.dry_run else now

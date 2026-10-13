@@ -73,6 +73,11 @@ expiry fails closed through the existing service failure reporting.
 Radar readers also wait up to 120 seconds for the shared owner lock before
 taking the receipt-cutoff SQLite transaction required by the news spec. The
 collector keeps exclusive ownership; waiting never changes the store or cutoff.
+`paper-execute`, `paper-exit` and `paper-audit --dry-run` use the same GET-only
+snapshot boundary, so the nightly compatibility checks also release the owner
+before HTTP and keep risk/order observations in memory. Paper plans use the
+current broker and real prediction journal; `--synthetic-time` applies to the
+synthetic research run, not future broker fills or simulated order acceptance.
 
 Broker calendar GETs must match the pinned NYSE session. Asset GETs validate
 class, active/tradable status, equity shortability and account short permission.

@@ -564,6 +564,40 @@ def test_audit_busy_writer_defers_quietly_without_marking_checkpoint_done(live_c
         assert db.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0] == 0
 
 
+@pytest.mark.parametrize('action', ['paper-audit', 'paper-execute', 'paper-exit'])
+def test_cli_dry_run_paper_checks_preserve_journal_and_release_owner_for_http(live_checks, capsys, monkeypatch, action):
+    import fcntl
+    from pathlib import Path
+    from urllib.request import OpenerDirector
+    from scripts.trading_lab.trader_agent.cli import main
+    from scripts.trading_lab.research.store import ResearchStore
+    checks, _, _, calls, _ = live_checks
+    shared = Path.home() / '.local/share/hyprl/trader-alpaca-paper'
+    shared.parent.mkdir(parents=True, exist_ok=True)
+    shared.symlink_to(checks.args.paper_runtime, target_is_directory=True)
+    original = OpenerDirector.open
+    def writer_can_acquire_during_http(self, request, **kwargs):
+        with (shared / 'paper-owner.lock').open('rb') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return original(self, request, **kwargs)
+    monkeypatch.setattr(OpenerDirector, 'open', writer_can_acquire_during_http)
+    paper = ResearchStore(shared / 'paper-evidence', read_only=True)
+    try:
+        before = paper.records('replay-summary')
+    finally:
+        paper.close()
+    assert main([action, '--authorization', checks.args.authorization,
+                 '--paper-authorization', checks.args.paper_authorization,
+                 '--runtime', checks.args.runtime, '--dry-run']) == 0
+    result = json.loads(capsys.readouterr().out)
+    paper = ResearchStore(shared / 'paper-evidence', read_only=True)
+    try:
+        assert paper.records('replay-summary') == before
+    finally:
+        paper.close()
+    assert result['production_writes'] == 0 and result['broker_methods'] == ['GET']
+
+
 def test_scorer_failure_after_admission_is_reported(live_checks):
     from pathlib import Path
     from scripts.trading_lab.trader_agent.rehearsal import rehearse
