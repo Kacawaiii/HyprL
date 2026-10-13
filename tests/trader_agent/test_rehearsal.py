@@ -598,6 +598,25 @@ def test_cli_dry_run_paper_checks_preserve_journal_and_release_owner_for_http(li
     assert result['production_writes'] == 0 and result['broker_methods'] == ['GET']
 
 
+def test_cli_dry_run_audit_skips_a_busy_writer_without_http(live_checks, capsys):
+    import fcntl
+    from pathlib import Path
+    from scripts.trading_lab.trader_agent.cli import main
+    checks, _, _, calls, _ = live_checks
+    shared = Path.home() / '.local/share/hyprl/trader-alpaca-paper'
+    shared.parent.mkdir(parents=True, exist_ok=True)
+    shared.symlink_to(checks.args.paper_runtime, target_is_directory=True)
+    before = len(calls)
+    with (shared / 'paper-owner.lock').open('rb') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert main(['paper-audit', '--authorization', checks.args.authorization,
+                     '--paper-authorization', checks.args.paper_authorization,
+                     '--runtime', checks.args.runtime, '--dry-run']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['state'] == 'PAPER_EXECUTION_IN_PROGRESS' and result['production_writes'] == 0
+    assert len(calls) == before
+
+
 def test_scorer_failure_after_admission_is_reported(live_checks):
     from pathlib import Path
     from scripts.trading_lab.trader_agent.rehearsal import rehearse

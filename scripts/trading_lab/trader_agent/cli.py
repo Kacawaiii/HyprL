@@ -143,10 +143,17 @@ def main(argv=None):
             temp.write_text(json.dumps(result, indent=2) + '\n')
             temp.replace(runtime / 'paper-report.json')
         else:
-            result = executor.run(args.action.removeprefix('paper-'), dry_run=args.dry_run,
-                                  accounts=[args.paper_account] if args.paper_account else None, replay_at=args.paper_replay_at)
-            if args.dry_run and args.action in {'paper-execute', 'paper-exit', 'paper-audit'}:
-                result.update(production_writes=0, broker_methods=['GET'], snapshot_unchanged=executor.ledger.unchanged())
+            try:
+                result = executor.run(args.action.removeprefix('paper-'), dry_run=args.dry_run,
+                                      accounts=[args.paper_account] if args.paper_account else None, replay_at=args.paper_replay_at)
+            except TraderError as error:
+                if not args.dry_run or error.code != 'PAPER_OWNER_BUSY':
+                    raise
+                result = {'state': 'PAPER_EXECUTION_IN_PROGRESS', 'dry_run': True,
+                          'production_writes': 0, 'broker_methods': []}
+            else:
+                if args.dry_run and args.action in {'paper-execute', 'paper-exit', 'paper-audit'}:
+                    result.update(production_writes=0, broker_methods=['GET'], snapshot_unchanged=executor.ledger.unchanged())
         print(json.dumps(result, indent=2))
         return 1 if result.get('state') == 'BLOCKED' else 0
     clock = Clock(instant(args.synthetic_time)) if args.dry_run else now
