@@ -220,20 +220,27 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
     return result
 
 
-def acknowledge_issues(state, issues, *, reason, at, unlabelable=False):
+def acknowledge_issues(state, issues, *, reason, at, unlabelable=False, not_activated=False, decision_sha256=None):
     """Explicit operator disposition of exact historical identities, never a code-wide mute."""
     if not re.fullmatch(r'[A-Z][A-Z0-9_]{2,159}', reason):
         raise TraderError('AUDIT_ACKNOWLEDGEMENT_REFUSED')
+    if (not_activated and (unlabelable or not isinstance(decision_sha256, str)
+                           or not re.fullmatch(r'[a-f0-9]{64}', decision_sha256))
+            or not not_activated and decision_sha256 is not None):
+        raise TraderError('AUDIT_ACKNOWLEDGEMENT_REFUSED')
+    allowed = {'MISSING_PM_RUN'} if not_activated else {'LABELS_MISSING', 'PAPER_ORDER_EXPIRED'}
     for issue in issues:
-        if (issue['code'] not in {'LABELS_MISSING', 'PAPER_ORDER_EXPIRED'}
+        if (issue['code'] not in allowed
                 or not re.fullmatch(r'[a-f0-9]{64}', issue['identity'])
                 or (unlabelable and issue['code'] != 'LABELS_MISSING')):
             raise TraderError('AUDIT_ACKNOWLEDGEMENT_REFUSED')
     with state.connect() as db:
         for issue in issues:
-            db.execute('INSERT OR IGNORE INTO acknowledgements VALUES(?,?,?,?,?)',
+            inserted = db.execute('INSERT OR IGNORE INTO acknowledgements VALUES(?,?,?,?,?)',
                        (issue['identity'], issue['code'], reason,
-                        'UNLABELABLE' if unlabelable else 'ACKNOWLEDGED', iso(at)))
+                        'NOT_ACTIVATED' if not_activated else 'UNLABELABLE' if unlabelable else 'ACKNOWLEDGED', iso(at))).rowcount
+            if inserted and not_activated:
+                db.execute('INSERT INTO acknowledgement_decisions VALUES(?,?)', (issue['identity'], decision_sha256))
 
 
 def apply_acknowledgements(state, result):
@@ -245,7 +252,12 @@ def apply_acknowledgements(state, result):
             row = db.execute('SELECT reason,disposition,at FROM acknowledgements WHERE identity=? AND code=?',
                              (issue['identity'], issue['code'])).fetchone()
             if row:
-                known.append({**issue, 'reason': row[0], 'disposition': row[1], 'at': row[2]})
+                disposition = {**issue, 'reason': row[0], 'disposition': row[1], 'at': row[2]}
+                decision = db.execute('SELECT sha256 FROM acknowledgement_decisions WHERE identity=?',
+                                      (issue['identity'],)).fetchone()
+                if decision:
+                    disposition['decision_sha256'] = decision[0]
+                known.append(disposition)
             else:
                 active.append(issue)
     result['observed_errors'] = result['errors']
@@ -291,6 +303,8 @@ def main(argv=None):
     parser.add_argument('--acknowledge-issue', action='append', default=[], metavar='CODE:SHA256')
     parser.add_argument('--acknowledge-reason')
     parser.add_argument('--unlabelable', action='store_true')
+    parser.add_argument('--not-activated', action='store_true')
+    parser.add_argument('--decision-sha256')
     args = parser.parse_args(argv)
     state = MonitorState(args.monitor_runtime)
     if args.acknowledge_issue:
@@ -299,12 +313,14 @@ def main(argv=None):
         try:
             issues = [dict(zip(('code', 'identity'), value.split(':', 1))) for value in args.acknowledge_issue]
             with state.owner():
-                acknowledge_issues(state, issues, reason=args.acknowledge_reason, at=now(), unlabelable=args.unlabelable)
+                acknowledge_issues(state, issues, reason=args.acknowledge_reason, at=now(), unlabelable=args.unlabelable,
+                                   not_activated=args.not_activated, decision_sha256=args.decision_sha256)
         except (KeyError, TraderError):
             parser.error('invalid historical acknowledgement')
-        print(json.dumps({'state': 'ACKNOWLEDGED', 'issues': len(issues), 'production_writes': 0}))
+        print(json.dumps({'state': 'NOT_ACTIVATED' if args.not_activated else 'ACKNOWLEDGED',
+                          'issues': len(issues), 'production_writes': 0}))
         return 0
-    if args.acknowledge_reason or args.unlabelable:
+    if args.acknowledge_reason or args.unlabelable or args.not_activated or args.decision_sha256:
         parser.error('disposition requires an exact issue identity')
     request_retries = []
     try:
