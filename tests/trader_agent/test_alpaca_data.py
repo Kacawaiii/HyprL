@@ -43,6 +43,20 @@ def test_latest_universe_quotes_and_trades_use_get_iex_and_real_wire_shape(feed)
     assert len(calls) == 2 and all(c[0] == 'GET' and c[2] is None for c in calls)
 
 
+@pytest.mark.parametrize('bid,ask', [(100, 0), (0, 0), (101, 100)])
+def test_non_executable_iex_book_never_supplies_an_order_quote(feed, bid, ask):
+    client, _, _, _ = feed
+    original = client.transport
+    def closed_book(*args):
+        body = original(*args)
+        for quote in body.get('quotes', {}).values():
+            quote.update(bp=bid, ap=ask)
+        return body
+    client.transport = closed_book
+    with pytest.raises(TraderError, match='PAPER_QUOTE_INVALID'):
+        client.latest(['AAPL'])
+
+
 @pytest.mark.parametrize('origin', ['https://data.alpaca.markets/', 'http://data.alpaca.markets',
                                   'https://data.alpaca.markets.evil.invalid', 'https://api.alpaca.markets'])
 def test_non_exact_origin_refused_before_transport(feed, origin):

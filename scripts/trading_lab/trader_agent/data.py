@@ -25,10 +25,31 @@ class NoRedirect(HTTPRedirectHandler):
         raise TraderError("REDIRECT_REFUSED")
 
 
+def rate_limit_retry_at(headers, received, failures=1):
+    """Only parsed deadlines leave HTTP headers; honor server backoff over our floor."""
+    from email.utils import parsedate_to_datetime
+    until = received + timedelta(hours=min(24, 2 ** min(5, max(0, failures - 1))))
+    values = {key.lower(): value for key, value in headers.items()}
+    retry = values.get('retry-after')
+    try:
+        until = max(until, received + timedelta(seconds=max(0, int(retry))))
+    except (TypeError, ValueError, OverflowError):
+        try:
+            until = max(until, parsedate_to_datetime(retry).astimezone(timezone.utc))
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            pass
+    try:
+        until = max(until, datetime.fromtimestamp(int(values['x-ratelimit-reset']), timezone.utc))
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        pass
+    return iso(until)
+
+
 class PublicData:
     def __init__(self, ledger, *, clock=now, sleep=time.sleep):
         self.ledger, self.clock, self.sleep = ledger, clock, sleep
         self.synthetic = False
+        self.gdelt_retry_at = None
 
     def fetch(self, source, path, params):
         host = HOSTS[source]
@@ -59,6 +80,9 @@ class PublicData:
         except TraderError:
             raise
         except HTTPError as error:
+            if source == 'gdelt_doc_api' and error.code == 429:
+                self.gdelt_retry_at = rate_limit_retry_at(error.headers or {}, self.clock())
+            # Evidence remains a digest for production context consumers.
             raise TraderError('SOURCE_HTTP_' + str(error.code)) from None
         except Exception:
             raise TraderError("SOURCE_UNAVAILABLE") from None

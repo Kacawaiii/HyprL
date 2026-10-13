@@ -32,6 +32,36 @@ def test_failure_continues_chain_alerts_and_reserves_second_rehearsal(tmp_path, 
     assert 'SOURCE_UNAVAILABLE' in (tmp_path / 'reports/rehearsal-2026-10-12.md').read_text()
 
 
+@pytest.mark.parametrize('code,expected', [('SOURCE_HTTP_429', 'GREEN'),
+    ('SOURCE_UNAVAILABLE', 'GREEN'), ('SOURCE_BUDGET', 'BLOCKED'),
+    ('AUTHORIZATION_EXPIRED_OR_NOT_STARTED', 'BLOCKED'), ('NEWS_QUERY_UNMAPPED', 'BLOCKED')])
+def test_gdelt_loss_alerts_as_partial_context_but_controls_still_block(tmp_path, clock, code, expected):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
+    state = MonitorState(tmp_path / 'monitor')
+    def unavailable():
+        raise TraderError(code)
+    messages = []
+    result = rehearse(state, [('gdelt', unavailable), ('executor', lambda: {'production_writes': 0})],
+        clock=clock, notify=lambda key, text: messages.append(text) or 'DELIVERED', reports=tmp_path / 'reports')
+    assert result['state'] == expected
+    assert result['steps'][0]['state'] == ('DEGRADED' if expected == 'GREEN' else 'BLOCKED')
+    assert result['alerts'][0]['delivery'] == 'DELIVERED'
+    if expected == 'GREEN':
+        assert result['context_state'] == 'DEGRADED' and result['retry_at'] is None
+        assert 'PARTIAL_CONTEXT' in messages[0]
+        assert 'DEGRADED' in (tmp_path / ('reports/rehearsal-' + clock().date().isoformat() + '.md')).read_text()
+
+
+def test_gdelt_degradation_cannot_hide_failed_alert_delivery(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
+    def unavailable():
+        raise TraderError('SOURCE_HTTP_429')
+    result = rehearse(MonitorState(tmp_path / 'monitor'), [('gdelt', unavailable)],
+        clock=clock, notify=lambda *a: 'FAILED', reports=tmp_path / 'reports')
+    assert result['state'] == 'BLOCKED'
+    assert result['steps'][-1]['error'] == 'TELEGRAM_DELIVERY_FAILED'
+
+
 def test_retry_reuses_successful_probes_and_never_spends_trader_model_calls(ledger, monkeypatch, tmp_path):
     from types import SimpleNamespace
     from scripts.trading_lab.trader_agent.rehearsal import LiveChecks, MonitorState
@@ -302,6 +332,79 @@ def test_full_chain_uses_real_configuration_with_only_gets_and_zero_decisions(li
     assert (state.root / 'cockpit-probe/analysis.json').exists()
 
 
+@pytest.mark.parametrize('status', [200, 429])
+def test_recent_radar_gdelt_receipt_is_reused_without_a_live_request(live_checks, status):
+    from scripts.radar.core import Store
+    from scripts.trading_lab.trader_agent.config import iso
+    from scripts.trading_lab.trader_agent.rehearsal import rehearse
+    checks, state, clock, calls, _ = live_checks
+    at = clock() - timedelta(minutes=30)
+    radar = Store(checks.args.radar_root, clock=clock)
+    radar.append('http', 'gdelt:macro', {'url': 'https://api.gdeltproject.org/api/v2/doc/doc',
+        'status': status, 'received_at': iso(at), 'body_hash': 'a' * 64}, at=at)
+    radar.append('health', 'gdelt:macro', {'source': 'gdelt:macro', 'status': 'LIVE' if status == 200 else 'BLOCKED',
+        'items': 3, 'checked_at': iso(at)}, at=at)
+    checks.configuration()
+    result = rehearse(state, [('gdelt', checks.gdelt)], clock=clock, reports=checks.args.reports,
+                      notify=lambda *a: 'DELIVERED')
+    assert result['state'] == 'GREEN'
+    step = result['steps'][0]
+    assert step['state'] == ('GREEN' if status == 200 else 'DEGRADED')
+    assert step['evidence']['reused_radar_receipt'] is True
+    assert not any(host == 'api.gdeltproject.org' for host, _, _ in calls)
+
+
+def test_radar_gdelt_backoff_outlives_receipt_freshness_and_does_not_spend_budget(live_checks):
+    from scripts.radar.core import Store
+    from scripts.trading_lab.trader_agent.config import iso
+    checks, _, clock, calls, _ = live_checks
+    radar = Store(checks.args.radar_root, clock=clock)
+    radar.append('cooldown', 'gdelt', {'until': iso(clock() + timedelta(hours=8)), 'status': 429, 'failures': 4},
+                 at=clock() - timedelta(hours=8))
+    checks.configuration()
+    with pytest.raises(TraderError, match='SOURCE_COOLDOWN') as error:
+        checks.gdelt()
+    assert error.value.evidence['failures'] == 4
+    assert not any(host == 'api.gdeltproject.org' for host, _, _ in calls)
+    assert 'gdelt_doc_api' not in checks.ledger.counts()
+
+
+def test_future_radar_gdelt_evidence_cannot_suppress_the_live_probe(live_checks):
+    from scripts.radar.core import Store
+    from scripts.trading_lab.trader_agent.config import iso
+    checks, _, clock, calls, _ = live_checks
+    radar = Store(checks.args.radar_root, clock=clock)
+    future = clock() + timedelta(minutes=1)
+    radar.append('http', 'gdelt:macro', {'url': 'https://api.gdeltproject.org/api/v2/doc/doc',
+        'status': 200, 'received_at': iso(future), 'body_hash': 'a' * 64}, at=future)
+    radar.append('cooldown', 'gdelt', {'until': iso(future + timedelta(hours=1))}, at=future)
+    checks.configuration()
+    assert checks.gdelt()['articles'] == 1
+    assert sum(host == 'api.gdeltproject.org' for host, _, _ in calls) == 1
+
+
+@pytest.mark.parametrize('retry_after', ['10800', 'Mon, 12 Oct 2026 14:00:00 GMT'])
+def test_gdelt_429_headers_persist_backoff_across_restart(live_checks, monkeypatch, retry_after):
+    from urllib.error import HTTPError
+    from urllib.request import OpenerDirector
+    from scripts.trading_lab.trader_agent.rehearsal import LiveChecks
+    checks, state, clock, _, _ = live_checks
+    checks.configuration()
+    requests = []
+    def limited(self, request, **kw):
+        requests.append(request.full_url)
+        raise HTTPError(request.full_url, 429, 'synthetic', {'Retry-After': retry_after}, None)
+    monkeypatch.setattr(OpenerDirector, 'open', limited)
+    with pytest.raises(TraderError, match='SOURCE_HTTP_429'):
+        checks.gdelt()
+    restarted = LiveChecks(checks.args, state, clock=clock)
+    restarted.configuration()
+    with pytest.raises(TraderError, match='SOURCE_COOLDOWN') as error:
+        restarted.gdelt()
+    assert instant(error.value.evidence['retry_at']) >= instant('2026-10-12T13:45:00Z')
+    assert len(requests) == 1
+
+
 @pytest.mark.parametrize('host,step', [('query1.finance.yahoo.com', 'yahoo'),
     ('api.exchange.coinbase.com', 'coinbase'), ('api.gdeltproject.org', 'gdelt'),
     ('data.alpaca.markets', 'alpaca_data'), ('paper-api.alpaca.markets', 'executor')])
@@ -310,16 +413,16 @@ def test_each_source_failure_is_attributed_and_other_steps_still_run(live_checks
     checks, state, clock, _, faults = live_checks
     faults[host] = True
     result = rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
-    assert result['state'] == 'BLOCKED'
-    assert next(s for s in result['steps'] if s['step'] == step)['state'] == 'BLOCKED'
+    assert result['state'] == ('GREEN' if step == 'gdelt' else 'BLOCKED')
+    assert next(s for s in result['steps'] if s['step'] == step)['state'] == ('DEGRADED' if step == 'gdelt' else 'BLOCKED')
     assert result['steps'][-1]['step'] == 'cockpit_export'
-    assert result['retry_at'] == '2026-10-12T11:15:00Z'
+    assert result['retry_at'] == (None if step == 'gdelt' else '2026-10-12T11:15:00Z')
 
 
 def test_retry_fresh_prices_and_successful_models_do_not_refund_or_repeat_calls(live_checks):
     from scripts.trading_lab.trader_agent.rehearsal import rehearse
     checks, state, clock, calls, faults = live_checks
-    faults['api.gdeltproject.org'] = True
+    faults['data.alpaca.markets'] = True
     assert rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)['state'] == 'BLOCKED'
     faults.clear()
     first = dict(checks.ledger.counts())
@@ -438,6 +541,57 @@ def test_stale_quotes_fail_while_older_positive_trades_match_production_contract
     result = rehearse(state, [('alpaca_data', checks.alpaca_data)], clock=clock,
                        notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
     assert result['steps'][0]['error'] == 'REHEARSAL_DATA_STALE'
+
+
+@pytest.mark.parametrize('before_open', [True, False])
+def test_iex_closed_book_quotes_do_not_gate_next_regular_day_order_but_do_gate_open_session(live_checks, monkeypatch, before_open):
+    from urllib.request import OpenerDirector
+    checks, _, clock, _, _ = live_checks
+    checks.configuration()
+    if not before_open:
+        clock.at = instant('2026-10-12T15:15:00Z')
+    original = OpenerDirector.open
+    def closing_book(self, request, **kw):
+        response = original(self, request, **kw)
+        if 'data.alpaca.markets/v2/stocks/' in request.full_url:
+            body = json.loads(response.body)
+            for row in body.get('quotes', {}).values():
+                row.update(ap=0, bs=100, **{'as': 0})
+                row['t'] = '2026-10-09T20:00:03Z' if before_open else '2026-10-12T15:14:59Z'
+            for row in body.get('trades', {}).values():
+                row['t'] = '2026-10-09T19:59:59Z' if before_open else '2026-10-12T15:14:59Z'
+            response.body = json.dumps(body).encode()
+        return response
+    monkeypatch.setattr(OpenerDirector, 'open', closing_book)
+    if before_open:
+        evidence = checks.alpaca_data()
+        assert evidence['equity_quote_use'] == 'INDICATIVE_CLOSED_BOOK'
+        assert evidence['non_executable_equity_quotes'] == 3
+    else:
+        with pytest.raises(TraderError, match='REHEARSAL_DATA_PRICE_INVALID'):
+            checks.alpaca_data()
+
+
+@pytest.mark.parametrize('price,timestamp,code,field', [
+    (0, '2026-10-09T19:59:59Z', 'REHEARSAL_DATA_PRICE_INVALID', 'trade.p'),
+    (100, '2026-10-08T19:59:59Z', 'REHEARSAL_DATA_STALE', 'trade.t'),
+    (100, '2026-10-12T10:46:00Z', 'DATA_TRADE_INVALID', 'trade.t')])
+def test_closed_session_trade_failures_still_block_with_asset_and_field(live_checks, monkeypatch, price, timestamp, code, field):
+    from urllib.request import OpenerDirector
+    checks, _, _, _, _ = live_checks
+    checks.configuration()
+    original = OpenerDirector.open
+    def invalid(self, request, **kw):
+        response = original(self, request, **kw)
+        if 'data.alpaca.markets/v2/stocks/trades/' in request.full_url:
+            body = json.loads(response.body)
+            body['trades']['AAPL'].update(p=price, t=timestamp)
+            response.body = json.dumps(body).encode()
+        return response
+    monkeypatch.setattr(OpenerDirector, 'open', invalid)
+    with pytest.raises(TraderError, match=code) as error:
+        checks.alpaca_data()
+    assert error.value.evidence == {'failures': [{'asset': 'AAPL', 'field': field, 'code': code}]}
 
 
 def test_approved_crypto_rehearsal_population_and_holiday_checkpoint(weekend_grant, service):

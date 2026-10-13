@@ -36,6 +36,16 @@ class RadarSnapshot:
             result.append(payload)
         return result
 
+    def latest(self, kind, key):
+        rows = self.db.execute('SELECT at,body FROM evidence WHERE kind=? AND key=? AND at<? ORDER BY seq DESC',
+                               (kind, key, database_time(self.cutoff)))
+        for recorded, raw in rows:
+            payload = json.loads(raw)
+            if instant(recorded) < self.cutoff and (
+                    not payload.get('received_at') or instant(payload['received_at']) < self.cutoff):
+                return payload
+        return None
+
 
 @contextmanager
 def radar_snapshot(root, cutoff):

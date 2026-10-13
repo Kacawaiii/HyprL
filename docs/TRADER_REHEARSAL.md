@@ -17,14 +17,35 @@ Three Yahoo requests preserve the existing 80-request daily acquisition budget
 for the full universe and labels. Coinbase probes cover the configured crypto
 universe. The data probes use the existing shared dispatch bank, without grants
 or caps being enlarged. Fresh daily price evidence is reused on retry only when
-its UTC day and latest calendar endpoint still match. GDELT is always requested
-again. A six-hour GDELT seen-time freshness check does not attest publisher time.
+its UTC day and latest calendar endpoint still match. GDELT reuses the radar's
+causal HTTP receipt and successful parse health when the receipt is under two
+hours old. A recent failure is reported without another request. The radar's
+durable provider cooldown is respected even when its receipt is older. A live
+fallback uses the existing source budget only when neither receipt nor cooldown
+applies; HTTP 429 persists a rehearsal cooldown across restarts, honoring
+Retry-After (seconds or HTTP date) and X-RateLimit-Reset with an exponential
+one-hour floor. A six-hour GDELT seen-time freshness check on that fallback does
+not attest publisher time.
 Radar freshness uses all causal input receipts from the last two hours, since
 ranked events can legitimately have older receipts. Alpaca quote freshness
 matches the production 60-second rule during the regular session and for crypto;
-before the equity open it uses the last completed session close. Last trades
-must be positive and not from the future; their ages are reported separately,
-as in the production quote client.
+before the equity open it uses the last completed session close. IEX can leave
+an unusable book update just after the close. Before the next regular DAY market
+entry (and on days without an equity session), those quotes are indicative:
+their non-executable count is reported and a positive trade from the completed
+session's closing window is required. Negative prices still fail. In-session,
+crypto and after-close quote checks remain strict. Production after-hours limit
+orders retain their fresh, positive, uncrossed quote and spread guards. Last
+trades must be positive and not from the future; their ages are reported
+separately. Data failures identify each asset, field and code without raw prices.
+
+GDELT availability failures are DEGRADED / PARTIAL_CONTEXT, matching the real
+run. They remain visible in reports and require a delivered Telegram alert.
+Readiness is GREEN when every mandatory step passes, even with this explicitly
+degraded context. Query mappings, authorization, budget, order and label failures
+still BLOCK; a missing degradation alert also blocks. Optional context loss
+alone does not reserve a retry or repeat model probes. The pm GREEN notification
+states the context grade explicitly.
 
 Inference prompts contain only synthetic empty input. Claude/Opus and
 Claude/Sonnet use the actual restricted runner and local schemas. GPT reuses the
@@ -45,6 +66,10 @@ an audit defers if execution changed that snapshot. No decision, execution
 intent, order or research label is recorded by a rehearsal or audit. Source
 reservations, model transcripts, monitoring state and probe exports remain
 private. Reports contain only identities, suffixes, codes, counts and digests.
+
+Paper writers wait up to 120 seconds for the ledger owner lock before reporting
+PAPER_OWNER_BUSY. Waiting reserves no intent, sends no order and emits no alert;
+expiry fails closed through the existing service failure reporting.
 
 Broker calendar GETs must match the pinned NYSE session. Asset GETs validate
 class, active/tradable status, equity shortability and account short permission.
@@ -96,7 +121,7 @@ batch rather than one message per prediction.
 Install the rehearsal units only after the owned branch's exact SHA has green
 CI and the full required local suites pass. Preserve existing trader units and
 hooks, add the audit hook before the existing label report hook, and use the
-operator's guarded deployment: outside 11:30–12:30 UTC, all trader services idle,
+operator's guarded deployment: outside 11:30–13:50 and 19:45–20:10 UTC, all trader services idle,
 owned timers stopped, saved units and consistent database backups, then a final
 idle check and timer restoration. Rollback restores code/unit bindings and
 holds mutation timers if needed; never restore an old backup over an appended

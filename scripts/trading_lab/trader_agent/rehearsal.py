@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import shlex
 import sqlite3
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, build_opener
 
 from scripts.trading_lab.research.store import ResearchStore
@@ -120,6 +120,14 @@ def error_code(error):
     return 'UNEXPECTED_' + type(error).__name__.upper()
 
 
+def gdelt_unavailable(code):
+    # Availability mirrors PARTIAL_CONTEXT in the run. Admission, query and
+    # budget failures remain blockers, even when they occur in this step.
+    return code in {'SOURCE_UNAVAILABLE', 'SOURCE_HTTP_429', 'SOURCE_HTTP_408',
+                    'SOURCE_COOLDOWN', 'REHEARSAL_GDELT_STALE_OR_EMPTY'} or (
+        code.startswith('SOURCE_HTTP_5') and code.removeprefix('SOURCE_HTTP_').isdigit())
+
+
 def write_report(state, reports, day, run_slot="am"):
     reports = private_root(reports)
     prefix = 'pm-' if run_slot == 'pm' else ''
@@ -167,18 +175,31 @@ def rehearse(state, steps, *, clock=now, retry=False, notify=None, reports, run_
                 evidence = check()
                 step = {'step': name, 'state': 'GREEN', 'evidence': evidence}
             except Exception as error:
-                step = {'step': name, 'state': 'BLOCKED', 'error': error_code(error)}
+                code = error_code(error)
+                degraded = name == 'gdelt' and gdelt_unavailable(code)
+                step = {'step': name, 'state': 'DEGRADED' if degraded else 'BLOCKED', 'error': code}
+                if degraded:
+                    step['evidence'] = {'run_effect': 'PARTIAL_CONTEXT', **(
+                        error.evidence if isinstance(error.evidence, dict) else {})}
                 if isinstance(error, TraderError) and error.code == 'REHEARSAL_PRICE_FAILURE':
                     step['evidence'] = {'failures': error.evidence}
+                if name == 'alpaca_data' and isinstance(error, TraderError) and isinstance(error.evidence, dict):
+                    step['evidence'] = error.evidence
                 result['alerts'].append({'step': name, 'delivery': state.alert(
                     day + ':' + slot + ':' + name,
-                    'Trader rehearsal ' + day + ' (' + slot + ') failed: ' + name + ' / ' + step['error'], notify)})
+                    'Trader rehearsal ' + day + ' (' + slot + ') ' +
+                    ('DEGRADED / PARTIAL_CONTEXT: ' if degraded else 'failed: ') + name + ' / ' + step['error'], notify)})
             result['steps'].append(step)
             state.save(day, slot, result)
-        result['state'] = 'BLOCKED' if result['alerts'] else 'GREEN'
+        result['context_state'] = 'DEGRADED' if any(s['state'] == 'DEGRADED' for s in result['steps']) else 'COMPLETE'
+        result['state'] = 'BLOCKED' if any(s['state'] == 'BLOCKED' for s in result['steps']) else 'GREEN'
+        if result['context_state'] == 'DEGRADED' and any(a['delivery'] != 'DELIVERED' for a in result['alerts']):
+            result['state'] = 'BLOCKED'
+            result['steps'].append({'step': 'notification', 'state': 'BLOCKED', 'error': 'TELEGRAM_DELIVERY_FAILED'})
         if run_slot == 'pm' and result['state'] == 'GREEN':
             result['notification'] = state.alert(day + ':' + slot + ':green',
-                'Trader pm pre-flight GREEN: data, model probes, executor GET and cockpit checks passed.', notify)
+                'Trader pm pre-flight GREEN: data, model probes, executor GET and cockpit checks passed. Context: ' +
+                result['context_state'] + (' / GDELT PARTIAL_CONTEXT.' if result['context_state'] == 'DEGRADED' else '.'), notify)
             if result['notification'] != 'DELIVERED':
                 result['state'] = 'BLOCKED'
                 result['steps'].append({'step': 'notification', 'state': 'BLOCKED', 'error': 'TELEGRAM_DELIVERY_FAILED'})
@@ -383,10 +404,50 @@ class LiveChecks:
     def gdelt(self):
         self.require()
         from .news_queries import news_query
+        from .news_context import radar_snapshot
         assets = self.grant.universe + ['macro', 'politics', 'trade']
         for asset in assets:
             news_query(asset)
-        headlines, source = self.public.headlines(news_query('macro'), self.clock())
+        cutoff = self.clock()
+        with radar_snapshot(self.args.radar_root, cutoff) as snapshot:
+            cooldown = snapshot.latest('cooldown', 'gdelt')
+            receipts = [r for r in snapshot.rows('http', since=cutoff - timedelta(hours=2))
+                        if urlsplit(r.get('url', '')).hostname == 'api.gdeltproject.org'
+                        and cutoff - timedelta(hours=2) <= instant(r['received_at']) < cutoff]
+            health = [r for r in snapshot.rows('health', since=cutoff - timedelta(hours=2))
+                      if r.get('source', '').startswith('gdelt:')]
+        if cooldown and cutoff < instant(cooldown['until']):
+            raise TraderError('SOURCE_COOLDOWN', evidence={'retry_at': cooldown['until'],
+                'failures': cooldown.get('failures', 0), 'live_requests': 0, 'backoff_source': 'radar'})
+        if receipts:
+            receipt = max(receipts, key=lambda r: instant(r['received_at']))
+            evidence = {'reused_radar_receipt': True, 'received_at': receipt['received_at'],
+                        'digest': receipt['body_hash'], 'http_status': receipt['status'],
+                        'queries_validated': len(assets), 'live_requests': 0}
+            if receipt['status'] != 200:
+                raise TraderError('SOURCE_HTTP_' + str(receipt['status']), evidence=evidence)
+            if not any(r['status'] == 'LIVE' and instant(receipt['received_at']) <= instant(r['checked_at']) < cutoff for r in health):
+                raise TraderError('REHEARSAL_GDELT_STALE_OR_EMPTY', evidence=evidence)
+            return {**evidence, 'clock': 'RADAR_RECEIPT_NOT_PUBLISHER_ATTESTED'}
+        backoff = self.state.root / 'gdelt-backoff.json'
+        prior = strict_json(backoff.read_text()) if backoff.exists() else {}
+        if prior and cutoff < instant(prior['retry_at']):
+            raise TraderError('SOURCE_COOLDOWN', evidence={**prior, 'live_requests': 0, 'backoff_source': 'rehearsal'})
+        try:
+            headlines, source = self.public.headlines(news_query('macro'), self.clock())
+        except TraderError as error:
+            if error.code == 'SOURCE_HTTP_429':
+                from .data import rate_limit_retry_at
+                failures = min(6, prior.get('failures', 0) + 1)
+                until = max(instant(self.public.gdelt_retry_at),
+                            instant(rate_limit_retry_at({}, self.clock(), failures)))
+                saved = {'retry_at': iso(until), 'failures': failures, 'status': 429}
+                temp = backoff.with_suffix('.tmp')
+                temp.write_text(json.dumps(saved))
+                temp.replace(backoff)
+                raise TraderError(error.code, evidence={**saved, 'live_requests': 1}) from None
+            raise
+        backoff.unlink(missing_ok=True)
         if not headlines or max(instant(h['published_at']) for h in headlines) < self.clock() - timedelta(hours=6):
             raise TraderError('REHEARSAL_GDELT_STALE_OR_EMPTY')
         return {'articles': len(headlines), 'digest': source['digest'], 'queries_validated': len(assets),
@@ -468,7 +529,11 @@ class LiveChecks:
         client = DataClient(self.data_grant, clock=self.clock)
         equities = self.grant.payload['universe']['stocks'] + self.grant.payload['universe']['sector_etfs']
         cryptos = self.grant.payload['universe']['crypto']
-        checked, trade_ages = [], []
+        checked, trade_ages, failures = [], [], []
+        at = self.clock()
+        session = calendar_session(at.date().isoformat())
+        before_open = not session or at < session.open_at
+        non_executable = 0
         for crypto, assets in ((False, equities), (True, cryptos)):
             prefix = '/v1beta3/crypto/us/latest/' if crypto else '/v2/stocks/'
             params = {'symbols': ','.join(symbol(a) for a in assets)}
@@ -481,22 +546,45 @@ class LiveChecks:
             in_session = session and session.open_at <= at < session.close_at
             earliest = at - timedelta(seconds=60) if crypto or in_session else latest_equity_close(at) - timedelta(minutes=5)
             for asset in assets:
+                field = 'symbol'
                 try:
                     quote_row, trade = q['quotes'][symbol(asset)], t['trades'][symbol(asset)]
+                    field = 'quote.t'
                     if not earliest <= instant(quote_row['t']) <= at:
                         raise TraderError('REHEARSAL_DATA_STALE')
                     # Match DataClient.latest: a current quote proves feed
                     # freshness; an infrequently traded asset's last trade is
                     # allowed to be older, but never from the future.
+                    field = 'trade.t'
                     if instant(trade['t']) > at:
                         raise TraderError('DATA_TRADE_INVALID')
-                    if decimal(quote_row['bp']) <= 0 or decimal(quote_row['ap']) < decimal(quote_row['bp']) or decimal(trade['p']) <= 0:
+                    if not crypto and before_open and instant(trade['t']) < earliest:
+                        raise TraderError('REHEARSAL_DATA_STALE')
+                    field = 'trade.p'
+                    if decimal(trade['p']) <= 0:
                         raise TraderError('REHEARSAL_DATA_PRICE_INVALID')
+                    field = 'quote.bp/ap'
+                    bid, ask = decimal(quote_row['bp']), decimal(quote_row['ap'])
+                    executable = bid > 0 and ask >= bid
+                    # IEX's last book update after the close can be one-sided or
+                    # crossed. Before an upcoming DAY market entry it is only
+                    # indicative; the completed-session trade proves prices.
+                    # In-session/crypto quotes and production limit guards stay strict.
+                    if bid < 0 or ask < 0 or (not executable and (crypto or not before_open)):
+                        raise TraderError('REHEARSAL_DATA_PRICE_INVALID')
+                    if not crypto and not executable:
+                        non_executable += 1
                     checked.append({'asset': asset, 'quote_at': quote_row['t'], 'trade_at': trade['t']})
                     trade_ages.append((at - instant(trade['t'])).total_seconds())
                 except (KeyError, TypeError):
-                    raise TraderError('REHEARSAL_DATA_MISSING_SYMBOL') from None
+                    failures.append({'asset': asset, 'field': field, 'code': 'REHEARSAL_DATA_MISSING_SYMBOL'})
+                except TraderError as error:
+                    failures.append({'asset': asset, 'field': field, 'code': error.code})
+        if failures:
+            raise TraderError(failures[0]['code'], evidence={'failures': failures})
         return {'assets_checked': len(checked), 'timestamps_hash': sha256_canonical(checked), 'feed': 'iex/crypto-us',
+                'equity_quote_use': 'INDICATIVE_CLOSED_BOOK' if before_open else 'EXECUTABLE',
+                'non_executable_equity_quotes': non_executable,
                 'trades_older_than_60s': sum(age > 60 for age in trade_ages),
                 'oldest_trade_age_seconds': round(max(trade_ages, default=0))}
 
