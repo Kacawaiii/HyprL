@@ -72,6 +72,19 @@ def _realize(store, ledger, data, *, at=None):
         labeled = {r["payload"]["prediction_hash"] for r in rows(store, "label")}
         predictions = [p for p in rows(store, "prediction") if p["identity"] not in labeled]
         cache, realized, pending = {}, 0, 0
+        def cached_source(key, acquire):
+            # One dispatch per source input in this job, including rejected
+            # native prices. Failures never become prices and are retried by
+            # the next job under its unchanged UTC/slot budget.
+            if key not in cache:
+                try:
+                    cache[key] = acquire()
+                except TraderError as error:
+                    cache[key] = error
+            value = cache[key]
+            if isinstance(value, TraderError):
+                raise value
+            return value
         for row in predictions:
             p = PredictionRecord.from_dict(row["payload"])
             ledger.slot = p.signal.get("slot", "am")
@@ -95,9 +108,8 @@ def _realize(store, ledger, data, *, at=None):
                     prices, sources = [], []
                     for anchor in (entry, exit_at):
                         key = (p.product, iso(anchor))
-                        if key not in cache:
-                            cache[key] = data.crypto(p.product, anchor, anchor + timedelta(minutes=1), minute=True)
-                        price, source = cache[key]
+                        price, source = cached_source(key, lambda: data.crypto(
+                            p.product, anchor, anchor + timedelta(minutes=1), minute=True))
                         prices.append(price)
                         sources.append(source)
                     raw, relative, spy_return = prices[1] / prices[0] - 1, None, None
@@ -106,15 +118,15 @@ def _realize(store, ledger, data, *, at=None):
                     intraday = definition.get("entry_price") == "intraday_5m_open"
                     for asset in (p.product, "SPY"):
                         key = (asset, ledger.slot, "5m" if intraday else "1d")
-                        if key not in cache:
+                        def acquire():
                             relevant = [instant(r["payload"]["signal"]["label_definition"]["entry_at"]) for r in predictions
                                         if (r["payload"]["product"] == asset or asset == "SPY")
                                         and r["payload"]["signal"].get("slot", "am") == ledger.slot]
                             first = min(relevant) - timedelta(days=1)
                             if not data.synthetic and protected(asset, first, at):
                                 raise TraderError("PROTECTED_LABEL")
-                            cache[key] = data.yahoo(asset, first, at, **({"interval": "5m"} if intraday else {}))
-                        bars, source = cache[key]
+                            return data.yahoo(asset, first, at, **({"interval": "5m"} if intraday else {}))
+                        bars, source = cached_source(key, acquire)
                         sources.append(source)
                         close_entry = definition.get("entry_price") == "close"
                         opening = [b for b in bars if (b["bar_open_at"].date() == entry.date() if close_entry else b["bar_open_at"] == entry)]
