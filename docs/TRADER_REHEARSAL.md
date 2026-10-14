@@ -142,6 +142,13 @@ expired order does not alert again at every new checkpoint. A new order with the
 same failure code still alerts. Newly missing labels are sent in one bounded
 batch rather than one message per prediction.
 
+The label writer dispatches each distinct source input once per job, including
+failed or invalid-price responses. Reusing a typed failure leaves all affected
+predictions pending; it never supplies a replacement price or weakens admission.
+The next job retries under the unchanged UTC/slot budgets. A failed equity bar
+shared by many analyst views therefore cannot consume the entire source quota
+through duplicate fetches.
+
 An operator can record a historical disposition with `post_audit
 --acknowledge-issue CODE:SHA256 --acknowledge-reason REASON_CODE`, adding
 `--unlabelable` for a missing exact label anchor. Only exact `LABELS_MISSING` and
