@@ -36,7 +36,8 @@ step run-am run "$drill_python" -m "$drill_module" run "${drill_common[@]}" --de
 step recover-am recover "$drill_python" -m "$drill_module" recover "${drill_common[@]}" --synthetic-time "${drill_day}T12:30:00Z"
 step run-pm run "$drill_python" -m "$drill_module" run "${drill_common[@]}" --slot pm --defer-synthetic-labels --synthetic-time "${drill_day}T16:00:00Z"
 step recover-pm recover "$drill_python" -m "$drill_module" recover "${drill_common[@]}" --slot pm --synthetic-time "${drill_day}T16:30:00Z"
-step label label "$drill_python" -m "$drill_module" label "${drill_common[@]}" --synthetic-time "${drill_day}T21:30:00Z"
+drill_label_time=$("$drill_python" -c 'import sys; from scripts.trading_lab.trader_agent.drill_summary import first_label_at; print(first_label_at(sys.argv[1]))' "$drill_day")
+step label label "$drill_python" -m "$drill_module" label "${drill_common[@]}" --synthetic-time "$drill_label_time"
 drill_matured=$(date -u -d "$drill_day + 10 days" +%F)
 step label-matured matured "$drill_python" -m "$drill_module" label "${drill_common[@]}" --synthetic-time "${drill_matured}T21:30:00Z"
 step current-execute-crypto paper "$drill_python" -m "$drill_module" paper-execute "${drill_paper[@]}" --paper-account ia_crypto
@@ -48,7 +49,7 @@ step current-paper-audit paper "$drill_python" -m "$drill_module" paper-audit "$
   if (( ${#drill_failures[@]} == 0 )); then printf 'STATUS: DONE\n'; else printf 'STATUS: BLOCKED\n'; fi
   printf '\n# Drill for %s (generated %s)\n\n' "$drill_day" "$(date -u +%FT%TZ)"
   printf 'Tomorrow: native-shape synthetic prices, deterministic analyst/reviewer fixtures, pinned calendar, isolated budgets and research journal. No production runtime copy.\n\n'
-  printf 'Label checks cover tomorrow\047s matured equities and a separate future checkpoint for all remaining horizons.\n\n'
+  printf 'First label checkpoint: %s (same-day equities or next-day crypto on a closed calendar). A separate future checkpoint covers all remaining horizons.\n\n' "$drill_label_time"
   printf 'Paper compatibility: current broker/journal, GET only, zero production writes. Future acceptance, fills and tomorrow\047s paper decisions remain unproven.\n\n'
   cat "$drill_run/summary.md"
 } > "$drill_run/report.md"
