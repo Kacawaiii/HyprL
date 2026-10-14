@@ -40,7 +40,7 @@ def render(repo, python, authorization, runtime, paper_authorization, data_autho
             'TimeoutStopSec=20s\nKillMode=control-group\n' +
             'StandardOutput=append:' + str(Path(runtime) / (name + '.log')) + '\n' +
             'StandardError=append:' + str(Path(runtime) / (name + '.error.log')) + '\n')
-    calendars = [('rehearsal-early', '*-*-* 07:30:00 UTC'), ('rehearsal', '*-*-* 10:45:00 UTC'),
+    calendars = [('rehearsal-early', '*-*-* 07:35:00 UTC'), ('rehearsal', '*-*-* 10:45:00 UTC'),
                            ('rehearsal-retry', '*-*-* 11:15:00 UTC'),
                            ('post-audit', '*-*-* *:01/10:30 UTC')]
     if include_pm:
