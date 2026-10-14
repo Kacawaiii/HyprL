@@ -4,6 +4,15 @@ import json
 from pathlib import Path
 
 
+def first_label_at(day):
+    """Equities mature at today's close; a crypto-only session needs 24 hours."""
+    from datetime import timedelta
+    from .config import instant, iso
+    from .data import calendar_session
+    at = instant(day + 'T21:30:00Z')
+    return iso(at if calendar_session(day) else at + timedelta(days=1))
+
+
 def summarize(result, kind):
     state = result.get('status', result.get('state', result.get('run_status')))
     evidence = {}
@@ -20,8 +29,15 @@ def summarize(result, kind):
             valid = valid and evidence['pending'] == 0
     elif kind == 'paper':
         evidence = {k: result.get(k) for k in ('production_writes', 'broker_methods', 'snapshot_unchanged')}
-        valid = (state == 'COMPLETE' and evidence['production_writes'] == 0
-                 and evidence['broker_methods'] == ['GET'] and evidence['snapshot_unchanged'] is True)
+        safe = (evidence['production_writes'] == 0 and evidence['broker_methods'] == ['GET']
+                and evidence['snapshot_unchanged'] is True)
+        valid = state == 'COMPLETE' and safe
+        if state == 'SKIPPED_CLOSED_EQUITY_MARKET':
+            from .data import calendar_session
+            day = result.get('at', '')[:10]
+            closed = bool(day) and calendar_session(day) is None
+            evidence['calendar_closed'] = closed
+            valid = safe and closed
     else:
         valid = state == 'NO_RECOVERY_NEEDED'
     return {'state': state or 'INVALID_RESULT', 'verified': valid, 'evidence': evidence}
