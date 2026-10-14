@@ -55,6 +55,36 @@ def test_native_shape_demo_pending_labels_and_append_only_realization(service, c
     assert weekly_report(service.store, service.ledger.root, at=clock(), synthetic=True)['identity']
 
 
+def test_cli_separate_synthetic_run_and_label_exercises_pending_endpoints(tmp_path, grant, capsys):
+    from scripts.trading_lab.trader_agent.cli import main
+    runtime = tmp_path / 'drill'
+    common = ['--authorization', str(tmp_path / 'synthetic-grant.json'), '--runtime', str(runtime), '--dry-run']
+    assert main(['run', *common, '--synthetic-time', '2026-10-15T12:00:00Z',
+                 '--defer-synthetic-labels']) == 0
+    run = json.loads(capsys.readouterr().out)
+    assert run['status'] == 'COMPLETE' and run['synthetic'] is True
+    assert len(run['decision']['views']) == 50
+    store = ResearchStore(runtime / 'synthetic/evidence', read_only=True)
+    assert store.records('label') == []
+    assert main(['label', *common, '--synthetic-time', '2026-10-15T21:30:00Z']) == 0
+    label = json.loads(capsys.readouterr().out)
+    assert label['state'] == 'COMPLETE' and label['labels_added'] == 15 and label['pending'] == 35
+    assert main(['label', *common, '--synthetic-time', '2026-10-25T21:30:00Z']) == 0
+    matured = json.loads(capsys.readouterr().out)
+    assert matured['state'] == 'COMPLETE' and matured['labels_added'] == 35 and matured['pending'] == 0
+    assert store.verify()['verified']
+    assert all(r['payload']['synthetic'] for r in rows(store, 'prediction'))
+    store.close()
+
+
+@pytest.mark.parametrize('args', [['run'], ['label', '--dry-run']])
+def test_deferred_labels_cannot_change_a_production_command(tmp_path, capsys, args):
+    from scripts.trading_lab.trader_agent.cli import main
+    with pytest.raises(SystemExit) as error:
+        main([*args, '--authorization', 'unused', '--runtime', str(tmp_path), '--defer-synthetic-labels'])
+    assert error.value.code == 2
+
+
 @pytest.mark.parametrize('code', ['SCHEMA_INVALID', 'TAINTED_RUN', 'SKIPPED_QUOTA', 'MODEL_TIMEOUT', 'BUDGET_EXHAUSTED'])
 def test_failed_inference_is_not_published_and_retries_bounded(service, code):
     class Broken(SyntheticRunner):

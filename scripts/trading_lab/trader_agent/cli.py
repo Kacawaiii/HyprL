@@ -106,7 +106,11 @@ def main(argv=None):
     parser.add_argument('--data-authorization')
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--synthetic-time", default="2026-10-06T12:00:00Z")
+    parser.add_argument('--defer-synthetic-labels', action='store_true',
+                        help='run --dry-run only: keep future labels pending for a separate label drill')
     args = parser.parse_args(argv)
+    if args.defer_synthetic_labels and (not args.dry_run or args.action != 'run'):
+        parser.error('--defer-synthetic-labels requires run --dry-run')
     grant = Authorization.load(args.authorization)
     if args.action.startswith('paper-'):
         if not args.paper_authorization:
@@ -227,7 +231,7 @@ def main(argv=None):
                         result['paper_execution'] = {'state': 'BLOCKED', 'reason': error.code}
                 if grant.news_decision is not None:
                     result['news_arm'] = service.run_news()
-            if args.dry_run and result["status"] in {"COMPLETE", "DEGRADED"}:
+            if args.dry_run and not args.defer_synthetic_labels and result["status"] in {"COMPLETE", "DEGRADED"}:
                 initial_labels = service.store.records("label")
                 # Advance to after every 5d endpoint: all are future at issue time.
                 clock.at += timedelta(days=9, hours=10)
