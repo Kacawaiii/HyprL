@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shlex
 import sqlite3
+import time
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, build_opener
 
@@ -219,31 +220,63 @@ def rehearse(state, steps, *, clock=now, retry=False, early=False, notify=None, 
         return result
 
 
+class FrozenResearchStore(ResearchStore):
+    """Pin the existing private read-only DB copy before expensive validation."""
+    def __init__(self, *args, **kwargs):
+        self.frozen_connection = None
+        super().__init__(*args, **kwargs)
+
+    @contextmanager
+    def connect(self):
+        if self.frozen_connection is not None:
+            yield self.frozen_connection
+        else:
+            with super().connect() as db:
+                yield db
+
+    def freeze(self):
+        self.frozen_connection = None
+        with super().connect() as db:
+            self.frozen_connection = db
+
+
 class SnapshotPaperLedger:
     """PaperLedger's projection/risk bindings, with append operations confined to memory."""
     def __new__(cls, *args, **kwargs):
         from .alpaca_paper import PaperLedger
         # Preserve all production methods; only storage mutation is replaced.
         class Snapshot(PaperLedger):
-            def __init__(self, root, grant, clock):
+            def __init__(self, root, grant, clock, *, owner_timeout=0):
                 self.root, self.grant, self.clock = Path(root), grant, clock
-                self.store = ResearchStore(self.root / 'paper-evidence', read_only=True)
+                self.owner_timeout = owner_timeout
+                self.store = FrozenResearchStore(self.root / 'paper-evidence', read_only=True)
                 self.memory = []
 
             @contextmanager
-            def owner(self):
+            def owner(self, *, timeout=None, poll=1.0, sleep=time.sleep, monotonic=time.monotonic):
+                started = monotonic()
+                deadline = started + (self.owner_timeout if timeout is None else timeout)
                 with (self.root / 'paper-owner.lock').open('rb') as lock:
-                    try:
-                        fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
-                    except BlockingIOError:
-                        raise TraderError('PAPER_OWNER_BUSY') from None
-                    self.store.verify()
-                    self.memory = [r['payload'] for r in rows(self.store, 'replay-summary')]
-                    bindings = self.events(event='binding')
-                    self.validate_bindings(bindings)
-                    if not bindings or any(bindings[-1].get(k) != v for k, v in self.binding_target().items()):
-                        raise TraderError('PAPER_LEDGER_BINDING_MISMATCH')
+                    while True:
+                        try:
+                            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            remaining = deadline - monotonic()
+                            if remaining <= 0:
+                                raise TraderError('PAPER_OWNER_BUSY') from None
+                            sleep(min(poll, remaining))
+                    acquired = monotonic()
+                    self.snapshot_wait_seconds = acquired - started
+                    self.store.freeze()
                     self.source_stamp = self.stamp()
+                    self.snapshot_lock_seconds = monotonic() - acquired
+                self.store.verify()
+                self.memory = [r['payload'] for r in rows(self.store, 'replay-summary')]
+                bindings = self.events(event='binding')
+                self.validate_bindings(bindings)
+                if not bindings or any(bindings[-1].get(k) != v for k, v in self.binding_target().items()):
+                    raise TraderError('PAPER_LEDGER_BINDING_MISMATCH')
                 # Never hold the writer's lock during HTTP. A changed snapshot
                 # defers an audit rather than obstructing a scheduled execution.
                 yield
@@ -337,7 +370,9 @@ class LiveChecks:
             raise TraderError('PAUSED')
         self.research = ResearchStore(Path(self.args.runtime) / 'evidence', read_only=True)
         self.research.verify()
-        self.paper = SnapshotPaperLedger(self.args.paper_runtime, self.paper_grant, self.clock)
+        from .alpaca_paper import OWNER_WAIT_SECONDS
+        self.paper = SnapshotPaperLedger(self.args.paper_runtime, self.paper_grant, self.clock,
+                                        owner_timeout=OWNER_WAIT_SECONDS)
         from . import retirement_spec
         if retirement_spec.active(self.clock()):
             if not self.grant.retirement_decision:
@@ -356,6 +391,8 @@ class LiveChecks:
         execution_spec()
         self.ready = True
         return {'population': self.mode, 'grant_hash': self.grant.identity,
+                'snapshot_wait_seconds': self.paper.snapshot_wait_seconds,
+                'snapshot_lock_seconds': self.paper.snapshot_lock_seconds,
                 'execution_spec_hash': retirement_spec.SPEC_HASH if retirement_spec.active(self.clock())
                                        else self.paper.binding_target()['spec_hash']}
 

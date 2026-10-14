@@ -71,9 +71,13 @@ intent, order or research label is recorded by a rehearsal or audit. Source
 reservations, model transcripts, monitoring state and probe exports remain
 private. Reports contain only identities, suffixes, codes, counts and digests.
 
-Paper writers wait up to 120 seconds for the ledger owner lock before reporting
+Paper writers and rehearsal snapshots wait up to 120 seconds for the ledger owner lock before reporting
 PAPER_OWNER_BUSY. Waiting reserves no intent, sends no order and emits no alert;
 expiry fails closed through the existing service failure reporting.
+Post-audits retain an immediate quiet deferral when ownership is busy. Snapshot
+readers pin the private DB/WAL copy under the shared lock, then validate its
+chain and bindings after releasing ownership. Hash validation and HTTP never
+hold the execution lock. Audits report snapshot lock duration and runtime.
 Radar readers also wait up to 120 seconds for the shared owner lock before
 taking the receipt-cutoff SQLite transaction required by the news spec. The
 collector keeps exclusive ownership; waiting never changes the store or cutoff.
@@ -93,7 +97,8 @@ cannot establish broker acceptance or future fills. The report says so.
 
 `rehearsal_schedule.render` produces only trader user units:
 
-- 07:30 UTC every day: an early rehearsal with an independent `early` reservation.
+- 07:35 UTC every day: an early rehearsal with an independent `early` reservation,
+  five minutes after the hourly crypto exit check.
 - 10:45 UTC every day: the primary rehearsal and final gate.
 - 11:15 UTC every day: a second rehearsal only after primary failure/interruption.
 - Every ten minutes at minute 01/11/21/31/41/51, second 30: read-only checkpoints and overdue manual retry dispatch.
@@ -136,7 +141,9 @@ unresolved orders fail. Broker positions must reconcile to every projected lot;
 overdue residual lots fail. The real selector/planner also catches eligible
 entries never reserved. At label checkpoints, every matured real prediction
 must have its immutable label. Checks never acquire label prices or touch
-holdouts. Each checkpoint independently audits the whole ledger. Failed orders, lots
+holdouts. Each checkpoint independently audits the whole ledger. Entry
+reconstruction runs the complete planner once per distinct dispatch time,
+rather than once per candidate at the same time. Failed orders, lots
 and labels are notified once per immutable issue identity, so a historical
 expired order does not alert again at every new checkpoint. A new order with the
 same failure code still alerts. Newly missing labels are sent in one bounded

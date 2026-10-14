@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 
 from scripts.trading_lab.research.store import ResearchStore
 from scripts.trading_lab.sources.canonical import sha256_canonical
@@ -88,6 +89,7 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
             original = executor.clock
             try:
                 candidates = executor.eligible_predictions(name)
+                inspected = set()
                 for row, _, _, _ in candidates:
                     p = row['payload']
                     definition = p['signal']['label_definition']
@@ -99,6 +101,9 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                         dispatch_at = instant(p['decision_at']) + timedelta(seconds=1)
                     if dispatch_at + timedelta(minutes=10) > original():
                         continue
+                    if dispatch_at in inspected:
+                        continue
+                    inspected.add(dispatch_at)
                     executor.clock = lambda dispatch_at=dispatch_at: dispatch_at
                     planned = executor.entries(name, decimal(account['equity']), positions)
                     if planned:
@@ -163,6 +168,7 @@ def execution_window(at, research=None):
 
 
 def audit(args, state, *, clock=now, force=False, notify=None, client_factory=get_only_client):
+    started = time.monotonic()
     at = clock()
     if execution_window(at):
         return {'state': 'PAPER_EXECUTION_WINDOW'}
@@ -196,6 +202,9 @@ def audit(args, state, *, clock=now, force=False, notify=None, client_factory=ge
                     require_label_job=any(k.startswith('label-deadline:') for k in due),
                     label_at=instant(last_label['at']) if label_check and last_label else None, last_label=last_label)
                 result['checkpoints'] = sorted(due)
+                result['runtime_seconds'] = time.monotonic() - started
+                result['snapshot_lock_seconds'] = paper.snapshot_lock_seconds
+                result['snapshot_wait_seconds'] = paper.snapshot_wait_seconds
                 if not paper.unchanged():
                     return {'state': 'PAPER_EXECUTION_IN_PROGRESS'}
                 with state.connect() as db:

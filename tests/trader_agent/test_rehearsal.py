@@ -178,7 +178,7 @@ def test_rendered_early_and_final_rehearsals_and_ten_minute_audits(tmp_path):
     from scripts.trading_lab.trader_agent.rehearsal_schedule import render
     units = render(tmp_path, '/python', '/grant', tmp_path / 'runtime', '/paper', '/data', path='/bin')
     assert len(units) == 9
-    assert '*-*-* 07:30:00 UTC' in units['hyprl-trader-rehearsal-early.timer']
+    assert '*-*-* 07:35:00 UTC' in units['hyprl-trader-rehearsal-early.timer']
     assert '"--early"' in units['hyprl-trader-rehearsal-early.service']
     assert '*-*-* 10:45:00 UTC' in units['hyprl-trader-rehearsal.timer']
     assert '*-*-* 11:15:00 UTC' in units['hyprl-trader-rehearsal-retry.timer']
@@ -584,6 +584,74 @@ def test_audit_does_not_hold_execution_lock_during_broker_reads(environment):
         with executor.ledger.owner():
             executor.ledger.append('alert', 'ia_actions', code='SYNTHETIC_CHANGE_DURING_HTTP')
         assert not snapshot.unchanged()
+
+
+def test_snapshot_waits_for_writer_then_releases_before_validation(environment, monkeypatch):
+    import fcntl
+    from scripts.trading_lab.research.store import ResearchStore
+    from scripts.trading_lab.trader_agent.rehearsal import SnapshotPaperLedger
+    executor, _, grant, clock = environment
+    with executor.ledger.owner():
+        pass
+    snapshot = SnapshotPaperLedger(executor.ledger.root, grant, clock)
+    elapsed = [0.0]
+    original = ResearchStore.verify
+    def validate_after_release(store):
+        with executor.ledger.owner(timeout=0):
+            executor.ledger.append('alert', 'ia_actions', code='SYNTHETIC_CONCURRENT_WRITE')
+        return original(store)
+    monkeypatch.setattr(ResearchStore, 'verify', validate_after_release)
+    with (executor.ledger.root / 'paper-owner.lock').open('rb') as writer:
+        fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        def release(seconds):
+            elapsed[0] += seconds
+            fcntl.flock(writer, fcntl.LOCK_UN)
+        with snapshot.owner(timeout=120, sleep=release, monotonic=lambda: elapsed[0]):
+            assert elapsed[0] == 1
+            assert not snapshot.events(event='alert')
+            assert not snapshot.unchanged()
+
+
+def test_snapshot_wait_expiry_reads_nothing_and_keeps_journal(environment):
+    from scripts.trading_lab.trader_agent.rehearsal import SnapshotPaperLedger
+    executor, _, grant, clock = environment
+    before = executor.ledger.events()
+    elapsed = [0.0]
+    snapshot = SnapshotPaperLedger(executor.ledger.root, grant, clock)
+    with executor.ledger.owner():
+        with pytest.raises(TraderError, match='PAPER_OWNER_BUSY'):
+            with snapshot.owner(timeout=2.5, sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+                                monotonic=lambda: elapsed[0]):
+                pytest.fail('busy snapshot admitted')
+    assert elapsed[0] == 2.5 and snapshot.memory == []
+    assert executor.ledger.events() == before
+
+
+def test_audit_reconstructs_each_dispatch_once_without_losing_missing_entry(environment):
+    from scripts.trading_lab.trader_agent.rehearsal import SnapshotPaperLedger, readonly_executor, get_only_client
+    from scripts.trading_lab.trader_agent.post_audit import inspect_audit
+    from tests.trader_agent.test_alpaca_paper import issue
+    executor, broker, grant, clock = environment
+    issue(executor, assets=('AAPL', 'MSFT'), probability=.5001)
+    with executor.ledger.owner():
+        pass
+    clock.at += timedelta(minutes=10)
+    snapshot = SnapshotPaperLedger(executor.ledger.root, grant, clock)
+    def factory(grant, name, *, clock):
+        return get_only_client(grant, name, clock=clock, transport=broker.transport(name))
+    reader = readonly_executor(snapshot, executor.research, clock=clock, client_factory=factory)
+    calls = []
+    entries = reader.entries
+    def counted(name, *args):
+        calls.append((name, reader.clock()))
+        return entries(name, *args)
+    reader.entries = counted
+    with snapshot.owner():
+        result = inspect_audit(reader)
+    assert result['state'] == 'GREEN', result
+    assert calls == [('ia_actions', instant('2026-10-12T13:30:30Z')),
+                     ('ia_crypto', instant('2026-10-12T11:30:31Z'))]
+    assert broker.posts() == []
 
 
 def test_audit_busy_writer_defers_quietly_without_marking_checkpoint_done(live_checks):
