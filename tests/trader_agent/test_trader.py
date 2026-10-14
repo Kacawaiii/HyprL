@@ -176,6 +176,42 @@ def test_source_budget_exhaustion_is_terminal(service):
     assert not service.store.records('prediction')
 
 
+def test_failed_label_source_is_fetched_once_per_job_and_retried_on_recovery(tmp_path, grant, clock):
+    from copy import deepcopy
+    from scripts.trading_lab.trader_agent.service import TraderService
+    payload = deepcopy(grant.payload)
+    # Five requests cover issuance including QQQ; four cover labels including
+    # a failed AAPL read. Its ten views must not consume this synthetic cap.
+    payload['data_sources']['yahoo_chart']['max_requests_per_day'] = 5
+    path = tmp_path / 'small-source-budget.json'
+    path.write_text(json.dumps(payload))
+    ledger = Ledger(tmp_path / 'label-budget', Authorization.load(path), clock=clock)
+    data = SyntheticData(ledger, clock)
+    service = TraderService(ledger, data, SyntheticRunner(ledger, clock=clock), clock=clock)
+    assert service.run()['status'] == 'COMPLETE'
+    clock.at += timedelta(days=9, hours=10)
+    native = data.yahoo
+    calls, invalid = [], [True]
+    def source(asset, *args, **kwargs):
+        calls.append(asset)
+        result = native(asset, *args, **kwargs)
+        if asset == 'AAPL' and invalid[0]:
+            raise TraderError('INVALID_PRICE')
+        return result
+    data.yahoo = source
+    result = realize(service.store, ledger, data, at=clock())
+    assert result['state'] == 'COMPLETE' and result['labels_added'] == 40 and result['pending'] == 10
+    assert calls.count('AAPL') == 1 and ledger.counts()['yahoo_chart'] == 4
+    assert all(r['payload']['product'] != 'AAPL' for r in rows(service.store, 'label'))
+    # A failed observation is memoized only within the job; a fresh UTC budget
+    # permits a corrected native response to label the same immutable predictions.
+    clock.at += timedelta(days=1)
+    invalid[0] = False
+    result = realize(service.store, ledger, data, at=clock())
+    assert result['state'] == 'COMPLETE' and result['labels_added'] == 10 and result['pending'] == 0
+    assert calls.count('AAPL') == 2 and service.store.verify()['verified']
+
+
 def test_atomic_daily_and_global_budgets(ledger, grant, clock):
     def reserve(_):
         try:
