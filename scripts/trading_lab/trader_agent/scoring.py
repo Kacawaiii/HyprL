@@ -9,6 +9,7 @@ import statistics
 from scripts.trading_lab.platform.contracts import LabelRecord, PredictionRecord
 from scripts.trading_lab.research.contracts import ExecutionObservation
 from scripts.trading_lab.sources.canonical import sha256_canonical
+from scripts.trading_lab.sources.store import ReadOnlyDatabase
 
 from .config import CRYPTO_PRODUCTS, TraderError, instant, iso, now
 from .data import calendar_session, protected
@@ -54,15 +55,27 @@ def repair_missing_executions(store):
     return repaired
 
 
-def realize(store, ledger, data, *, at=None):
+def unlabelable_issues(path):
+    """Read exact operator dispositions without creating or updating monitoring state."""
+    if not path.is_file():
+        return {}
+    reader = ReadOnlyDatabase(path, validator=lambda db: None)
+    try:
+        return dict(reader.conn.execute("SELECT identity,reason FROM acknowledgements "
+                                        "WHERE code='LABELS_MISSING' AND disposition='UNLABELABLE'"))
+    finally:
+        reader.close()
+
+
+def realize(store, ledger, data, *, at=None, unlabelable=None):
     previous_slot = ledger.slot
     try:
-        return _realize(store, ledger, data, at=at)
+        return _realize(store, ledger, data, at=at, unlabelable=unlabelable or {})
     finally:
         ledger.slot = previous_slot
 
 
-def _realize(store, ledger, data, *, at=None):
+def _realize(store, ledger, data, *, at=None, unlabelable):
     at = at or now()
     with ledger.owner():
         ledger.grant.check(at)
@@ -71,7 +84,7 @@ def _realize(store, ledger, data, *, at=None):
         repaired = repair_missing_executions(store)
         labeled = {r["payload"]["prediction_hash"] for r in rows(store, "label")}
         predictions = [p for p in rows(store, "prediction") if p["identity"] not in labeled]
-        cache, realized, pending = {}, 0, 0
+        cache, realized, pending, unresolved = {}, 0, 0, []
         def cached_source(key, acquire):
             # One dispatch per source input in this job, including rejected
             # native prices. Failures never become prices and are retried by
@@ -85,6 +98,7 @@ def _realize(store, ledger, data, *, at=None):
             if isinstance(value, TraderError):
                 raise value
             return value
+        unlabelable_count = 0
         for row in predictions:
             p = PredictionRecord.from_dict(row["payload"])
             ledger.slot = p.signal.get("slot", "am")
@@ -99,6 +113,14 @@ def _realize(store, ledger, data, *, at=None):
             if exit_at + (timedelta(minutes=1) if crypto else timedelta()) > at:
                 pending += 1
                 continue
+            issue = sha256_canonical(['LABELS_MISSING', row['identity']])
+            if issue in unlabelable:
+                pending += 1
+                unlabelable_count += 1
+                unresolved.append({'prediction_hash': row['identity'], 'asset': p.product,
+                                   'slot': ledger.slot, 'reason': unlabelable[issue],
+                                   'disposition': 'UNLABELABLE'})
+                continue
             if not data.synthetic and protected(p.product, entry, exit_at):
                 ledger.alert("PROTECTED_LABEL")
                 pending += 1
@@ -107,7 +129,7 @@ def _realize(store, ledger, data, *, at=None):
                 if crypto:
                     prices, sources = [], []
                     for anchor in (entry, exit_at):
-                        key = (p.product, iso(anchor))
+                        key = (p.product, ledger.slot, iso(anchor))
                         price, source = cached_source(key, lambda: data.crypto(
                             p.product, anchor, anchor + timedelta(minutes=1), minute=True))
                         prices.append(price)
@@ -126,8 +148,26 @@ def _realize(store, ledger, data, *, at=None):
                             if not data.synthetic and protected(asset, first, at):
                                 raise TraderError("PROTECTED_LABEL")
                             return data.yahoo(asset, first, at, **({"interval": "5m"} if intraday else {}))
-                        bars, source = cached_source(key, acquire)
-                        sources.append(source)
+                        try:
+                            bars, source = cached_source(key, acquire)
+                            asset_sources = [source]
+                        except TraderError as error:
+                            if intraday or error.code != 'INVALID_PRICE':
+                                raise
+                            # An invalid intervening day is not an endpoint.
+                            # Request exact native endpoint days; every response
+                            # still passes the same full OHLC parser and quota.
+                            bars, asset_sources = [], []
+                            for day in sorted({entry.date(), exit_at.date()}):
+                                first = instant(day.isoformat() + 'T00:00:00Z')
+                                last = min(first + timedelta(days=1), at)
+                                if not data.synthetic and protected(asset, first, last):
+                                    raise TraderError('PROTECTED_LABEL')
+                                daily, source = cached_source((asset, ledger.slot, '1d-endpoint', iso(first)),
+                                    lambda: data.yahoo(asset, first, last))
+                                bars.extend(daily)
+                                asset_sources.append(source)
+                        sources.extend(asset_sources)
                         close_entry = definition.get("entry_price") == "close"
                         opening = [b for b in bars if (b["bar_open_at"].date() == entry.date() if close_entry else b["bar_open_at"] == entry)]
                         closing = [b for b in bars if (b["bar_open_at"] == exit_at - timedelta(minutes=5) if intraday
@@ -162,11 +202,21 @@ def _realize(store, ledger, data, *, at=None):
                 realized += 1
             except TraderError as error:
                 ledger.alert(error.code)
-                if error.code in {"BUDGET_EXHAUSTED", "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}:
+                unresolved.append({'prediction_hash': row['identity'], 'asset': p.product,
+                                   'slot': ledger.slot, 'reason': error.code})
+                if error.code == "AUTHORIZATION_EXPIRED_OR_NOT_STARTED":
                     return {"state": "BLOCKED", "reason": error.code, "labels_added": realized, "pending": len(predictions) - realized,
-                            "executions_repaired": repaired}
+                            "executions_repaired": repaired, "unresolved": unresolved}
                 pending += 1
-        return {"state": "COMPLETE", "labels_added": realized, "pending": pending, "executions_repaired": repaired}
+        # A source/slot quota cannot prevent other independent grants from being
+        # used. Keep the incomplete job visible, after attempting every outcome.
+        blocked = any(r['reason'] == 'BUDGET_EXHAUSTED' for r in unresolved)
+        result = {"state": "BLOCKED" if blocked else "COMPLETE", "labels_added": realized,
+                  "pending": pending, "executions_repaired": repaired, "unresolved": unresolved,
+                  "unlabelable_count": unlabelable_count}
+        if blocked:
+            result['reason'] = 'BUDGET_EXHAUSTED'
+        return result
 
 
 def correlation(x, y):

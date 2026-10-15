@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from scripts.trading_lab.equity_calendar import USEquityRegularCalendar
 from scripts.trading_lab.research_protection import crypto_interval, equity_interval
 from scripts.trading_lab.sources.canonical import sha256_canonical
-from scripts.trading_lab.yahoo_chart_provider import adapt_chart_rows, chart_path, parse_chart_meta
+from scripts.trading_lab.yahoo_chart_provider import YahooProviderError, adapt_chart_rows, chart_path, parse_chart_meta
 
 from .coinbase import candles, daily_closes
 from .news_queries import news_query
@@ -105,8 +105,11 @@ class PublicData:
             raise TraderError("UNAUTHORIZED_PRICE_INTERVAL")
         payload, source = self.fetch("yahoo_chart", chart_path(asset), {
             "period1": int(start.timestamp()), "period2": int(end.timestamp()), "interval": interval, "events": "div,split"})
-        parse_chart_meta(payload)
-        rows = adapt_chart_rows(payload, instrument_id=asset)
+        try:
+            parse_chart_meta(payload)
+            rows = adapt_chart_rows(payload, instrument_id=asset)
+        except YahooProviderError:
+            raise TraderError('SOURCE_PRICE_SHAPE_INVALID') from None
         for row in rows:
             values = [float(row[k]) for k in ('open', 'high', 'low', 'close', 'volume')]
             op, high, low, close, volume = values

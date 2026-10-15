@@ -172,6 +172,33 @@ def test_labels_and_scorecard_separate_am_pm_and_combined(tmp_path, grant, clock
     assert card['by_slot']['pm']['scores']['consensus/equity_etf/1d/raw']['realized'] == 3
 
 
+def test_exhausted_am_equity_budget_still_labels_crypto_and_pm(tmp_path, grant, clock):
+    from scripts.trading_lab.trader_agent.service import TraderService
+    from scripts.trading_lab.trader_agent.synthetic import SyntheticData, SyntheticRunner
+    from scripts.trading_lab.trader_agent.scoring import realize, rows
+    clock.at = instant('2026-10-13T12:00:00Z')
+    ledger = Ledger(tmp_path / 'runtime', pm_grant(grant), clock=clock)
+    data = SyntheticData(ledger, clock)
+    service = TraderService(ledger, data, SyntheticRunner(ledger, clock=clock), clock=clock)
+    assert service.run()['status'] == 'COMPLETE'
+    ledger.slot = 'pm'
+    clock.at = instant('2026-10-13T16:00:00Z')
+    assert service.run()['status'] == 'COMPLETE'
+    clock.at = instant('2026-10-23T21:30:00Z')
+    ledger.slot = 'am'
+    for _ in range(80):
+        ledger.reserve('yahoo_chart')
+    ledger.slot = 'pm'
+    result = realize(service.store, ledger, data, at=clock())
+    assert result['labels_added'] == 70 and result['pending'] == 30
+    assert result['state'] == 'BLOCKED' and result['reason'] == 'BUDGET_EXHAUSTED'
+    assert len(result['unresolved']) == 30
+    assert {r['reason'] for r in result['unresolved']} == {'BUDGET_EXHAUSTED'}
+    assert ledger.slot == 'pm' and ledger.counts()['yahoo_chart'] == 4
+    assert len(list(rows(service.store, 'label'))) == 70
+    assert service.store.verify()['verified']
+
+
 from test_execution_v2 import amended
 from test_weekend_crypto import weekend_grant
 

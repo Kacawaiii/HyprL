@@ -11,7 +11,7 @@ from .config import Authorization, TraderError, instant, iso, now, private_root
 from .data import PublicData, calendar_session
 from .ledger import Ledger
 from .runners import ModelRunner
-from .scoring import realize, scorecard, weekly_report
+from .scoring import realize, scorecard, unlabelable_issues, weekly_report
 from .service import TraderService
 from .synthetic import Clock, SyntheticData, SyntheticRunner
 
@@ -231,12 +231,18 @@ def main(argv=None):
                     "initial_labels": len(initial_labels), "label_job": realize(service.store, ledger, data, at=clock()),
                     "chain": service.store.verify(), "scorecard": scorecard(service.store, synthetic=True)}
         else:
-            result = realize(service.store, ledger, data, at=clock())
+            known = {} if args.dry_run else unlabelable_issues(
+                Path.home() / '.local/share/hyprl/trader-rehearsal/monitor.sqlite')
+            result = realize(service.store, ledger, data, at=clock(), unlabelable=known)
             result["scorecard"] = scorecard(service.store, synthetic=args.dry_run)
             if clock().weekday() == 4:
                 result["weekly"] = weekly_report(service.store, runtime, at=clock(), synthetic=args.dry_run)["identity"]
         if args.action == "label":
-            (runtime / "last-label.json").write_text(json.dumps({"at": iso(clock()), "state": result["state"]}))
+            summary = {key: value for key, value in result.items() if key not in {'scorecard', 'weekly'}}
+            summary['at'] = iso(clock())
+            temp = runtime / 'last-label.tmp'
+            temp.write_text(json.dumps(summary))
+            temp.replace(runtime / 'last-label.json')
     print(json.dumps(result, indent=2))
     if result.get("status") == "FAILED" or result.get("state") == "BLOCKED" or result.get('paper_execution', {}).get('state') == 'BLOCKED' or result.get('news_arm', {}).get('status') == 'FAILED':
         return 1

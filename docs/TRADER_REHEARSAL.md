@@ -149,6 +149,15 @@ The next job retries under the unchanged UTC/slot budgets. A failed equity bar
 shared by many analyst views therefore cannot consume the entire source quota
 through duplicate fetches.
 
+An exhausted source budget defers only outcomes needing that source and slot;
+the writer still attempts crypto and the other slot before returning its quota
+failure. Each unresolved outcome is reported by prediction hash, asset, slot and
+reason in the atomically replaced `last-label.json`. Invalid daily series get
+bounded, cached retries for the exact entry/exit days through the same authorized
+provider and strict OHLC parser. An invalid intervening bar cannot poison valid
+native endpoints. Malformed native array shapes remain rejected as typed source
+failures, allowing unrelated labels to proceed.
+
 An operator can record a historical disposition with `post_audit
 --acknowledge-issue CODE:SHA256 --acknowledge-reason REASON_CODE`, adding
 `--unlabelable` for a missing exact label anchor. Only exact `LABELS_MISSING` and
@@ -157,6 +166,10 @@ persist in monitoring state without changing research labels, score denominators
 paper events or orders. Audits keep these observations and reasons visible in
 `acknowledged_issues`; only active issues block and alert. New identities still
 block. Open lots, reconciliation failures and other safety checks cannot be muted.
+The production label job reads exact `UNLABELABLE` dispositions without writing
+monitoring state. It reports those identities and reasons without refetching or
+adding a price, label or scored sample; issued and pending denominators remain
+unchanged. New missing outcomes require their own operator disposition.
 
 Install the rehearsal units only after the owned branch's exact SHA has green
 CI and the full required local suites pass. Preserve existing trader units and
