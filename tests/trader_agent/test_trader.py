@@ -180,8 +180,8 @@ def test_failed_label_source_is_fetched_once_per_job_and_retried_on_recovery(tmp
     from copy import deepcopy
     from scripts.trading_lab.trader_agent.service import TraderService
     payload = deepcopy(grant.payload)
-    # Five requests cover issuance including QQQ; four cover labels including
-    # a failed AAPL read. Its ten views must not consume this synthetic cap.
+    # Five requests cover issuance including QQQ, or labels including a failed
+    # series and exact-day retry. Ten views must not consume ten requests.
     payload['data_sources']['yahoo_chart']['max_requests_per_day'] = 5
     path = tmp_path / 'small-source-budget.json'
     path.write_text(json.dumps(payload))
@@ -201,7 +201,7 @@ def test_failed_label_source_is_fetched_once_per_job_and_retried_on_recovery(tmp
     data.yahoo = source
     result = realize(service.store, ledger, data, at=clock())
     assert result['state'] == 'COMPLETE' and result['labels_added'] == 40 and result['pending'] == 10
-    assert calls.count('AAPL') == 1 and ledger.counts()['yahoo_chart'] == 4
+    assert calls.count('AAPL') == 2 and ledger.counts()['yahoo_chart'] == 5
     assert all(r['payload']['product'] != 'AAPL' for r in rows(service.store, 'label'))
     # A failed observation is memoized only within the job; a fresh UTC budget
     # permits a corrected native response to label the same immutable predictions.
@@ -209,7 +209,76 @@ def test_failed_label_source_is_fetched_once_per_job_and_retried_on_recovery(tmp
     invalid[0] = False
     result = realize(service.store, ledger, data, at=clock())
     assert result['state'] == 'COMPLETE' and result['labels_added'] == 10 and result['pending'] == 0
-    assert calls.count('AAPL') == 2 and service.store.verify()['verified']
+    assert calls.count('AAPL') == 3 and service.store.verify()['verified']
+
+
+def test_exact_unlabelable_dispositions_are_not_refetched_or_scored(service, clock, tmp_path):
+    from scripts.trading_lab.sources.canonical import sha256_canonical
+    from scripts.trading_lab.trader_agent.post_audit import acknowledge_issues
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState
+    from scripts.trading_lab.trader_agent.scoring import unlabelable_issues
+    assert service.run()['status'] == 'COMPLETE'
+    clock.at += timedelta(days=9, hours=10)
+    state = MonitorState(tmp_path / 'monitor')
+    issues = [{'code': 'LABELS_MISSING', 'identity': sha256_canonical(['LABELS_MISSING', r['identity']])}
+              for r in rows(service.store, 'prediction') if r['payload']['product'] == 'AAPL']
+    for _ in range(2):
+        acknowledge_issues(state, issues, reason='NO_ACCEPTABLE_NATIVE_BAR', at=clock(), unlabelable=True)
+    known = unlabelable_issues(state.path)
+    assert len(known) == 10
+    native = service.data.yahoo
+    def source(asset, *args, **kwargs):
+        assert asset != 'AAPL', 'A terminal operator disposition must not fetch again'
+        return native(asset, *args, **kwargs)
+    service.data.yahoo = source
+    result = realize(service.store, service.ledger, service.data, at=clock(), unlabelable=known)
+    assert result['state'] == 'COMPLETE' and result['labels_added'] == 40
+    assert result['pending'] == result['unlabelable_count'] == 10
+    assert len(result['unresolved']) == 10
+    assert {r['disposition'] for r in result['unresolved']} == {'UNLABELABLE'}
+    card = scorecard(service.store, synthetic=True)['combined']
+    assert card['issued_predictions'] == 50 and card['realized_predictions'] == 40
+    assert realize(service.store, service.ledger, service.data, at=clock(), unlabelable=known)['labels_added'] == 0
+    assert unlabelable_issues(state.path) == known
+    assert unlabelable_issues(tmp_path / 'absent.sqlite') == {}
+
+
+@pytest.mark.parametrize('malformed', [False, True])
+def test_bad_unneeded_daily_bar_does_not_poison_valid_native_endpoints(service, clock, malformed):
+    from scripts.trading_lab.trader_agent.data import equity_calendar
+    assert service.run()['status'] == 'COMPLETE'
+    clock.at += timedelta(days=9, hours=10)
+    native = PublicData(service.ledger, clock=clock)
+    native.synthetic = True
+    native.crypto = service.data.crypto
+    requests = []
+    def fetch(source, path, params):
+        asset = path.rsplit('/', 1)[-1]
+        first = instant('1970-01-01T00:00:00Z') + timedelta(seconds=params['period1'])
+        last = instant('1970-01-01T00:00:00Z') + timedelta(seconds=params['period2'])
+        stamps = [s.open_at for s in equity_calendar(first.year).sessions_between(first, last)
+                  if first <= s.open_at < last]
+        payload = {'chart': {'error': None, 'result': [{'meta': {'symbol': asset, 'currency': 'USD',
+            'exchangeTimezoneName': 'America/New_York', 'exchangeName': 'NMS', 'instrumentType': 'EQUITY'},
+            'timestamp': [int(s.timestamp()) for s in stamps], 'indicators': {'quote': [{
+                'open': [100] * len(stamps), 'close': [101] * len(stamps),
+                'low': [99] * len(stamps), 'volume': [1000] * len(stamps),
+                'high': [100 if asset == 'AAPL' and s.day == 7 else 102 for s in stamps]}]}}]}}
+        if malformed and asset == 'AAPL':
+            payload['chart']['result'][0]['indicators']['quote'][0]['open'] = []
+        requests.append((asset, first.date(), last.date()))
+        return payload, service.data.source(source, payload)
+    native.fetch = fetch
+    result = realize(service.store, service.ledger, native, at=clock())
+    if malformed:
+        assert result['state'] == 'COMPLETE' and result['labels_added'] == 40 and result['pending'] == 10
+        assert {r['reason'] for r in result['unresolved']} == {'SOURCE_PRICE_SHAPE_INVALID'}
+        return
+    assert result['labels_added'] == 50 and result['pending'] == 0
+    assert len([r for r in requests if r[0] == 'AAPL']) == 3  # rejected series, two exact native days
+    labels = [r['payload'] for r in rows(service.store, 'label') if r['payload']['product'] == 'AAPL']
+    assert {len(r['provenance']['sources']) for r in labels} == {2, 3}
+    assert service.store.verify()['verified']
 
 
 def test_atomic_daily_and_global_budgets(ledger, grant, clock):
