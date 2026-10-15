@@ -4,6 +4,7 @@ from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from urllib.parse import urlencode, quote, urlsplit, urljoin, unquote
 import html
+import json
 import re
 import xml.etree.ElementTree as ET
 
@@ -96,6 +97,49 @@ def publisher_for(article):
     return 'benzinga'  # this endpoint is a Benzinga distribution feed
 
 
+def parse_channel_page(raw, channel_id, publisher, received, *, identity=None):
+    """Titles from the selected channel video tab, never scripts or relative dates."""
+    match = re.search(br'(?:var ytInitialData\s*=|window\["ytInitialData"\]\s*=)\s*', raw)
+    if not match:
+        raise RadarError('CHANNEL_METADATA_UNAVAILABLE')
+    try:
+        data, _ = json.JSONDecoder().raw_decode(raw[match.end():].decode('utf-8'))
+        if data['metadata']['channelMetadataRenderer']['externalId'] != channel_id:
+            raise RadarError('CHANNEL_ID_UNVERIFIED')
+        if identity and data['metadata']['channelMetadataRenderer'].get('title') != identity:
+            raise RadarError('CHANNEL_ID_UNVERIFIED')
+        tabs = data['contents']['twoColumnBrowseResultsRenderer']['tabs']
+        selected = [t['tabRenderer']['content'] for t in tabs
+                    if t.get('tabRenderer', {}).get('selected') is True and 'content' in t['tabRenderer']]
+        if len(selected) != 1:
+            raise RadarError('CHANNEL_METADATA_UNAVAILABLE')
+        entries = selected[0]['richGridRenderer']['contents']
+    except (ValueError, KeyError, TypeError, UnicodeError):
+        raise RadarError('CHANNEL_METADATA_UNAVAILABLE') from None
+    result = []
+    for entry in entries[:60]:
+        content = entry.get('richItemRenderer', {}).get('content', {})
+        lockup = content.get('lockupViewModel', {})
+        if lockup.get('contentType') == 'LOCKUP_CONTENT_TYPE_VIDEO':
+            video_id = lockup.get('contentId')
+            title = lockup.get('metadata', {}).get('lockupMetadataViewModel', {}).get('title', {}).get('content')
+        else:
+            video = content.get('videoRenderer', {})
+            video_id = video.get('videoId')
+            title_data = video.get('title', {})
+            title = title_data.get('simpleText') or ''.join(r.get('text', '') for r in title_data.get('runs', []))
+        if not isinstance(video_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):
+            continue
+        if not isinstance(title, str) or not text(title):
+            continue
+        result.append(item('youtube:' + channel_id, publisher,
+                           'https://www.youtube.com/watch?' + urlencode({'v': video_id}),
+                           title, '', None, received, retail=True))
+    if not result:
+        raise RadarError('EMPTY_CHANNEL_ITEMS')
+    return result
+
+
 class Collector:
     def __init__(self, client, *, channels=None):
         self.client, self.store = client, client.store
@@ -150,19 +194,25 @@ class Collector:
 
     def channel(self, config):
         handle = config.get('handle', '')
+        metadata_handle, identity = CHANNEL_METADATA_ALIASES.get(handle, (handle, None))
+        resolution_key = handle + ':' + metadata_handle if identity else handle
         channel_id = config.get('channel_id')
         if not channel_id:
             cached = self.store.latest('channel', handle)
+            if cached and identity:
+                cached_path = unquote(urlsplit(cached.get('metadata_url', '')).path).casefold()
+                expected_path = '/' + metadata_handle.casefold()
+                if cached_path != expected_path and not cached_path.startswith(expected_path + '/'):
+                    cached = None
             channel_id = cached['channel_id'] if cached else None
         if not channel_id:
             if not re.fullmatch(r'@[A-Za-z0-9_.-]+', handle):
                 raise RadarError('INVALID_CHANNEL_HANDLE')
-            if self.store.latest('channel_resolution', handle):
+            if self.store.latest('channel_resolution', resolution_key):
                 raise RadarError('CHANNEL_RESOLUTION_ALREADY_ATTEMPTED')
             # One bounded metadata resolution; redirects never become implicit
             # transport permission. Every hop is a separate grant/budget check.
-            self.store.append('channel_resolution', handle, {'status': 'STARTED', 'at': iso(self.store.clock())})
-            metadata_handle, identity = CHANNEL_METADATA_ALIASES.get(handle, (handle, None))
+            self.store.append('channel_resolution', resolution_key, {'status': 'STARTED', 'at': iso(self.store.clock())})
             url = 'https://www.youtube.com/' + quote(metadata_handle, safe='@') + '/about'
             for hop in range(3):
                 status, headers, body, _ = self.client.get(url, 'youtube', 'discover:' + handle + ':' + str(hop),
@@ -181,8 +231,14 @@ class Collector:
                 url = target
             if status != 200:
                 raise RadarError('HTTP_' + str(status))
-            if identity and identity.encode() not in body:
-                raise RadarError('CHANNEL_ID_UNVERIFIED')
+            if identity:
+                marker = re.search(br'"channelMetadataRenderer"\s*:\s*', body)
+                try:
+                    metadata, _ = json.JSONDecoder().raw_decode(body[marker.end():].decode('utf-8')) if marker else ({}, 0)
+                    if metadata.get('title') != identity:
+                        raise RadarError('CHANNEL_ID_UNVERIFIED')
+                except (ValueError, UnicodeError, AttributeError):
+                    raise RadarError('CHANNEL_ID_UNVERIFIED') from None
             # Metadata only; never downloads video, captions or stores the page.
             # Related videos can contain many channelId values. Prefer the
             # channel metadata's externalId rather than guessing from them.
@@ -196,7 +252,32 @@ class Collector:
         if not re.fullmatch(r'UC[A-Za-z0-9_-]{22}', channel_id):
             raise RadarError('INVALID_CHANNEL_ID')
         publisher = next((label for label in ('cnbc', 'yahoo', 'bloomberg') if label in handle.lower()), channel_id)
-        return self.feed('youtube:' + channel_id, 'https://www.youtube.com/feeds/videos.xml?' + urlencode({'channel_id': channel_id}), publisher, retail=True)
+        previous = self.store.latest('health', 'youtube:' + handle) or {}
+        route = self.store.latest('channel_route', handle) if handle else None
+        if handle and (route or previous.get('reason') == 'HTTP_404'):
+            return self.channel_page(handle, channel_id, publisher)
+        try:
+            return self.feed('youtube:' + channel_id, 'https://www.youtube.com/feeds/videos.xml?' + urlencode({'channel_id': channel_id}), publisher, retail=True)
+        except RadarError as error:
+            if str(error) != 'HTTP_404' or not handle:
+                raise
+            return self.channel_page(handle, channel_id, publisher)
+
+    def channel_page(self, handle, channel_id, publisher):
+        if not re.fullmatch(r'@[A-Za-z0-9_.-]+', handle):
+            raise RadarError('INVALID_CHANNEL_HANDLE')
+        metadata_handle, identity = CHANNEL_METADATA_ALIASES.get(handle, (handle, None))
+        url = 'https://www.youtube.com/' + quote(metadata_handle, safe='@') + '/videos'
+        # One stable per-handle reservation across restarts. No pagination,
+        # video page, captions, thumbnail or continuation request is dispatched.
+        status, _, raw, received = self.client.get(url, 'youtube', 'channel-page:' + handle,
+            headers={'Cookie': 'SOCS=CAI', 'Accept-Language': 'en-US,en;q=0.9', 'Accept': 'text/html'})
+        if status != 200:
+            raise RadarError('HTTP_' + str(status))
+        items = parse_channel_page(raw, channel_id, publisher, received, identity=identity)
+        self.store.append('channel_route', handle, {'url': url, 'channel_id': channel_id,
+                          'verified_at': iso(received), 'transport': 'channel_titles', 'items_observed': len(items)})
+        return self.add(items)
 
     def news(self):
         pending = self.store.latest('news_cursor', 'alpaca')
@@ -276,9 +357,11 @@ class Collector:
             for name in ('actives', 'stocks', 'crypto'):
                 self.attempt('alpaca:screener:' + name, lambda name=name: self.screener(name))
         for source, url, publisher, primary in FEEDS:
-            # Permanently bad candidates are dropped after verified dead response.
+            # A reviewed replacement URL gets its own grant check. Historical
+            # DEAD evidence for the old endpoint cannot suppress the repair.
             previous = self.store.latest('health', 'rss:' + source)
-            if previous and previous['status'] == 'DEAD':
+            receipt = self.store.latest('http', 'rss:' + source)
+            if previous and previous['status'] == 'DEAD' and (not receipt or receipt.get('url') == url):
                 self.health.append(previous)
                 continue
             self.attempt('rss:' + source, lambda source=source, url=url, publisher=publisher, primary=primary:
@@ -287,8 +370,10 @@ class Collector:
             source = 'youtube:' + config.get('handle', config.get('channel_id', 'unknown'))
             previous = self.store.latest('health', source)
             if previous and previous['status'] == 'DEAD' and not (
-                    previous.get('reason') in ('REDIRECT_REQUIRES_EXPLICIT_URL', 'HTTP_301', 'HTTP_302', 'HTTP_303', 'HTTP_307', 'HTTP_308')
-                    and config.get('handle') and not self.store.latest('channel_resolution', config['handle'])):
+                    (previous.get('reason') == 'HTTP_404' and config.get('handle')
+                     and self.store.latest('channel', config['handle'])) or
+                    (previous.get('reason') in ('REDIRECT_REQUIRES_EXPLICIT_URL', 'HTTP_301', 'HTTP_302', 'HTTP_303', 'HTTP_307', 'HTTP_308')
+                     and config.get('handle') and not self.store.latest('channel_resolution', config['handle']))):
                 self.health.append(previous)
                 continue
             self.attempt(source, lambda config=config: self.channel(config))

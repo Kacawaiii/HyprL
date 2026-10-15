@@ -7,7 +7,7 @@ FEEDS = [
     ('marketwatch', 'https://feeds.content.dowjones.io/public/rss/mw_topstories', 'dowjones', False),
     ('yahoo', 'https://finance.yahoo.com/news/rssindex', 'yahoo', False),
     ('investing', 'https://www.investing.com/rss/news.rss', 'investing', False),
-    ('coindesk', 'https://www.coindesk.com/arc/outboundfeeds/rss/', 'coindesk', False),
+    ('coindesk', 'https://www.coindesk.com/arc/outboundfeeds/rss', 'coindesk', False),
     ('cointelegraph', 'https://cointelegraph.com/rss', 'cointelegraph', False),
     ('theblock', 'https://www.theblock.co/rss.xml', 'theblock', False),
     ('decrypt', 'https://decrypt.co/feed', 'decrypt', False),
@@ -25,7 +25,10 @@ CHANNELS = [
     '@TheDefiant', '@Bankless',
 ]
 # Public metadata verified for the same approved creator; no guessed IDs.
-CHANNEL_METADATA_ALIASES = {'@PatrickBoyleOnFinance': ('@PBoyle', 'Patrick Boyle')}
+CHANNEL_METADATA_ALIASES = {
+    '@PatrickBoyleOnFinance': ('@PBoyle', 'Patrick Boyle'),
+    '@BloombergTelevision': ('@markets', 'Bloomberg Television'),
+}
 THEMES = {
     'energy': '(Hormuz OR oil OR energy) sourcelang:english',
     'policy': '("central bank" OR inflation OR regulation OR tariff OR election) sourcelang:english',

@@ -66,13 +66,30 @@ explicitly checked requests may resolve redirects within the same handle on
 `www.youtube.com`. External consent, other handles, video pages and out-of-grant
 paths are refused before dispatch. Each hop consumes a YouTube reservation.
 Verified IDs are cached privately; later polls use
-`/feeds/videos.xml?channel_id=...`. Failed resolution is not repeated automatically;
+`/feeds/videos.xml?channel_id=...`. If a verified channel's feed returns 404,
+the collector can recover titles and video links from the approved handle's
+`/videos` metadata page. It verifies the page's channel ID, reads only video
+cards in the selected tab and leaves publication and description unknown.
+No video, captions, thumbnails, scripts or continuations are fetched or executed.
+Empty or mismatched metadata remains blocked. A successful fallback is cached
+across restarts; later polls make one metadata request per handle, using the
+same YouTube daily budget and 15-minute minimum spacing. Historical feed-404
+health records do not suppress this repair for a cached verified channel.
+The Bloomberg Television alias is `@markets`, verified from its channel
+metadata title; the former handle's cached identity is resolved anew. Alias
+titles must match channel metadata, not related video titles.
+Failed resolution is not repeated automatically;
 the operator can supply a verified ID. Legacy redirect-dead handles receive one
 new resolution attempt. Ordinary feed redirects remain dead.
 Candidates are unverified until a successful parse. HTTP 404/410 and pages
 which are not feeds and redirects drop a candidate without following the
 redirect; 403, 429 and grant refusals are reported as blocked. Remove the cause or append a reviewed new health record
 to retry a dropped candidate; never edit/delete its historical evidence.
+A reviewed registry URL change also rechecks the source against the grant;
+an old endpoint's DEAD record cannot suppress the replacement. CoinDesk's
+canonical feed path is `/arc/outboundfeeds/rss` without a trailing slash.
+A grant limited to the former slash path blocks this replacement before any
+request; the operator must authorize the exact new path.
 
 The installer writes three radar service/timer pairs, plus an official collector
 pair with `--with-official`. It requires a valid
