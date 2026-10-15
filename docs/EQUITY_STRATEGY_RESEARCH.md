@@ -229,6 +229,40 @@ not these numbers.**
 Without this step the deployed system would have been a *different strategy* from the
 validated one.
 
+## 8. Momentum sleeve of the Claude paper book (2026-10-15, DRY)
+
+The Claude paper book (an operator tool kept outside this repository) gained a momentum
+sleeve with the rules above: 90-day exp-regression slope × R², price > MA100, no
+close-to-close move > 15% in 90 days, buys only while SPY > MA200, risk parity
+`sleeve × 0.001 / ATR20`, sale when a name leaves the top 20% or breaks a rule (it also
+sells on a > 15% gap, which `clenow_backtest.run` did not), weekly on Wednesday, day
+limit orders near the open. Sleeve = 30% of equity, at most 15 names, 15% per name,
+fractional shares. Universe: the members with an open interval in
+`data/momentum/sp500_membership.csv` (503 names, last change 2026-06-02), Alpaca SIP
+adjusted daily bars. It only plans (weekly dry timer); going live is an operator decision.
+
+Parity with this research code, same input bars (Alpaca SIP, adjusted), point-in-time
+members on the date:
+
+| Date | Ranked | Keep band | Ranking order | Max rel. score diff | Qualified flags | First 15 buys vs `momentum_targets` |
+|---|---|---|---|---|---|---|
+| 2026-07-08 | 482 / 482 | 96 / 96 | identical | 1.9e-11 | identical | identical |
+| 2026-10-07 | 482 / 482 | 96 / 96 | identical | 2.7e-11 | identical | identical |
+
+The live fetch path on 2026-10-07 (496 names ranked: the bar cache used for the parity
+lacks about 20 members, share classes and names its fetch filter dropped) gives the same top 10 and the
+same 15 buys.
+
+Known differences from the backtest, by design or by constraint:
+- **15-name cap.** At 0.1% per ATR the full book holds about 30-35 names; the cap keeps the
+  top 15, so the sleeve is a top-of-list subset (the concentration bug 2 above warned
+  about) and invests about half its budget (2026-10-14 plan: 8.3k of 18.5k USD).
+- **Timing**: it ranks on the prior completed session and trades near Wednesday's open; the
+  backtest traded at Wednesday's close.
+- **Universe**: the list is frozen at its last update. Later index additions are missing and
+  later removals still rank (they are usually weak and rarely reach the top band).
+- **Resizes** every second Wednesday, only when a size is >= 10% off its target.
+
 ## Files of record
 
 - `scripts/momentum_stocks/clenow_backtest.py` — momentum engine (vectorized,
