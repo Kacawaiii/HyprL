@@ -150,6 +150,7 @@ export interface CandleQuery {
 }
 
 export const apiClient = {
+  getAgentV2Summary: (signal?: AbortSignal) => request<import('./agentV2Types').AgentV2Summary>('/api/v1/agent-v2/summary', signal),
   /** Sanitized Radar home snapshot (read only; written by the export job, outside Git). */
   getRadarHome: (signal?: AbortSignal) => request<RadarHome>('/api/v1/radar/home', signal),
   getRadarPaper: (signal?: AbortSignal) => request<PaperSnapshot>('/api/v1/radar/paper', signal),

@@ -131,4 +131,5 @@ export function PageTabs({ label, links }: { label: string; links: Array<{ to: s
 }
 
 export const NEWS_TABS = [{ to: '/radar', label: 'Fil d’actualité' }, { to: '/events', label: 'Sources officielles (Fed, SEC)' }];
-export const AI_TABS = [{ to: '/trader', label: 'Décisions des IA' }, { to: '/news-value', label: 'L’actualité aide ?' }];
+export const AI_TABS = [
+  { to: '/agent-v2', label: 'V2 shadow' }, { to: '/trader', label: 'Décisions des IA' }, { to: '/news-value', label: 'L’actualité aide ?' }];

@@ -263,6 +263,8 @@ class AppApiHandler(BaseHTTPRequestHandler):
             return self.policies.dispatch(path, parse_qs(urlparse(self.path).query, keep_blank_values=True))
         if path.startswith('/api/v1/radar/'):
             return self.radar.dispatch(path, parse_qs(urlparse(self.path).query, keep_blank_values=True))
+        if path.startswith('/api/v1/agent-v2/'):
+            return self.agent_v2.dispatch(path, query)
         if path.startswith('/api/v1/trader/'):
             return self.trader.dispatch(path, parse_qs(urlparse(self.path).query, keep_blank_values=True))
         if path == "/api/v1/ops/health":
@@ -568,7 +570,7 @@ class AppApiHandler(BaseHTTPRequestHandler):
 def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 dist_root=None, fomc_store=None, edgar_store=None,
                 model_lab_root=None, model_lab_token=None, research_root=None, ops_root=None, trader_root=None,
-                policy_root=None, radar_root=None):
+                policy_root=None, radar_root=None, agent_v2_root=None):
     """Build a loopback-bound read-only server over a fixed data root.
 
     ``dist_root`` turns on single-origin production mode. It is resolved once,
@@ -595,6 +597,7 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
         site = StaticSite(dist_root)
     from scripts.trading_lab.app_api.research import ResearchViews
     from scripts.trading_lab.app_api.policies import PolicyViews
+    from scripts.trading_lab.app_api.agent_v2 import AgentV2Views
     from scripts.trading_lab.app_api.trader import TraderViews
     from scripts.trading_lab.app_api.radar import RadarViews
     from scripts.trading_lab.ops.control import versions, local_path
@@ -602,7 +605,7 @@ def make_server(data_root, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT
         ops_root = local_path(ops_root)
     handler = type("BoundAppApiHandler", (AppApiHandler,),
                    {"service": service, "site": site, "research": ResearchViews(research_root), "trader": TraderViews(trader_root), "radar": RadarViews(radar_root),
-                    "policies": PolicyViews(policy_root),
+                    "policies": PolicyViews(policy_root), "agent_v2": AgentV2Views(agent_v2_root),
                     "ops_root": ops_root, "running_versions": versions()})
     server = server_class((host, port), handler)
     if model_lab_root is not None:
@@ -626,6 +629,7 @@ def main(argv=None):  # pragma: no cover - entry point
     parser.add_argument("--dist-root", default=None,
                         help="serve a frontend build from the same origin")
     parser.add_argument("--research-root", default=None, help="private registry and observability store to read only")
+    parser.add_argument("--agent-v2-root", default=None, help="separate v2 shadow ledger, read only")
     parser.add_argument("--trader-root", default=None, help="private paper trader runtime to read only")
     parser.add_argument("--radar-root", default=None, help="private directory of sanitized cockpit radar snapshots to read only")
     parser.add_argument("--policy-root", default=None, help="read separate synthetic calibration/risk evidence")
@@ -651,7 +655,7 @@ def main(argv=None):  # pragma: no cover - entry point
                          model_lab_root=arguments.model_lab_root,
                          model_lab_token=os.environ.get("HYPRL_MODEL_LAB_TOKEN"),
                          research_root=arguments.research_root, ops_root=arguments.ops_root, trader_root=arguments.trader_root,
-                         policy_root=arguments.policy_root, radar_root=arguments.radar_root)
+                         policy_root=arguments.policy_root, radar_root=arguments.radar_root, agent_v2_root=arguments.agent_v2_root)
     if arguments.dist_root:
         print(f"HyprL on http://{arguments.host}:{arguments.port}/")
     else:

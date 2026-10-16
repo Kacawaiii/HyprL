@@ -52,6 +52,8 @@ jobs:
         run: python -m pytest tests/policies -q
       - name: Prospective paper trader, restricted runners, budgets, labels and API
         run: python -m pytest tests/trader_agent -q
+      - name: Isolated agent v2 shadow causality, risk, ledger and veto contracts
+        run: python -m pytest tests/agent_v2 -q
       - name: Project-scoped B2B auth, isolation, budgets, audit, exports and OpenAPI
         run: |
           python -m scripts.trading_lab.b2b.openapi --check

@@ -16,7 +16,7 @@ const NAV = [
   { to: '/', label: 'Aujourd’hui', icon: '◉', end: true },
   { to: '/radar', label: 'Actualités', icon: '◌', also: ['/events'] },
   { to: '/paper', label: 'Comptes', icon: '◐' },
-  { to: '/trader', label: 'IA', icon: '◎', also: ['/news-value'] },
+  { to: '/trader', label: 'IA', icon: '◎', also: ['/news-value', '/agent-v2'] },
   { to: '/system', label: 'Système', icon: '⚙' },
 ];
 const ARCHIVES = [

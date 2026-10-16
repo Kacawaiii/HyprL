@@ -48,6 +48,8 @@ const HypothesesView = lazy(() =>
   import('./pages/lab/HypothesesView').then((module) => ({ default: module.HypothesesView })));
 const ApiDocsPage = lazy(() =>
   import('./pages/ApiDocsPage').then((module) => ({ default: module.ApiDocsPage })));
+const AgentV2Page = lazy(() =>
+  import('./pages/AgentV2Page').then((module) => ({ default: module.AgentV2Page })));
 const TraderPage = lazy(() =>
   import('./pages/TraderPage').then((module) => ({ default: module.TraderPage })));
 const SettingsPage = lazy(() =>
@@ -90,6 +92,7 @@ export function App() {
           path="research"
           element={<Suspense fallback={<LoadingState />}><ResearchPage /></Suspense>}
         />
+        <Route path="agent-v2" element={<Suspense fallback={<LoadingState />}><AgentV2Page /></Suspense>} />
         <Route
           path="trader"
           element={<Suspense fallback={<LoadingState />}><TraderPage /></Suspense>}
