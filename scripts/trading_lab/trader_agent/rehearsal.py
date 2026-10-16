@@ -341,8 +341,9 @@ class LiveChecks:
             if not self.grant.retirement_decision:
                 raise TraderError('GPT_RETIREMENT_OPERATOR_DECISION_REQUIRED')
             retirement_spec.preregistration()
-            self.paper.check_gpt_retirement_registration()
         with self.paper.owner():
+            if retirement_spec.active(self.clock()):
+                self.paper.check_gpt_retirement_registration()
             if slot == 'pm':
                 self.paper.check_pm_registration()
         data_ledger = Ledger(self.state.root / 'sources', self.grant, clock=self.clock,

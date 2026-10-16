@@ -388,6 +388,22 @@ def live_checks(environment, tmp_path, monkeypatch):
     return checks, state, clock, calls, faults
 
 
+def test_retired_live_configuration_reads_registration_from_locked_snapshot(live_checks, monkeypatch):
+    from scripts.trading_lab.trader_agent import retirement_spec
+    from scripts.trading_lab.trader_agent.alpaca_paper import PaperLedger
+    from scripts.trading_lab.trader_agent.config import Authorization
+    from dataclasses import replace
+    checks, _, clock, _, _ = live_checks
+    clock.at = instant('2026-10-17T07:35:00Z')
+    original = Authorization.load
+    monkeypatch.setattr(Authorization, 'load', lambda *a, **kw: replace(original(*a, **kw), retirement_decision={'synthetic': True}))
+    grant = Authorization.load(checks.args.authorization)
+    from scripts.trading_lab.trader_agent.alpaca_paper import PaperAuthorization
+    ledger = PaperLedger(checks.args.paper_runtime, PaperAuthorization.load(checks.args.paper_authorization, grant), clock=clock)
+    ledger.append('gpt_retirement_registration', None, **retirement_spec.registration_target(ledger))
+    assert checks.configuration()['execution_spec_hash'] == retirement_spec.SPEC_HASH
+
+
 def test_full_chain_uses_real_configuration_with_only_gets_and_zero_decisions(live_checks):
     from scripts.trading_lab.trader_agent.rehearsal import rehearse
     checks, state, clock, calls, _ = live_checks
