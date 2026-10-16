@@ -138,7 +138,9 @@ def _realize(store, ledger, data, *, at=None, unlabelable):
                 else:
                     prices, sources = {}, []
                     intraday = definition.get("entry_price") == "intraday_5m_open"
-                    for asset in (p.product, "SPY"):
+                    # Validate the shared dependency first. A rejected SPY bar
+                    # must not spend a new symbol's quota for every outcome.
+                    for asset in dict.fromkeys(("SPY", p.product)):
                         key = (asset, ledger.slot, "5m" if intraday else "1d")
                         def acquire():
                             relevant = [instant(r["payload"]["signal"]["label_definition"]["entry_at"]) for r in predictions
@@ -204,6 +206,8 @@ def _realize(store, ledger, data, *, at=None, unlabelable):
                 ledger.alert(error.code)
                 unresolved.append({'prediction_hash': row['identity'], 'asset': p.product,
                                    'slot': ledger.slot, 'reason': error.code})
+                if error.code in {'INVALID_PRICE', 'INVALID_LABEL_PRICE'}:
+                    unresolved[-1]['disposition'] = 'RETRYABLE_INVALID_PRICE'
                 if error.code == "AUTHORIZATION_EXPIRED_OR_NOT_STARTED":
                     return {"state": "BLOCKED", "reason": error.code, "labels_added": realized, "pending": len(predictions) - realized,
                             "executions_repaired": repaired, "unresolved": unresolved}
@@ -213,7 +217,8 @@ def _realize(store, ledger, data, *, at=None, unlabelable):
         blocked = any(r['reason'] == 'BUDGET_EXHAUSTED' for r in unresolved)
         result = {"state": "BLOCKED" if blocked else "COMPLETE", "labels_added": realized,
                   "pending": pending, "executions_repaired": repaired, "unresolved": unresolved,
-                  "unlabelable_count": unlabelable_count}
+                  "unlabelable_count": unlabelable_count,
+                  "skipped_invalid_price": sum(r.get('disposition') == 'RETRYABLE_INVALID_PRICE' for r in unresolved)}
         if blocked:
             result['reason'] = 'BUDGET_EXHAUSTED'
         return result

@@ -213,6 +213,31 @@ def test_exact_unlabelable_dispositions_are_not_refetched_or_scored(service, clo
     assert unlabelable_issues(tmp_path / 'absent.sqlite') == {}
 
 
+def test_invalid_shared_benchmark_marks_its_labels_without_exhausting_other_work(service, clock):
+    assert service.run()['status'] == 'COMPLETE'
+    clock.at += timedelta(days=9, hours=10)
+    service.ledger.grant.payload['data_sources']['yahoo_chart']['max_requests_per_day'] = 4
+    native = service.data.yahoo
+    calls = []
+
+    def source(asset, *args, **kwargs):
+        calls.append(asset)
+        result = native(asset, *args, **kwargs)
+        if asset == 'SPY':
+            raise TraderError('INVALID_PRICE')
+        return result
+
+    service.data.yahoo = source
+    result = realize(service.store, service.ledger, service.data, at=clock())
+    assert result['state'] == 'COMPLETE'
+    assert result['labels_added'] == 20 and result['pending'] == 30
+    assert result['skipped_invalid_price'] == 30
+    assert set(calls) == {'SPY'} and len(calls) == 2
+    assert {r['reason'] for r in result['unresolved']} == {'INVALID_PRICE'}
+    assert {r['disposition'] for r in result['unresolved']} == {'RETRYABLE_INVALID_PRICE'}
+    assert len(service.store.records('label')) == len(service.store.records('execution')) == 20
+
+
 @pytest.mark.parametrize('malformed', [False, True])
 def test_bad_unneeded_daily_bar_does_not_poison_valid_native_endpoints(service, clock, malformed):
     from scripts.trading_lab.trader_agent.data import equity_calendar
