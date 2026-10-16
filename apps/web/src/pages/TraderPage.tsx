@@ -13,6 +13,7 @@ import { useTraderData } from './trader/useTraderData';
 import { TraderDecisionCards } from './trader/TraderDecisionCards';
 import { NewsComparison } from './trader/NewsComparison';
 import { AI_TABS, PageIntro, PageTabs } from '../components/Simple';
+import { TraderLifecycle } from '../components/TraderLifecycle';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -38,11 +39,12 @@ export function TraderPage() {
   const asset = selection.product && choices.includes(selection.product) ? selection.product : choices[0] ?? null;
   return (
     <div className="stack">
+      <TraderLifecycle roles={data.scorecard.data?.role_lifecycle} />
       <PageTabs label="IA" links={AI_TABS} />
       {!expert && (
         <PageIntro id="trader" question="Qu’ont décidé les IA, et pourquoi ?">
-          Chaque jour, deux IA donnent un avis par actif, un relecteur les contrôle, et les comptes papier n’exécutent que
-          les avis retenus.
+          L’analyste Claude donne un avis par actif, le relecteur Claude le contrôle, et les comptes papier suivent
+          les règles d’exécution enregistrées. Les anciens avis et résultats restent consultables.
         </PageIntro>
       )}
       <section className="card" aria-label="Agent trader">

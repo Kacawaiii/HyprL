@@ -37,12 +37,13 @@ export interface TodayRow {
   asset: string; horizon: Horizon; consensus: DecisionView; reason: string;
 }
 
-/** One row per asset and horizon: the consensus, with the first available analyst reason as the one-liner. */
+/** Historical consensus or current reviewed Claude, with the recorded analyst reason. */
 export function todayRows(views: DecisionView[]): TodayRow[] {
   const rows: TodayRow[] = [];
-  for (const consensus of views.filter((v) => v.analyst === 'consensus')) {
+  const role = views.some((v) => v.analyst === 'consensus') ? 'consensus' : 'reviewer_claude';
+  for (const consensus of views.filter((v) => v.analyst === role)) {
     const analysts = views.filter((v) => ANALYSTS.includes(v.analyst as never) && v.asset === consensus.asset && v.horizon === consensus.horizon);
-    const reason = consensus.view === 'ABSTAIN'
+    const reason = role === 'reviewer_claude' ? consensus.review?.note ?? consensus.raw_view?.confidence_reason ?? 'No reason recorded.' : consensus.view === 'ABSTAIN'
       ? 'The two reviewed analysts do not agree on a direction, or one abstained: no view is taken.'
       : analysts.find((v) => v.raw_view?.view === consensus.view)?.raw_view?.confidence_reason ?? 'No reason recorded.';
     rows.push({ asset: consensus.asset, horizon: consensus.horizon, consensus, reason });
@@ -112,7 +113,10 @@ export function assetChart(asset: string, series: SeriesPoint[], rows: LedgerRow
   const priceAt = (t: number) => [...line].reverse().find((p) => p.at <= t)?.price ?? null;
   const decisions: ChartDecision[] = [];
   const outcomes: ChartOutcome[] = [];
-  for (const row of rows.filter((r) => r.prediction.payload.product === asset && r.prediction.payload.model_id === 'trader:consensus')) {
+  const historicalRuns = new Set(rows.filter((r) => r.prediction.payload.model_id === 'trader:consensus')
+    .map((r) => r.prediction.payload.signal.run_id));
+  for (const row of rows.filter((r) => r.prediction.payload.product === asset &&
+    r.prediction.payload.model_id === (historicalRuns.has(r.prediction.payload.signal.run_id) ? 'trader:consensus' : 'trader:reviewer_claude'))) {
     const t = Date.parse(row.prediction.payload.decision_at);
     const price = priceAt(t);
     if (price !== null) {
@@ -163,8 +167,8 @@ export const scoreKey = (k: ScoreKey) => `${k.analyst}/${k.population}/${k.horiz
 export const BASELINES = ['always_up', 'momentum20', 'random_seeded', 'spy_relative_zero'] as const;
 
 export interface BaselineRow { name: string; entry: ScoreEntry }
-export function baselineRows(card: TraderScorecard, population: ScoreKey['population'], horizon: Horizon, target: ScoreKey['target']): BaselineRow[] {
-  return ['consensus', ...BASELINES].flatMap((name) => {
+export function baselineRows(card: TraderScorecard, population: ScoreKey['population'], horizon: Horizon, target: ScoreKey['target'], role = 'consensus'): BaselineRow[] {
+  return [role, ...BASELINES].flatMap((name) => {
     const entry = card.scores[scoreKey({ analyst: name, population, horizon, target })];
     return entry ? [{ name, entry }] : [];
   });

@@ -7,6 +7,7 @@ import { useQuery } from '../state/useQuery';
 import type { NewsGroup } from '../api/analysisTypes';
 import { AI_TABS, PageIntro, PageTabs, ShowMore, Tabs } from '../components/Simple';
 import { useCockpit } from '../state/useCockpit';
+import { TraderLifecycle } from '../components/TraderLifecycle';
 
 const GROUPS: Record<string, string> = { news: 'Actualité', technical: 'Technique', unclassified: 'Non classé' };
 function NewsRows({ rows }: { rows: NewsGroup[] }) {
@@ -59,6 +60,7 @@ export function NewsValuePage() {
     scores: (
     <section className="card stack" aria-label="IA contre baselines">
       <h2 className="card-title">Scorecards IA contre baselines</h2>
+      <TraderLifecycle roles={data.news.role_lifecycle} />
       <div className="observation-controls">
         <label>Population <select className="control" value={population} onChange={(e) => setPopulation(e.target.value)}>
           <option value="equity_etf">Actions / ETF</option><option value="crypto">Crypto</option></select></label>
@@ -76,7 +78,7 @@ export function NewsValuePage() {
           const score = data.news.ai_scores[key];
           return <tr key={name}><td>{analystLabel(name)}</td><td>{score?.issued ?? '—'}</td><td>{score?.realized ?? '—'}</td>
             <td>{score?.non_abstained ?? '—'}</td><td>{score?.days ?? '—'}</td><td>{pct(score?.hit_rate, 1)}</td>
-            <td>{signedPct(score?.mean_unit_pnl_after_costs, 3)}</td><td>{!score ? 'Indisponible' : score.non_abstained < data.news.minimum_n || score.days < 30 ? 'Trop tôt' : 'Descriptif seulement'}</td></tr>;
+            <td>{signedPct(score?.mean_unit_pnl_after_costs, 3)}</td><td>{data.news.role_lifecycle?.[scoreName]?.state === 'RETIRED' ? 'RETIRED · historique conservé' : !score ? 'Indisponible' : score.non_abstained < data.news.minimum_n || score.days < 30 ? 'Trop tôt' : 'Descriptif seulement'}</td></tr>;
         })}</tbody>
       </table></div>
       <p className="metric-sub">Les effectifs peuvent différer à cause de l’abstention. Cette table ne démontre ni causalité ni avantage. Les cohortes chevauchantes ne sont pas indépendantes.</p>

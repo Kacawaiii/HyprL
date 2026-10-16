@@ -70,6 +70,7 @@ export interface RadarHome {
   trader: {
     runs: number; labels: number; latest_run: string | null; latest_run_at: string | null;
     models: Record<string, { model: string; cli_version: string; reported_version: string }>;
+    role_lifecycle?: import('./traderTypes').RoleLifecycle;
     preregistration_hash: string | null; predictive_quality: Record<string, ScoreEntry>; hypothesis_state: string | null;
   };
   regime: Record<string, RegimeItem>; events: RadarEvent[];

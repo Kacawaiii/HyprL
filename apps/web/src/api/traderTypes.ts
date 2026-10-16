@@ -3,6 +3,7 @@
 export type ViewDirection = 'UP' | 'DOWN' | 'ABSTAIN';
 export type Verdict = 'KEEP' | 'DOWNGRADE' | 'REJECT' | 'ABSTAIN' | 'MISSING';
 export type Horizon = '1d' | '5d';
+export type RoleLifecycle = Record<string, { state: 'ACTIVE' | 'RETIRED'; effective_from: string; operator_decision_hash: string }>;
 
 export interface Catalyst { url: string; published_at: string; fact: string }
 
@@ -98,6 +99,9 @@ export interface TraderScorecard {
   portfolio_cohorts: Cohort[]; limitations: string[];
   multiple_testing: { attempted_runs: number; count: number; model_configuration_count: number };
   news_ab?: NewsAbScorecard;
+  role_lifecycle?: RoleLifecycle;
+  current_score_population?: string;
+  current_preregistration_hash?: string;
 }
 
 export interface NewsArmScore {
@@ -105,6 +109,7 @@ export interface NewsArmScore {
   hit_rate: number | null; brier: number | null; abstention_rate: number | null;
 }
 export interface NewsAbScorecard {
+  role_lifecycle?: RoleLifecycle;
   mode: 'SHADOW_ONLY'; paired_base_runs: number; complete_news_runs: number;
   promotion_rule: { minimum_directional_per_arm: number; target: string; comparison: string; execution: string };
   comparisons: Array<{ population: string; asset_class: string; horizon: Horizon; target: string; role: string;

@@ -47,7 +47,10 @@ export function BeginnerTrader({ data, run, asset, detail, news }: {
           </div>
         )}
         {rows.length > shown && <button className="more" onClick={() => setShown((n) => n + STEP)}>Voir plus ({rows.length - shown})</button>}
-        <p className="metric-sub">A view is shown only when both analysts, after review, agree. Probabilities are model judgments, not calibrated.</p>
+        <p className="metric-sub">{views.some((v) => v.analyst === 'consensus')
+          ? 'Historical views required agreement between both reviewed analysts.'
+          : 'Views show the Claude analyst after Claude review. KEEP trades at the existing size; DOWNGRADE at half size for equities. Crypto KEEP uses half size.'}
+          {' '}Probabilities are model judgments, not calibrated.</p>
       </section>
     ) },
     { id: 'review', label: 'Relecture', content: () => (
@@ -75,7 +78,9 @@ export function BeginnerTrader({ data, run, asset, detail, news }: {
         <h2 className="card-title">Positions et résultats papier</h2>
         <Query query={data.scorecard} label="Loading results">
           {(card) => {
-            const lines = paperLines(card.portfolio_cohorts.filter((c) => c.analyst === 'consensus'));
+            const role = views.some((v) => v.analyst === 'consensus') ? 'consensus' : 'reviewer_claude';
+            const lines = paperLines(card.portfolio_cohorts.filter((c) => c.analyst === role &&
+              (role === 'consensus' || !card.current_score_population || c.session.includes(card.current_score_population))));
             return lines.length === 0 ? (
               <p className="metric-sub">No paper cohort yet. Positions are proposed at each run and only measured when their horizon ends.</p>
             ) : (

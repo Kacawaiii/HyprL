@@ -58,6 +58,46 @@ function open(path: string, state: State | 'empty', overrides?: Record<string, u
 
 beforeEach(() => invalidate());
 
+describe('retired GPT with historical evidence', () => {
+  function currentToday() {
+    const today = structuredClone(fx.shared.today) as TraderToday;
+    for (const row of today.runs) {
+      if (!row.payload.decision) continue;
+      row.payload.decision.models.analyst_gpt = { model: 'RETIRED', cli_version: 'RETIRED', reported_version: 'RETIRED' };
+      row.payload.decision.views = row.payload.decision.views.filter((v) => ['analyst_claude', 'reviewer_claude'].includes(v.analyst));
+    }
+    return today;
+  }
+
+  it('shows reviewed Claude views with GPT and consensus retired', async () => {
+    open('/trader?date=2026-10-19', 'issued', { today: currentToday() });
+    const table = await screen.findByRole('table', { name: 'Views per asset' });
+    expect(within(table).getAllByRole('row').length).toBeGreaterThan(1);
+    const roles = await screen.findByLabelText('Retired trader roles');
+    expect(roles).toHaveTextContent('GPT analyst: RETIRED');
+    expect(roles).toHaveTextContent('Consensus: RETIRED');
+    expect(screen.getByText(/Views show the Claude analyst after Claude review/)).toBeInTheDocument();
+  });
+
+  it('keeps current and historical score populations selectable', async () => {
+    const history = fx.states.realized.scorecard;
+    const scorecard = { ...history, scores: { ...history.scores,
+      'gpt_retired_v1:reviewer_claude/equity_etf/1d/SPY_relative': {
+        ...history.scores['reviewer_claude/equity_etf/1d/SPY_relative'], issued: 123,
+      } } };
+    open('/trader?mode=expert&date=2026-10-19', 'realized', { today: currentToday(), scorecard });
+    await screen.findByRole('region', { name: 'Run provenance' });
+    const protocolChoice = await screen.findByRole('combobox', { name: 'Protocol' });
+    const table = await screen.findByRole('table', { name: 'Baseline comparison' });
+    expect(within(table).getByText('Reviewed Claude')).toBeInTheDocument();
+    expect(within(table).getByText('123')).toBeInTheDocument();
+    expect(within(table).queryByText('Consensus')).not.toBeInTheDocument();
+    await userEvent.selectOptions(protocolChoice, 'history');
+    expect(within(table).getByText('Consensus')).toBeInTheDocument();
+    expect(within(table).queryByText('123')).not.toBeInTheDocument();
+  });
+});
+
 /** Beginner lists five rows at a time; expand them all. */
 async function expandAll() {
   for (let button = screen.queryByRole('button', { name: /Voir plus/ }); button; button = screen.queryByRole('button', { name: /Voir plus/ })) {
@@ -281,7 +321,8 @@ describe('Prospective news A/B', () => {
     expect(within(section).getByText('NEWS · SHADOW ONLY')).toBeInTheDocument();
     const table = within(section).getByRole('table', { name: 'News A/B comparison' });
     expect(table.textContent).toContain('SPY_relative');
-    expect(within(table).getAllByText('Too early')).toHaveLength(5);
+    expect(within(table).getAllByText('Too early')).toHaveLength(2);
+    expect(within(table).getAllByText('RETIRED · historical results')).toHaveLength(3);
     expect(section.textContent).toContain('≥ 30 realized directional views in each arm');
     expect(section.textContent).toContain('strictly lower Brier');
     expect(section.textContent).toContain('Operator approval');

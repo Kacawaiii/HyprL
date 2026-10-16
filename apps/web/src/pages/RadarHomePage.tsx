@@ -16,6 +16,7 @@ import { NEWS_TABS, PageIntro, PageTabs, ShowMore } from '../components/Simple';
 import type { RadarEvent } from '../api/radarTypes';
 import { since } from '../lib/fr';
 import { instant, signedNumber } from '../lib/radar';
+import { TraderLifecycle } from '../components/TraderLifecycle';
 
 const PAGE = 10;
 const REGIME_ORDER = ['SPY', 'QQQ', 'VIX', 'BTC', 'ETH', 'Brent', 'gold', '10y_yield', 'dollar_index', 'EURUSD'];
@@ -112,6 +113,7 @@ export function RadarHomePage() {
             </div>
           </dl>
         )}
+        <TraderLifecycle roles={data.trader.role_lifecycle} />
         {expert && data.radar.limitations.length > 0 && (
           <ul className="muted limitations">{data.radar.limitations.map((x) => <li key={x}>{x}</li>)}</ul>
         )}

@@ -3,6 +3,7 @@ import { Badge } from '../../components/States';
 import type { NewsAbScorecard, NewsArmScore } from '../../api/traderTypes';
 import { analystLabel } from '../../lib/trader';
 import { pct } from './shared';
+import { TraderLifecycle } from '../../components/TraderLifecycle';
 
 const brier = (v: number | null) => v === null ? 'n/a' : v.toFixed(3);
 const cells = (score: NewsArmScore) => <>
@@ -15,6 +16,7 @@ export function NewsComparison({ card }: { card: NewsAbScorecard }) {
   const choice = selected && choices.includes(selected) ? selected : choices[0];
   const rows = card.comparisons.filter((r) => `${r.population}/${r.asset_class}/${r.horizon}` === choice);
   return <section className="card" aria-label="Base versus news arm">
+    <TraderLifecycle roles={card.role_lifecycle} />
     <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'space-between' }}>
       <h2 className="card-title">Base vs news</h2><Badge tone="warn">NEWS · SHADOW ONLY</Badge>
       <label>Comparison <select className="control" value={choice ?? ''} onChange={(e) => setSelected(e.target.value)}>
@@ -32,7 +34,7 @@ export function NewsComparison({ card }: { card: NewsAbScorecard }) {
       </thead>
       <tbody>{rows.map((r) => <tr key={r.role}>
         <td>{analystLabel(r.role)}</td>{cells(r.base)}{cells(r.news)}
-        <td>{r.state === 'TOO_EARLY' ? 'Too early' : r.state === 'ELIGIBLE_FOR_OPERATOR_REVIEW' ? 'Operator review required' :
+        <td>{r.state === 'RETIRED' ? 'RETIRED · historical results' : r.state === 'TOO_EARLY' ? 'Too early' : r.state === 'ELIGIBLE_FOR_OPERATOR_REVIEW' ? 'Operator review required' :
           r.state === 'DESCRIPTIVE_ONLY_NO_SPY_TARGET' ? 'Descriptive only (no SPY target)' : 'Not eligible'}</td>
       </tr>)}</tbody>
     </table></div>

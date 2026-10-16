@@ -193,6 +193,7 @@ def build_analysis(radar, trader=None, paper=None, journal=None, *, health=None,
                              for tag in sorted({t['tag'] for t in trades})],
                   'tag_counts': {tag: sum(t['tag'] == tag for t in trades) for tag in sorted({t['tag'] for t in trades})},
                   'ai_scores': trader.get('scorecard', {}).get('scores', {}) if trader.get('scorecard') else {},
+                  'role_lifecycle': trader.get('scorecard', {}).get('role_lifecycle', {}) if trader.get('scorecard') else {},
                   'context_comparison': 'UNAVAILABLE',
                   'note': 'Aucune variante appariée avec/sans actualité identifiée. Les baselines ne sont pas une ablation news.'},
                 'system': {'radar_at': radar.get('cutoff'), 'sources': [

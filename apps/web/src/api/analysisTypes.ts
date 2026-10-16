@@ -36,6 +36,7 @@ export interface AnalysisSnapshot {
   news: {
     groups: NewsGroup[]; by_tag?: NewsGroup[]; minimum_n: number; tag_counts: Record<string, number>;
     ai_scores: Record<string, import('./traderTypes').ScoreEntry>;
+    role_lifecycle?: import('./traderTypes').RoleLifecycle;
     context_comparison: string; note: string;
   };
   system: {

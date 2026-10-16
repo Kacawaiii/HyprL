@@ -20,10 +20,11 @@ function SideBySide({ run, asset, rows }: { run: RunSummary; asset: string; rows
     <div className="stack">
       {(['1d', '5d'] as Horizon[]).map((h) => {
         const pair = sideBySide(views, asset, h);
-        const consensus = views.find((v) => v.analyst === 'consensus' && v.asset === asset && v.horizon === h);
+        const role = views.some((v) => v.analyst === 'consensus') ? 'consensus' : 'reviewer_claude';
+        const consensus = views.find((v) => v.analyst === role && v.asset === asset && v.horizon === h);
         return (
           <section key={h} className="card" aria-label={`${asset} ${h} analysts`}>
-            <h3 className="card-title">{asset} · {h} · consensus {consensus ? <Direction view={consensus.view} /> : 'none'}{consensus && consensus.view !== 'ABSTAIN' ? ` (${pct(consensus.p_outperform)})` : ''}</h3>
+            <h3 className="card-title">{asset} · {h} · {analystLabel(role)} {consensus ? <Direction view={consensus.view} /> : 'none'}{consensus && consensus.view !== 'ABSTAIN' ? ` (${pct(consensus.p_outperform)})` : ''}</h3>
             <div className="grid grid-2">
               {pair.map((v) => (
                 <article key={v.analyst} aria-label={analystLabel(v.analyst)}>
@@ -65,20 +66,32 @@ function Entry({ name, e }: { name: string; e: ScoreEntry }) {
   );
 }
 
-function Scoring({ data }: { data: TraderData }) {
+function Scoring({ data, run }: { data: TraderData; run: RunSummary | null }) {
   const [population, setPopulation] = useState<ScoreKey['population']>('equity_etf');
   const [horizon, setHorizon] = useState<Horizon>('1d');
+  const [selectedProtocol, setProtocol] = useState<string | null>(null);
+  const protocol = selectedProtocol ?? (!run || run.decision?.models.analyst_gpt?.model === 'RETIRED' ? 'current' : 'history');
   const target: ScoreKey['target'] = population === 'crypto' ? 'raw' : 'SPY_relative';
   return (
     <Query query={data.scorecard} label="Loading scorecard">
-      {(card) => {
-        const base = baselineRows(card, population, horizon, target);
-        const consensus = card.scores[scoreKey({ analyst: 'consensus', population, horizon, target })];
+      {(original) => {
+        const current = protocol === 'current' && Boolean(original.current_score_population);
+        const prefix = `${original.current_score_population}:`;
+        const card = current ? { ...original, scores: Object.fromEntries(Object.entries(original.scores)
+          .filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value])),
+          portfolio_cohorts: original.portfolio_cohorts.filter((c) => c.session.includes(prefix.slice(0, -1))) }
+          : { ...original, portfolio_cohorts: original.portfolio_cohorts.filter((c) => !c.session.includes(prefix.slice(0, -1))) };
+        const role = current ? 'reviewer_claude' : 'consensus';
+        const base = baselineRows(card, population, horizon, target, role);
+        const consensus = card.scores[scoreKey({ analyst: role, population, horizon, target })];
         const kr = keptVsRejected(card, population, horizon, target);
         return (
           <>
             <section className="card" aria-label="Scorecard versus baselines">
               <h2 className="card-title">Scorecard vs baselines</h2>
+              {original.current_score_population && <label>Protocol <select className="control" value={protocol} onChange={(e) => setProtocol(e.target.value)}>
+                <option value="current">Claude only</option><option value="history">Historical consensus</option>
+              </select></label>}
               <div className="row" style={{ flexWrap: 'wrap' }}>
                 <label>Population <select className="control" value={population} onChange={(e) => setPopulation(e.target.value as ScoreKey['population'])}>
                   <option value="equity_etf">Stocks and sector ETF (vs SPY)</option><option value="crypto">Crypto (raw direction)</option></select></label>
@@ -98,8 +111,8 @@ function Scoring({ data }: { data: TraderData }) {
 
             <div className="grid grid-2">
               <section className="card" aria-label="Calibration">
-                <h2 className="card-title">Calibration (consensus)</h2>
-                {consensus ? <CalibrationChart bins={consensus.calibration_bins} label={`consensus ${population} ${horizon}`} /> : <EmptyState title="No consensus scores yet" />}
+                <h2 className="card-title">Calibration ({analystLabel(role)})</h2>
+                {consensus ? <CalibrationChart bins={consensus.calibration_bins} label={`${role} ${population} ${horizon}`} /> : <EmptyState title="No scores yet" />}
               </section>
               <section className="card" aria-label="Kept versus rejected">
                 <h2 className="card-title">Reviewer: kept vs rejected accuracy</h2>
@@ -243,7 +256,7 @@ export function ExpertTrader({ data, run, asset }: { data: TraderData; run: RunS
           </Query>
         </section>
       )}
-      <Scoring data={data} />
+      <Scoring data={data} run={run} />
       <Ledger data={data} />
       <RunHealth data={data} />
     </>
