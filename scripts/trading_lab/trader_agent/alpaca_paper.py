@@ -39,6 +39,7 @@ LIMITS = {'ia_actions': {'max_weight_per_name': .08, 'max_gross': .80, 'max_shor
           'ia_crypto': {'max_weight_per_asset': .25, 'max_gross': .50, 'short': False}}
 D = Decimal
 OWNER_WAIT_SECONDS = 120
+INCIDENT_DECISION_HASH = '435841de1bf86af67b80a4ad908002959b0b839714f3f390d0e4f63436462753'
 
 
 def decimal(value):
@@ -411,7 +412,8 @@ class PaperLedger:
                 if (account is None or r['payload']['account'] == account) and (event is None or r['payload']['event'] == event)]
 
     def halted(self, account):
-        return bool(self.events(account, 'halt'))
+        transitions = [e for e in self.events(account) if e['event'] in {'halt', 'resume'}]
+        return bool(transitions and transitions[-1]['event'] == 'halt')
 
     def halt(self, account, reason):
         self.append('halt', account, reason=reason)
@@ -519,6 +521,48 @@ class PaperExecutor:
         self.pause_paths = [self.ledger.root / 'PAPER_PAUSED', self.ledger.root / 'PAUSED', *map(Path, pause_paths)]
         execution_spec()
 
+    def resume_after_reconciliation(self, decision_path, name):
+        """The incident's explicit operator resume, with a fresh GET-only proof."""
+        decision = strict_json(Path(decision_path).read_text())
+        if (name != 'ia_actions' or sha256_canonical(decision) != INCIDENT_DECISION_HASH
+                or instant(decision['decided_at']) > self.clock()):
+            raise TraderError('PAPER_RESUME_OPERATOR_DECISION_REFUSED')
+        with self.ledger.owner():
+            self.grant.check(self.dispatch_clock())
+            self.ledger.store.verify()
+            self.research.verify()
+            halts = self.ledger.events(name, 'halt')
+            if not self.ledger.halted(name):
+                return {'state': 'ALREADY_RESUMED', 'account': name}
+            if any(e['reason'] != 'PAPER_RECONCILIATION_MISMATCH' or e['at'][:10] != '2026-10-16' for e in halts):
+                raise TraderError('PAPER_RESUME_HALT_NOT_AUTHORIZED')
+            client = self.client_factory(self.grant, name, clock=self.dispatch_clock)
+            client.start()
+            orders = client.request('GET', '/v2/orders', params={'status': 'all', 'limit': 500})
+            if not isinstance(orders, list) or any(not isinstance(o, dict) for o in orders) or len(orders) >= 500:
+                raise TraderError('PAPER_RESUME_ORDER_HISTORY_INCOMPLETE')
+            intents, observed, _ = self.ledger.projection(name)
+            keys = [o.get('client_order_id') for o in orders]
+            if len(set(keys)) != len(keys) or any(k not in intents for k in keys):
+                raise TraderError('PAPER_RESUME_UNKNOWN_ORDER')
+            required = {k for k, i in intents.items() if decimal(i['order']['qty'])
+                        and observed.get(k, {}).get('status') != 'not_submitted'}
+            if required - set(keys):
+                raise TraderError('PAPER_RESUME_ORDER_HISTORY_INCOMPLETE')
+            for order in orders:
+                self.observe(name, intents[order['client_order_id']], order)
+            _, account, positions = self.start(name)
+            if account['_paper_risk_breach'] or any(e['reason'] == 'PAPER_KILL_SWITCH'
+                                                   for e in self.ledger.events(name, 'halt')):
+                raise TraderError('PAPER_RESUME_RISK_BREACH')
+            proof = self.ledger.events(name, 'reconciliation')[-1]
+            event = self.ledger.append('resume', name, operator_decision_hash=INCIDENT_DECISION_HASH,
+                halt_hashes=[sha256_canonical(e) for e in halts], reconciliation_hash=sha256_canonical(proof),
+                broker_orders=len(orders), orders_digest=sha256_canonical(orders),
+                positions_digest=sha256_canonical(positions), broker_methods=['GET'],
+                reason='OPERATOR_APPROVED_MATCHED_INCIDENT_RECONCILIATION')
+            return {'state': 'RESUMED', 'account': name, 'proof': event}
+
     def observe(self, name, intent, order):
         if (order.get('client_order_id') != intent['client_id'] or broker_symbol(order.get('symbol')) != intent['order']['symbol']
                 or order.get('side') != intent['order']['side'] or decimal(order.get('qty')) != decimal(intent['order']['qty'])):
@@ -618,16 +662,10 @@ class PaperExecutor:
                 data['state'] = 'EXIT_PENDING'
             self.ledger.append('trade_outcome', name, **data)
 
-    def start(self, name):
-        client = self.client_factory(self.grant, name, clock=self.dispatch_clock)
-        try:
-            account = client.start()
-            equity = decimal(account['equity'])
-            if equity <= 0:
-                raise TraderError('PAPER_INVALID_EQUITY')
-            if name == 'momentum':
-                positions = client.request('GET', '/v2/positions')
-                return client, account, positions
+    def reconcile(self, client, name):
+        # Orders and positions are independent broker snapshots. A partial fill
+        # can advance between their GETs even under the local ownership lock.
+        for attempt in range(3):
             intents, observed, _ = self.ledger.projection(name)
             for key, intent in intents.items():
                 if key in observed and observed[key]['status'] in TERMINAL:
@@ -657,8 +695,37 @@ class PaperExecutor:
             mismatches = [s for s in set(expected) | set(actual) if abs(expected.get(s, D(0)) - actual.get(s, D(0))) > D('.00000001')]
             self.ledger.append('reconciliation', name, matched=not mismatches,
                                expected={k: str(v) for k, v in expected.items()}, actual={k: str(v) for k, v in actual.items()})
-            if mismatches:
-                raise TraderError('PAPER_RECONCILIATION_MISMATCH')
+            if not mismatches:
+                return positions
+        # A moving, known fill defers this pass without enabling dispatch or
+        # misclassifying it as an unknown position. Unexplained deltas still halt.
+        intents, observed, _ = self.ledger.projection(name)
+        lower, upper = {}, {}
+        for key, intent in intents.items():
+            observation = observed.get(key, {})
+            if observation.get('status') in TERMINAL:
+                continue
+            remaining = decimal(intent['order']['qty']) - decimal(observation.get('filled_qty', 0))
+            asset = intent['order']['symbol']
+            delta = remaining if intent['order']['side'] == 'buy' else -remaining
+            lower[asset] = lower.get(asset, D(0)) + min(delta, D(0))
+            upper[asset] = upper.get(asset, D(0)) + max(delta, D(0))
+        if all(lower.get(s, D(0)) <= actual.get(s, D(0)) - expected.get(s, D(0)) <= upper.get(s, D(0))
+               for s in mismatches):
+            raise TraderError('PAPER_RECONCILIATION_PENDING')
+        raise TraderError('PAPER_RECONCILIATION_MISMATCH')
+
+    def start(self, name):
+        client = self.client_factory(self.grant, name, clock=self.dispatch_clock)
+        try:
+            account = client.start()
+            equity = decimal(account['equity'])
+            if equity <= 0:
+                raise TraderError('PAPER_INVALID_EQUITY')
+            if name == 'momentum':
+                positions = client.request('GET', '/v2/positions')
+                return client, account, positions
+            positions = self.reconcile(client, name)
             previous = self.ledger.events(name, 'account')
             peak = max([equity, D(100000)] + [decimal(e['equity']) for e in previous])
             self.ledger.append('account', name, equity=str(equity), peak=str(peak),

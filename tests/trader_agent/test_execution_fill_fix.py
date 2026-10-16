@@ -1,9 +1,96 @@
 """Execution behavior at the mocked broker boundary; no real dispatch."""
 from datetime import timedelta
+import pytest
 
+from scripts.trading_lab.trader_agent import alpaca_paper as paper
+from scripts.trading_lab.trader_agent.config import TraderError
 from scripts.trading_lab.trader_agent.config import instant
 from scripts.trading_lab.trader_agent.data import calendar_session
 from tests.trader_agent.test_alpaca_paper import environment, issue
+
+
+def test_second_open_pass_refreshes_own_fill_between_order_and_position_reads(environment):
+    executor, broker, grant, clock = environment
+    clock.at = instant('2026-10-16T13:30:30Z')
+    issue(executor, horizons=('1d',), direction='DOWN', probability=.2, verdict='DOWNGRADE')
+    assert executor.run('execute', accounts=['ia_actions'])['state'] == 'COMPLETE'
+    key = broker.posts()[0][3]['client_order_id']
+    clock.at = instant('2026-10-16T13:33:00Z')
+    order = broker.orders[('ia_actions', key)]
+    order.update(status='partially_filled', filled_qty='1', filled_avg_price='100',
+                 filled_at='2026-10-16T13:33:00Z')
+    broker.positions[('ia_actions', 'AAPL')] = paper.D(-1)
+    native = broker.transport('ia_actions')
+    raced = []
+
+    def transport(method, url, headers, body):
+        if url.endswith('/v2/positions') and not raced:
+            raced.append(True)
+            order['filled_qty'] = '3'
+            broker.positions[('ia_actions', 'AAPL')] = paper.D(-3)
+        return native(method, url, headers, body)
+
+    executor.client_factory = lambda g, name, **kw: paper.PaperClient(g, name, transport=transport, **kw)
+    assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
+    assert executor.run('execute', accounts=['ia_actions'])['state'] == 'COMPLETE'
+    assert not executor.ledger.halted('ia_actions')
+    assert sum(paper.decimal(l['qty']) for l in executor.ledger.projection('ia_actions')[2].values()) == -3
+    assert len(broker.posts()) == 1
+    broker.fill('ia_actions', key)
+    executor.run('audit', accounts=['ia_actions'])
+    assert not executor.ledger.halted('ia_actions')
+
+
+@pytest.mark.parametrize('unknown', ['none', 'order', 'position', 'missing_history', 'wrong_decision'])
+def test_incident_resume_requires_complete_get_only_order_and_position_proof(environment, tmp_path, monkeypatch, unknown):
+    import json
+    from scripts.trading_lab.sources.canonical import sha256_canonical
+    executor, broker, _, clock = environment
+    clock.at = instant('2026-10-16T13:30:30Z')
+    issue(executor, horizons=('1d',))
+    executor.run('execute', accounts=['ia_actions'])
+    key = broker.posts()[0][3]['client_order_id']
+    broker.fill('ia_actions', key)
+    executor.ledger.halt('ia_actions', 'PAPER_RECONCILIATION_MISMATCH')
+    before = executor.ledger.events().copy()
+    clock.at = instant('2026-10-17T00:01:00Z')
+    decision = {'schema': 'synthetic-operator-decision', 'decided_at': '2026-10-16T22:30:00Z'}
+    path = tmp_path / 'decision.json'
+    path.write_text(json.dumps(decision))
+    monkeypatch.setattr(paper, 'INCIDENT_DECISION_HASH', sha256_canonical(decision))
+    if unknown == 'wrong_decision':
+        path.write_text('{}')
+    if unknown == 'order':
+        broker.orders[('ia_actions', 'unowned')] = {**broker.orders[('ia_actions', key)], 'client_order_id': 'unowned'}
+    if unknown == 'position':
+        broker.positions[('ia_actions', 'MSFT')] = paper.D(1)
+    if unknown == 'missing_history':
+        del broker.orders[('ia_actions', key)]
+    native = broker.transport('ia_actions')
+
+    def transport(method, *args):
+        assert method == 'GET', 'incident recovery may never send an order or cancellation'
+        return native(method, *args)
+
+    executor.client_factory = lambda g, name, **kw: paper.PaperClient(g, name, transport=transport, **kw)
+    if unknown != 'none':
+        with pytest.raises(TraderError):
+            executor.resume_after_reconciliation(path, 'ia_actions')
+        assert executor.ledger.halted('ia_actions')
+        assert not executor.ledger.events(event='resume')
+        return
+    assert executor.resume_after_reconciliation(path, 'ia_actions')['state'] == 'RESUMED'
+    assert not executor.ledger.halted('ia_actions')
+    assert executor.ledger.events()[:len(before)] == before
+    assert executor.resume_after_reconciliation(path, 'ia_actions')['state'] == 'ALREADY_RESUMED'
+    lots = executor.ledger.projection('ia_actions')[2]
+    assert sum(paper.decimal(l['qty']) for l in lots.values()) == 36
+    assert {l['exit_at'] for l in lots.values()} == {'2026-10-16T20:00:00Z'}
+    # The normal overdue-lot sweep still owns Monday's exit.
+    clock.at = instant('2026-10-19T13:30:30Z')
+    executor.client_factory = lambda g, name, **kw: paper.PaperClient(g, name, transport=native, **kw)
+    assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
+    assert len(broker.posts()) == 2 and broker.posts()[-1][3]['side'] == 'sell'
 
 
 def test_equity_waits_for_open_then_submits_day_once(environment):
@@ -17,6 +104,25 @@ def test_equity_waits_for_open_then_submits_day_once(environment):
     assert executor.run('execute', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert broker.posts()[0][3]['time_in_force'] == 'day'
     executor.run('execute', accounts=['ia_actions'])
+    assert len(broker.posts()) == 1
+
+
+@pytest.mark.parametrize('unknown', [False, True])
+def test_moving_known_fill_defers_without_orders_but_unknown_position_still_halts(environment, unknown):
+    executor, broker, _, clock = environment
+    issue(executor, horizons=('1d',))
+    executor.run('execute', accounts=['ia_actions'])
+    key = broker.posts()[0][3]['client_order_id']
+    order = broker.orders[('ia_actions', key)]
+    order.update(status='partially_filled', filled_qty='1', filled_avg_price='100',
+                 filled_at='2026-10-12T13:30:30Z')
+    broker.positions[('ia_actions', 'AAPL')] = paper.D(3)
+    if unknown:
+        broker.positions[('ia_actions', 'MSFT')] = paper.D(1)
+    result = executor.run('execute', accounts=['ia_actions'])
+    assert result['state'] == 'BLOCKED'
+    assert result['accounts'][0]['reason'] == ('PAPER_RECONCILIATION_MISMATCH' if unknown else 'PAPER_RECONCILIATION_PENDING')
+    assert executor.ledger.halted('ia_actions') is unknown
     assert len(broker.posts()) == 1
 
 
@@ -89,10 +195,7 @@ def test_partial_entry_is_canceled_before_horizon_exit_and_no_late_fill(environm
     assert broker.posts()[-1][3]['qty'] == '18'
 
 
-import pytest
-from scripts.trading_lab.trader_agent import alpaca_paper as paper
 from scripts.trading_lab.trader_agent.schedule import render
-from scripts.trading_lab.trader_agent.config import TraderError
 
 
 @pytest.mark.parametrize('day,entry,exit_at', [

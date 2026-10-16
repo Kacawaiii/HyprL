@@ -55,7 +55,8 @@ class MockBroker:
                     raise TraderError('PAPER_HTTP_404')
                 return deepcopy(result)
             if method == 'GET' and path == '/v2/orders':
-                return [deepcopy(o) for (a, _), o in self.orders.items() if a == name and o['status'] not in paper.TERMINAL]
+                return [deepcopy(o) for (a, _), o in self.orders.items() if a == name
+                        and (query.get('status') == ['all'] or o['status'] not in paper.TERMINAL)]
             if method == 'DELETE':
                 for (a, _), order in self.orders.items():
                     if a == name and path.endswith(order['id']):

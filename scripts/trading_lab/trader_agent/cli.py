@@ -92,7 +92,7 @@ def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "news", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
-                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm', 'paper-register-gpt-retirement'))
+                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-resume', 'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm', 'paper-register-gpt-retirement'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--slot", choices=("am", "pm"), default="am")
@@ -139,7 +139,11 @@ def main(argv=None):
             print(json.dumps({'state': 'SKIPPED_CLOSED_EQUITY_MARKET'}))
             return 0
         executor = paper_executor(args, grant, runtime)
-        if args.action == 'paper-report':
+        if args.action == 'paper-resume':
+            if not args.operator_decision or not args.paper_account or args.dry_run:
+                parser.error('paper-resume requires --operator-decision and --paper-account and forbids --dry-run')
+            result = executor.resume_after_reconciliation(args.operator_decision, args.paper_account)
+        elif args.action == 'paper-report':
             from .paper_reporting import benchmarks
             result = executor.report(benchmarks(executor.ledger, runtime, grant))
             temp = runtime / 'paper-report.tmp'
