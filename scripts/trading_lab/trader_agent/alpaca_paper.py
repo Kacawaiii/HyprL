@@ -411,9 +411,17 @@ class PaperLedger:
         return [r['payload'] for r in rows(self.store, 'replay-summary')
                 if (account is None or r['payload']['account'] == account) and (event is None or r['payload']['event'] == event)]
 
+    def active_halts(self, account):
+        halts = []
+        for event in self.events(account):
+            if event['event'] == 'resume':
+                halts = []
+            elif event['event'] == 'halt':
+                halts.append(event)
+        return halts
+
     def halted(self, account):
-        transitions = [e for e in self.events(account) if e['event'] in {'halt', 'resume'}]
-        return bool(transitions and transitions[-1]['event'] == 'halt')
+        return bool(self.active_halts(account))
 
     def halt(self, account, reason):
         self.append('halt', account, reason=reason)
@@ -665,7 +673,8 @@ class PaperExecutor:
     def reconcile(self, client, name):
         # Orders and positions are independent broker snapshots. A partial fill
         # can advance between their GETs even under the local ownership lock.
-        for attempt in range(3):
+        _, initial_observed, _ = self.ledger.projection(name)
+        for _ in range(3):
             intents, observed, _ = self.ledger.projection(name)
             for key, intent in intents.items():
                 if key in observed and observed[key]['status'] in TERMINAL:
@@ -703,13 +712,18 @@ class PaperExecutor:
         lower, upper = {}, {}
         for key, intent in intents.items():
             observation = observed.get(key, {})
-            if observation.get('status') in TERMINAL:
+            initial = initial_observed.get(key, {})
+            if initial.get('status') in TERMINAL and observation.get('status') in TERMINAL:
                 continue
-            remaining = decimal(intent['order']['qty']) - decimal(observation.get('filled_qty', 0))
+            before = decimal(initial.get('filled_qty', 0))
+            filled = decimal(observation.get('filled_qty', 0))
+            maximum = filled if observation.get('status') in TERMINAL else decimal(intent['order']['qty'])
             asset = intent['order']['symbol']
-            delta = remaining if intent['order']['side'] == 'buy' else -remaining
-            lower[asset] = lower.get(asset, D(0)) + min(delta, D(0))
-            upper[asset] = upper.get(asset, D(0)) + max(delta, D(0))
+            sign = 1 if intent['order']['side'] == 'buy' else -1
+            # Position GETs may lag a newly observed terminal fill as well.
+            deltas = ((before - filled) * sign, (maximum - filled) * sign)
+            lower[asset] = lower.get(asset, D(0)) + min(deltas)
+            upper[asset] = upper.get(asset, D(0)) + max(deltas)
         if all(lower.get(s, D(0)) <= actual.get(s, D(0)) - expected.get(s, D(0)) <= upper.get(s, D(0))
                for s in mismatches):
             raise TraderError('PAPER_RECONCILIATION_PENDING')
@@ -735,7 +749,7 @@ class PaperExecutor:
             account['_paper_risk_breach'] = (sum(marked.values(), D(0)) > decimal(limits['max_gross'])
                 or any(w > decimal(limits.get('max_weight_per_name', limits.get('max_weight_per_asset'))) for w in marked.values())
                 or sum((abs(decimal(p['market_value'])) / equity for p in positions if decimal(p['qty']) < 0), D(0)) > decimal(limits.get('max_short_gross', 0)))
-            if equity < peak * D('.90') and not any(e.get('reason') == 'PAPER_KILL_SWITCH' for e in self.ledger.events(name, 'halt')):
+            if equity < peak * D('.90') and not any(e.get('reason') == 'PAPER_KILL_SWITCH' for e in self.ledger.active_halts(name)):
                 self.ledger.halt(name, 'PAPER_KILL_SWITCH')
             return client, account, positions
         except TraderError as error:
@@ -1160,7 +1174,7 @@ class PaperExecutor:
         if action == 'status':
             return status
         if self.ledger.halted(name):
-            reasons = {e['reason'] for e in self.ledger.events(name, 'halt')}
+            reasons = {e['reason'] for e in self.ledger.active_halts(name)}
             if reasons == {'PAPER_KILL_SWITCH'}:
                 plans = self.flatten(client, name, positions, dry_run=dry_run)
             else:

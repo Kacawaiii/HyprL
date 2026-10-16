@@ -42,8 +42,9 @@ def test_second_open_pass_refreshes_own_fill_between_order_and_position_reads(en
     assert not executor.ledger.halted('ia_actions')
 
 
-@pytest.mark.parametrize('unknown', ['none', 'order', 'position', 'missing_history', 'wrong_decision'])
-def test_incident_resume_requires_complete_get_only_order_and_position_proof(environment, tmp_path, monkeypatch, unknown):
+@pytest.mark.parametrize('unknown,kill_after_resume', [('none', False), ('none', True), ('order', False),
+    ('position', False), ('missing_history', False), ('wrong_decision', False)])
+def test_incident_resume_requires_complete_get_only_order_and_position_proof(environment, tmp_path, monkeypatch, unknown, kill_after_resume):
     import json
     from scripts.trading_lab.sources.canonical import sha256_canonical
     executor, broker, _, clock = environment
@@ -89,9 +90,12 @@ def test_incident_resume_requires_complete_get_only_order_and_position_proof(env
     assert {l['exit_at'] for l in lots.values()} == {'2026-10-16T20:00:00Z'}
     # The normal overdue-lot sweep still owns Monday's exit.
     clock.at = instant('2026-10-19T13:30:30Z')
+    if kill_after_resume:
+        broker.accounts['ia_actions']['equity'] = '89000'
     executor.client_factory = lambda g, name, **kw: paper.PaperClient(g, name, transport=native, **kw)
     assert executor.run('exit', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 2 and broker.posts()[-1][3]['side'] == 'sell'
+    assert executor.ledger.events('ia_actions', 'intent')[-1]['purpose'] == ('kill' if kill_after_resume else 'exit')
 
 
 def test_equity_waits_for_open_then_submits_day_once(environment):
@@ -124,6 +128,23 @@ def test_moving_known_fill_defers_without_orders_but_unknown_position_still_halt
     assert result['state'] == 'BLOCKED'
     assert result['accounts'][0]['reason'] == ('PAPER_RECONCILIATION_MISMATCH' if unknown else 'PAPER_RECONCILIATION_PENDING')
     assert executor.ledger.halted('ia_actions') is unknown
+    assert len(broker.posts()) == 1
+
+
+@pytest.mark.parametrize('direction,probability,sign', [('UP', .8, 1), ('DOWN', .2, -1)])
+def test_fresh_terminal_fill_with_lagging_position_defers_until_gets_match(environment, direction, probability, sign):
+    executor, broker, _, _ = environment
+    issue(executor, horizons=('1d',), direction=direction, probability=probability)
+    executor.run('execute', accounts=['ia_actions'])
+    key = broker.posts()[0][3]['client_order_id']
+    broker.fill('ia_actions', key)
+    broker.positions[('ia_actions', 'AAPL')] = paper.D(sign)
+    result = executor.run('execute', accounts=['ia_actions'])
+    assert result['state'] == 'BLOCKED'
+    assert result['accounts'][0]['reason'] == 'PAPER_RECONCILIATION_PENDING'
+    assert not executor.ledger.halted('ia_actions') and len(broker.posts()) == 1
+    broker.positions[('ia_actions', 'AAPL')] = sign * paper.decimal(broker.orders[('ia_actions', key)]['qty'])
+    assert executor.run('execute', accounts=['ia_actions'])['state'] == 'COMPLETE'
     assert len(broker.posts()) == 1
 
 

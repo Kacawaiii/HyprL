@@ -6,6 +6,7 @@ writers; it cannot make separate broker GET responses atomic.
 
 The lock-aware second open pass now retries order/position reconciliation up to
 three times. A remaining delta wholly within known outstanding signed quantities
+or the progress of a fill observed in that pass
 returns `PAPER_RECONCILIATION_PENDING`, blocks dispatch and leaves the account
 eligible for a later reconciliation. Unknown orders, unexplained positions and
 invalid or regressing fills retain their existing refusal and halt behavior.
@@ -20,6 +21,8 @@ order, missing history, binding failure or risk breach refuses the resume.
 Success appends a resume referencing the preserved halt and reconciliation;
 it neither places orders nor changes any lot's quantity or exit deadline.
 An overdue equity lot remains subject to the next regular-session opening sweep.
+Later kill-switch handling uses the active halts since that resume, preserving
+the historical incident without obstructing a new safety liquidation.
 
 Label realization validates SPY before consuming each dependent symbol's quota.
 Invalid native prices retain strict rejection and produce exact
