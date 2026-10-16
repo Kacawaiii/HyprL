@@ -1,0 +1,29 @@
+{
+  "schema": "trader-shadow-v2-preregistration-v1",
+  "revision": 1,
+  "spec_hash": "e7a219a8690ee50ab4880e73cbbb0f0d82295a948c934036763cdb2f306ec5ea",
+  "operator_decision_hash": "4e073916015c8af716140d34b68cf16abcba90fabddcfd5a70852f58ad6f44b2",
+  "initial_equity": 100000,
+  "provenance": "SHADOW_FORWARD",
+  "freeze_at": "runtime initialization before first decision",
+  "primary_unit": "cluster x entry session; counts alongside every layer metric",
+  "core": "equity_momentum+hunter_runner+optional ETF long trend",
+  "news": "primary events, liquid small/mid cap; negative emphasis; positive hypothesis unproven; five-session time stop",
+  "scoring": "net cash PnL and R by core/news; veto counts by code; veto counterfactual unmeasured; no efficacy claim",
+  "blocked_prerequisites": [
+    "read replay-bench report before activation",
+    "dedicated current v2 input and model authorization with caps",
+    "verified forward local quote/calendar/source producer",
+    "exact-SHA CI and fast-forward integration"
+  ],
+  "forbidden": [
+    "broker orders",
+    "single-stock shorts",
+    "crypto",
+    "holdout research",
+    "v1 modification",
+    "automatic promotion",
+    "tuning on forward ledger"
+  ],
+  "canonical_sha256": "26581e54b5804a2d9a40e6d309a8b8b2aeb22b77fb80c682852c4f8e826fe73e"
+}

@@ -1,0 +1,119 @@
+{
+  "schema": "trader-shadow-v2-spec-v1",
+  "revision": 1,
+  "operator_decision_hash": "4e073916015c8af716140d34b68cf16abcba90fabddcfd5a70852f58ad6f44b2",
+  "mode": "SHADOW_ONLY_NO_BROKER",
+  "initial_equity": 100000,
+  "max_heat": 0.04,
+  "max_cluster": 0.015,
+  "max_name_notional": 0.08,
+  "max_gross": 1.0,
+  "max_spread_fraction": 0.01,
+  "fee_per_side": 0.001,
+  "slippage_per_side": 0.0002,
+  "clusters": [
+    "energy",
+    "technology",
+    "financials",
+    "health",
+    "consumer",
+    "industrials",
+    "broad_index",
+    "rates",
+    "commodities",
+    "fx",
+    "real_estate",
+    "utilities"
+  ],
+  "etf_universe": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "TLT",
+    "IEF",
+    "GLD",
+    "DBC",
+    "UUP",
+    "VNQ"
+  ],
+  "core": {
+    "equity_momentum": "Clenow exponential OLS90 annualized250 x R2; SPY>MA200; close>MA100; gap90<15%; top20%; sleeve30%, 0.1% sleeve/ATR20; stop3ATR; Wednesday rank exits",
+    "hunter_runner": "two_layer=true; S2/S3/S4; revenue acceleration>=10pt; no chase>10%; stop20%; risk0.3%; max8; trail25% after best close+50%",
+    "etf_trend": "optional long-only adaptation; MA50>MA100; close50 high; ATR100; stop/trail3ATR; risk0.25%; unlevered"
+  },
+  "news": {
+    "cap_usd": [
+      300000000,
+      20000000000
+    ],
+    "min_dollar_volume": 10000000,
+    "primary_only": true,
+    "negative": "block entries and exit held longs; no single-stock shorts",
+    "positive": "primary beat_and_raise only; shadow hypothesis UNPROVEN",
+    "holding_sessions": 5,
+    "allowed_holding_sessions": [
+      2,
+      10
+    ],
+    "source_age_seconds": 259200
+  },
+  "governor": {
+    "week_loss": 0.03,
+    "week_size": 0.5,
+    "month_loss": 0.06,
+    "month_size": 0.25,
+    "month_review": "required coded flag in nightly report",
+    "peak_loss_halt": 0.08
+  },
+  "execution": {
+    "type": "local authorized quote inbox only; no outbound client",
+    "entry": "ask +2bp, fee10bp; subsequent quote at/after approval; displayed-size cap, whole shares; pending expires5min",
+    "exit": "bid -2bp, fee10bp; gaps fill through stop; no continuous quote path assumed",
+    "protective_exits": "deterministic stop/time/negative-primary/rank exits; independent of LLM availability",
+    "limitations": [
+      "IEX is a partial market feed; no guaranteed execution",
+      "minute polling can miss intraminute stops",
+      "overnight gaps can exceed initial risk",
+      "primary provenance relies on authorized input producer"
+    ]
+  },
+  "inputs": {
+    "snapshot_age_seconds": 300,
+    "quote_age_seconds": 60,
+    "calendar_age_seconds": 64800,
+    "metadata_age_seconds": 345600,
+    "daily_bars": "previous completed NYSE session; original wire t; explicit available_at after session close",
+    "events": "full-day CPI/FOMC/NFP entry blackout; earnings through holding horizon; no implicit absent-calendar approval"
+  },
+  "supervisor": {
+    "model": "sonnet",
+    "role": "immutable proposed entries only; coded vetoes, no invention or sizing",
+    "tools": [],
+    "max_calls_per_day": 8,
+    "counterfactual": "UNMEASURED until a separately preregistered comparison"
+  },
+  "cadence": {
+    "zone": "America/New_York",
+    "decisions": [
+      "open+10min",
+      "close-20min"
+    ],
+    "slot_tolerance_seconds": 180,
+    "watch": "each minute during NYSE session",
+    "reconcile": "16:05 market timezone"
+  },
+  "freeze": "new runtime only; spec+prereg+implementation digest; no migration; no v1 imports, accounts, keys, units or preregistration",
+  "promotion": "operator decision only after replay test-period result; never automatic",
+  "evidence": "forward shadow only; synthetic smoke is segregated; no replay/holdout input or performance claim",
+  "schema_hashes": {
+    "news": "ec19f9fb526486b7cedbe5d79e682c192034f90e27f17dfaa213c35ab60e9ccb",
+    "supervisor": "c1cb98d11b09afc544c8f2ccf48a628cada03c321053e5d285bfbb67f72f4a78",
+    "snapshot": "c169e35f7d039fafffec05d7bec17925a032ce9bb02cc7d7cf2eea0c9533b6c7",
+    "quotes": "4902ea9c0a241ef66a0bccb03a08b20d3cc351c4d6befb4ce8c61d3a87c7dc45"
+  },
+  "prompt_hashes": {
+    "news.txt": "c00d829f98c56173c38c946fbd219c7391ec56f2daadfef84a3a42a6ff433550",
+    "supervisor.txt": "c3eb1e7f39349de32f2b02629e8a81e3c5ae1278e16aacf28ac79c0b4b362e1c"
+  },
+  "canonical_sha256": "e7a219a8690ee50ab4880e73cbbb0f0d82295a948c934036763cdb2f306ec5ea"
+}
