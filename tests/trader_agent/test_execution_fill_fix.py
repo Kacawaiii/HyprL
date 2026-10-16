@@ -12,8 +12,9 @@ from tests.trader_agent.test_alpaca_paper import environment, issue
 def test_second_open_pass_refreshes_own_fill_between_order_and_position_reads(environment):
     executor, broker, grant, clock = environment
     clock.at = instant('2026-10-16T13:30:30Z')
-    issue(executor, horizons=('1d',), direction='DOWN', probability=.2, verdict='DOWNGRADE')
+    issue(executor, horizons=('1d',), direction='DOWN', probability=.42, verdict='DOWNGRADE')
     assert executor.run('execute', accounts=['ia_actions'])['state'] == 'COMPLETE'
+    assert broker.posts()[0][3]['qty'] == '4' and broker.posts()[0][3]['side'] == 'sell'
     key = broker.posts()[0][3]['client_order_id']
     clock.at = instant('2026-10-16T13:33:00Z')
     order = broker.orders[('ia_actions', key)]
