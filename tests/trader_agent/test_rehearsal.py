@@ -393,11 +393,12 @@ def test_full_chain_uses_real_configuration_with_only_gets_and_zero_decisions(li
     checks, state, clock, calls, _ = live_checks
     result = rehearse(state, checks.steps(), clock=clock, notify=lambda *a: 'DELIVERED', reports=checks.args.reports)
     assert result['state'] == 'GREEN', [s for s in result['steps'] if s['state'] != 'GREEN']
-    assert len(result['steps']) == 14
+    assert len(result['steps']) == 13
+    assert 'analyst_gpt' not in {s['step'] for s in result['steps']}
     assert all(method == 'GET' for _, method, _ in calls)
     assert checks.research.records('prediction') == []
     assert checks.ledger.counts() == {'yahoo_chart': 3, 'coinbase_exchange_public': 2, 'gdelt_doc_api': 1,
-                                      'gpt_preflight': 1, 'rehearsal_analyst_claude': 1, 'rehearsal_reviewer': 1}
+                                      'rehearsal_analyst_claude': 1, 'rehearsal_reviewer': 1}
     assert (state.root / 'cockpit-probe/analysis.json').exists()
 
 

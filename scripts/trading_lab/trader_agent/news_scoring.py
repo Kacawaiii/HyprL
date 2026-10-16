@@ -6,6 +6,7 @@ from .news_spec import PREREG_HASH, preregistration, spec
 
 
 def comparison(predictions, labels, summaries, metric):
+    from . import retirement_spec
     rule = spec()['promotion']
     preregistration()
     complete = {s['run_id']: s['base_run_id'] for s in summaries
@@ -17,7 +18,8 @@ def comparison(predictions, labels, summaries, metric):
         signal = p['signal']
         arm = 'news' if signal.get('arm') == 'news' else 'base'
         from .slots import PREREG_HASH as pm_hash
-        expected = pm_hash if signal.get('slot') == 'pm' else PREREG_HASH
+        retired = p['artifact_hash'] == retirement_spec.PREREG_HASH
+        expected = retirement_spec.PREREG_HASH if retired else pm_hash if signal.get('slot') == 'pm' else PREREG_HASH
         if (arm == 'news' and (signal['run_id'] not in complete or p['artifact_hash'] != expected)
                 or arm == 'base' and signal['run_id'] not in base_ids):
             continue
@@ -27,6 +29,8 @@ def comparison(predictions, labels, summaries, metric):
                       'after_hours' if 'after_hours' in variant else 'catchup' if 'catchup' in variant else 'weekday')
         if signal.get('slot') == 'pm':
             population = 'pm_' + population
+        if retired:
+            population = retirement_spec.POPULATION + ':' + population
         target = 'raw' if p['product'] in CRYPTO_PRODUCTS else 'SPY_relative'
         key = (population, 'crypto' if target == 'raw' else 'equity_etf', definition['horizon'], target, view['analyst'])
         issued[(key, arm)] += 1
@@ -55,7 +59,8 @@ def comparison(predictions, labels, summaries, metric):
                  'ELIGIBLE_FOR_OPERATOR_REVIEW' if news['hit_rate'] > base['hit_rate'] and news['brier'] < base['brier'] else
                  'NOT_ELIGIBLE')
         comparisons.append(dict(zip(('population', 'asset_class', 'horizon', 'target', 'role'), key)) |
-                           {'state': state, **entries})
+                           {'state': 'RETIRED' if key[4] in retirement_spec.RETIRED else state, **entries})
     return {'schema': 'trader-news-ab-scorecard-v1', 'preregistration_hash': PREREG_HASH,
             'mode': 'SHADOW_ONLY', 'promotion_rule': rule, 'comparisons': comparisons,
-            'paired_base_runs': len(base_ids), 'complete_news_runs': len(complete)}
+            'paired_base_runs': len(base_ids), 'complete_news_runs': len(complete),
+            'role_lifecycle': retirement_spec.lifecycle()}

@@ -67,6 +67,7 @@ class Authorization:
     news_decision: dict | None = None
     pm_amendment: dict | None = None
     pm_identity: str | None = None
+    retirement_decision: dict | None = None
 
     @classmethod
     def load(cls, path, *, amendment_path=None):
@@ -104,6 +105,13 @@ class Authorization:
         return amended.load_weekend(Path(path).parent)
 
     def load_weekend(self, folder):
+        from .retirement_spec import DECISION_NAME as retirement_name, DECISION_HASH as retirement_hash
+        path = folder / retirement_name
+        if path.exists():
+            decision = strict_json(path.read_text())
+            if sha256_canonical(decision) != retirement_hash:
+                raise TraderError('GPT_RETIREMENT_OPERATOR_DECISION_HASH_MISMATCH')
+            self = replace(self, retirement_decision=decision)
         from .slots import load_amendment
         self = load_amendment(self, folder)
         from .news_spec import DECISION_NAME, DECISION_HASH

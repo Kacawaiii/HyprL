@@ -8,7 +8,9 @@ HALF_CRYPTO = 'crypto_single_kept_half_v1'
 ROLES = {'analyst_claude', 'analyst_gpt'}
 
 
-def selections(views, account):
+def selections(views, account, *, retired=False):
+    if retired and any(v['analyst'] in {'analyst_gpt', 'reviewer_gpt', 'consensus'} for v in views):
+        raise TraderError('PAPER_RETIRED_VIEW_REFUSED')
     groups, consensus = {}, {}
     for view in views:
         key = (view['asset'], view['horizon'])

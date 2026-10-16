@@ -110,8 +110,14 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
           status='COMPLETE', verdict='KEEP', tainted=False, reviewer=True, variant=None, peer_direction=None, peer_verdict=None, artifact_hash=PREREG_HASH, slot='am'):
     at = executor.clock()
     from scripts.trading_lab.trader_agent import slots
+    from scripts.trading_lab.trader_agent import retirement_spec
+    retired = retirement_spec.active(at)
     if slot == 'pm':
         variant, artifact_hash = 'pm_slot_v1' if calendar_session(at.date().isoformat()) else 'pm_weekend_crypto_v1', slots.PREREG_HASH
+    if retired:
+        artifact_hash = retirement_spec.PREREG_HASH
+        if not executor.ledger.events(event='gpt_retirement_registration'):
+            executor.ledger.append('gpt_retirement_registration', None, **retirement_spec.registration_target(executor.ledger))
     if slot != 'pm' and not variant and any(a not in executor.grant.parent.payload['universe']['crypto'] for a in assets):
         session = calendar_session(at.date().isoformat())
         if session and session.open_at <= at < session.close_at:
@@ -124,12 +130,13 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
                     'p_outperform': probability, 'verdict': verdict}
             if peer_direction and peer_direction != direction:
                 view.update(view='ABSTAIN', p_outperform=.5, verdict='ABSTAIN')
-            views.append(view)
+            if not retired:
+                views.append(view)
             raw = [{**view, 'analyst': role, 'view': direction if role == 'analyst_claude' else peer_direction or direction,
                     'verdict': verdict if role == 'analyst_claude' else peer_verdict or verdict,
                     'p_outperform': .5 if role == 'analyst_gpt' and peer_direction == 'ABSTAIN' else
                                       1 - probability if role == 'analyst_gpt' and peer_direction == 'DOWN' else probability}
-                   for role in ('analyst_claude', 'analyst_gpt')]
+                   for role in (('analyst_claude',) if retired else ('analyst_claude', 'analyst_gpt'))]
             views.extend(raw)
             window = slots.label_window if slot == 'pm' else label_window
             entry, exit_at = window(asset, day, horizon, executor.grant.parent.payload['universe']['crypto'],
@@ -137,7 +144,7 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
             definition = {'entry_at': iso(entry), 'exit_at': iso(exit_at), 'horizon': horizon}
             if variant:
                 definition['variant'] = variant
-            for selected in [view, *raw]:
+            for selected in ([*raw] if retired else [view, *raw]):
                 identity = sha256_canonical({'run': run_id, 'asset': asset, 'horizon': horizon, 'analyst': selected['analyst']})
                 p = PredictionRecord(prediction_id=identity, model_id='trader:' + selected['analyst'], model_contract_hash='a' * 64,
                     artifact_hash=artifact_hash, product=asset, decision_at=iso(at), horizon_seconds=100,
@@ -151,7 +158,10 @@ def issue(executor, *, assets=('AAPL',), horizons=('1d', '5d'), direction='UP', 
                 executor.research.issue(p, evidence)
     executor.research.append('replay-summary', {'schema': 'trader-run-v1', 'run_id': run_id, 'at': iso(at),
         'status': status, 'slot': slot, 'synthetic': False, 'tainted': tainted,
-        'decision': {'slot': slot, **({'pm_amendment_hash': executor.grant.parent.pm_identity} if slot == 'pm' else {}), 'execution_preregistration_hash': slots.preregistration() if slot == 'pm' else paper.execution_preregistration(), 'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
+        'decision': {'slot': slot, **({'preregistration_hash': retirement_spec.PREREG_HASH} if retired else {}),
+                     **({'pm_amendment_hash': executor.grant.parent.pm_identity} if slot == 'pm' else {}),
+                     'execution_preregistration_hash': retirement_spec.PREREG_HASH if retired else slots.preregistration() if slot == 'pm' else paper.execution_preregistration(),
+                     'session': day, 'models': {'reviewer': {'cli_version': 'synthetic'}} if reviewer else {}, 'views': views}}, recorded_at=iso(at))
 
 
 @pytest.mark.parametrize('release', [True, False])

@@ -193,6 +193,7 @@ def metrics(samples, issued):
 
 
 def scorecard(store, *, synthetic=False, include_samples=False):
+    from . import retirement_spec
     labels = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "label")}
     inputs = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "inputs")}
     samples, issued, cohort_views = defaultdict(list), defaultdict(int), defaultdict(list)
@@ -214,8 +215,12 @@ def scorecard(store, *, synthetic=False, include_samples=False):
         if view["analyst"].startswith("analyst_"):
             groups.append("reviewer_" + {"KEEP": "kept", "REJECT": "rejected", "DOWNGRADE": "downgraded"}[view["verdict"]])
         targets = ["raw"] if population == "crypto" else ["raw", "SPY_relative"]
-        baselines = inputs[row["identity"]]["baselines"] if view["analyst"] == "consensus" else {}
+        retired = p['artifact_hash'] == retirement_spec.PREREG_HASH
+        baseline_role = 'reviewer_claude' if retired else 'consensus'
+        baselines = inputs[row["identity"]]["baselines"] if view["analyst"] == baseline_role else {}
         variant = definition.get("variant")
+        if retired:
+            variant = retirement_spec.POPULATION + (':' + variant if variant else '')
         if variant:   # e.g. the catch-up run: scored apart, never pooled with the primary preregistered views
             groups = [f"{variant}:{g}" for g in groups]
             baselines = {f"{variant}:{k}": v for k, v in baselines.items()}
@@ -234,7 +239,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
             value = label["value"]
             r = value["raw_return"] if target == "raw" else value["spy_relative_return"]
             # Preserve existing weekday climatology; the new population has its own history.
-            history_key = (population, horizon, target, 'weekend_crypto' in (variant or ''), p['signal'].get('arm', 'base'), slot)
+            history_key = (population, horizon, target, 'weekend_crypto' in (variant or ''), p['signal'].get('arm', 'base'), slot, retired)
             prior = [v for a, v in historical[history_key] if a < p["decision_at"]]
             climate = statistics.mean(prior) if prior else .5
             sample = {"p": view["p_outperform"], "view": view["view"], "y": int(r > 0), "return": r,
@@ -252,7 +257,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
                 samples[key].append(baseline)
                 for bucket in (slot, "combined"):
                     slot_samples[(bucket, aggregate_key(key))].append(baseline)
-            if view["analyst"] == "consensus":
+            if view["analyst"] == baseline_role:
                 historical[history_key].append((label["recorded_at"], int(r > 0)))
     scores = {key: metrics(samples[key], count) for key, count in sorted(issued.items())}
     primary = scores.get("consensus/equity_etf/5d/SPY_relative", {})
@@ -292,7 +297,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
                                  "scored_population_variants": sorted(issued), "count": len(issued)},
             "limitations": ["Interim looks exploratory; overlapping 5d labels and cross-asset dependence",
                             "Equity raw-direction scores use outperformance probabilities and are secondary diagnostics",
-                            "Climatology prequential from earlier observed consensus asset-days, initial 0.50",
+                            "Climatology prequential within each protocol from earlier observed asset-days, initial 0.50",
                             "Fixed modeled equity half-spread 2.5bp each side; not measured spread",
                             "No LLM backtest on pre-cutoff outcomes; no calibration or edge claim"]}
     def bucket(name):
@@ -304,6 +309,10 @@ def scorecard(store, *, synthetic=False, include_samples=False):
                 'hypothesis_state': 'DESCRIPTIVE_ONLY'}
     card['by_slot'] = {name: bucket(name) for name in ('am', 'pm')}
     card['combined'] = bucket('combined')
+    card['role_lifecycle'] = retirement_spec.lifecycle()
+    card['current_preregistration_hash'] = retirement_spec.PREREG_HASH
+    card['current_score_population'] = retirement_spec.POPULATION
+    card['effective_model_budgets'] = retirement_spec.spec()['model_budgets']
     if include_samples:
         card['_primary_samples'] = samples['consensus/equity_etf/5d/SPY_relative']
     from .news_scoring import comparison

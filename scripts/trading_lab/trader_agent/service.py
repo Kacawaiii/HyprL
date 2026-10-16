@@ -15,7 +15,7 @@ from .portfolio import portfolios
 from .runners import HERE, prompt
 from .schemas import validate, validate_analyst, validate_reviewer
 from .scoring import rows
-from . import slots
+from . import slots, retirement_spec
 
 # Operator-approved same-day recovery (2026-10-06), extended 2026-10-07 ~12:45Z:
 # "on peut pas reprendre le run mtn on perd trop" authorizes recovery after FAILED even if models were called.
@@ -40,7 +40,14 @@ def preregistration():
     return expected
 
 
-def skills():
+def skills(at=None):
+    if at is not None and retirement_spec.active(at):
+        artifact = retirement_spec.pinned('trader_agent_preregistration_v10.json', retirement_spec.preregistration())
+        paths = {name + '_SKILL.md': HERE / 'skills' / (name + '_SKILL_V2.md') for name in ('TRADER', 'REVIEWER')}
+        hashes = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()}
+        if hashes != artifact['skill_hashes']:
+            raise TraderError('SKILL_HASH_MISMATCH')
+        return {name: path.read_text() for name, path in paths.items()}, hashes
     texts = {name: (HERE / "skills" / name).read_text() for name in ("TRADER_SKILL.md", "REVIEWER_SKILL.md")}
     hashes = {name: hashlib.sha256((HERE / "skills" / name).read_bytes()).hexdigest() for name in texts}
     artifact = json.loads(ARTIFACT.read_text())
@@ -57,7 +64,7 @@ NEVER_DEGRADE = {"BUDGET_EXHAUSTED", "PAUSED", "MISSED_DECISION_DEADLINE", "MISS
 ROLES = ("analyst_claude", "analyst_gpt")
 
 
-def views_with_review(analysts, reviewer, degraded=None):
+def views_with_review(analysts, reviewer, degraded=None, *, consensus=True):
     reviews = {(r["analyst"], r["asset"], r["horizon"]): r for r in reviewer["verdicts"]}
     output, kept = [], {}
     for analyst, result in analysts.items():
@@ -82,6 +89,8 @@ def views_with_review(analysts, reviewer, degraded=None):
                 output.append({"asset": asset, "horizon": horizon, "analyst": name, "view": "ABSTAIN", "p_outperform": .5,
                                "verdict": "MISSING", "raw_view": None, "review": None, "error": code})
     for (asset, horizon), pair in kept.items():
+        if not consensus:
+            continue
         agrees = len(pair) == 2 and pair[0]["view"] == pair[1]["view"] and pair[0]["view"] != "ABSTAIN"
         p = min((r["p_outperform"] for r in pair), key=lambda p: abs(p - .5)) if agrees else .5
         output.append({"asset": asset, "horizon": horizon, "analyst": "consensus",
@@ -120,6 +129,7 @@ class TraderService:
         return counts.get(role, 0) >= model['calls_per_day'] + model['retries_per_day']
 
     def catchup_missing(self, daily_run_id):
+        roles = retirement_spec.roles(self.clock())
         counts = self.ledger.counts()
         statuses = {r['payload'].get('status') for r in rows(self.store, 'replay-summary')
                     if r['payload'].get('schema') == 'trader-run-v1'
@@ -129,12 +139,13 @@ class TraderService:
         if any(r['payload'].get('signal', {}).get('run_id') == daily_run_id
                for r in rows(self.store, 'prediction')):
             raise TraderError('CATCHUP_NOT_ALLOWED')
-        missing = {role: 'BUDGET_EXHAUSTED' for role in ROLES if self.role_exhausted(role, counts)}
-        remaining = self.ledger.grant.payload['budgets']['max_llm_calls_per_day'] - sum(
+        missing = {role: 'BUDGET_EXHAUSTED' for role in roles if self.role_exhausted(role, counts)}
+        remaining = min(self.ledger.grant.payload['budgets']['max_llm_calls_per_day'],
+                        4 if retirement_spec.active(self.clock()) else 6) - sum(
             counts.get(role, 0) for role in (*ROLES, 'reviewer'))
         # Need at least one valid analyst and a reviewer; retries still reserve against the same immutable bank.
-        if (counts.get('catchup_run', 0) or len(missing) == len(ROLES)
-                or self.role_exhausted('reviewer', counts) or remaining < len(ROLES) - len(missing) + 1):
+        if (counts.get('catchup_run', 0) or len(missing) == len(roles)
+                or self.role_exhausted('reviewer', counts) or remaining < len(roles) - len(missing) + 1):
             raise TraderError('BUDGET_EXHAUSTED')
         return missing
 
@@ -197,7 +208,7 @@ class TraderService:
                     raise TraderError("MISSED_DECISION_DEADLINE")
                 self.runner.deadline = cutoff if catchup else deadline
                 prereg_hash = slots.preregistration() if pm else weekend.preregistration() if self.crypto_only else preregistration()
-                texts, hashes = skills()
+                texts, hashes = skills(at)
                 self.ledger.reserve("catchup_run" if catchup else "run")
                 variants = list(slots.pinned('trader_agent_preregistration_v9.json', slots.PREREG_HASH)['variants']) if pm else weekend.variants() if self.crypto_only else VARIANTS
                 from .paper_spec import execution_spec, execution_preregistration
@@ -205,6 +216,12 @@ class TraderService:
                 if at >= instant(execution_spec()['effective_from']):
                     execution_registration = slots.preregistration() if pm else execution_preregistration()
                     variants = list(dict.fromkeys([*variants, *execution_spec()['variants']]))
+                retired = retirement_spec.active(at)
+                if retired:
+                    if not self.data.synthetic and not self.ledger.grant.retirement_decision:
+                        raise TraderError('GPT_RETIREMENT_OPERATOR_DECISION_REQUIRED')
+                    prereg_hash = execution_registration = retirement_spec.preregistration()
+                    variants = retirement_spec.pinned('trader_agent_preregistration_v10.json', prereg_hash)['variants']
                 self.summary(run_id, "RUNNING", at, preregistration_hash=prereg_hash, multiple_testing_variants=variants)
                 context, context_hash = build_context(self.ledger.grant, self.data, at=slots.start_at(day, 'pm') if pm else at, fomc=self.fomc,
                                                       edgar=self.edgar, crypto_only=self.crypto_only, freeze_cutoff=pm, label_anchor=self.pm_anchor)
@@ -242,7 +259,7 @@ class TraderService:
                 self.runner.deadline = min(self.runner.deadline, entry_deadline)
                 analysts, last = {}, None
                 # Neither prompt contains the other analyst's output. Serial to bound host memory.
-                for role in ROLES:
+                for role in retirement_spec.roles(at):
                     self.before_call(session)
                     if role in degraded:
                         continue   # no CLI/version request or reservation for an exhausted catch-up analyst
@@ -274,14 +291,16 @@ class TraderService:
                                         self.ledger.grant.payload["external_models"][role]["model"],
                                         "cli_version": "NOT_RUN", "reported_version": "NOT_RUN"} for role in degraded},
                                **self.runner.metadata},
-                    "views": views_with_review(analysts, reviewer, degraded)}
+                    "views": views_with_review(analysts, reviewer, degraded, consensus=not retired)}
+                if retired:
+                    decision['models']['analyst_gpt'] = retirement_spec.retired_model()
                 validate("decision", decision)
                 self.record(decision, context)
                 return self.summary(run_id, "DEGRADED" if degraded else "COMPLETE", decision_at, decision=decision,
                     **({"degraded": degraded} if degraded else {}),
-                    portfolios=portfolios(decision["views"]), exclusions=context["exclusions"],
+                    portfolios=portfolios(decision["views"], analyst='reviewer_claude' if retired else 'consensus'), exclusions=context["exclusions"],
                     reviewed_analyst_portfolios={a:portfolios(decision['views'],analyst=a)
-                                                for a in ('reviewer_claude','reviewer_gpt')},
+                                                for a in (('reviewer_claude',) if retired else ('reviewer_claude','reviewer_gpt'))},
                     multiple_testing_variants=variants,
                     budget_counts=self.ledger.counts())
             except TraderError as error:
@@ -378,16 +397,21 @@ class TraderService:
                     deadline = min(self.window(a, day, '1d')[0]
                                    for a in context['universe'])
                 self.runner.deadline = deadline
-                texts, hashes = skills()
+                texts, hashes = skills(self.clock())
                 prereg_hash = slots.preregistration() if self.ledger.slot == 'pm' else news_spec.preregistration()
                 variants = ['news_pm_slot_v1', 'news_pm_weekend_crypto_v1'] if self.ledger.slot == 'pm' else list(news_spec.spec()['variants'].values())
+                retired = retirement_spec.active(self.clock())
+                if retired:
+                    if not self.data.synthetic and not self.ledger.grant.retirement_decision:
+                        raise TraderError('GPT_RETIREMENT_OPERATOR_DECISION_REQUIRED')
+                    prereg_hash = retirement_spec.preregistration()
                 summary('RUNNING', preregistration_hash=prereg_hash, multiple_testing_variants=variants)
                 identity = sha256_canonical(context)
                 self.store.append('replay-summary', {'schema': 'trader-context-evidence-v1', 'run_id': run_id,
                     'arm': 'news', 'context_hash': identity, 'context': context}, object_id=run_id + ':context',
                     recorded_at=iso(self.clock()))
                 analysts, degraded = {}, {}
-                for role in ROLES:
+                for role in retirement_spec.roles(self.clock()):
                     self.before_call(session)
                     try:
                         analysts[role] = self.runner.infer(role, prompt(context, texts['TRADER_SKILL.md']),
@@ -408,7 +432,9 @@ class TraderService:
                 decision = {**base['decision'], 'run_id': run_id, 'arm': 'news', 'base_run_id': base['run_id'],
                     'decision_at': iso(self.clock()), 'context_hash': identity, 'preregistration_hash': prereg_hash,
                     'models': {**models, **self.runner.metadata}, 'skill_hashes': hashes,
-                    'views': views_with_review(analysts, reviewer, degraded)}
+                    'views': views_with_review(analysts, reviewer, degraded, consensus=not retired)}
+                if retired:
+                    decision['models']['analyst_gpt'] = retirement_spec.retired_model()
                 decision.pop('execution_preregistration_hash', None)
                 validate('decision', decision)
                 self.record(decision, context)

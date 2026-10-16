@@ -28,6 +28,7 @@ from . import slots
 from .paper_spec import (SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH, V3_DECISION_HASH,
                          OPERATOR_DECISION_HASH, execution_spec, execution_preregistration)
 from .execution_tiers import HALF_DOWNGRADE, selections, execution_scores
+from . import retirement_spec
 from .scoring import rows
 
 PAPER_URL = 'https://paper-api.alpaca.markets'
@@ -66,7 +67,7 @@ def allocated_quantities(intent, observation):
     filled = decimal(observation.get('filled_qty', 0))
     fraction = filled / total if total else D(1) if observation.get('status') == 'internal' else D(0)
     values = [decimal(lot['qty']) * fraction for lot in intent['lots']]
-    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH, slots.SPEC_HASH} else D('.00000001')
+    crypto_unit = D('.000000001') if intent.get('spec_hash') in {SPEC_HASH, PREVIOUS_SPEC_HASH, V3_SPEC_HASH, slots.SPEC_HASH, retirement_spec.SPEC_HASH} else D('.00000001')
     unit = crypto_unit if '/USD' in intent['order']['symbol'] else D(1)
     rounded = [v.quantize(unit, rounding=ROUND_DOWN) for v in values]
     signed_total = sum((decimal(l['qty']) for l in intent['lots']), D(0))
@@ -262,6 +263,28 @@ class PaperLedger:
         previous = self.events(event='pm_registration')
         if not previous or any(previous[-1].get(k) != v for k, v in target.items()):
             raise TraderError('PM_PAPER_REGISTRATION_REQUIRED')
+
+    def register_gpt_retirement(self, decision_path):
+        decision = strict_json(Path(decision_path).read_text())
+        if (sha256_canonical(decision) != retirement_spec.DECISION_HASH
+                or instant(decision['decided_at']) > self.clock()):
+            raise TraderError('GPT_RETIREMENT_OPERATOR_DECISION_REFUSED')
+        self.grant.check(self.clock())
+        with self.owner():
+            target = retirement_spec.registration_target(self)
+            previous = self.events(event='gpt_retirement_registration')
+            if previous:
+                if any(previous[-1].get(k) != v for k, v in target.items()):
+                    raise TraderError('PAPER_GPT_RETIREMENT_REGISTRATION_MISMATCH')
+                return previous[-1]
+            return self.append('gpt_retirement_registration', None, **target,
+                               reason='OPERATOR_APPROVED_FORWARD_ONLY_GPT_RETIREMENT')
+
+    def check_gpt_retirement_registration(self):
+        target = retirement_spec.registration_target(self)
+        previous = self.events(event='gpt_retirement_registration')
+        if not previous or any(previous[-1].get(k) != v for k, v in target.items()):
+            raise TraderError('PAPER_GPT_RETIREMENT_REGISTRATION_REQUIRED')
 
     def register_weekend(self, decision_path):
         """Explicit additive registration; no grant/spec migration or broker request."""
@@ -675,8 +698,14 @@ class PaperExecutor:
         if (run.get('tainted') or decision.get('tainted') or 'TAINTED_RUN' in run.get('degraded', {}).values()
                 or not reviewer or reviewer.get('cli_version') == 'NOT_RUN'):
             return []
-        views = selections(decision.get('views', []), name)
-        if not self.replay_prior_registration and decision.get('execution_preregistration_hash') != (slots.preregistration() if pm else execution_preregistration()):
+        retired = decision.get('preregistration_hash') == retirement_spec.PREREG_HASH
+        if retired:
+            self.ledger.check_gpt_retirement_registration()
+        if retirement_spec.active(self.clock()) and not self.replay_prior_registration and not retired:
+            return []
+        views = selections(decision.get('views', []), name, retired=retired)
+        expected_execution = retirement_spec.preregistration() if retired else slots.preregistration() if pm else execution_preregistration()
+        if not self.replay_prior_registration and decision.get('execution_preregistration_hash') != expected_execution:
             return []
         predictions = []
         for row in rows(self.research, 'prediction'):
@@ -691,7 +720,7 @@ class PaperExecutor:
                        slots.variant(is_weekend, 'pm_label_anchor' in decision) or
                        decision.get('slot') != 'pm' or decision.get('pm_amendment_hash') != self.grant.parent.pm_identity):
                 raise TraderError('PAPER_PM_PREDICTION_BINDING_MISMATCH')
-            expected_registration = slots.preregistration() if pm else weekend.preregistration() if is_weekend else preregistration()
+            expected_registration = retirement_spec.preregistration() if retired else slots.preregistration() if pm else weekend.preregistration() if is_weekend else preregistration()
             if is_weekend:
                 if name != 'ia_crypto' or calendar_session(p['signal']['session']) is not None:
                     continue
@@ -700,7 +729,7 @@ class PaperExecutor:
             elif calendar_session(p['signal']['session']) is None:
                 continue
             if not self.replay_prior_registration and (p['artifact_hash'] != expected_registration or
-                    instant(p['decision_at']) < instant(execution_spec()['effective_from'])):
+                    instant(p['decision_at']) < instant(retirement_spec.EFFECTIVE_FROM if retired else execution_spec()['effective_from'])):
                 continue
             selection = views.get((p['product'], definition['horizon']))
             if selection is None or selection[0]['analyst'] != view['analyst']:
@@ -810,6 +839,8 @@ class PaperExecutor:
                                'session': p['signal'].get('session', instant(p['decision_at']).astimezone(NY).date().isoformat()),
                                'horizon': definition['horizon'], 'exit_at': definition['exit_at'], 'entry_at': definition['entry_at'],
                                'prediction_hash': row['identity'], 'reference_price': str(price), 'weight': weight,
+                               **({'execution_spec_hash': retirement_spec.SPEC_HASH}
+                                  if p['artifact_hash'] == retirement_spec.PREREG_HASH else {}),
                                'direction': direction, 'size_multiplier': str(multiplier), 'slot': 'pm' if pm else 'am',
                                'population': 'weekend_crypto_v1' if definition.get('variant') in {'weekend_crypto_v1', 'pm_weekend_crypto_v1', 'pm_weekend_crypto_recovery_v1'}
                                else 'after_hours' if definition.get('variant') == 'alpaca_after_hours_v1' else 'weekday',
@@ -867,7 +898,8 @@ class PaperExecutor:
                 for lot in group:
                     lot['reference_price'] = str((decimal(q['bid']) + decimal(q['ask'])) / 2)
             plans.append({'client_id': key, 'run_id': run, 'purpose': purpose, 'lots': group,
-                          'spec_hash': slots.SPEC_HASH if any(l.get('slot') == 'pm' for l in group) else SPEC_HASH, 'order': {'symbol': asset, 'qty': str(abs(net)), 'side': side,
+                          'spec_hash': retirement_spec.SPEC_HASH if any(l.get('execution_spec_hash') == retirement_spec.SPEC_HASH for l in group)
+                          else slots.SPEC_HASH if any(l.get('slot') == 'pm' for l in group) else SPEC_HASH, 'order': {'symbol': asset, 'qty': str(abs(net)), 'side': side,
                                                          **terms, 'client_order_id': key}})
         return plans
 

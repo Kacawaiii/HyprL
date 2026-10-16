@@ -29,6 +29,10 @@ def replay(research, grant, day, *, equity='100000'):
         raise TraderError('PAPER_REPLAY_NETWORK_REFUSED')
     with TemporaryDirectory(prefix='hyprl-execution-replay-') as root:
         ledger = PaperLedger(Path(root), grant, clock=clock)
+        from . import retirement_spec
+        if run['decision'].get('preregistration_hash') == retirement_spec.PREREG_HASH:
+            # This registration exists only in the disposable, no-network counterfactual journal.
+            ledger.append('gpt_retirement_registration', None, **retirement_spec.registration_target(ledger))
         if any(v.get('asset') in grant.assets('ia_crypto') for v in run['decision']['views']):
             from .weekend import registration_target
             # Virtual registration is confined to this disposable counterfactual ledger.

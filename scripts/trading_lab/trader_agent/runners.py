@@ -145,6 +145,8 @@ class ModelRunner:
         self.web_searches = {}
 
     def infer(self, role, prompt, *, validator=None):
+        from .retirement_spec import check_dispatch
+        check_dispatch(role, self.clock())
         config = self.ledger.grant.payload["external_models"][role]
         attempts = 2 if self.ledger.arm == 'news' else config['retries_per_day'] + 1
         for attempt in range(attempts):
@@ -163,6 +165,8 @@ class ModelRunner:
         raise TraderError("MODEL_FAILED")  # pragma: no cover
 
     def once(self, role, prompt, *, preflight=False, probe=False):
+        from .retirement_spec import check_dispatch
+        check_dispatch(role, self.clock())
         if preflight and role != 'analyst_gpt':
             raise TraderError('UNAUTHORIZED_DISPATCH')
         if probe and (preflight or role not in {'analyst_claude', 'reviewer'}):

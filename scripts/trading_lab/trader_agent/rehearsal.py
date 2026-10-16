@@ -18,7 +18,7 @@ from urllib.request import Request, build_opener
 from scripts.trading_lab.research.store import ResearchStore
 from scripts.trading_lab.sources.canonical import sha256_canonical
 
-from .config import Authorization, ROLES, TraderError, instant, iso, now, private_root, strict_json
+from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import PublicData, NoRedirect, calendar_session, equity_calendar, price_summary, protected
 from .scoring import rows
 from .ledger import Ledger
@@ -336,18 +336,25 @@ class LiveChecks:
         self.research = ResearchStore(Path(self.args.runtime) / 'evidence', read_only=True)
         self.research.verify()
         self.paper = SnapshotPaperLedger(self.args.paper_runtime, self.paper_grant, self.clock)
+        from . import retirement_spec
+        if retirement_spec.active(self.clock()):
+            if not self.grant.retirement_decision:
+                raise TraderError('GPT_RETIREMENT_OPERATOR_DECISION_REQUIRED')
+            retirement_spec.preregistration()
+            self.paper.check_gpt_retirement_registration()
         with self.paper.owner():
             if slot == 'pm':
                 self.paper.check_pm_registration()
         data_ledger = Ledger(self.state.root / 'sources', self.grant, clock=self.clock,
                              budget_root=self.args.budget_root, slot=slot, preflight=True)
         self.public = PublicData(data_ledger, clock=self.clock)
-        skills()
+        skills(self.clock())
         preregistration()
         execution_spec()
         self.ready = True
         return {'population': self.mode, 'grant_hash': self.grant.identity,
-                'execution_spec_hash': self.paper.binding_target()['spec_hash']}
+                'execution_spec_hash': retirement_spec.SPEC_HASH if retirement_spec.active(self.clock())
+                                       else self.paper.binding_target()['spec_hash']}
 
     def prices(self, crypto):
         self.require()
@@ -493,25 +500,12 @@ class LiveChecks:
 
     def model(self, role, retry=False):
         self.require()
-        from .preflight import preflight
+        from . import retirement_spec
+        if role in retirement_spec.RETIRED:
+            return {'state': 'RETIRED', 'operator_decision_hash': retirement_spec.DECISION_HASH}
         from .runners import ModelRunner, command
         from .schemas import validate
         runner = ModelRunner(self.ledger, clock=self.clock)
-        if role == 'analyst_gpt':
-            path = self.ledger.root / 'gpt-preflight.json'
-            prior = strict_json(path.read_text()) if path.exists() else {}
-            if (prior.get('state') == 'GREEN' and prior.get('day') == self.clock().date().isoformat()
-                    and prior.get('model', {}).get('model') == self.grant.gpt_model):
-                # Revalidate the exact deployed schema binding even when reusing the web proof.
-                from .schemas import HERE, GPT_SCHEMAS, openai_strict_problems
-                schema = strict_json((HERE / 'schemas/analyst.gpt.json').read_text())
-                if schema != GPT_SCHEMAS['analyst'] or openai_strict_problems(schema):
-                    raise TraderError('GPT_SCHEMA_DRIFT')
-                return {'reused_gpt_preflight': True, 'web_searches': prior['web_searches'], 'model': prior['model']}
-            result = preflight(self.ledger, runner, retry=retry)
-            if result['state'] != 'GREEN':
-                raise TraderError(result.get('error', 'REHEARSAL_GPT_PREFLIGHT_FAILED'))
-            return {'web_searches': result['web_searches'], 'model': result['model']}
         cache = self.state.root / (role + '-probe.json')
         binding = sha256_canonical(command(role, self.grant))
         prior = strict_json(cache.read_text()) if cache.exists() else {}
@@ -694,7 +688,9 @@ class LiveChecks:
         if not callable(realize):
             raise TraderError('REHEARSAL_LABEL_JOB_UNAVAILABLE')
         card = scorecard(self.research)
-        return {'scorecard_hash': sha256_canonical(card), 'label_job_loaded': True, 'preregistration_hash': preregistration()}
+        from . import retirement_spec
+        registration = retirement_spec.preregistration() if retirement_spec.active(self.clock()) else preregistration()
+        return {'scorecard_hash': sha256_canonical(card), 'label_job_loaded': True, 'preregistration_hash': registration}
 
     def cockpit(self):
         self.require()
@@ -720,7 +716,8 @@ class LiveChecks:
     def steps(self, retry=False):
         return [('configuration', self.configuration), ('yahoo', lambda: self.prices(False)),
                 ('coinbase', lambda: self.prices(True)), ('gdelt', self.gdelt), ('radar_veille', self.news),
-                ('archives', self.archives), *[(role, lambda role=role: self.model(role, retry)) for role in ROLES],
+                ('archives', self.archives), *[(role, lambda role=role: self.model(role, retry))
+                                              for role in ('analyst_claude', 'reviewer')],
                 ('alpaca_data', self.alpaca_data), ('executor', self.executor), ('order_types', self.order_types),
                 ('scorer_labels', self.scoring), ('cockpit_export', self.cockpit)]
 

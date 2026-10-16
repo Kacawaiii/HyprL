@@ -92,7 +92,7 @@ def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run", "news", "recover", "catchup", "catchup-after-hours", "label", "health", "status", "pause", "resume", 'gpt-preflight',
-                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm'))
+                                          'paper-execute', 'paper-exit', 'paper-audit', 'paper-report', 'paper-status', 'paper-rebind', 'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm', 'paper-register-gpt-retirement'))
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--slot", choices=("am", "pm"), default="am")
@@ -114,13 +114,16 @@ def main(argv=None):
         runtime = private_root(args.runtime)
         if args.paper_replay_at and (args.action != 'paper-execute' or not args.dry_run):
             parser.error('--paper-replay-at requires paper-execute --dry-run')
-        if args.action in {'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm'}:
+        if args.action in {'paper-register-weekend', 'paper-register-news-guard', 'paper-register-pm', 'paper-register-gpt-retirement'}:
             if not args.operator_decision or args.dry_run:
                 parser.error(args.action + ' requires --operator-decision and forbids --dry-run')
             from .alpaca_paper import PaperAuthorization, PaperLedger
             paper_grant = PaperAuthorization.load(args.paper_authorization, grant)
             paper = PaperLedger(Path.home() / '.local/share/hyprl/trader-alpaca-paper', paper_grant)
-            registration = paper.register_pm(args.operator_decision) if args.action == 'paper-register-pm' else paper.register_weekend(args.operator_decision) if args.action == 'paper-register-weekend' else paper.register_news_guard(args.operator_decision)
+            register = {'paper-register-pm': paper.register_pm, 'paper-register-weekend': paper.register_weekend,
+                        'paper-register-news-guard': paper.register_news_guard,
+                        'paper-register-gpt-retirement': paper.register_gpt_retirement}[args.action]
+            registration = register(args.operator_decision)
             print(json.dumps({'state': 'REGISTERED', 'registration': registration}, indent=2))
             return 0
         if args.action == 'paper-rebind':

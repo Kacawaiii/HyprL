@@ -57,6 +57,8 @@ class Ledger:
         if self.paused:
             raise TraderError('PAUSED')
         at = self.clock()
+        from . import retirement_spec
+        retirement_spec.check_dispatch(kind, at)
         self.grant.check_slot(self.slot, at, preflight=self.preflight or kind.startswith(('rehearsal_', 'gpt_preflight')))
         if self.arm == 'news' and kind in self.grant.payload['data_sources']:
             raise TraderError('NEWS_ACQUISITION_FORBIDDEN')
@@ -89,6 +91,7 @@ class Ledger:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             at = self.clock()
+            retirement_spec.check_dispatch(logical_kind, at)
             day = at.date().isoformat() if news else self.budget_day or at.date().isoformat()
             self.grant.check_slot(self.slot, at, preflight=self.preflight or logical_kind.startswith(('rehearsal_', 'gpt_preflight')))
             if news:
@@ -100,13 +103,13 @@ class Ledger:
                 prefix = 'pm_' if self.slot == 'pm' else ''
                 total = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind IN (?,?,?)",
                     (day, prefix + "analyst_claude", prefix + "analyst_gpt", prefix + "reviewer")).fetchone()[0]
-                if total >= p["budgets"]["max_llm_calls_per_day"]:
+                if total >= min(p["budgets"]["max_llm_calls_per_day"], 4 if retirement_spec.active(at) else 6):
                     raise TraderError("BUDGET_EXHAUSTED")
             if news and logical_kind != 'news_run':
                 prefix = 'pm_' if self.slot == 'pm' else ''
                 total = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind IN (?,?,?)",
                     (day, prefix + 'news_analyst_claude', prefix + 'news_analyst_gpt', prefix + 'news_reviewer')).fetchone()[0]
-                if total >= 6:
+                if total >= (4 if retirement_spec.active(at) else 6):
                     raise TraderError('BUDGET_EXHAUSTED')
             if logical_kind == "gdelt_doc_api":
                 row = db.execute("SELECT at FROM dispatch WHERE kind IN (?,?) ORDER BY seq DESC LIMIT 1", ('gdelt_doc_api', 'pm_gdelt_doc_api')).fetchone()

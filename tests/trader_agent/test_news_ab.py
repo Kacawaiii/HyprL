@@ -164,7 +164,8 @@ def test_separate_news_predictions_frozen_context_base_untouched_and_scored_apar
     card = scorecard(service.store, synthetic=True)
     assert 'news_context_v1:analyst_claude/equity_etf/1d/SPY_relative' in card['scores']
     assert card['news_ab']['paired_base_runs'] == 1
-    assert all(c['state'] == 'TOO_EARLY' for c in card['news_ab']['comparisons'])
+    assert all(c['state'] == ('RETIRED' if c['role'] in {'analyst_gpt', 'reviewer_gpt', 'consensus'} else 'TOO_EARLY')
+               for c in card['news_ab']['comparisons'])
 
 
 def test_news_source_failure_does_not_fail_or_consume_base(news_service):

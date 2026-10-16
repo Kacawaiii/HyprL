@@ -1,0 +1,71 @@
+{
+  "schema": "trader-agent-preregistration-v10",
+  "revision": 13,
+  "registered_on": "2026-10-16",
+  "effective_from": "2026-10-16T00:00:00Z",
+  "operator_decision_hash": "5136ce360c9672b685e783448d31d7c87e2c8b925343b58e978fc5f3dd6a947c",
+  "execution_spec_hash": "c9fa4f18638612cfc42861fa775d15e007a1ec221ea69f07aa216f0cd58f928f",
+  "previous_preregistrations": {
+    "trader_agent_preregistration_v1.json": "bf234bbad501b4a636e841e5cdacf4f23244b0d8c42f534ded351883d54763b9",
+    "trader_agent_preregistration_v2.json": "3ae8bf1ba47ddd9a1aead3fabbc1444cdd05b3f9949f004c8aea500c62ed8ce7",
+    "trader_agent_preregistration_v3.json": "d38d91c8c822ddfaa478b102c22099aa00a750ec1957c83bb006ccd38df1d89c",
+    "trader_agent_preregistration_v4.json": "7b134cdaf0cb1b6d750ada86a9a8cd365745ad4dab1f14053354cbaa863a9adc",
+    "trader_agent_preregistration_v5.json": "e34839a11adbb3ff7aae52f311c190a2200dc6df5c51233422619ed060909b53",
+    "trader_agent_preregistration_v6.json": "eb39435cafa050c497699223c2de80c5d0d6cce44673eb9b55ca4b489b911ec1",
+    "trader_agent_preregistration_v7.json": "bcee03f1f9136c72bc2663a653b3ecd9e6f4d5454c4f7ce7957fc21c95271c65",
+    "trader_agent_preregistration_v8.json": "eef176adfdd071c3bc1edb7f73439bf9e4b5c414afa8d24279e7599d884c75bb",
+    "trader_agent_preregistration_v9.json": "25d6d41568029b51592ff8c6a463645ecf2e70e1834a43642c004b94aa2d85ef"
+  },
+  "scope": "Forward-only retirement of GPT analyst, reviewed GPT and consensus in am/pm base/news and all health probes. Claude analyst plus Claude reviewer retain existing horizons, labels, sizing, source/grant and role budgets. No budget reallocation. Historical rows remain immutable.",
+  "confirmatory": false,
+  "score_population": "gpt_retired_v1",
+  "active_roles": [
+    "analyst_claude",
+    "reviewer"
+  ],
+  "active_research_views": [
+    "analyst_claude",
+    "reviewer_claude"
+  ],
+  "retired": [
+    "analyst_gpt",
+    "reviewer_gpt",
+    "consensus",
+    "gpt_preflight"
+  ],
+  "skill_hashes": {
+    "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+    "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+  },
+  "variants": [
+    "analyst_claude",
+    "reviewer_claude",
+    "reviewer_kept",
+    "reviewer_rejected",
+    "reviewer_downgraded",
+    "always_up",
+    "momentum20",
+    "random_seeded",
+    "spy_relative_zero",
+    "alpaca_open_entry_v1",
+    "alpaca_after_hours_v1",
+    "alpaca_open_entry_v2",
+    "alpaca_after_hours_v2",
+    "weekend_crypto_v1",
+    "half_size_downgrade_v1",
+    "crypto_single_kept_half_v1",
+    "pm_slot_v1",
+    "pm_weekend_crypto_v1",
+    "pm_slot_recovery_v1",
+    "pm_weekend_crypto_recovery_v1",
+    "news_pm_slot_v1",
+    "news_pm_weekend_crypto_v1",
+    "news_pm_slot_recovery_v1",
+    "news_pm_weekend_crypto_recovery_v1",
+    "news_context_v1",
+    "news_context_weekend_crypto_v1",
+    "news_context_catchup_v1",
+    "news_context_after_hours_v1"
+  ],
+  "canonical_sha256": "584d96095e6dac777d2bf67dde604017880aeaee843c2390b9352b9c8c1a8b21"
+}
