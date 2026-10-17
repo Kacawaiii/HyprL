@@ -78,6 +78,43 @@ def post_message(url, payload):
         raise RadarError('TELEGRAM_TRANSPORT_UNCONFIRMED') from None
 
 
+def discord_hook(credentials):
+    """Operator 2026-10-17 (« passe tout sur discord »): radar digests and alerts go to the HyprL Discord #brouillons
+    (staff-only: the digest carries a private report path). The webhook sits next to the Telegram file (discord.env)."""
+    try:
+        values = {}
+        for line in (Path(credentials).expanduser().parent / 'discord.env').read_text().splitlines():
+            name, sep, raw = line.strip().partition('=')
+            if sep:
+                values[name.strip()] = raw.strip()
+        url = values.get('DISCORD_WEBHOOK_BROUILLONS', '')
+        return url if url.startswith('https://discord.com/api/webhooks/') and not any(c in url for c in '?#\\ \r\n') else None
+    except Exception:
+        return None
+
+
+def discord_parts(message, limit=1900):
+    parts, cur = [], ''
+    for line in message.splitlines(keepends=True):
+        if len(cur) + len(line) > limit and cur:
+            parts.append(cur); cur = ''
+        cur += line[:limit]
+    return parts + ([cur] if cur else [])
+
+
+def post_discord(url, payload):
+    """Discord rejects bare urllib clients: send an explicit User-Agent. Never raises; (0, b'') on transport errors."""
+    try:
+        request = Request(url, data=json.dumps(payload).encode(), method='POST',
+                          headers={'Content-Type': 'application/json', 'User-Agent': 'HyprL-radar/1.0'})
+        with build_opener(NoRedirect()).open(request, timeout=20) as response:
+            return response.status, response.read(100_001)
+    except HTTPError as error:
+        return error.code, b''
+    except Exception:
+        return 0, b''
+
+
 class TelegramDelivery:
     def __init__(self, store, grant, *, credentials=None, post=post_message):
         self.store, self.grant, self.post = store, grant, post
@@ -113,7 +150,8 @@ class TelegramDelivery:
             previous = self.store.latest('delivery', key)
             if previous:
                 return {'status': 'DEDUPLICATED', 'previous_status': previous['status']}
-            token, recipient = self.secrets()
+            hook = discord_hook(self.credentials)
+            token, recipient = (None, None) if hook else self.secrets()
             maximum = self.grant.payload['budgets']['telegram']
             if reserve_digests:
                 # Reserve capacity for both scheduled digests within the same
@@ -131,6 +169,23 @@ class TelegramDelivery:
             # blind retry that sends a second operator notification.
             self.store.append('delivery', key, attempt)
             try:
+                if hook:
+                    ids = []
+                    for part in discord_parts(message):
+                        status, raw = post_discord(hook + '?wait=true', {'content': part, 'allowed_mentions': {'parse': []}})
+                        answer = json.loads(raw or b'{}') if status == 200 else {}
+                        if status != 200 or not answer.get('id'):
+                            break
+                        ids.append(answer['id'])
+                    if bool(ids) and len(ids) == len(discord_parts(message)):
+                        attempt = {**attempt, 'status': 'SENT', 'channel': 'discord', 'message_id': ids[0]}
+                        self.store.append('delivery', key, attempt)
+                        return attempt
+                    if ids:  # partly delivered: never duplicate through Telegram
+                        attempt = {**attempt, 'status': 'FAILED', 'channel': 'discord', 'reason': 'DISCORD_PARTIAL'}
+                        self.store.append('delivery', key, attempt)
+                        return attempt
+                    token, recipient = self.secrets()  # Discord unreachable: Telegram fallback
                 status, raw = self.post('https://api.telegram.org/bot' + token + '/sendMessage',
                                         {'chat_id': recipient, 'text': message, 'disable_web_page_preview': True})
                 response = json.loads(raw)
