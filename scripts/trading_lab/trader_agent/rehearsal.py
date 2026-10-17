@@ -89,9 +89,35 @@ class MonitorState:
         return delivered
 
 
+def discord_webhook(env_path):
+    """Operator 2026-10-17: alerts go to the HyprL Discord #alertes-systeme channel; Telegram stays the fallback.
+    The webhook lives next to the Telegram file (discord.env, DISCORD_WEBHOOK_ALERTES_SYSTEME)."""
+    try:
+        values = {}
+        for line in (Path(env_path).parent / 'discord.env').read_text().splitlines():
+            name, sep, raw = line.strip().partition('=')
+            if sep:
+                values[name.strip()] = raw.strip()
+        url = values.get('DISCORD_WEBHOOK_ALERTES_SYSTEME', '')
+        return url if url.startswith('https://discord.com/api/webhooks/') and not any(c in url for c in '?#\\\r\n ') else None
+    except Exception:
+        return None
+
+
 def telegram(env_path):
-    """No subprocess/shell environment loading; URL and exceptions never reach logs."""
+    """No subprocess/shell environment loading; URL and exceptions never reach logs. Discord first, Telegram fallback."""
     def send(key, message):
+        url = discord_webhook(env_path)
+        if url:
+            try:
+                request = Request(url + '?wait=true', data=json.dumps({'content': message[:1900], 'allowed_mentions': {'parse': []}}).encode(),
+                                  headers={'Content-Type': 'application/json', 'User-Agent': 'HyprL-trader/1.0'}, method='POST')
+                with build_opener(NoRedirect()).open(request, timeout=15) as response:
+                    answer = strict_json(response.read(65537).decode() or '{}')
+                if answer.get('id'):
+                    return 'DELIVERED'
+            except Exception:
+                pass
         try:
             values = {}
             for line in Path(env_path).read_text().splitlines():
