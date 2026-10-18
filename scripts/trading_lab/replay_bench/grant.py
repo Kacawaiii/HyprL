@@ -105,7 +105,7 @@ class Budget:
             data[day][key] = used + 1
             return used + 1
 
-    def reserve_model(self, family, limit, at, night_limit=150):
+    def reserve_model(self, family, limit, at, night_limit=60):
         """Atomically reserve both model and shared night allowance, including legacy calls."""
         with self._locked() as data:
             day = data.setdefault(iso(at)[:10], {})

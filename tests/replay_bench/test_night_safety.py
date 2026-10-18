@@ -16,7 +16,7 @@ AT = gr.instant('2026-10-19T01:00:00Z')
 
 def successful(args, **kwargs):
     event = {'subtype': 'success', 'structured_output': {'ok': True},
-             'modelUsage': {models.MODELS['sonnet']: {}}, 'permission_denials': []}
+             'modelUsage': {models.MODELS['opus']: {}}, 'permission_denials': []}
     return subprocess.CompletedProcess(args, 0, stdout=json.dumps(event), stderr='')
 
 
@@ -30,8 +30,8 @@ def test_no_calls_outside_window(tmp_path, hour, minute):
     seen = []
     c = client(tmp_path, lambda *a, **kw: seen.append(a), AT.replace(hour=hour, minute=minute))
     with pytest.raises(gr.ReplayError, match='OUTSIDE_NIGHT_WINDOW'):
-        c.call('sonnet', 'q', {}, tag='x')
-    assert not seen and gr.Budget(tmp_path).used('model:sonnet', AT) == 0
+        c.call('opus', 'q', {}, tag='x')
+    assert not seen and gr.Budget(tmp_path).used('model:opus', AT) == 0
 
 
 def test_call_timeout_cannot_cross_end_of_night(tmp_path):
@@ -40,23 +40,23 @@ def test_call_timeout_cannot_cross_end_of_night(tmp_path):
         seen.append(kwargs['timeout'])
         return successful(args, **kwargs)
     c = client(tmp_path, runner, AT.replace(hour=5, minute=29, second=50))
-    c.call('sonnet', 'q', {}, tag='x')
+    c.call('opus', 'q', {}, tag='x')
     assert seen == [9]
 
 
 def test_shared_atomic_night_cap_includes_legacy_models(tmp_path):
     b = gr.Budget(tmp_path)
-    atomic_json(b.path, {'2026-10-19': {'model:opus': 12, 'model:sonnet': 136}})
+    atomic_json(b.path, {'2026-10-19': {'model:opus': 12, 'model:sonnet': 46}})
     def reserve(_):
         try:
-            b.reserve_model('sonnet', 400, AT)
+            b.reserve_model('opus', 150, AT)
             return True
         except gr.ReplayError as error:
             assert error.code == 'BUDGET_EXHAUSTED'
             return False
     with ThreadPoolExecutor(8) as workers:
         assert sum(workers.map(reserve, range(8))) == 2
-    assert b.used('model:sonnet', AT) == 138
+    assert b.used('model:opus', AT) == 14
 
 
 def test_usage_limit_stops_before_next_day_is_submitted():
@@ -74,12 +74,12 @@ def test_saved_response_is_not_called_again_and_unknown_intent_blocks(tmp_path):
         seen.append(args)
         return successful(args, **kwargs)
     c = client(tmp_path, runner)
-    first = c.call('sonnet', 'q', {}, tag='x')
-    assert c.call('sonnet', 'q', {}, tag='x') == first and len(seen) == 1
+    first = c.call('opus', 'q', {}, tag='x')
+    assert c.call('opus', 'q', {}, tag='x') == first and len(seen) == 1
     path = next((tmp_path / 'transcripts').glob('*.json'))
     atomic_json(path, {'state': 'INTENT'})
     with pytest.raises(gr.ReplayError, match='CALL_OUTCOME_UNKNOWN'):
-        c.call('sonnet', 'q', {}, tag='x')
+        c.call('opus', 'q', {}, tag='x')
     assert len(seen) == 1
 
 
@@ -91,7 +91,7 @@ def test_timeout_is_not_blindly_retried(tmp_path):
     c = client(tmp_path, runner)
     for _ in range(2):
         with pytest.raises(gr.ReplayError, match='CALL_OUTCOME_UNKNOWN'):
-            c.call('sonnet', 'q', {}, tag='x')
+            c.call('opus', 'q', {}, tag='x')
     assert len(seen) == 1
 
 
@@ -101,7 +101,7 @@ def test_structured_quota_response_also_stops(tmp_path):
         return subprocess.CompletedProcess(args, 0, stdout=json.dumps(event), stderr='')
     c = client(tmp_path, runner)
     with pytest.raises(gr.ReplayError, match='MODEL_USAGE_LIMIT'):
-        c.call('sonnet', 'q', {}, tag='x')
+        c.call('opus', 'q', {}, tag='x')
     assert c.budget.stopped(AT) == 'MODEL_USAGE_LIMIT'
 
 
@@ -110,12 +110,12 @@ def test_alias_drift_invalidates_the_probe_binding(tmp_path):
         return subprocess.CompletedProcess(args, 0, stdout=json.dumps({
             'structured_output': {'ok': True}, 'modelUsage': {'changed-model': {}}}), stderr='')
     with pytest.raises(gr.ReplayError, match='MODEL_IDENTITY_CHANGED'):
-        client(tmp_path, runner).call('sonnet', 'q', {}, tag='x')
+        client(tmp_path, runner).call('opus', 'q', {}, tag='x')
 
 
 def test_schema_is_validated_locally_not_just_sent_to_cli(tmp_path):
     with pytest.raises(gr.ReplayError, match='MODEL_SCHEMA_INVALID'):
-        client(tmp_path).call('sonnet', 'q', {'type': 'object', 'required': ['views']}, tag='x')
+        client(tmp_path).call('opus', 'q', {'type': 'object', 'required': ['views']}, tag='x')
 
 
 def test_exact_probe_event_coverage_and_grades_are_required(tmp_path):
@@ -139,7 +139,7 @@ def test_exact_probe_event_coverage_and_grades_are_required(tmp_path):
 def test_original_forced_threshold_cannot_be_relaxed_after_results():
     rows = [{'family': 'sonnet', 'month': month, 'id': f'{month}{i}', 'knows': False, 'correct': i < 3}
             for month in ('2026-08', '2026-10') for i in range(6)]
-    summary = probe.summarize(rows, spec.spec()['probe'])
+    summary = probe.summarize(rows, json.loads((spec.ROOT / 'docs/artifacts/replay_bench_spec_v3.json').read_text())['probe'])
     assert summary['sonnet']['replay_floor'] == '2026-11-01'
     assert not hasattr(probe, 'forced_floor')
 
@@ -155,12 +155,18 @@ def test_no_eligible_dates_and_no_proof_prevent_dispatch(tmp_path, monkeypatch):
         experiment.input_proof(tmp_path)
 
 
-def test_opus_audit_is_dev_only_and_capped_at_15(tmp_path, monkeypatch):
-    monkeypatch.setattr(audit, 'evidence', lambda root: {'floor': {'sonnet': '2026-07-01', 'opus': '2026-07-01'}})
-    days, _ = experiment.planned(tmp_path, 'dev', 'opus')
-    assert len(days) <= 15 and len(days) > 0
+def test_opus_full_period_and_anonymized_subset_are_declared(tmp_path, monkeypatch):
+    monkeypatch.setattr(audit, 'evidence', lambda root: {'floor': {'opus': '2026-07-01'}})
+    days, start = experiment.planned(tmp_path, 'dev', 'ab')
+    assert start == '2026-07-01' and days == run.sessions('2026-07-01', '2026-08-31')
+    assert experiment.planned(tmp_path, 'dev', 'cd')[0] == days
+    assert experiment.planned(tmp_path, 'dev', 'anon')[0] == days[::4]
+    assert experiment.planned(tmp_path, 'test', 'ab')[0] == run.sessions('2026-09-01', '2026-10-09')
+    assert all(families == ('opus',) for families in experiment.GROUP_MODELS.values())
     with pytest.raises(gr.ReplayError, match='AUDIT_IS_DEV_ONLY'):
-        experiment.planned(tmp_path, 'test', 'opus')
+        experiment.planned(tmp_path, 'test', 'anon')
+    with pytest.raises(gr.ReplayError, match='GROUP_NOT_ALLOWED'):
+        experiment.planned(tmp_path, 'dev', 'opus')
 
 
 def test_trial_rejects_old_spec_before_reading_snapshot(tmp_path):
@@ -174,9 +180,9 @@ def test_test_claim_is_resume_only_for_same_freeze(tmp_path, monkeypatch):
     monkeypatch.setattr(experiment, 'check_freeze', lambda root: {'config': 'a'})
     monkeypatch.setattr(experiment, 'head', lambda: 'synthetic-sha')
     experiment.claim_test(tmp_path)
-    original = (tmp_path / 'v3/test_started.json').read_bytes()
+    original = (tmp_path / 'v4/test_started.json').read_bytes()
     experiment.claim_test(tmp_path)
-    assert (tmp_path / 'v3/test_started.json').read_bytes() == original
+    assert (tmp_path / 'v4/test_started.json').read_bytes() == original
     monkeypatch.setattr(experiment, 'check_freeze', lambda root: {'config': 'b'})
     with pytest.raises(gr.ReplayError, match='TEST_ALREADY_STARTED_WITH_OTHER_CONFIG'):
         experiment.claim_test(tmp_path)
@@ -277,12 +283,15 @@ def test_score_outputs_labels_and_daily_marks_for_all_groups(tmp_path, monkeypat
         record['decision_hash'] = sha256_canonical(record)
         run.write_json(out / group / f'{day}.json.gz', record)
     result = score.score(tmp_path, 'dev', object(), value)
-    assert (tmp_path / 'v3/results/dev.json').exists()
+    assert (tmp_path / 'v4/results/dev.json').exists()
     assert result['summary']['a_v1_as_live:1d']['n_views'] == 1
     # 2% relative move less 2 * (0.1% fee + 0.05% liquidity-tier slippage).
     assert result['summary']['a_v1_as_live:1d']['mean_net_bp'] == pytest.approx(170)
     assert result['summary']['c_news_small_mid']['daily_pnl']['2026-07-16'] != 0
-    assert result['paired_audits']['audit_opus_a'] == {'n_pairs': 1, 'agree': 1}
+    assert result['paired_audits']['audit_anonymized'] == {'n_pairs': 1, 'agree': 1}
+    assert 'audit_opus_a' not in result['paired_audits']
+    monkeypatch.setattr(run, 'Universe', lambda *a, **kw: pytest.fail('A scored period was fetched again'))
+    assert score.score(tmp_path, 'dev', object(), value) == result
     assert all(r['snapshot_hash'] and 'daily_pnl' in r for r in result['labels'])
 
 
@@ -337,8 +346,8 @@ def test_committed_freeze_binds_current_code_and_all_four_variants():
     assert frozen['config_hashes'] == {g: run.config_hash('test', g) for g in ('ab', 'cd')}
     assert frozen['declaration_hash'] == sha256_canonical(declaration)
     assert len(declaration['variants']) == 4
-    assert frozen['eligibility'] == 'BLOCKED_BEFORE_TEST'
-    assert frozen['test_days'] == {'ab': [], 'cd': []}
+    assert frozen['input_seal_required'] is True
+    assert frozen['test_days'] == {g: run.sessions('2026-09-01', '2026-10-09') for g in ('ab', 'cd')}
 
 
 def test_timer_install_refuses_missing_environment_before_any_write(tmp_path):

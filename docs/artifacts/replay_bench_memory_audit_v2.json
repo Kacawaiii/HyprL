@@ -1,0 +1,86 @@
+{
+  "spec_hash": "0814d6e4c424ec883dcf4b3e2da4a70f82f694499dc18cc33dc406a1140e8b56",
+  "floor": {
+    "opus": "2026-07-01"
+  },
+  "excluded_families": [
+    "sonnet"
+  ],
+  "tables": {
+    "opus": {
+      "exact_eps": {
+        "correct": 0,
+        "n": 35
+      },
+      "optional_direction": {
+        "unknown": 60,
+        "n": 60
+      },
+      "forced_direction": {
+        "correct_by_month": {
+          "2026-05": 9,
+          "2026-06": 4,
+          "2026-07": 7,
+          "2026-08": 6,
+          "2026-09": 8
+        },
+        "pooled_correct": 21,
+        "pooled_n": 36,
+        "always_up_by_month": {
+          "2026-05": 9,
+          "2026-06": 3,
+          "2026-07": 7,
+          "2026-08": 9,
+          "2026-09": 5
+        },
+        "always_up_pooled": 21,
+        "binomial_one_sided_p_vs_half": 0.20251612307038158,
+        "flagged": false
+      }
+    },
+    "sonnet": {
+      "exact_eps": {
+        "correct": 0,
+        "n": 35
+      },
+      "optional_direction": {
+        "unknown": 60,
+        "n": 60
+      },
+      "forced_direction": {
+        "correct_by_month": {
+          "2026-05": 7,
+          "2026-06": 4,
+          "2026-07": 7,
+          "2026-08": 10,
+          "2026-09": 9
+        },
+        "pooled_correct": 26,
+        "pooled_n": 36,
+        "always_up_by_month": {
+          "2026-05": 9,
+          "2026-06": 3,
+          "2026-07": 7,
+          "2026-08": 9,
+          "2026-09": 5
+        },
+        "always_up_pooled": 21,
+        "binomial_one_sided_p_vs_half": 0.005665492091793567,
+        "flagged": true
+      }
+    }
+  },
+  "file_digests": {
+    "probe-preregistration.json": "249cbe13f4a2186c482ad1d025a5cc1415d04a9a5df91ecd0c34fc386b4059e0",
+    "probe2-preregistration.json": "876fb8547fcb9f5a4d05f38b9773edaae3fdbf6505bd07aebb8c1486e1698ecf",
+    "probe3-preregistration.json": "e3d454c38ce5836d356090597e460298592fce84664e91cd20bb44b006422331",
+    "answers-opus.json": "e1d372f2f91902ea4ac49c79a47e13b6987d39ab20a8b30b67c8fe1ca32238ac",
+    "answers-sonnet.json": "e1d372f2f91902ea4ac49c79a47e13b6987d39ab20a8b30b67c8fe1ca32238ac",
+    "probe2-answers-opus.json": "c4f2778e16d7e9ada56341b733a5ea3707e10303f9b0b47151dd40fc0b85689d",
+    "probe2-answers-sonnet.json": "c4f2778e16d7e9ada56341b733a5ea3707e10303f9b0b47151dd40fc0b85689d",
+    "probe3-answers-opus.json": "65ac7cd73a621ce4b8c7b5443c881b02db0718ca2b16687c9d8a1b0304a4e0ec",
+    "probe3-answers-sonnet.json": "886f1999deffab8c40ae98002ce28cb0ed70b65e5c59cff65bca9335a2792dbf"
+  },
+  "evidence_hash": "da3b00468e18015dda8ae4cfd0f3ae0b7335a215ec03b91aa36157f2da9344a5",
+  "limitations": "Non-flagging does not prove absence of memory. Clean sessions and pre-call rule hashing are operator-attested; raw answer files do not contain CLI modelUsage envelopes."
+}

@@ -10,11 +10,12 @@ from .grant import ReplayError
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
 SKILLS = ROOT / 'scripts/trading_lab/trader_agent/skills'
-SPEC_FILE = ROOT / 'docs/artifacts/replay_bench_spec_v3.json'
-SPEC_HASH = '80a8a4dff0e07baebac5378972d60347a51c42ca0a1ba196d07ed167b129ecaa'
+SPEC_FILE = ROOT / 'docs/artifacts/replay_bench_spec_v4.json'
+SPEC_HASH = '0814d6e4c424ec883dcf4b3e2da4a70f82f694499dc18cc33dc406a1140e8b56'
 # Revision 1 served the main probe only; it stays on disk and is never loaded for a decision.
 SUPERSEDED = {1: 'f96cbe1fad63cc68f22b190a2a5eacca4d86dc1bf59afc256aa802d80811980f',
-              2: '95c2ed012a9954a6c4b08309ab32ff1e87217ee2af466c62854d8751b0f3cc9f'}
+              2: '95c2ed012a9954a6c4b08309ab32ff1e87217ee2af466c62854d8751b0f3cc9f',
+              3: '80a8a4dff0e07baebac5378972d60347a51c42ca0a1ba196d07ed167b129ecaa'}
 PROVENANCE = 'REPLAY_POST_CUTOFF'
 # Supplementary probe (declared after the main probe, before any replay decision): 12 pre-cutoff control events
 # (2025-12, 2026-03) and a forced-guess pass over all 48 events. It can only make the floor more conservative.
@@ -30,7 +31,7 @@ def spec():
     expected = value.pop('canonical_sha256')
     if expected != SPEC_HASH or sha256_canonical(value) != expected:
         raise ReplayError('SPEC_HASH_MISMATCH')
-    if value['supersedes']['canonical_sha256'] != SUPERSEDED[2]:
+    if value['supersedes']['canonical_sha256'] != SUPERSEDED[3]:
         raise ReplayError('SPEC_LINEAGE_MISMATCH')
     variants = value['variants']
     for name, digest in variants['a_v1_as_live']['skills'].items():
