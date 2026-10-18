@@ -58,7 +58,7 @@ jobs:
       - name: Prospective paper trader, restricted runners, budgets, labels and API
         run: python -m pytest tests/trader_agent -q
       - name: Offline replay causality, memory gate, frozen test and night batch safety
-        run: python -m pytest tests/replay_bench tests/replay_duel -q
+        run: python -m pytest tests/replay_bench tests/replay_duel tests/replay_seal_forward -q
       - name: Isolated agent v2 shadow causality, risk, ledger and veto contracts
         run: python -m pytest tests/agent_v2 -q
       - name: Project-scoped B2B auth, isolation, budgets, audit, exports and OpenAPI

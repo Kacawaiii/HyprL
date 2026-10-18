@@ -1,0 +1,31 @@
+{
+  "schema": "replay-seal-forward-admission-v1",
+  "status": "BLOCKED",
+  "provenance": "APPROXIMATE_POINT_IN_TIME",
+  "method_hash": "5464c2f722f93702c4cc3eb54a38935fdb2ff6892cd19b34119183d1ab328d70",
+  "cache_object_count": 863,
+  "cache_inventory_hash": "839d9b26b02f733865c08768663934d56fe93489548e51033f3518effd4987ee",
+  "counts": {
+    "news_objects": 719,
+    "news_items": 34914,
+    "bar_objects": 144,
+    "bar_rows": 356699
+  },
+  "earliest_bar_date": "2026-05-01",
+  "latest_bar_date": "2026-10-16",
+  "asset_response_count": 0,
+  "sec_submission_response_count": 0,
+  "archive_request_index_present": false,
+  "budget_hash_before": "5a769cfae6f910410090f99f13dead0e9ca8d67cd84d880f58ae12081d7774de",
+  "blockers": [
+    "VENDOR_REQUEST_INDEX_MISSING",
+    "ACTIVE_AND_INACTIVE_ASSETS_REQUIRED",
+    "PRIOR_200_SESSION_COVERAGE_UNAVAILABLE"
+  ],
+  "manifest_sealed": false,
+  "model_calls_this_task": 0,
+  "official_source_requests_this_task": 0,
+  "unproven": [
+    "EDGAR_ACCEPTANCE_ARCHIVE_UNAVAILABLE_PRIMARY_ONLY_ABSTAINS"
+  ]
+}

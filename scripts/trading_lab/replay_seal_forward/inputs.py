@@ -1,0 +1,174 @@
+"""Declared method: strict cutoffs, headline-only news, and causal universes."""
+from datetime import timedelta
+import re
+import statistics
+
+from scripts.trading_lab.sources.canonical import sha256_canonical
+from scripts.trading_lab.replay_bench import marketdata as md, snapshot as sn
+from scripts.trading_lab.replay_bench.grant import ReplayError, instant, iso
+from . import spec
+
+RISKS = ['vendor corrections of historical bars', 'headline edits within 24 h',
+         'universe survivorship for names without Alpaca history', 'news vendor coverage gaps']
+
+
+def declaration(root):
+    import json
+    from pathlib import Path
+    values = [json.loads((Path(root) / name).read_text()) for name in ('input_proof.json', 'duel_input_proof.json')]
+    if values[0] != values[1] or sha256_canonical(values[0]) != spec.spec()['declared_method_sha256']:
+        raise ReplayError('METHOD_DECLARATION_CHANGED')
+    return values[0]
+
+
+def news_at(rows, T):
+    out = []
+    for row in rows:
+        created = instant(row['created_at'])
+        updated = instant(row.get('updated_at') or row['created_at'])
+        if updated < created:
+            raise ReplayError('NEWS_EDIT_CLOCK_INVALID')
+        if created >= T or updated - created > timedelta(hours=24) or md.PROTECTED.intersection(row['symbols']):
+            continue
+        # No summary, article, author, URL or last-edit text enters selection or
+        # the model. The URL is an opaque citation identifier required by schema.
+        out.append({'id': row['id'], 'headline': row['headline'], 'source': row['source'],
+                    'symbols': sorted(row['symbols']), 'created_at': iso(created)})
+    return sorted(out, key=lambda r: (r['created_at'], r['id']), reverse=True)
+
+
+def rows_at(bars, T, *, crypto=False):
+    bars = [b for b in bars if instant(b['t']) < T]
+    rows = md.crypto_rows(bars) if crypto else md.session_rows(bars)
+    rows = [r for r in rows if r['close_at'] < T]
+    if len({r['bar_open_at'] for r in rows}) != len(rows):
+        raise ReplayError('DUPLICATE_PRICE_SESSION')
+    return sorted(rows, key=lambda r: r['bar_open_at'])
+
+
+def headline(row):
+    return {'news_id': row['id'], 'title': row['headline'], 'source': row['source'],
+            'symbols': row['symbols'], 'published_at': row['created_at'],
+            'url': 'https://news.invalid/' + str(row['id'])}
+
+
+def small_mid(rows, T):
+    if len(rows) < 200:
+        return 'HISTORY_LT_200_SESSIONS'
+    dollar = statistics.mean(float(r['close']) * float(r['volume']) for r in rows[-50:])
+    if dollar < 10e6:
+        return 'DOLLAR_VOLUME_50D_LT_10M'
+    from scripts.trading_lab.trader_agent.data import price_summary
+    try:
+        stats = price_summary(rows, 'candidate', T, False)
+    except Exception as error:
+        return getattr(error, 'code', 'PRICE_INVALID')
+    return dict(stats, mean_dollar_volume_50d=dollar, history_sessions=len(rows))
+
+
+def build(archive, T, method_hash):
+    archive.require_assets()
+    start = md.previous_close(T)
+    earliest = min(T - timedelta(hours=72), start)
+    archive.require_news(earliest, T)
+    visible = [n for n in news_at(archive.news.values(), T) if instant(n['created_at']) >= earliest]
+    prices, eligible, excluded = {}, [], []
+    items = {}
+    def bind(kind, identity, value):
+        key = kind + ':' + str(identity)
+        items[key] = sha256_canonical(value)
+    # Include items consulted during ranking and exclusions, not only the winners.
+    for n in visible:
+        bind('news', n['id'], n)
+    for asset in sn.UNIVERSE + sn.BENCHMARKS:
+        bars = archive.bars.get(asset, [])
+        if not any(instant(b['t']) < instant('2026-07-01T00:00:00Z') for b in bars):
+            raise ReplayError('FIXED_UNIVERSE_PRE_JULY_HISTORY_MISSING', asset)
+        rows = rows_at(bars, T, crypto=asset in sn.CRYPTO)
+        from scripts.trading_lab.trader_agent.data import price_summary
+        try:
+            prices[asset] = price_summary(rows, asset, T, asset in sn.CRYPTO)
+        except Exception as error:
+            raise ReplayError('FIXED_UNIVERSE_HISTORY_INCOMPLETE', asset) from error
+        for row in rows[-21:]:
+            bind('bar', asset + ':' + iso(row['bar_open_at']), {k: iso(v) if hasattr(v, 'tzinfo') else v for k, v in row.items()})
+        if asset in sn.UNIVERSE:
+            eligible.append(asset)
+    window = [n for n in visible if instant(n['created_at']) >= T - timedelta(hours=72)]
+    headlines = {}
+    for asset in eligible:
+        selected = [n for n in window if sn.alpaca_news_symbol(asset) in n['symbols']][:8]
+        headlines[asset] = {'state': 'AVAILABLE', 'items': [headline(n) for n in selected]}
+        for n in selected:
+            bind('news', n['id'], n)
+    macro = [n for n in window if {'SPY', 'QQQ'}.intersection(n['symbols'])][:15]
+    headlines['macro'] = {'state': 'AVAILABLE', 'items': [headline(n) for n in macro]}
+    for n in macro:
+        bind('news', n['id'], n)
+    ab = {'schema': 'replay-context-v1', 'session': T.date().isoformat(), 'decision_time': iso(T),
+          'price_cutoff': iso(T), 'universe': eligible, 'prices': prices, 'headlines': headlines,
+          'archives': {'fomc': {'state': 'NOT_CONFIGURED', 'items': []}, 'edgar': {'state': 'AVAILABLE', 'items': []}},
+          'exclusions': excluded, 'synthetic': False, 'limitations': RISKS,
+          'provenance': spec.PROVENANCE}
+    by_symbol = {}
+    for n in visible:
+        if instant(n['created_at']) < start or not 1 <= len(n['symbols']) <= 2:
+            continue
+        for symbol in n['symbols']:
+            if sn.TICKER.fullmatch(symbol) and symbol not in sn.NOT_SMALL_MID:
+                by_symbol.setdefault(symbol, []).append(n)
+    candidates, rejections = [], {}
+    keywords = spec.spec()['variants']['c_news_small_mid']['negative_keywords']
+    for symbol, news in sorted(by_symbol.items()):
+        asset = archive.assets.get(symbol)
+        if asset is None:
+            raise ReplayError('CANDIDATE_ASSET_METADATA_MISSING', symbol)
+        bind('asset', symbol, asset)
+        if asset['class'] != 'us_equity' or re.search(r'\bETF\b', asset.get('name', ''), re.I):
+            rejections[symbol] = 'NOT_COMPANY_EQUITY'
+            continue
+        archive.require_bar_history(symbol, T)
+        rows = rows_at(archive.bars.get(symbol, []), T)
+        for r in rows:
+            bind('universe-bar', symbol + ':' + iso(r['bar_open_at']),
+                 {k: iso(v) if hasattr(v, 'tzinfo') else v for k, v in r.items()})
+        stats = small_mid(rows, T)
+        if isinstance(stats, str):
+            rejections[symbol] = stats
+            continue
+        # Only headline bytes affect rank. Later-edited summaries cannot leak.
+        news = sorted(news, key=lambda n: (sn.negative_score(n['headline'], keywords), n['created_at'], n['id']), reverse=True)
+        score = sum(sn.negative_score(n['headline'], keywords) for n in news)
+        candidates.append((score, max(n['created_at'] for n in news), symbol, stats, news[:3]))
+    candidates.sort(key=lambda v: (v[0], v[1], v[2]), reverse=True)
+    shown = []
+    for _, _, symbol, stats, news in sorted(candidates[:40], key=lambda v: v[2]):
+        filings = [f for f in archive.filings.get(symbol, {}).values() if instant(f['accepted_at']) < T]
+        for f in filings:
+            bind('filing', symbol + ':' + f['accession'], f)
+        for n in news:
+            bind('news', n['id'], n)
+        shown.append({'symbol': symbol, 'prices': dict(stats, asset=symbol),
+                      'headlines': [headline(n) for n in news], 'filings': filings,
+                      'filings_state': 'AVAILABLE' if symbol in archive.filing_symbols else 'UNAVAILABLE'})
+    cd = {'schema': 'replay-news-context-v1', 'session': T.date().isoformat(), 'decision_time': iso(T),
+          'news_window_start': iso(start), 'candidates': shown, 'limitations': RISKS, 'provenance': spec.PROVENANCE}
+    manifest = {'schema': 'replay-per-day-input-manifest-v2', 'decision_time': iso(T), 'spec_hash': spec.SPEC_HASH,
+                'method_hash': method_hash, 'provenance': spec.PROVENANCE, 'residual_risks': RISKS,
+                'items': [{'id': k, 'sha256': v} for k, v in sorted(items.items())],
+                'rejections': rejections, 'candidate_count': len(candidates), 'shown_count': len(shown)}
+    return {g: sn.seal(c, dict(manifest, group=g), T) for g, c in (('ab', ab), ('cd', cd))}
+
+
+def primary_filter(views, context):
+    kept, evidence = set(), {}
+    for c in context['candidates']:
+        accepted = {f['accession'] for f in c['filings'] if f['form'] == '8-K' and
+                    instant(context['decision_time']) - timedelta(hours=72) <= instant(f['accepted_at']) < instant(context['decision_time'])}
+        titles = {h['news_id']: h['title'] for h in c['headlines']}
+        view = next(v for v in views if v['symbol'] == c['symbol'])
+        exact = sorted({a for i in view['news_ids'] for a in re.findall(r'\b\d{10}-\d{2}-\d{6}\b', titles[i])} & accepted)
+        evidence[c['symbol']] = exact
+        if exact:
+            kept.add(c['symbol'])
+    return kept, evidence

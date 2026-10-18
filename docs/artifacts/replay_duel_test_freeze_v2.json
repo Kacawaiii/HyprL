@@ -1,0 +1,92 @@
+{
+  "base_rate_rule": "Laplace (wins+1)/(n+2) per variant/fixed horizon. Dev uses only labels whose exit is strictly before that decision. Test uses a rate fixed from censored Jul-Aug dev labels before any test call; no test fitting.",
+  "code_hash": "eadee241884cf7cb9a8838b9a93e07c2bdb813277fbb23100d01d45f372cdb3c",
+  "config_hashes": {
+    "gpt": {
+      "ab": "008dc0499bfb21aff712cf00f023ea3e97d0529ee4c496030458dcf077304ac9",
+      "cd": "199620d20ce06c233c0b1f259103d26c740b2349ef470a6cd0e743f8ce900200"
+    },
+    "opus": {
+      "ab": "aa4e0077722277b2ea7e9fbd127ca7ad92173956368e5f64fd539b2018fd2961",
+      "cd": "af90b23d9b227bb40639deab4d6b73e6a4ffe9737f8d2e9eb6128d99f92f03b4"
+    }
+  },
+  "config_payloads": {
+    "gpt": {
+      "ab": {
+        "code_hash": "eadee241884cf7cb9a8838b9a93e07c2bdb813277fbb23100d01d45f372cdb3c",
+        "family": "gpt",
+        "group": "ab",
+        "model": "gpt-6.1-sol",
+        "period": "test",
+        "spec_hash": "9fa12130740254b77899d2e0d7e5f1b0ea4b5392950cd8ffc4b478337c0ef222"
+      },
+      "cd": {
+        "code_hash": "eadee241884cf7cb9a8838b9a93e07c2bdb813277fbb23100d01d45f372cdb3c",
+        "family": "gpt",
+        "group": "cd",
+        "model": "gpt-6.1-sol",
+        "period": "test",
+        "spec_hash": "9fa12130740254b77899d2e0d7e5f1b0ea4b5392950cd8ffc4b478337c0ef222"
+      }
+    },
+    "opus": {
+      "ab": {
+        "code_hash": "eadee241884cf7cb9a8838b9a93e07c2bdb813277fbb23100d01d45f372cdb3c",
+        "family": "opus",
+        "group": "ab",
+        "model": "claude-opus-5-5",
+        "period": "test",
+        "spec_hash": "9fa12130740254b77899d2e0d7e5f1b0ea4b5392950cd8ffc4b478337c0ef222"
+      },
+      "cd": {
+        "code_hash": "eadee241884cf7cb9a8838b9a93e07c2bdb813277fbb23100d01d45f372cdb3c",
+        "family": "opus",
+        "group": "cd",
+        "model": "claude-opus-5-5",
+        "period": "test",
+        "spec_hash": "9fa12130740254b77899d2e0d7e5f1b0ea4b5392950cd8ffc4b478337c0ef222"
+      }
+    }
+  },
+  "forward_config_hashes": {
+    "gpt": "01e119866d69fa47a3ee337005b9b81a6fc525ed5f9eb91154244927a44f24f7",
+    "opus": "207216e67d83417799a957ce8fc35136ce0ed72265c30c5936ba89b3365e9bda"
+  },
+  "input_seal_required": true,
+  "paired_test_rule": "Exact two-sided block sign-flip on daily mean Opus-minus-GPT Brier and log loss, all same instruments/days/horizons paired, nonoverlapping blocks of 10 NYSE sessions anchored at period start; Holm correction over all named panel/loss comparisons. No trade-conditioned probability selection.",
+  "parent_freeze_hash": "130bde95e0a336741416d28151859191eaadf38f9c8062451ee26352d06f2def",
+  "probe_evidence_hash": "e87bf920702d8ab8fb3d4b42bd3013b6d9c5f9ba099f5025c4937820c0849e23",
+  "schema": "replay-duel-test-freeze-v2",
+  "spec_hash": "9fa12130740254b77899d2e0d7e5f1b0ea4b5392950cd8ffc4b478337c0ef222",
+  "test_days": [
+    "2026-09-01",
+    "2026-09-02",
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-14",
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17",
+    "2026-09-18",
+    "2026-09-21",
+    "2026-09-22",
+    "2026-09-23",
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-05",
+    "2026-10-06",
+    "2026-10-07",
+    "2026-10-08",
+    "2026-10-09"
+  ]
+}
