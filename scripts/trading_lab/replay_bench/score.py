@@ -1,4 +1,4 @@
-"""Score v3 only: per-view labels, baselines on the same eligible rows, and daily marked P&L."""
+"""Score the current protocol only: per-view labels, baselines on the same eligible rows, and daily marked P&L."""
 from collections import Counter, defaultdict
 from datetime import timedelta
 import json
@@ -47,6 +47,21 @@ def score(root, period, transport, spec):
     if period == 'test':
         experiment.ready_test(root)
         experiment.claim_test(root)
+    decision_hashes = {}
+    for group, days in planned.items():
+        meta = experiment.trial_meta(period, group)
+        out = experiment.trial_out(root, meta)
+        for day in days:
+            record = run.checked_record(out / group / f'{day}.json.gz', meta, out)
+            decision_hashes[group + ':' + day] = record['decision_hash']
+    result_path = root / experiment.STATE_DIR / 'results' / f'{period}.json'
+    if result_path.is_file():
+        previous = json.loads(result_path.read_text())
+        if previous.get('status') == 'SCORED':
+            if (previous.get('code_hash') != run.code_hash() or previous.get('spec_hash') != binding.SPEC_HASH or
+                    previous.get('decision_hashes') != decision_hashes):
+                raise ReplayError('SCORED_RESULT_BINDING_MISMATCH')
+            return previous
     first, last = spec['periods'][period]
     dates = period_days(first, last)
     if instant(last + 'T23:59:59Z') > now():
@@ -70,7 +85,7 @@ def score(root, period, transport, spec):
                 counts[group + (':no_candidates' if group == 'cd' and record.get('candidates') == 0
                                  else ':failed_model_day')] += 1
                 continue
-            required = {'ab': run.VARIANTS_AB, 'anon': ('b_v1_no_reviewer',), 'opus': ('a_v1_as_live',),
+            required = {'ab': run.VARIANTS_AB, 'anon': ('b_v1_no_reviewer',),
                         'cd': ('c_news_small_mid',)}[group]
             for variant in required:
                 if variant not in record['views']:
@@ -82,8 +97,6 @@ def score(root, period, transport, spec):
                 views_by_variant = record['views']
                 if group == 'anon':
                     views_by_variant = {'audit_anonymized': record['views'].get('b_v1_no_reviewer', [])}
-                if group == 'opus':
-                    views_by_variant = {'audit_opus_a': record['views'].get('a_v1_as_live', [])}
                 for variant, views in views_by_variant.items():
                     for view in views:
                         asset, horizon = view['asset'], view['horizon']
@@ -153,7 +166,7 @@ def score(root, period, transport, spec):
                             labels.append(label)
                             series = key if sign is None else f'baseline:{name}:{variant}:{horizon}'
                             trades[series].append((day, result, path))
-                            if group in ('ab', 'opus', 'anon') and sign is None:
+                            if group in ('ab', 'anon') and sign is None:
                                 paired[(day, asset, horizon)][name] = view
             else:
                 context = primary_context(out, record)
@@ -214,21 +227,22 @@ def score(root, period, transport, spec):
         summary[key] = metrics.summarize([(d, r) for d, r, _ in rows], dates, pnl_by_day=pnl, annualization=365)
         summary[key]['capital_divisor'] = divisor
     agreement = {}
-    for name in ('audit_opus_a', 'audit_anonymized'):
-        target = 'a_v1_as_live' if name == 'audit_opus_a' else 'b_v1_no_reviewer'
+    for name in ('audit_anonymized',):
+        target = 'b_v1_no_reviewer'
         pairs = [v for v in paired.values() if name in v and target in v]
         agreement[name] = {'n_pairs': len(pairs), 'agree': sum(v[name]['view'] == v[target]['view'] for v in pairs)}
     missing = {k: v for k, v in counts.items() if v and ('missing_' in k or 'failed_model' in k)}
     result = {'status': 'BLOCKED' if missing else 'SCORED', 'missing_coverage': missing,
               'provenance': binding.PROVENANCE, 'period': period, 'spec_hash': binding.SPEC_HASH,
               'code_hash': run.code_hash(), 'summary': summary, 'counts': dict(counts),
+              'decision_hashes': decision_hashes,
               'paired_audits': agreement, 'labels': labels,
               'limitations': ['Sparse crypto fills or midnight marks remain unscored and counted',
                               'Boundary-crossing horizons are censored and counted',
                               'Wilson intervals ignore clustering and are descriptive',
                               'SPY-relative strategies charge costs on the asset leg only; SPY baseline is absolute',
                               'Daily P&L uses fixed initial capital, equal weights in entry cohorts, calendar days x sqrt(365)']}
-    atomic_json(root / 'v3/results' / f'{period}.json', result)
+    atomic_json(result_path, result)
     if missing:
         raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
     return result

@@ -8,8 +8,9 @@ import tempfile
 
 from jsonschema import Draft202012Validator
 
-from .grant import ReplayError, iso, now
+from .grant import ReplayError, instant, iso, now
 from .storage import atomic_json, append_event
+from . import spec
 
 MODELS = {'opus': 'claude-opus-5-5', 'sonnet': 'claude-sonnet-5-5'}
 QUOTA = ('rate_limit', 'rate limit', 'usage limit', 'usage_limit', 'limit reached', 'hit your limit',
@@ -58,15 +59,20 @@ class Claude:
         self.transcripts.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     def call(self, family, prompt, schema, *, tag, timeout=900):
-        if family not in MODELS:
+        if family != 'opus':
             raise ReplayError('MODEL_NOT_ALLOWED')
         identity = hashlib.sha256(json.dumps([family, prompt, schema, tag], sort_keys=True).encode()).hexdigest()
         path = self.transcripts / (identity + '.json')
         previous = json.loads(path.read_text()) if path.exists() else None
         # A saved response is replayed locally, never re-dispatched. An unresolved intent cannot be retried.
         if previous and previous['state'] == 'RECEIVED':
-            return self._decode(previous['raw'], previous['err'], previous['returncode'], family,
-                                previous['at'], identity, prompt, schema)
+            if self._quota(previous['raw'], previous['err']):
+                previous['state'] = 'USAGE_LIMIT'
+                atomic_json(path, previous)
+                self.budget.mark_stopped('MODEL_USAGE_LIMIT', instant(previous['at']))
+            else:
+                return self._decode(previous['raw'], previous['err'], previous['returncode'], family,
+                                    previous['at'], identity, prompt, schema)
         if previous and previous['state'] == 'INTENT':
             raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
         at = self.clock()
@@ -76,7 +82,8 @@ class Claude:
         if previous and previous['state'] == 'USAGE_LIMIT' and previous['at'][:10] == iso(at)[:10]:
             raise ReplayError('MODEL_USAGE_LIMIT')
         self.grant.check()
-        self.budget.reserve_model(family, self.grant.model_limit(family), at)
+        self.budget.reserve_model(family, self.grant.model_limit(family), at,
+                                  night_limit=spec.spec()['models']['night']['max_calls'])
         record = {'state': 'INTENT', 'at': iso(at), 'family': family, 'tag': tag,
                   'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()}
         atomic_json(path, record)

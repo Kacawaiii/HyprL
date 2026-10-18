@@ -1,0 +1,16 @@
+{
+  "schema": "replay-bench-trials-v3",
+  "previous_registry_sha256": "5fc90afdfbc1b89a3151e6ec0f1cea606e1c4df4682bbd3ffe5ae2fa8c2dbfe3",
+  "legacy_status": "all inherited trials remain exploratory and rejected by v4; no test trials registered",
+  "variants": [
+    "a_v1_as_live",
+    "b_v1_no_reviewer",
+    "c_news_small_mid",
+    "d_news_primary_only"
+  ],
+  "audit_subruns": [
+    "Opus anonymized raw analyst, dev every fourth session"
+  ],
+  "decision_model": "opus",
+  "trials": []
+}

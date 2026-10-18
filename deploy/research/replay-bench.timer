@@ -1,5 +1,5 @@
 [Unit]
-Description=Night research replay batch, at most 150 calls between 00:30 and 05:30 UTC
+Description=Night Opus research replay batch, at most 60 calls between 00:30 and 05:30 UTC
 
 [Timer]
 OnCalendar=*-*-* 00:30:00 UTC
