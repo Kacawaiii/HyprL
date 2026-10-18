@@ -1,0 +1,113 @@
+{
+  "schema": "replay-duel-memory-audit-v1",
+  "spec_hash": "8347a7b6a40281e99e4f0447f3ec31619d6e45cfc1a1348c43b3d9f3b7b0fb5a",
+  "evidence_hash": "e87bf920702d8ab8fb3d4b42bd3013b6d9c5f9ba099f5025c4937820c0849e23",
+  "file_digests": {
+    "answers-opus.json": "e1d372f2f91902ea4ac49c79a47e13b6987d39ab20a8b30b67c8fe1ca32238ac",
+    "answers-sonnet.json": "e1d372f2f91902ea4ac49c79a47e13b6987d39ab20a8b30b67c8fe1ca32238ac",
+    "probe-gpt-answers.json": "cd318cb441979d8c89d4f6cfc696d572c42e5824a9c7966ee7c05b6ac535cd05",
+    "probe-preregistration.json": "249cbe13f4a2186c482ad1d025a5cc1415d04a9a5df91ecd0c34fc386b4059e0",
+    "probe2-answers-opus.json": "c4f2778e16d7e9ada56341b733a5ea3707e10303f9b0b47151dd40fc0b85689d",
+    "probe2-answers-sonnet.json": "c4f2778e16d7e9ada56341b733a5ea3707e10303f9b0b47151dd40fc0b85689d",
+    "probe2-preregistration.json": "876fb8547fcb9f5a4d05f38b9773edaae3fdbf6505bd07aebb8c1486e1698ecf",
+    "probe3-answers-opus.json": "65ac7cd73a621ce4b8c7b5443c881b02db0718ca2b16687c9d8a1b0304a4e0ec",
+    "probe3-answers-sonnet.json": "886f1999deffab8c40ae98002ce28cb0ed70b65e5c59cff65bca9335a2792dbf",
+    "probe3-preregistration.json": "e3d454c38ce5836d356090597e460298592fce84664e91cd20bb44b006422331"
+  },
+  "floor": {
+    "gpt": "2026-07-01",
+    "opus": "2026-07-01"
+  },
+  "limitations": "Non-flagging does not prove absence of memory. Clean sessions and pre-call rule hashing are operator-attested; raw answer files do not contain CLI modelUsage envelopes. GPT clean-session setup is operator-attested; no new calls.",
+  "tables": {
+    "gpt": {
+      "exact_eps": {
+        "correct": 0,
+        "n": 35
+      },
+      "forced_direction": {
+        "always_up_by_month": {
+          "2026-05": 9,
+          "2026-06": 3,
+          "2026-07": 7,
+          "2026-08": 9,
+          "2026-09": 5
+        },
+        "always_up_pooled": 21,
+        "binomial_one_sided_p_vs_half": 0.5660302997857798,
+        "correct_by_month": {
+          "2026-05": 8,
+          "2026-06": 1,
+          "2026-07": 7,
+          "2026-08": 6,
+          "2026-09": 5
+        },
+        "flagged": false,
+        "pooled_correct": 18,
+        "pooled_n": 36
+      }
+    },
+    "opus": {
+      "exact_eps": {
+        "correct": 0,
+        "n": 35
+      },
+      "forced_direction": {
+        "always_up_by_month": {
+          "2026-05": 9,
+          "2026-06": 3,
+          "2026-07": 7,
+          "2026-08": 9,
+          "2026-09": 5
+        },
+        "always_up_pooled": 21,
+        "binomial_one_sided_p_vs_half": 0.20251612307038158,
+        "correct_by_month": {
+          "2026-05": 9,
+          "2026-06": 4,
+          "2026-07": 7,
+          "2026-08": 6,
+          "2026-09": 8
+        },
+        "flagged": false,
+        "pooled_correct": 21,
+        "pooled_n": 36
+      },
+      "optional_direction": {
+        "n": 60,
+        "unknown": 60
+      }
+    },
+    "sonnet": {
+      "exact_eps": {
+        "correct": 0,
+        "n": 35
+      },
+      "forced_direction": {
+        "always_up_by_month": {
+          "2026-05": 9,
+          "2026-06": 3,
+          "2026-07": 7,
+          "2026-08": 9,
+          "2026-09": 5
+        },
+        "always_up_pooled": 21,
+        "binomial_one_sided_p_vs_half": 0.005665492091793567,
+        "correct_by_month": {
+          "2026-05": 7,
+          "2026-06": 4,
+          "2026-07": 7,
+          "2026-08": 10,
+          "2026-09": 9
+        },
+        "flagged": true,
+        "pooled_correct": 26,
+        "pooled_n": 36
+      },
+      "optional_direction": {
+        "n": 60,
+        "unknown": 60
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+Analyze every supplied liquid small/mid candidate using only CONTEXT_DATA. Liquidity is a proxy,
+not a market-cap classification. Assess guidance, earnings surprises, dilution, distress, legal or
+regulatory developments, upgrades/downgrades, M&A, contracts/products and management changes.
+Prefer specific fresh information with a plausible unpriced mechanism. State the counter-thesis
+and falsifier. Cite exact supplied news IDs. Abstain on generic, routine or unsupported headlines.
+For each candidate, independently forecast P(stock return > SPY return) over BOTH fixed 2-session
+and 10-session horizons, even when abstaining. Separately choose a trade (UP/DOWN/ABSTAIN),
+holding_sessions from 2 through 10, and a probability over that chosen trade horizon.
+All probabilities are numeric in [0,1]. UP needs p > 0.5 and DOWN p < 0.5. ABSTAIN allows any p.
+The primary-source-only variant retains exactly these forecasts, while trades require an exact
+8-K accession linked from a cited headline and accepted before decision time. Never infer evidence.
