@@ -1,0 +1,22 @@
+{
+  "schema": "replay-test-freeze-v2",
+  "spec_hash": "80a8a4dff0e07baebac5378972d60347a51c42ca0a1ba196d07ed167b129ecaa",
+  "code_hash": "9fd6b4e3fc5e0a4402bf34a766821169236e78e7e44525f7b039fcf869c8b7aa",
+  "declaration_hash": "5fc90afdfbc1b89a3151e6ec0f1cea606e1c4df4682bbd3ffe5ae2fa8c2dbfe3",
+  "probe_evidence_hash": "ba86e84f8a9a9a45e07873918715c0a867fa1b767826fe979a210c1b02f2c581",
+  "input_proof_hash": null,
+  "config_hashes": {
+    "ab": "47dbb3e49f763cdf805190da4d29ba5fc19ccad4fcccf312a1094cd73f51c19c",
+    "cd": "c8f9a113d9c0190e94537429165e199336a1d5564b17b94adca2c56bcc68147a"
+  },
+  "test_days": {
+    "ab": [],
+    "cd": []
+  },
+  "eligibility": "BLOCKED_BEFORE_TEST",
+  "memory_floor": {
+    "sonnet": "2026-11-01",
+    "opus": "2026-11-01"
+  },
+  "reason": "No post-cutoff dates in original periods; no proof of original price vintage and historical identity. This freeze cannot authorize test calls."
+}
