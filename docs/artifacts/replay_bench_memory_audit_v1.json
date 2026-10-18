@@ -1,0 +1,277 @@
+{
+  "spec_hash": "80a8a4dff0e07baebac5378972d60347a51c42ca0a1ba196d07ed167b129ecaa",
+  "floor": {
+    "sonnet": "2026-11-01",
+    "opus": "2026-11-01"
+  },
+  "tables": {
+    "main": {
+      "opus": {
+        "months": {
+          "2026-05": {
+            "n": 6,
+            "claimed": 1,
+            "correct": 1,
+            "errors": 0
+          },
+          "2026-06": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-07": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-08": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-09": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-10": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          }
+        },
+        "known_months": [],
+        "last_known_month": null,
+        "replay_floor": null,
+        "incomplete_months": []
+      },
+      "sonnet": {
+        "months": {
+          "2026-05": {
+            "n": 6,
+            "claimed": 1,
+            "correct": 1,
+            "errors": 0
+          },
+          "2026-06": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-07": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-08": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-09": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          },
+          "2026-10": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          }
+        },
+        "known_months": [],
+        "last_known_month": null,
+        "replay_floor": null,
+        "incomplete_months": []
+      }
+    },
+    "controls": {
+      "opus": {
+        "months": {
+          "2025-12": {
+            "n": 6,
+            "claimed": 6,
+            "correct": 6,
+            "errors": 0
+          },
+          "2026-03": {
+            "n": 6,
+            "claimed": 2,
+            "correct": 2,
+            "errors": 0
+          }
+        },
+        "known_months": [
+          "2025-12",
+          "2026-03"
+        ],
+        "last_known_month": "2026-03",
+        "replay_floor": "2026-04-01",
+        "incomplete_months": []
+      },
+      "sonnet": {
+        "months": {
+          "2025-12": {
+            "n": 6,
+            "claimed": 6,
+            "correct": 6,
+            "errors": 0
+          },
+          "2026-03": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 0,
+            "errors": 0
+          }
+        },
+        "known_months": [
+          "2025-12"
+        ],
+        "last_known_month": "2025-12",
+        "replay_floor": "2026-01-01",
+        "incomplete_months": []
+      }
+    },
+    "forced": {
+      "opus": {
+        "months": {
+          "2025-12": {
+            "n": 6,
+            "claimed": 6,
+            "correct": 6,
+            "errors": 0
+          },
+          "2026-03": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 4,
+            "errors": 0
+          },
+          "2026-05": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 3,
+            "errors": 0
+          },
+          "2026-06": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 1,
+            "errors": 0
+          },
+          "2026-07": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 1,
+            "errors": 0
+          },
+          "2026-08": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 3,
+            "errors": 0
+          },
+          "2026-09": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 3,
+            "errors": 0
+          },
+          "2026-10": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 3,
+            "errors": 0
+          }
+        },
+        "known_months": [
+          "2025-12",
+          "2026-03",
+          "2026-05",
+          "2026-08",
+          "2026-09",
+          "2026-10"
+        ],
+        "last_known_month": "2026-10",
+        "replay_floor": "2026-11-01",
+        "incomplete_months": []
+      },
+      "sonnet": {
+        "months": {
+          "2025-12": {
+            "n": 6,
+            "claimed": 6,
+            "correct": 5,
+            "errors": 0
+          },
+          "2026-03": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 4,
+            "errors": 0
+          },
+          "2026-05": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 4,
+            "errors": 0
+          },
+          "2026-06": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 1,
+            "errors": 0
+          },
+          "2026-07": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 1,
+            "errors": 0
+          },
+          "2026-08": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 2,
+            "errors": 0
+          },
+          "2026-09": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 3,
+            "errors": 0
+          },
+          "2026-10": {
+            "n": 6,
+            "claimed": 0,
+            "correct": 3,
+            "errors": 0
+          }
+        },
+        "known_months": [
+          "2025-12",
+          "2026-03",
+          "2026-05",
+          "2026-08",
+          "2026-09",
+          "2026-10"
+        ],
+        "last_known_month": "2026-10",
+        "replay_floor": "2026-11-01",
+        "incomplete_months": []
+      }
+    }
+  },
+  "evidence_hash": "ba86e84f8a9a9a45e07873918715c0a867fa1b767826fe979a210c1b02f2c581",
+  "schema": "replay-memory-audit-v1",
+  "interpretation": "Conservative original >=2 criterion, including forced guesses. This does not establish the true training cutoff; guessability ambiguity blocks retrospective claims."
+}
