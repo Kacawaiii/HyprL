@@ -339,3 +339,13 @@ def test_committed_freeze_binds_current_code_and_all_four_variants():
     assert len(declaration['variants']) == 4
     assert frozen['eligibility'] == 'BLOCKED_BEFORE_TEST'
     assert frozen['test_days'] == {'ab': [], 'cd': []}
+
+
+def test_timer_install_refuses_missing_environment_before_any_write(tmp_path):
+    import importlib.util
+    path = spec.ROOT / 'deploy/research/install_replay_timer.py'
+    module_spec = importlib.util.spec_from_file_location('replay_timer_install', path)
+    installer = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(installer)
+    with pytest.raises(SystemExit, match='private research environment file'):
+        installer.main(['--environment', str(tmp_path / 'missing.env'), '--claude', 'unused'])

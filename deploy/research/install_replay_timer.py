@@ -11,6 +11,10 @@ def main(argv=None):
     parser.add_argument('--environment', type=Path, required=True)
     parser.add_argument('--claude', type=Path, required=True)
     args = parser.parse_args(argv)
+    if not args.environment.is_file() or args.environment.stat().st_mode & 0o077:
+        raise SystemExit('A private research environment file is required (mode 600)')
+    if not args.claude.is_file() or not os.access(args.claude, os.X_OK):
+        raise SystemExit('Claude CLI executable is missing')
     root = Path(__file__).resolve().parents[2]
     sha = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
     if subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain'], text=True).strip():

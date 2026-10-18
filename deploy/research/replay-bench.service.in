@@ -2,7 +2,7 @@
 Description=HyprL research replay bench (isolated from trader runtime)
 
 [Service]
-Type=oneshot
+Type=exec
 WorkingDirectory=@WORKTREE@
 EnvironmentFile=@ENVIRONMENT@
 Environment=PATH=@CLI_PATH@:/usr/bin:/bin
