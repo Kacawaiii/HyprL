@@ -20,7 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Verify exact source SHA
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -52,6 +57,8 @@ jobs:
         run: python -m pytest tests/policies -q
       - name: Prospective paper trader, restricted runners, budgets, labels and API
         run: python -m pytest tests/trader_agent -q
+      - name: Offline replay causality, memory gate, frozen test and night batch safety
+        run: python -m pytest tests/replay_bench -q
       - name: Isolated agent v2 shadow causality, risk, ledger and veto contracts
         run: python -m pytest tests/agent_v2 -q
       - name: Project-scoped B2B auth, isolation, budgets, audit, exports and OpenAPI

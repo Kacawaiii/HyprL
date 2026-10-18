@@ -1,0 +1,18 @@
+[Unit]
+Description=HyprL research replay bench (isolated from trader runtime)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@WORKTREE@
+EnvironmentFile=@ENVIRONMENT@
+Environment=PATH=@CLI_PATH@:/usr/bin:/bin
+ExecStart=@PYTHON@ -m scripts.trading_lab.replay_bench.cli night --expected-commit @COMMIT@
+UMask=0077
+NoNewPrivileges=yes
+Nice=15
+CPUQuota=50%
+MemoryMax=700M
+RuntimeMaxSec=18000
+TimeoutStopSec=20
+KillMode=control-group
+Restart=no

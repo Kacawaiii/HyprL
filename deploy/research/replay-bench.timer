@@ -1,0 +1,11 @@
+[Unit]
+Description=Night research replay batch, at most 150 calls between 00:30 and 05:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+AccuracySec=1min
+Persistent=false
+Unit=hyprl-replay-bench.service
+
+[Install]
+WantedBy=timers.target
