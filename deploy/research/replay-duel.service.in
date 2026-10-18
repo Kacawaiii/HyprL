@@ -1,0 +1,19 @@
+[Unit]
+Description=HyprL offline Opus vs GPT research replay (60 calls each per night)
+
+[Service]
+Type=exec
+WorkingDirectory=@WORKTREE@
+EnvironmentFile=@ENVIRONMENT@
+Environment=PATH=@CLI_PATH@:/usr/bin:/bin
+ExecStart=@PYTHON@ -m scripts.trading_lab.replay_duel.cli night --expected-commit @COMMIT@
+UMask=0077
+NoNewPrivileges=yes
+Nice=15
+CPUQuota=50%
+MemoryMax=700M
+RuntimeMaxSec=18000
+TimeoutStopSec=20
+KillMode=control-group
+Restart=no
+SuccessExitStatus=2

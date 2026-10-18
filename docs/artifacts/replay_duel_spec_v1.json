@@ -1,0 +1,235 @@
+{
+  "authorization": {
+    "name": "replay-bench-v1",
+    "payload_sha256": "e5bcf2d0db9c3c638a7acfd8cde22bd44918fecd5652a35260f69f3bd8cd37be"
+  },
+  "periods": {
+    "dev": [
+      "2026-07-01",
+      "2026-08-31"
+    ],
+    "test": [
+      "2026-09-01",
+      "2026-10-09"
+    ],
+    "test_rule": "run once with a configuration hashed and committed before the run; no tuning on test"
+  },
+  "decision_time_utc": "12:00:00 on every NYSE session day (08:00 New York, the live am run time); all period days are EDT",
+  "information_snapshot": {
+    "schema": "replay-snapshot-v1",
+    "rule": "every item carries available_at <= T and is rejected otherwise; the snapshot is canonical-hashed and the hash is stored with the decision",
+    "news": "Alpaca /v1beta1/news, created_at < T AND updated_at < T (revised items are excluded, never shown in their later form)",
+    "daily_bars": "Alpaca /v2/stocks/bars 1Day raw, sessions whose close <= T only; crypto /v1beta3/crypto/us/bars 1Day bars whose day ended <= T",
+    "sec": "data.sec.gov submissions, 8-K filings with acceptanceDateTime < T only; CIK map is today's company_tickers.json (limitation)",
+    "not_used": [
+      "web search",
+      "revised data",
+      "prices after T",
+      "headlines after T",
+      "GDELT",
+      "FOMC/EDGAR archives"
+    ],
+    "vintage": "Historical archive retrieval does not prove original vintage. Private frozen input manifest must attest unrevised prices and point-in-time universe/identity evidence; absent proof blocks model decisions. Prediction reads are offline and every cache object is bound by digest in the proof manifest."
+  },
+  "variants": {
+    "a_v1_as_live": {
+      "analyst": "same selected family (opus or gpt)",
+      "reviewer": "same selected family (opus or gpt)",
+      "prompt": "Pinned model-neutral duel analyst/reviewer prompts, with identical stage schemas for both models",
+      "decision": "trader_agent.service.views_with_review(consensus=False): reviewer_claude views",
+      "universe": "live grant universe: 25 stocks + XLK XLF XLE XLI XLV + SOL AVAX LINK DOGE LTC (BTC/ETH not in the live universe and protected 2026-09-01..2026-11-30); SPY and QQQ as unpredicted benchmarks",
+      "context": "per asset: 21 completed daily closes, 1/5/20 returns, vol_20d (trader_agent.data.price_summary); per asset up to 8 Alpaca headlines from the last 72 h; macro headlines tagged SPY/QQQ up to 15",
+      "horizons": {
+        "primary": "1d",
+        "secondary": "5d"
+      }
+    },
+    "b_v1_no_reviewer": {
+      "analyst": "shared raw analyst of a within each family",
+      "decision": "analyst_claude raw views (no review)"
+    },
+    "c_news_small_mid": {
+      "analyst": "same selected family (opus or gpt)",
+      "reviewer": null,
+      "candidates": "symbols of Alpaca news created in [previous session close, T), items naming at most 2 symbols; US equities with price >= 5 USD and 20-session median dollar volume in (10M, 1B] USD (small/mid proxy: no market-cap source in scope); live-universe names, ETFs and benchmarks excluded; at most 40 candidates ranked by negative-keyword score then recency; at most 3 headlines each",
+      "negative_keywords": [
+        "cut",
+        "lower",
+        "miss",
+        "below",
+        "downgrade",
+        "offering",
+        "dilut",
+        "delist",
+        "bankrupt",
+        "chapter 11",
+        "going concern",
+        "investigation",
+        "subpoena",
+        "lawsuit",
+        "sec ",
+        "fraud",
+        "recall",
+        "halt",
+        "withdraw",
+        "suspend",
+        "plunge",
+        "fall",
+        "drop",
+        "slump",
+        "weak",
+        "warn",
+        "resign",
+        "terminate",
+        "default",
+        "impair",
+        "restat"
+      ],
+      "holding_sessions": [
+        2,
+        10
+      ],
+      "entry": "open of the decision session (next open after T)",
+      "exit": "close of session entry+h-1",
+      "abstention": "allowed",
+      "probability_panel": [
+        "2d",
+        "10d"
+      ]
+    },
+    "d_news_primary_only": {
+      "from": "c trades with primary-source filter; retain all c probabilities",
+      "filter": "c views only when a cited news item links the exact accession of an 8-K accepted in [T-72h,T); unrelated filings never qualify; missing evidence means abstention"
+    }
+  },
+  "costs": {
+    "fee_per_side": 0.001,
+    "spread_slippage_per_side": {
+      "dollar_volume_gt_1B": 0.0002,
+      "100M_to_1B": 0.0005,
+      "10M_to_100M": 0.0015,
+      "crypto": 0.001
+    },
+    "applied_to": "the traded asset leg; the SPY-relative return measures the view, the hedge leg is not charged (stated limitation)"
+  },
+  "fills": {
+    "a_b_1d": "equities: first SIP stock trade in [session open+30s, open+31s), exit first trade in [session close-5min, +1s); missing trade = unlabeled; SPY same",
+    "a_b_5d": "equities only: entry = session open (daily bar), exit = close of session 5; secondary",
+    "crypto_1d": "entry open of exact 13:31 UTC minute, exit open of exact same minute 24h later; missing minute = unlabeled; no stale fills",
+    "c_d": "entry = daily open of the decision session, exit = daily close of session h"
+  },
+  "schema": "replay-duel-spec-v1",
+  "revision": 5,
+  "purpose": "Research-only paired offline replay; no orders, training, web or external tools.",
+  "supersedes": {
+    "artifact": "replay_bench_spec_v4.json",
+    "canonical_sha256": "0814d6e4c424ec883dcf4b3e2da4a70f82f694499dc18cc33dc406a1140e8b56",
+    "migration": "none; previous stores remain rejected"
+  },
+  "operator_amendment": {
+    "decision_date": "2026-10-18",
+    "scope": "GPT joins the research replay through the Codex ChatGPT subscription only. This does not authorize GPT in the live trader or change the HTTP grant.",
+    "task_sha256": "e237399e5b6a974308a571390ec99df08a1382933e1833aa6d3723956e15fad0"
+  },
+  "models": {
+    "identities": {
+      "opus": "claude-opus-5-5",
+      "gpt": "gpt-6.1-sol"
+    },
+    "tools": [],
+    "night": {
+      "start_utc": "00:30",
+      "end_utc": "05:30",
+      "max_calls_per_family": 60,
+      "workers": 1,
+      "timeout_seconds": 900,
+      "stop_on_usage_limit": true
+    },
+    "gpt_cli_version": "codex-cli 0.160.0",
+    "gpt_identity_evidence": "requested model is pinned; server identity is checked if emitted, never fabricated when absent",
+    "gpt_reasoning_effort": "medium",
+    "isolation": "empty cwd, ignore user config/rules, no web, shell, code mode host, plugins, skills, memory or MCP; no API-key fallback",
+    "isolation_runtime_note": "CLI flags are verified offline; no real transport smoke test is permitted until input proof and night gates pass."
+  },
+  "prompt_hashes": {
+    "reviewer.txt": "7fc5c56a52e25e79b767805903e0a455039ba78866e17cdafba26a75ee911ef6",
+    "analyst.txt": "0ea1b9c92bf34d5c28f49231cfa4db07098e8bdc98f77ca7044ece1253409c50",
+    "news.txt": "aaa25d70516ef3d8808586457c5f4bea8f2a26eb08673d3fd8a62d5961b88ff6"
+  },
+  "schema_sha256": "b33edb0c69ccfb5db6aa7616158ff2707a29055373a7173205d74c93ab62c666",
+  "probe": {
+    "forced_pool_months": [
+      "2026-07",
+      "2026-08",
+      "2026-09"
+    ],
+    "forced_pool_threshold": 24,
+    "forced_month_threshold": 10,
+    "gpt_answers_sha256": "cd318cb441979d8c89d4f6cfc696d572c42e5824a9c7966ee7c05b6ac535cd05",
+    "parent_probe_files": {
+      "probe-preregistration.json": "249cbe13f4a2186c482ad1d025a5cc1415d04a9a5df91ecd0c34fc386b4059e0",
+      "probe2-preregistration.json": "876fb8547fcb9f5a4d05f38b9773edaae3fdbf6505bd07aebb8c1486e1698ecf",
+      "probe3-preregistration.json": "e3d454c38ce5836d356090597e460298592fce84664e91cd20bb44b006422331",
+      "answers-opus.json": "e1d372f2f91902ea4ac49c79a47e13b6987d39ab20a8b30b67c8fe1ca32238ac",
+      "answers-sonnet.json": "e1d372f2f91902ea4ac49c79a47e13b6987d39ab20a8b30b67c8fe1ca32238ac",
+      "probe2-answers-opus.json": "c4f2778e16d7e9ada56341b733a5ea3707e10303f9b0b47151dd40fc0b85689d",
+      "probe2-answers-sonnet.json": "c4f2778e16d7e9ada56341b733a5ea3707e10303f9b0b47151dd40fc0b85689d",
+      "probe3-answers-opus.json": "65ac7cd73a621ce4b8c7b5443c881b02db0718ca2b16687c9d8a1b0304a4e0ec",
+      "probe3-answers-sonnet.json": "886f1999deffab8c40ae98002ce28cb0ed70b65e5c59cff65bca9335a2792dbf"
+    },
+    "floor": {
+      "opus": "2026-07-01",
+      "gpt": "2026-07-01"
+    },
+    "limitation": "Operator attests clean sessions and pre-call hashing. Non-flagging is not proof of no latent memory."
+  },
+  "forecast_panel": {
+    "ab": [
+      "1d",
+      "5d"
+    ],
+    "cd": [
+      "2d",
+      "10d"
+    ],
+    "probabilities": "numeric [0,1] required for every eligible instrument and horizon, including ABSTAIN; no imputation for invalid/missing outputs",
+    "trade": "UP requires p>0.5, DOWN p<0.5, ABSTAIN permits any p. Trade decision independent of forecast. Review rejects retain a probability constrained toward 0.5.",
+    "news_trade": "separate chosen holding_sessions 2..10 and probability; fixed 2d/10d forecasts allow exact paired comparison regardless of chosen trades",
+    "primary_only": "same forecasts as c on ALL candidates; missing exact primary-source evidence causes trade abstention only",
+    "target": "gross asset return > gross SPY return over the identical interval; ties count 0",
+    "crypto_spy": "crypto 1d exact 13:31 UTC to +24h and midnight mark; SPY exact stock trade in [anchor,anchor+1s) during its session, last actual raw session close while closed. Crypto 5d is forecast but not scored (parent exclusion). No BTC/ETH protected data."
+  },
+  "statistics": {
+    "base_rate": "Laplace (wins+1)/(n+2) per variant/fixed horizon. Dev uses only labels whose exit is strictly before that decision. Test uses a rate fixed from censored Jul-Aug dev labels before any test call; no test fitting.",
+    "paired_test": "Exact two-sided block sign-flip on daily mean Opus-minus-GPT Brier and log loss, all same instruments/days/horizons paired, nonoverlapping blocks of 10 NYSE sessions anchored at period start; Holm correction over all named panel/loss comparisons. No trade-conditioned probability selection.",
+    "log_loss_clip": 1e-06,
+    "pnl": "fixed initial equity; equal weights within actual entry cohorts; max horizon capital divisor 1/5/10; mark daily, costs charged on entry/exit; calendar days including zeros, Sharpe annualization sqrt(365)",
+    "ess": "cluster/day Kish and day ICC design effect for forecast loss and trade returns; paired independent-block count also reported",
+    "limitations": [
+      "Only 28 test sessions; up to three 10-session blocks, coarse paired p-values. No general superiority claim from an underpowered replay.",
+      "Latent model memory cannot be ruled out by non-flagging probes.",
+      "Universe/identity and original data vintage require genuine sealed evidence before any decision.",
+      "Crypto 5d and boundary-crossing outcomes excluded with counts; missing eligible fills/marks block scoring.",
+      "SPY-relative P&L charges asset-leg costs only; zero-cost SPY hedge is a stated limitation.",
+      "Wilson intervals are descriptive and ignore clustering; ESS is diagnostic, not a proof of independence."
+    ]
+  },
+  "input_proof": {
+    "schema": "replay-duel-input-proof-v1",
+    "file_basename": "duel_input_proof.json",
+    "required": [
+      "unrevised_prices_proven",
+      "historical_universe_and_identity_proven",
+      "evidence",
+      "prediction_cache"
+    ],
+    "scoring_requires": "outcome_cache sealed by file digests; every model reads identical offline cache; test needs committed input seal"
+  },
+  "provenance": "REPLAY_POST_CUTOFF_DUEL",
+  "variant_count_declared": 4,
+  "robustness_anonymized": {
+    "variant": "b, both families, every fourth dev session; no extra test calls",
+    "method": "same parent stable per-day identity codes, headline masks and return-preserving price rescaling; same seed for both models"
+  },
+  "canonical_sha256": "8347a7b6a40281e99e4f0447f3ec31619d6e45cfc1a1348c43b3d9f3b7b0fb5a"
+}

@@ -338,10 +338,16 @@ def test_freeze_must_be_committed_before_test(tmp_path, monkeypatch):
         experiment.check_freeze(tmp_path)
 
 
-def test_committed_freeze_binds_current_code_and_all_four_variants():
+def test_superseded_opus_freeze_is_preserved_and_refused(tmp_path, monkeypatch):
     frozen = json.loads(experiment.FREEZE.read_text())
     declaration = json.loads(experiment.DECLARATION.read_text())
-    assert frozen['code_hash'] == run.code_hash()
+    # Revision 5 has its own committed freeze. Never rewrite this v4 artifact to fit new code.
+    assert frozen['code_hash'] == '86dc3e5090617b44ca1344b026974179d40934203e3f51290b2ced5eac95d551'
+    assert frozen['code_hash'] != run.code_hash()
+    monkeypatch.setattr(audit, 'evidence', lambda root: {
+        'floor': {'opus': '2026-07-01'}, 'evidence_hash': frozen['probe_evidence_hash']})
+    with pytest.raises(gr.ReplayError, match='TEST_CONFIG_NOT_FROZEN'):
+        experiment.check_freeze(tmp_path)
     assert frozen['spec_hash'] == spec.SPEC_HASH
     assert frozen['config_hashes'] == {g: run.config_hash('test', g) for g in ('ab', 'cd')}
     assert frozen['declaration_hash'] == sha256_canonical(declaration)
