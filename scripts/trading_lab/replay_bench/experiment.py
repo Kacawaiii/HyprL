@@ -1,18 +1,19 @@
 """Frozen plans, one-shot test ownership, private trial ledger and sequential night batches."""
-from datetime import timedelta
 from copy import copy
 import json
 from pathlib import Path
 import subprocess
 
 from scripts.trading_lab.sources.canonical import sha256_canonical
-from . import audit, marketdata as md, models, run, spec
-from .grant import ReplayError, instant, iso, now
-from .storage import append_event, atomic_json, load_lines
+from . import audit, models, run, spec
+from .grant import ReplayError, iso, now
+from .storage import append_event, atomic_json
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_bench_test_freeze_v2.json'
-DECLARATION = spec.ROOT / 'docs/artifacts/replay_bench_trials_v2.json'
-GROUP_MODELS = {'ab': ('sonnet',), 'cd': ('sonnet',), 'anon': ('sonnet',), 'opus': ('sonnet', 'opus')}
+FREEZE = spec.ROOT / 'docs/artifacts/replay_bench_test_freeze_v3.json'
+DECLARATION = spec.ROOT / 'docs/artifacts/replay_bench_trials_v3.json'
+GROUP_MODELS = {'ab': ('opus',), 'cd': ('opus',), 'anon': ('opus',)}
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_bench_input_seal_v1.json'
+STATE_DIR = 'v4'
 
 
 def head():
@@ -55,33 +56,29 @@ def input_proof(root):
 
 def planned(root, period, group, evidence=None):
     value = spec.spec()
+    if group not in GROUP_MODELS:
+        raise ReplayError('GROUP_NOT_ALLOWED')
     first, last = value['periods'][period]
     ev = evidence or audit.evidence(root)
     floor = max(ev['floor'][f] for f in GROUP_MODELS[group])
     start = max(first, floor)
     all_days = run.sessions(first, last)
     days = [d for d in all_days if d >= start]
-    if group in ('anon', 'opus'):
+    if group == 'anon':
         if period != 'dev':
             raise ReplayError('AUDIT_IS_DEV_ONLY')
-        if group == 'anon':
-            selected = all_days[::4]
-        else:
-            used = set(value['opus_comparison']['legacy_replay_dates'])
-            for day in all_days[::3]:
-                if len(used) < 15:
-                    used.add(day)
-            selected = sorted(used.intersection(all_days))
-        days = [d for d in selected if d >= start]
+        days = [d for d in all_days[::4] if d >= start]
     return days, start
 
 
 def frozen_payload(root):
     ev = audit.evidence(root)
-    return {'schema': 'replay-test-freeze-v2', 'spec_hash': spec.SPEC_HASH, 'code_hash': run.code_hash(),
+    return {'schema': 'replay-test-freeze-v3', 'spec_hash': spec.SPEC_HASH, 'code_hash': run.code_hash(),
             'declaration_hash': sha256_canonical(json.loads(DECLARATION.read_text())),
             'probe_evidence_hash': ev['evidence_hash'],
-            'input_proof_hash': input_proof(root),
+            'input_seal_required': True,
+            'previous_config_hashes': spec.spec()['model_amendment']['previous_config_hashes'],
+            'config_payloads': {g: run.config_payload('test', g) for g in ('ab', 'cd')},
             'config_hashes': {g: run.config_hash('test', g) for g in ('ab', 'cd')},
             'test_days': {g: planned(root, 'test', g, ev)[0] for g in ('ab', 'cd')}}
 
@@ -94,6 +91,15 @@ def check_freeze(root):
     committed()
     if not all(expected['test_days'].values()):
         raise ReplayError('NO_POST_CUTOFF_TEST_DATES')
+    expected_seal = input_seal_payload(root, frozen)
+    if not INPUT_SEAL.is_file() or json.loads(INPUT_SEAL.read_text()) != expected_seal:
+        raise ReplayError('TEST_INPUTS_NOT_SEALED')
+    tracked = subprocess.run(['git', '-C', str(spec.ROOT), 'cat-file', '-e',
+                              'HEAD:' + str(INPUT_SEAL.relative_to(spec.ROOT))], capture_output=True)
+    if tracked.returncode:
+        raise ReplayError('TEST_INPUTS_NOT_COMMITTED')
+    if (Path(root) / 'v3/test_started.json').exists():
+        raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
     # Protect against old test calls too; never silently start a replacement configuration.
     legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
     if any(t['period'] == 'test' for t in legacy['trials']):
@@ -101,14 +107,20 @@ def check_freeze(root):
     return frozen
 
 
+def input_seal_payload(root, frozen=None):
+    frozen = frozen or json.loads(FREEZE.read_text())
+    return {'schema': 'replay-input-seal-v1', 'spec_hash': spec.SPEC_HASH,
+            'freeze_hash': sha256_canonical(frozen), 'input_proof_hash': input_proof(root)}
+
+
 def trial_meta(period, group):
     config = run.config_hash(period, group)
     return {'trial_id': f'{period}-{group}-{config[:12]}', 'config_hash': config, 'spec_hash': spec.SPEC_HASH,
-            'period': period, 'group': group}
+            'period': period, 'group': group, 'code_hash': run.code_hash(), 'model': 'opus'}
 
 
 def trial_out(root, meta):
-    return Path(root) / 'v3' / 'store' / meta['period'] / meta['config_hash']
+    return Path(root) / STATE_DIR / 'store' / meta['period'] / meta['config_hash']
 
 
 def trial_complete(root, period, group):
@@ -125,15 +137,16 @@ def ready_test(root):
     for group in GROUP_MODELS:
         if not trial_complete(root, 'dev', group):
             raise ReplayError('DEV_NOT_COMPLETE', group)
-    scored = Path(root) / 'v3/results/dev.json'
+    scored = Path(root) / STATE_DIR / 'results/dev.json'
     if (not scored.exists() or json.loads(scored.read_text()).get('code_hash') != run.code_hash() or
+            json.loads(scored.read_text()).get('spec_hash') != spec.SPEC_HASH or
             json.loads(scored.read_text()).get('status') != 'SCORED'):
         raise ReplayError('DEV_NOT_SCORED')
 
 
 def claim_test(root):
     freeze = check_freeze(root)
-    path = Path(root) / 'v3/test_started.json'
+    path = Path(root) / STATE_DIR / 'test_started.json'
     value = {'freeze_hash': sha256_canonical(freeze), 'spec_hash': spec.SPEC_HASH}
     if path.exists():
         old = json.loads(path.read_text())
@@ -141,7 +154,7 @@ def claim_test(root):
             raise ReplayError('TEST_ALREADY_STARTED_WITH_OTHER_CONFIG')
     else:
         atomic_json(path, dict(value, started_at=iso(now()), commit=head()))
-        append_event(Path(root) / 'v3/trials.jsonl', dict(value, event='TEST_STARTED', at=iso(now())))
+        append_event(Path(root) / STATE_DIR / 'trials.jsonl', dict(value, event='TEST_STARTED', at=iso(now())))
 
 
 def status(root, budget, clock=now):
@@ -152,11 +165,15 @@ def status(root, budget, clock=now):
         plans[period] = {}
         for group in (GROUP_MODELS if period == 'dev' else ('ab', 'cd')):
             days, start = planned(root, period, group, ev)
-            plans[period][group] = {'days': len(days), 'effective_start': start}
+            out = trial_out(root, trial_meta(period, group))
+            plans[period][group] = {'days': len(days), 'effective_start': start,
+                                    'completed_days': sum((out / group / f'{day}.json.gz').is_file() for day in days)}
             if not days:
                 reasons.append(f'NO_POST_CUTOFF_DATES:{period}:{group}')
     if budget.stopped(clock()):
         reasons.append('MODEL_USAGE_LIMIT')
+    if sum(budget.used('model:' + f, clock()) for f in models.MODELS) >= spec.spec()['models']['night']['max_calls']:
+        reasons.append('BUDGET_EXHAUSTED')
     try:
         input_proof(root)
     except ReplayError as error:
@@ -182,7 +199,7 @@ def run_group(root, period, group, transport, claude):
         claim_test(root)
     meta = trial_meta(period, group)
     out = trial_out(root, meta)
-    ledger = Path(root) / 'v3/trials.jsonl'
+    ledger = Path(root) / STATE_DIR / 'trials.jsonl'
     append_event(ledger, dict(meta, event='BATCH_STARTED', days_planned=len(days), commit=head(), at=iso(now())))
     pending = []
     for day in days:
@@ -193,11 +210,11 @@ def run_group(root, period, group, transport, claude):
             pending.append(day)
     if not pending:
         return {'complete': True, 'group': group}
-    if group in ('ab', 'anon', 'opus'):
+    if group in ('ab', 'anon'):
         # Prediction data end at the period's last decision; labels fetched only by the scorer.
         universe = run.Universe(transport, end=iso(run.decision_time(days[-1])))
         fn = lambda day: run.decide_ab(day, universe, claude, out, meta,
-                                       anonymized=group == 'anon', opus_sample=group == 'opus')
+                                       anonymized=group == 'anon')
     else:
         keywords = spec.spec()['variants']['c_news_small_mid']['negative_keywords']
         fn = lambda day: run.decide_c(day, transport, claude, out, meta, keywords)

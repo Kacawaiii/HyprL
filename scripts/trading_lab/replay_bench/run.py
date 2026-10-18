@@ -51,9 +51,24 @@ def code_hash():
                              for f in files})
 
 
+def config_payload(period, variant_group, *, amended=True):
+    if period == 'test':
+        amendment = spec_module.spec()['model_amendment']
+        previous = json.loads((spec_module.ROOT / 'docs/artifacts' / amendment['previous_freeze']).read_text())
+        if sha256_canonical(previous) != amendment['previous_freeze_sha256']:
+            raise ReplayError('PREVIOUS_FREEZE_HASH_MISMATCH')
+        payload = {'spec_hash': previous['spec_hash'], 'code_hash': previous['code_hash'],
+                   'period': period, 'variant_group': variant_group}
+        if sha256_canonical(payload) != amendment['previous_config_hashes'][variant_group]:
+            raise ReplayError('PREVIOUS_CONFIG_HASH_MISMATCH')
+    else:
+        payload = {'spec_hash': spec_module.SPEC_HASH, 'code_hash': code_hash(),
+                   'period': period, 'variant_group': variant_group}
+    return dict(payload, model='opus') if amended else payload
+
+
 def config_hash(period, variant_group):
-    return sha256_canonical({'spec_hash': spec_module.SPEC_HASH, 'code_hash': code_hash(), 'period': period,
-                             'variant_group': variant_group})
+    return sha256_canonical(config_payload(period, variant_group))
 
 
 def sessions(first, last):
@@ -126,9 +141,9 @@ def call_validated(claude, family, text, schema, check, tag, attempts=2):
     return None, metas, errors
 
 
-def decide_ab(day, universe, claude, out, run_meta, *, anonymized=False, opus_sample=False):
+def decide_ab(day, universe, claude, out, run_meta, *, anonymized=False):
     """Variants a (reviewed) and b (raw analyst) share one analyst call, as in the live pipeline."""
-    kind = 'anon' if anonymized else ('opus' if opus_sample else 'ab')
+    kind = 'anon' if anonymized else 'ab'
     path = out / kind / f'{day}.json.gz'
     if path.exists():
         return checked_record(path, run_meta, out)
@@ -147,7 +162,7 @@ def decide_ab(day, universe, claude, out, run_meta, *, anonymized=False, opus_sa
         citations_ok(output, shown)
 
     analyst, analyst_meta, analyst_errors = call_validated(
-        claude, 'opus' if opus_sample else 'sonnet', ab_prompt(shown, 'TRADER_SKILL_V2.md'), SCHEMAS['analyst'], check_analyst,
+        claude, 'opus', ab_prompt(shown, 'TRADER_SKILL_V2.md'), SCHEMAS['analyst'], check_analyst,
         f"{run_meta.get('config_hash', 'synthetic')}-{kind}-{day}-analyst")
     record = {'provenance': spec_module.PROVENANCE, 'session': day, 'decision_time': iso(T), **run_meta,
               'snapshot_hash': sealed['snapshot_hash'], 'context_hash': sealed['context_hash'],
@@ -162,7 +177,7 @@ def decide_ab(day, universe, claude, out, run_meta, *, anonymized=False, opus_sa
                                                       'verdict': 'RAW'} for v in analyst['views']])
         if not anonymized:
             reviewer, reviewer_meta, reviewer_errors = call_validated(
-                claude, 'sonnet', ab_prompt(shown, 'REVIEWER_SKILL_V2.md', analysts={'analyst_claude': analyst}),
+                claude, 'opus', ab_prompt(shown, 'REVIEWER_SKILL_V2.md', analysts={'analyst_claude': analyst}),
                 SCHEMAS['reviewer'], lambda o: validate_reviewer(o, {'analyst_claude': analyst}),
                 f"{run_meta.get('config_hash', 'synthetic')}-{kind}-{day}-reviewer")
             record['reviewer'] = {'output': reviewer, 'calls': reviewer_meta, 'errors': reviewer_errors}
@@ -212,7 +227,7 @@ def decide_c(day, transport, claude, out, run_meta, keywords):
     if candidates:
         text = (C_HEADER + spec_module.text('NEWS_SMALL_MID_SKILL.md') + '\nJSON_SCHEMA:\n' + json.dumps(C_SCHEMA)
                 + '\nCONTEXT_DATA:\n' + json.dumps(context))
-        output, metas, errors = call_validated(claude, 'sonnet', text, C_SCHEMA, check,
+        output, metas, errors = call_validated(claude, 'opus', text, C_SCHEMA, check,
                                                f"{run_meta.get('config_hash', 'synthetic')}-cd-{day}-analyst")
         record['analyst'] = {'output': output, 'calls': metas, 'errors': errors}
         if output is not None:

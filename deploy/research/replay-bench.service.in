@@ -1,5 +1,5 @@
 [Unit]
-Description=HyprL research replay bench (isolated from trader runtime)
+Description=HyprL Opus research replay bench (60 calls per night)
 
 [Service]
 Type=exec
@@ -16,3 +16,4 @@ RuntimeMaxSec=18000
 TimeoutStopSec=20
 KillMode=control-group
 Restart=no
+SuccessExitStatus=2
