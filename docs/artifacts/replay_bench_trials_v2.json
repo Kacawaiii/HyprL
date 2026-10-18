@@ -1,0 +1,16 @@
+{
+  "schema": "replay-bench-trials-v2",
+  "legacy_registry_sha256": "47e904865a9ba57efbed18a34bd60f4671d69d2075789102e08aa94a25351d47",
+  "legacy_status": "exploratory; v2 relaxed the prespecified memory gate after results; not post-cutoff evidence",
+  "variants": [
+    "a_v1_as_live",
+    "b_v1_no_reviewer",
+    "c_news_small_mid",
+    "d_news_primary_only"
+  ],
+  "audit_subruns": [
+    "anonymized Sonnet analyst, dev every fourth day",
+    "Opus variant a paired dev sample, at most 15 days"
+  ],
+  "trials": []
+}

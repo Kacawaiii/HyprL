@@ -1,0 +1,242 @@
+{
+  "schema": "replay-bench-spec-v3",
+  "revision": 3,
+  "provenance": "REPLAY_POST_CUTOFF",
+  "authorization": {
+    "name": "replay-bench-v1",
+    "payload_sha256": "e5bcf2d0db9c3c638a7acfd8cde22bd44918fecd5652a35260f69f3bd8cd37be"
+  },
+  "purpose": "Point-in-time replay of past sessions as if live; decisions see only information timestamped before T; scored afterwards; never mixed with live records.",
+  "models": {
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "tools": [],
+    "gpt": "retired, not used",
+    "note": "CLI aliases sonnet and opus; reported model must match pinned identity and memory probe. Bulk analyst, reviewer and anonymized audit use Sonnet.",
+    "night": {
+      "start_utc": "00:30",
+      "end_utc": "05:30",
+      "max_calls": 150,
+      "workers": 1,
+      "stop_on_usage_limit": true,
+      "timeout_seconds": 900
+    },
+    "context_isolation": "empty cwd, custom system prompt, no tools/MCP/skills/hooks; disable auto-memory and CLAUDE.md discovery explicitly; subscription auth retained"
+  },
+  "probe": {
+    "set_sha256": "47da31bcfe2185d2d8414a5c6f1f638c98b263a52a8e02849358720060eef3dd",
+    "set_private": true,
+    "events": 36,
+    "events_per_month": 6,
+    "months": [
+      "2026-05",
+      "2026-06",
+      "2026-07",
+      "2026-08",
+      "2026-09",
+      "2026-10"
+    ],
+    "source": "Alpaca news archive (Benzinga), one dated headline per event, question written without the answer",
+    "families": [
+      "opus",
+      "sonnet"
+    ],
+    "context": "none, no tools, one event per call",
+    "scoring": "correct = knows=true AND every answer-key group matched (regex, case-insensitive)",
+    "known_min_correct": 2,
+    "floor_rule": "maximum of main, control and forced-guess floors using the declared >=2 correct threshold, after validating every expected event, model identity and answer key; no post-hoc exclusion of months",
+    "supplementary": {
+      "declared_at_commit": "after the main probe, before any replay decision",
+      "control_set_sha256": "e981166a35f71abe5696e6230467b49f94c043d7c93ce25f90fc7e7bb94dcacb",
+      "control_months": [
+        "2025-12",
+        "2026-03"
+      ],
+      "forced_guess": "all 48 events, graded on the answer alone",
+      "declared_rule": "a month with >= 2 forced correct answers also counts as KNOWN",
+      "declared_rule_outcome": "floor 2026-11-01 for both models (no replay possible)",
+      "application": "apply the original >=2 forced-correct rule without negative-control adjustment; ambiguity blocks the original periods"
+    }
+  },
+  "periods": {
+    "dev": [
+      "2026-07-01",
+      "2026-08-31"
+    ],
+    "test": [
+      "2026-09-01",
+      "2026-10-09"
+    ],
+    "test_rule": "run once with a configuration hashed and committed before the run; no tuning on test"
+  },
+  "decision_time_utc": "12:00:00 on every NYSE session day (08:00 New York, the live am run time); all period days are EDT",
+  "information_snapshot": {
+    "schema": "replay-snapshot-v1",
+    "rule": "every item carries available_at <= T and is rejected otherwise; the snapshot is canonical-hashed and the hash is stored with the decision",
+    "news": "Alpaca /v1beta1/news, created_at < T AND updated_at < T (revised items are excluded, never shown in their later form)",
+    "daily_bars": "Alpaca /v2/stocks/bars 1Day raw, sessions whose close <= T only; crypto /v1beta3/crypto/us/bars 1Day bars whose day ended <= T",
+    "sec": "data.sec.gov submissions, 8-K filings with acceptanceDateTime < T only; CIK map is today's company_tickers.json (limitation)",
+    "not_used": [
+      "web search",
+      "revised data",
+      "prices after T",
+      "headlines after T",
+      "GDELT",
+      "FOMC/EDGAR archives"
+    ],
+    "vintage": "Historical archive retrieval does not prove original vintage. Private frozen input manifest must attest unrevised prices and point-in-time universe/identity evidence; absent proof blocks model decisions. Prediction reads are offline and every cache object is bound by digest in the proof manifest."
+  },
+  "variants": {
+    "a_v1_as_live": {
+      "analyst": "sonnet",
+      "reviewer": "sonnet",
+      "skills": {
+        "TRADER_SKILL_V2.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL_V2.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "prompt": "Existing v1 prompt style and validators; strict exact timestamp and URL or news ID from snapshot; no fuzzy citation acceptance",
+      "decision": "trader_agent.service.views_with_review(consensus=False): reviewer_claude views",
+      "universe": "live grant universe: 25 stocks + XLK XLF XLE XLI XLV + SOL AVAX LINK DOGE LTC (BTC/ETH not in the live universe and protected 2026-09-01..2026-11-30); SPY and QQQ as unpredicted benchmarks",
+      "context": "per asset: 21 completed daily closes, 1/5/20 returns, vol_20d (trader_agent.data.price_summary); per asset up to 8 Alpaca headlines from the last 72 h; macro headlines tagged SPY/QQQ up to 15",
+      "horizons": {
+        "primary": "1d",
+        "secondary": "5d"
+      },
+      "preamble": {
+        "replay_preamble.txt": "9fee1ba4e5f3b5d10c9454e29433c58cedc8b874476ce0d66736931eede9eb5b"
+      }
+    },
+    "b_v1_no_reviewer": {
+      "analyst": "same Sonnet call as a_v1_as_live",
+      "decision": "analyst_claude raw views (no review)"
+    },
+    "c_news_small_mid": {
+      "analyst": "sonnet",
+      "reviewer": null,
+      "skill": {
+        "NEWS_SMALL_MID_SKILL.md": "f57182bb768cb564e50c76ed0f6dd2d543888854e824951ee110233452e8dffc"
+      },
+      "candidates": "symbols of Alpaca news created in [previous session close, T), items naming at most 2 symbols; US equities with price >= 5 USD and 20-session median dollar volume in (10M, 1B] USD (small/mid proxy: no market-cap source in scope); live-universe names, ETFs and benchmarks excluded; at most 40 candidates ranked by negative-keyword score then recency; at most 3 headlines each",
+      "negative_keywords": [
+        "cut",
+        "lower",
+        "miss",
+        "below",
+        "downgrade",
+        "offering",
+        "dilut",
+        "delist",
+        "bankrupt",
+        "chapter 11",
+        "going concern",
+        "investigation",
+        "subpoena",
+        "lawsuit",
+        "sec ",
+        "fraud",
+        "recall",
+        "halt",
+        "withdraw",
+        "suspend",
+        "plunge",
+        "fall",
+        "drop",
+        "slump",
+        "weak",
+        "warn",
+        "resign",
+        "terminate",
+        "default",
+        "impair",
+        "restat"
+      ],
+      "holding_sessions": [
+        2,
+        10
+      ],
+      "entry": "open of the decision session (next open after T)",
+      "exit": "close of session entry+h-1",
+      "abstention": "allowed"
+    },
+    "d_news_primary_only": {
+      "from": "c_news_small_mid views (no extra model call)",
+      "filter": "c views only when a cited news item links the exact accession of an 8-K accepted in [T-72h,T); unrelated filings never qualify; missing evidence means abstention"
+    }
+  },
+  "variant_count_declared": 4,
+  "robustness_anonymized": {
+    "variant": "Sonnet raw analyst of a (b) on every fourth planned dev session",
+    "method": "tickers and company names replaced by stable per-day codes, URLs replaced by opaque ids, price levels rescaled by a per-asset random factor (returns unchanged); compared with the named run on the same days",
+    "reference": "Glasserman & Lin, Assessing look-ahead bias in stock return predictions generated by GPT sentiment analysis (2023)"
+  },
+  "fills": {
+    "a_b_1d": "equities: first SIP stock trade in [session open+30s, open+31s), exit first trade in [session close-5min, +1s); missing trade = unlabeled; SPY same",
+    "a_b_5d": "equities only: entry = session open (daily bar), exit = close of session 5; secondary",
+    "crypto_1d": "entry open of exact 13:31 UTC minute, exit open of exact same minute 24h later; missing minute = unlabeled; no stale fills",
+    "c_d": "entry = daily open of the decision session, exit = daily close of session h"
+  },
+  "costs": {
+    "fee_per_side": 0.001,
+    "spread_slippage_per_side": {
+      "dollar_volume_gt_1B": 0.0002,
+      "100M_to_1B": 0.0005,
+      "10M_to_100M": 0.0015,
+      "crypto": 0.001
+    },
+    "applied_to": "the traded asset leg; the SPY-relative return measures the view, the hedge leg is not charged (stated limitation)"
+  },
+  "labels": {
+    "hit": "net signed relative return > 0 after both-side fees and slippage; raw direction hit also reported; Brier uses gross outperformance",
+    "R": "net signed return / (vol_20d * sqrt(holding sessions))",
+    "brier": "(p_outperform - 1[outperform])^2 on directional views; abstentions excluded and counted",
+    "crypto_5d": "not scored (predeclared); exact 1d fills plus midnight mark required for crypto daily P&L"
+  },
+  "metrics": [
+    "hit rate with counts and Wilson 95% CI",
+    "Brier vs 0.25",
+    "expectancy in R after costs",
+    "max drawdown of cumulative daily P&L",
+    "effective sample size: distinct (day, cluster, direction) groups and ICC design effect",
+    "daily P&L Sharpe and peak-relative drawdown on fixed initial equity from equal-weight fixed-horizon sleeves marked daily at planned exit/close; all calendar days including zero days, annualized by sqrt(365); absent mark or incomplete trial blocks scoring",
+    "cluster x day Kish ESS with all within-group views fully dependent, plus day ICC design effect; Wilson intervals descriptive only",
+    "Opus/Sonnet paired agreement and Brier on the predetermined <=15 dev days",
+    "boundary-crossing horizons are censored, with counts; dev labels never enter the test interval"
+  ],
+  "baselines": {
+    "always_up": "every candidate/asset UP",
+    "random": "seeded coin flip per asset-day (seed 20261016)",
+    "momentum20": "UP if 20-session return > SPY 20-session return (crypto: > 0)",
+    "spy": "long SPY over the same entry/exit"
+  },
+  "protected": "BTC-USD and ETH-USD 2026-09-01..2026-11-30 never requested, never in a snapshot or label",
+  "trial_registry": "immutable public declaration in replay_bench_trials_v2.json and private append-only run ledger; legacy trials preserved verbatim with hashes and counts",
+  "storage": "private store with provenance REPLAY_POST_CUTOFF, bound to v3 hash; reject old spec/config/snapshot hashes; stage intents stop ambiguous crash retries",
+  "supersedes": {
+    "revision": 2,
+    "canonical_sha256": "95c2ed012a9954a6c4b08309ab32ff1e87217ee2af466c62854d8751b0f3cc9f",
+    "old_stores": "rejected; historical trials remain exploratory, never migrated"
+  },
+  "opus_comparison": {
+    "variant": "a_v1_as_live",
+    "period": "dev only",
+    "max_trading_days": 15,
+    "selection": "count legacy replay dates toward the 15-day cap; include eligible legacy dev dates, then every third dev session until the union reaches 15 dates; v2 records stay rejected",
+    "analyst": "opus",
+    "reviewer": "sonnet",
+    "separate_from_variants": true,
+    "legacy_replay_dates": [
+      "2026-06-30",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08",
+      "2026-07-09",
+      "2026-07-10",
+      "2026-07-13",
+      "2026-07-14"
+    ]
+  },
+  "freeze": "test config hashes, all code dependencies, models, input manifest and probe evidence digests committed before any test call; dev complete and scored first; private irreversible test-start marker prevents alternate configs",
+  "canonical_sha256": "80a8a4dff0e07baebac5378972d60347a51c42ca0a1ba196d07ed167b129ecaa"
+}
