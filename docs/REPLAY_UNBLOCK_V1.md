@@ -41,6 +41,10 @@ known-defective protocol from dispatching. No replacement timer is armed, and
 October 20 is not an armed forward date. Live-engine and Claude-book units
 and tools are untouched. No artificial ledger or Discord receipt was published.
 
+SEC access now succeeds for the ticker map and 25 fixed-universe submissions.
+News-candidate collection separately blocks on CANDIDATE_ASSET_METADATA_MISSING;
+no missing metadata is invented or silently excluded.
+
 The remaining probe prerequisites require an operator decision under a new
 prospective protocol; quota recovery alone does not authorize a third attempt.
 After valid admission: freeze, build all input bundles and label exclusions,

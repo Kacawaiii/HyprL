@@ -1,0 +1,92 @@
+{
+  "admission": {
+    "forward_decisions": 0,
+    "freeze_committed": false,
+    "replay_decisions": 0,
+    "seal_committed": false
+  },
+  "archive": {
+    "index_sha256": "d6cfdb4e6193837118806104072d2299568dd3a672d3f293a3d18c99f03720f6",
+    "objects": 2089
+  },
+  "checks": {
+    "mandatory_repository": {
+      "failed": 0,
+      "passed": 505,
+      "seconds": 414.62,
+      "skipped_expected": 1
+    },
+    "replay_forward": {
+      "failed": 1,
+      "failure": "real revision 9 freeze absent",
+      "passed": 157
+    },
+    "unit_drafts_verified": 14
+  },
+  "code_hash": "784c31bc67a7a23608c71df8c66718827114fbab27ea59cc65531045dba85b92",
+  "labels": {
+    "attempted": 658,
+    "census_sha256": "4429ad0bc2bdd6270c356b38f0c221b60ebb2e73e0d396c6f7de016123aebd5e",
+    "counts": {
+      "dev": 2232,
+      "test": 1475
+    },
+    "excluded_keys_sha256": "32a8c0be96ca47b022702980adea702290dd74b4e887874e3d117abcfe1f1476",
+    "missing_errors": {
+      "INCOMPLETE_LABEL_COVERAGE": 630,
+      "MISSING_CRYPTO_MARK": 28
+    },
+    "paired": true,
+    "recovered": 0,
+    "refreshed_requests": 267,
+    "remaining_excluded": 658,
+    "retry_record_sha256": "987d2c4910d9f4edc2dc8953b46281443279b5cfb6e8d3b94b44187a118bcd03"
+  },
+  "method_sha256": "99d87fe6f268c3c651e037a71c5ce0aa550350295868ac8467e2281c2915975b",
+  "news_data_quality": {
+    "archive_unique_items": 68550,
+    "excluded_count": 1,
+    "excluded_ids_sha256": "0da173eb4aa82c3b2639f6a116c130fba71eca2a0164003eb575e9f4a85253d3",
+    "rule": "updated_at earlier than created_at excluded uniformly"
+  },
+  "probe4": {
+    "families": {
+      "gpt": {
+        "accepted_answers": 0,
+        "attempts": 2,
+        "binding_retry_error": "TAINTED_RUN",
+        "graded_answers": 0,
+        "original_error": "TAINTED_RUN",
+        "original_response_sha256": "9cf27699e595edf96ca8c148c8a1946c9470fc248747b514d9ad168323bf278c",
+        "retry_response_sha256": "681638ee794220d4dcf234ab001930450c9ec38dfe7dbb28b222a3f131dc0110"
+      },
+      "opus": {
+        "accepted_answers": 0,
+        "attempts": 2,
+        "binding_retry_error": "MODEL_USAGE_LIMIT",
+        "graded_answers": 0,
+        "original_error": "MODEL_FAILED",
+        "original_response_sha256": "adb857674bc9beeecb13751424bddc1f744095ebe67b5016145e5c46879852f0",
+        "retry_response_sha256": "417de617d12aabb7188a66c94358d2a3342d194674b14009fefe37a3b2029325"
+      }
+    },
+    "no_further_retry": true,
+    "retry_transport": "agent systemd user units"
+  },
+  "research_timers": {
+    "forward_first_session_armed": null,
+    "new_armed": 0,
+    "next_actual_runs": null,
+    "predecessor_disabled": 4
+  },
+  "schema": "replay-unblock-evidence-v1",
+  "sec": {
+    "fixed_universe_submissions": 25,
+    "identities_and_parallel_arrays_validated": 25,
+    "news_candidate_collection_error": "CANDIDATE_ASSET_METADATA_MISSING",
+    "ticker_map_available": true,
+    "uniform_unavailable_fallback_used": false
+  },
+  "spec_hash": "f1f5f27c07372c07f2ee05402e1465c2431ed35a2be9ec12d49669b611588c17",
+  "status": "BLOCKED"
+}
