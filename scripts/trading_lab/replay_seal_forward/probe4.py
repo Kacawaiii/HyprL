@@ -125,16 +125,32 @@ def committed_preregistration(directory):
     return json.loads(file.read_text()), public
 
 
-def ask(directory, family, budget, *, runner=subprocess.run, clock=now):
+def retry_authorization(directory, family):
+    """One operator-authorized retry, bound to the original rejected envelope."""
+    name = spec.spec()['probe']['probe4']['retry_artifact']
+    public = json.loads(subprocess.check_output(['git', '-C', str(spec.ROOT), 'show', 'HEAD:docs/artifacts/' + name]))
+    original = Path(directory) / f'probe4-answers-{family}.response'
+    if (Path(directory) / f'probe4-answers-{family}.json').exists():
+        raise ReplayError('PROBE4_ACCEPTED_ANSWER_EXISTS')
+    if (public['attempts_per_family'] != 2 or
+            hashlib.sha256(original.read_bytes()).hexdigest() != public['original_response_sha256'][family]):
+        raise ReplayError('PROBE4_RETRY_AUTHORIZATION_MISMATCH')
+    return public
+
+
+def ask(directory, family, budget, *, runner=subprocess.run, clock=now, authorized_retry=False):
+    models.require_systemd(runner)
     prereg, _ = committed_preregistration(directory)
-    target = Path(directory) / f'probe4-answers-{family}.json'
+    if authorized_retry:
+        retry_authorization(directory, family)
+    target = Path(directory) / f'probe4-{"retry-" if authorized_retry else ""}answers-{family}.json'
     if target.exists() or target.with_suffix('.intent').exists():
         raise ReplayError('PROBE4_ALREADY_ASKED')
     text, shape = prompt(prereg['questions']), schema(prereg['questions'])
     if hashlib.sha256(text.encode()).hexdigest() != prereg['prompt_sha256']:
         raise ReplayError('PROBE4_PROMPT_HASH_MISMATCH')
     at = clock()
-    budget.reserve_probe(family, 150, at)
+    budget.reserve_probe(family, 150, at, authorized_retry=authorized_retry)
     atomic_json(target.with_suffix('.intent'), {'at': iso(at), 'family': family})
     with tempfile.TemporaryDirectory(prefix='probe4-') as private:
         cwd = Path(private) / 'empty'
@@ -173,7 +189,8 @@ def evidence(directory):
     prereg, public = committed_preregistration(directory)
     out = {'preregistration_sha256': public['preregistration_sha256'], 'families': {}}
     for family in ('opus', 'gpt'):
-        file = Path(directory) / f'probe4-answers-{family}.json'
+        retry_authorization(directory, family)
+        file = Path(directory) / f'probe4-retry-answers-{family}.json'
         if not file.is_file():
             raise ReplayError('PROBE4_ANSWERS_MISSING', family)
         value = json.loads(file.read_text())
@@ -189,7 +206,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='replay_seal_forward.probe4')
     parser.add_argument('--probe-root', default=os.environ.get('REPLAY_PROBE_ROOT'), required=True)
     parser.add_argument('--data-root', default=os.environ.get('REPLAY_DATA_ROOT'), required=True)
-    parser.add_argument('command', choices=('preregister', 'ask-opus', 'ask-gpt', 'evidence'))
+    parser.add_argument('command', choices=('preregister', 'ask-opus', 'ask-gpt', 'retry-opus', 'retry-gpt', 'evidence'))
     parser.add_argument('--collection-grant')
     parser.add_argument('--authorization')
     parser.add_argument('--alpaca-env')
@@ -205,7 +222,8 @@ def main(argv=None):
         elif args.command == 'evidence':
             result = evidence(args.probe_root)
         else:
-            result = ask(args.probe_root, args.command.split('-')[1], models.DuelBudget(args.data_root))
+            result = ask(args.probe_root, args.command.split('-')[1], models.DuelBudget(args.data_root),
+                         authorized_retry=args.command.startswith('retry-'))
     except ReplayError as error:
         result = {'status': 'BLOCKED', 'error': error.code, 'evidence': str(error.evidence)}
     print(json.dumps(result, sort_keys=True, indent=2))

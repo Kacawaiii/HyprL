@@ -1,0 +1,15 @@
+{
+  "attempts_per_family": 2,
+  "binding_retry": true,
+  "decision_date": "2026-10-19",
+  "original_response_sha256": {
+    "gpt": "9cf27699e595edf96ca8c148c8a1946c9470fc248747b514d9ad168323bf278c",
+    "opus": "adb857674bc9beeecb13751424bddc1f744095ebe67b5016145e5c46879852f0"
+  },
+  "preregistration_sha256": "b16b5c9de1e2c38c2e27ea03dbf5891f1f5d3847dcba69a7a6e20a7d7f5e1333",
+  "reasons": {
+    "gpt": "Tainted envelope rejected without grading or use; strengthened isolation flags now required.",
+    "opus": "No inference: zero API duration, no reported model, authentication rejected in sandbox."
+  },
+  "schema": "replay-memory-probe4-retry-v1"
+}

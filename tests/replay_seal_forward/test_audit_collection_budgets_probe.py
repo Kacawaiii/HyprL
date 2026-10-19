@@ -220,6 +220,42 @@ def test_probe4_requires_committed_digest_and_never_retries_unknown_call(tmp_pat
     assert len(attempts) == 1
 
 
+def test_authorized_probe_retry_preserves_original_and_is_binding(tmp_path, monkeypatch):
+    import hashlib
+    value = prereg()
+    value['prompt_sha256'] = hashlib.sha256(probe4.prompt(value['questions']).encode()).hexdigest()
+    monkeypatch.setattr(probe4, 'committed_preregistration', lambda _: (value, {}))
+    original = tmp_path/'probe4-answers-opus.response'
+    original.write_text('{"synthetic_rejected":true}')
+    original_bytes = original.read_bytes()
+    public = {'attempts_per_family': 2, 'original_response_sha256': {
+        'opus': hashlib.sha256(original_bytes).hexdigest()}}
+    monkeypatch.setattr(subprocess, 'check_output', lambda *a, **kw: json.dumps(public).encode())
+    attempts = []
+    def timeout(args, **kw):
+        attempts.append(args)
+        raise subprocess.TimeoutExpired(args, 1)
+    budget = models.DuelBudget(tmp_path/'budget')
+    budget.reserve_probe('opus', 150, AT)
+    with pytest.raises(ReplayError, match='CALL_OUTCOME_UNKNOWN'):
+        probe4.ask(tmp_path, 'opus', budget, runner=timeout, clock=lambda: AT, authorized_retry=True)
+    with pytest.raises(ReplayError, match='ALREADY_ASKED'):
+        probe4.ask(tmp_path, 'opus', budget, runner=timeout, clock=lambda: AT, authorized_retry=True)
+    assert len(attempts) == 1 and original.read_bytes() == original_bytes
+    assert budget.used('probe:opus', AT) == 2
+
+
+def test_real_model_calls_require_systemd_before_reserving_or_dispatching(tmp_path, monkeypatch):
+    monkeypatch.delenv('INVOCATION_ID', raising=False)
+    budget = models.DuelBudget(tmp_path)
+    with pytest.raises(ReplayError, match='MODEL_SYSTEMD_REQUIRED'):
+        probe4.ask(tmp_path, 'opus', budget)
+    client = models.Models(SimpleNamespace(), budget, tmp_path/'transcripts')
+    with pytest.raises(ReplayError, match='MODEL_SYSTEMD_REQUIRED'):
+        client.call('gpt', 'synthetic', {}, tag='no-shell')
+    assert not budget.path.exists()
+
+
 def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_path, grants, monkeypatch):
     from datetime import timedelta
     from urllib.parse import parse_qs, urlsplit

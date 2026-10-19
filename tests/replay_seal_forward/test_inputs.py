@@ -73,8 +73,7 @@ def test_strict_news_updated_before_T_and_creation_fields_only():
     assert inputs.news_at([dict(row, created_at=iso(T), updated_at=iso(T))], T) == []
     with pytest.raises(ReplayError, match='NEWS_EDIT_CLOCK_MISSING'):
         inputs.news_at([dict(row, updated_at=None)], T)
-    with pytest.raises(ReplayError, match='NEWS_EDIT_CLOCK_INVALID'):
-        inputs.news_at([dict(row, updated_at=iso(T-timedelta(hours=2)))], T)
+    assert inputs.news_at([dict(row, updated_at=iso(T-timedelta(hours=2)))], T) == []
 
 
 def test_raw_timestamps_completed_intervals_and_200_50_boundaries(tmp_path):

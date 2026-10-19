@@ -30,7 +30,7 @@ def news_at(rows, T):
             raise ReplayError('NEWS_EDIT_CLOCK_MISSING')
         updated = instant(row['updated_at'])
         if updated < created:
-            raise ReplayError('NEWS_EDIT_CLOCK_INVALID')
+            continue  # Operator 2026-10-19: uniform data-quality exclusion.
         # Operator decision 2026-10-18: both clocks strictly before T, no edit tolerance.
         if created >= T or updated >= T or md.PROTECTED.intersection(row['symbols']):
             continue
@@ -76,6 +76,9 @@ def build(archive, T, method_hash):
     earliest = min(T - timedelta(hours=72), start)
     archive.require_news(earliest, T)
     visible = [n for n in news_at(archive.news.values(), T) if instant(n['created_at']) >= earliest]
+    invalid_news = [n['id'] for n in archive.news.values() if n.get('updated_at') and
+                    instant(n['updated_at']) < instant(n['created_at'])]
+    filings_unavailable = archive.index.get('sec_availability', {}).get('state') == 'UNAVAILABLE'
     prices, eligible, excluded = {}, [], []
     items = {}
     def bind(kind, identity, value):
@@ -111,7 +114,8 @@ def build(archive, T, method_hash):
         bind('news', n['id'], n)
     ab = {'schema': 'replay-context-v1', 'session': T.date().isoformat(), 'decision_time': iso(T),
           'price_cutoff': iso(T), 'universe': eligible, 'prices': prices, 'headlines': headlines,
-          'archives': {'fomc': {'state': 'NOT_CONFIGURED', 'items': []}, 'edgar': {'state': 'AVAILABLE', 'items': []}},
+          'archives': {'fomc': {'state': 'NOT_CONFIGURED', 'items': []},
+                       'edgar': {'state': 'UNAVAILABLE' if filings_unavailable else 'AVAILABLE', 'items': []}},
           'exclusions': excluded, 'synthetic': False, 'limitations': RISKS,
           'provenance': spec.PROVENANCE}
     by_symbol = {}
@@ -149,14 +153,15 @@ def build(archive, T, method_hash):
     candidates.sort(key=lambda v: (v[0], v[1], v[2]), reverse=True)
     shown = []
     for _, _, symbol, stats, news in sorted(candidates[:40], key=lambda v: v[2]):
-        filings = [f for f in archive.filings.get(symbol, {}).values() if instant(f['accepted_at']) < T]
+        filings = [] if filings_unavailable else [f for f in archive.filings.get(symbol, {}).values()
+                                                  if instant(f['accepted_at']) < T]
         for f in filings:
             bind('filing', symbol + ':' + f['accession'], f)
         for n in news:
             bind('news', n['id'], n)
         shown.append({'symbol': symbol, 'prices': dict(stats, asset=symbol),
                       'headlines': [headline(n) for n in news], 'filings': filings,
-                      'filings_state': 'AVAILABLE' if symbol in archive.filing_symbols else 'UNAVAILABLE'})
+                      'filings_state': 'AVAILABLE' if not filings_unavailable and symbol in archive.filing_symbols else 'UNAVAILABLE'})
     cd = {'schema': 'replay-news-context-v1', 'session': T.date().isoformat(), 'decision_time': iso(T),
           'news_window_start': iso(start), 'candidates': shown, 'limitations': RISKS, 'provenance': spec.PROVENANCE}
     # Scoring-only borrow flags (never shown to a model): hard-to-borrow shorts are excluded.
@@ -167,6 +172,10 @@ def build(archive, T, method_hash):
                 'items': [{'id': k, 'sha256': v} for k, v in sorted(items.items())],
                 'rejections': rejections, 'candidate_count': len(candidates), 'shown_count': len(shown),
                 'borrow_flags': borrow}
+    manifest['news_data_quality'] = {'rule': 'updated_at < created_at excluded uniformly',
+                                    'excluded_count': len(invalid_news),
+                                    'excluded_ids_sha256': sha256_canonical(sorted(invalid_news))}
+    manifest['sec_availability'] = archive.index.get('sec_availability', {})
     return {g: sn.seal(c, dict(manifest, group=g), T) for g, c in (('ab', ab), ('cd', cd))}
 
 

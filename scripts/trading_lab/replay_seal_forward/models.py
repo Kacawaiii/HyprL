@@ -62,7 +62,7 @@ class DuelBudget(Budget):
                                                      'note': 'hard stop; the operator removes this file'})
         self.stop_model('opus', at)
 
-    def reserve_probe(self, family, limit, at):
+    def reserve_probe(self, family, limit, at, *, authorized_retry=False):
         if family not in ('opus', 'gpt'):
             raise ReplayError('MODEL_NOT_ALLOWED')
         if family == 'opus' and (self.path.parent / CREDIT_STOP).exists():
@@ -71,13 +71,14 @@ class DuelBudget(Budget):
             day = data.setdefault(iso(at)[:10], {})
             if day.get('stopped:' + family) or family == 'opus' and day.get('stopped'):
                 raise ReplayError('MODEL_USAGE_LIMIT')
-            if day.get('probe:' + family, 0):
+            used = day.get('probe:' + family, 0)
+            if used >= (2 if authorized_retry else 1):
                 raise ReplayError('PROBE4_ALREADY_ASKED')
             if family == 'opus' and sum(day.get(k, 0) for k in OPUS_DAY_KEYS) >= limit:
                 raise ReplayError('BUDGET_EXHAUSTED')
             if family == 'gpt' and day.get('model:gpt', 0) + day.get('probe:gpt', 0) >= limit:
                 raise ReplayError('BUDGET_EXHAUSTED')
-            day['probe:' + family] = 1
+            day['probe:' + family] = used + 1
 
     def stop_model(self, family, at):
         with self._locked() as data:
@@ -118,6 +119,12 @@ def argv(family, schema, schema_file):
 
 
 SYSTEM = 'Answer only the supplied research question using the supplied data. No tools.'
+
+
+def require_systemd(runner):
+    """Production model dispatch must inherit an agent user-unit invocation."""
+    if runner is subprocess.run and not os.environ.get('INVOCATION_ID'):
+        raise ReplayError('MODEL_SYSTEMD_REQUIRED')
 
 
 def no_tools(event):
@@ -281,6 +288,7 @@ class Models:
         self.billing, self.scope = billing, scope
 
     def call(self, family, prompt, schema, *, tag, timeout=900):
+        require_systemd(self.runner)
         if family not in spec.spec()['models']['identities']:
             raise ReplayError('MODEL_NOT_ALLOWED')
         # Bind code/spec/schema: no old decisions can be silently relabeled under a new protocol.
