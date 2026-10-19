@@ -1,0 +1,94 @@
+{
+  "as_of": "2026-10-19T14:37:21.087223Z",
+  "configuration_freeze_committed": false,
+  "development_primary_target_counts": {
+    "n": 1214,
+    "outcomes_sha256": "eb5fd2f9545feb62ff07ffc4e76e0ccd4073789cf4317ee2a3167e6ee4989dc3",
+    "panel": "a_v1_as_live:1d",
+    "spec_hash": "958824609ff8d6a971a607915a7670709a03e5ed0db0df3f4872ed86a4fef51f",
+    "successes": 590
+  },
+  "fixed_universe_labels": {
+    "dev": 2232,
+    "test": 1475
+  },
+  "forward_ready": false,
+  "input_seal_committed": false,
+  "memory_probe": {
+    "families": {
+      "gpt": {
+        "accepted_answers": false,
+        "response_sha256": "9cf27699e595edf96ca8c148c8a1946c9470fc248747b514d9ad168323bf278c",
+        "status": "REJECTED_CLI_ERROR_ITEMS"
+      },
+      "opus": {
+        "accepted_answers": false,
+        "response_sha256": "adb857674bc9beeecb13751424bddc1f744095ebe67b5016145e5c46879852f0",
+        "status": "NOT_AUTHENTICATED"
+      }
+    },
+    "preregistration_sha256": "b16b5c9de1e2c38c2e27ea03dbf5891f1f5d3847dcba69a7a6e20a7d7f5e1333"
+  },
+  "method_declaration_sha256": "2db027a544a978efbe023e4f272eae8e9c5e891f5e7f083929b2675057d007f8",
+  "missing_label_count": 658,
+  "missing_label_errors": {
+    "INCOMPLETE_LABEL_COVERAGE": 630,
+    "MISSING_CRYPTO_MARK": 28
+  },
+  "news_invalid_clock_count": 1,
+  "news_invalid_identity_set_sha256": "0da173eb4aa82c3b2639f6a116c130fba71eca2a0164003eb575e9f4a85253d3",
+  "note": "Counts and digests only. No successful memory probe, input seal, prospective duel or performance claim. Missing fills/marks and malformed source clocks remain rejected.",
+  "object_counts": [
+    {
+      "adjustment": null,
+      "count": 1373,
+      "endpoint": "https://data.alpaca.markets/v1beta1/news",
+      "timeframe": null
+    },
+    {
+      "adjustment": null,
+      "count": 3,
+      "endpoint": "https://data.alpaca.markets/v1beta3/crypto/us/bars",
+      "timeframe": "1Day"
+    },
+    {
+      "adjustment": null,
+      "count": 148,
+      "endpoint": "https://data.alpaca.markets/v1beta3/crypto/us/bars",
+      "timeframe": "1Min"
+    },
+    {
+      "adjustment": "all",
+      "count": 62,
+      "endpoint": "https://data.alpaca.markets/v2/stocks/bars",
+      "timeframe": "1Day"
+    },
+    {
+      "adjustment": "raw",
+      "count": 261,
+      "endpoint": "https://data.alpaca.markets/v2/stocks/bars",
+      "timeframe": "1Day"
+    },
+    {
+      "adjustment": null,
+      "count": 214,
+      "endpoint": "https://data.alpaca.markets/v2/stocks/trades",
+      "timeframe": null
+    },
+    {
+      "adjustment": null,
+      "count": 2,
+      "endpoint": "https://paper-api.alpaca.markets/v2/assets",
+      "timeframe": null
+    }
+  ],
+  "probe_launch_commit": "6d8937c2bea114f7dec1cebd656b3594bf29b2b6",
+  "request_index_sha256": "3a0adf1dbff5cd22f22209d686fa3681fe55c15cbfe039f1a57242e9b7e1d636",
+  "request_objects": 2063,
+  "runtime_code_sha256": "4f2b8ed5f2402881f73dabf75d8e5d2cdf2fbe0a40577d056bad87eccdbc6cab",
+  "runtime_commit": "5eaf66c803be49e9a3465cf6785225db3b084735",
+  "schema": "replay-audit-collection-evidence-v1",
+  "sec_collection_status": "HTTP_403_STOPPED",
+  "spec_hash": "958824609ff8d6a971a607915a7670709a03e5ed0db0df3f4872ed86a4fef51f",
+  "status": "BLOCKED"
+}
