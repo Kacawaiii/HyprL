@@ -1,0 +1,26 @@
+{
+  "criteria": {
+    "cut": "2026-09-30",
+    "n": 40,
+    "pooled_threshold": 26,
+    "text": "Forced choice up/down, no unknown. Balanced design: always-up scores 50%. Flagged if pooled correct >= 26/40 (one-sided binomial p <= 0.05) or any window correct >= its threshold (p <= 0.025). A flagged model has its test period cut at 2026-09-30. Fixed before any model call.",
+    "window_thresholds": {
+      "2026-09-30..2026-10-08": 12,
+      "2026-10-08..2026-10-16": 19
+    }
+  },
+  "models": {
+    "gpt": "gpt-6.1-sol",
+    "opus": "claude-opus-5-5"
+  },
+  "n_questions": 40,
+  "note": "Digest only; questions and answers stay private until graded.",
+  "preregistration_sha256": "b16b5c9de1e2c38c2e27ea03dbf5891f1f5d3847dcba69a7a6e20a7d7f5e1333",
+  "prompt_sha256": "ccc697bdf1fd08b742899e391de6fb0a3e0661842e48aaf865ef643b68ad540c",
+  "rule": "Forced choice up/down, no unknown. Balanced design: always-up scores 50%. Flagged if pooled correct >= 26/40 (one-sided binomial p <= 0.05) or any window correct >= its threshold (p <= 0.025). A flagged model has its test period cut at 2026-09-30. Fixed before any model call.",
+  "schema": "replay-memory-probe4-v1",
+  "windows": [
+    "2026-09-30..2026-10-08",
+    "2026-10-08..2026-10-16"
+  ]
+}
