@@ -77,7 +77,12 @@ def decide(root, period, group, day, family, transport, client, meta, path):
                   snapshot_hash=sealed['snapshot_hash'], shown_context_hash=sha256_canonical(context),
                   residual_risks=spec.spec()['residual_risks'], decisions={}, forecasts={}, calls={}, errors={})
     tag = meta['config_hash'] + ':' + day
-    if group in ('ab', 'anon'):
+    if group in ('ab', 'anon') and not context['universe']:
+        for variant in (AB if group == 'ab' else (AB[1],)):
+            record['decisions'][variant] = []
+            record['forecasts'][variant] = []
+        record['data_quality_excluded_day'] = True
+    elif group in ('ab', 'anon'):
         output, call, errors = infer(client, family, prompt('analyst', context), schemas.ANALYST_SCHEMA,
                                     lambda o: schemas.analyst(o, context), tag + ':analyst')
         record['calls']['analyst'], record['errors']['analyst'] = call, errors

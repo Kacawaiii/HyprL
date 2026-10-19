@@ -81,3 +81,35 @@ def test_hedge_leg_borrow_hard_to_borrow_and_diagnostic_labels():
 def test_split_and_dividend_windows_are_detected(ratio):
     assert fills.corporate_action({'2026-07-15': 1, '2026-07-16': ratio}, '2026-07-15', '2026-07-16')
     assert fills.corporate_action({'2026-07-15': 1}, '2026-07-15', '2026-07-16') is None
+
+
+def test_missing_required_outcome_cache_is_shared_exclusion_but_hash_mismatch_blocks():
+    class Missing:
+        def get(self, *args):
+            raise ReplayError('OFFLINE_CACHE_MISS')
+    outcomes = score.Outcomes(Missing(), '2026-07-01', '2026-08-31', spec.spec()['costs'])
+    for asset in ('AAPL', 'SOL-USD'):
+        assert outcomes.get('ab', '2026-07-15', asset, 1) is None
+        assert outcomes.exclusion_reasons[('ab', '2026-07-15', asset, 1)] == 'OFFLINE_CACHE_MISS'
+    class Corrupt:
+        def get(self, *args):
+            raise ReplayError('CACHE_HASH_MISMATCH')
+    with pytest.raises(ReplayError, match='CACHE_HASH_MISMATCH'):
+        score.Outcomes(Corrupt(), '2026-07-01', '2026-08-31', spec.spec()['costs'])
+
+
+def test_missing_sealed_request_is_data_quality_but_bound_object_damage_is_integrity(tmp_path):
+    import hashlib
+    from scripts.trading_lab.replay_seal_forward.quality import DataTransport
+    from scripts.trading_lab.replay_bench.grant import Transport, Budget
+    transport = Transport(SimpleNamespace(payload={'scope': {}}, check=lambda: None), Budget(tmp_path),
+                          tmp_path/'cache', offline=True)
+    transport.allowed_cache = {}
+    source = DataTransport(transport)
+    origin, path = md.ALPACA, '/v2/stocks/bars'
+    with pytest.raises(ReplayError, match='SEALED_SOURCE_DATA_MISSING'):
+        source.get(origin, path)
+    # A once-bound object that vanished is an integrity failure; no exclusion hides it.
+    transport.allowed_cache[hashlib.sha256((origin+path).encode()).hexdigest()] = 'a'*64
+    with pytest.raises(ReplayError, match='PREDICTION_CACHE_NOT_SEALED'):
+        source.get(origin, path)

@@ -129,23 +129,23 @@ def test_missing_label_retry_is_closed_without_reading_or_dispatching(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-def test_150_nightly_cap_inside_opus_daily_cap_and_forward_reservation(tmp_path):
+def test_400_nightly_cap_inside_opus_daily_cap_and_forward_reservation(tmp_path):
     budget = models.DuelBudget(tmp_path)
-    for _ in range(149):
-        budget.reserve_model('opus', 150, AT)
+    for _ in range(399):
+        budget.reserve_model('opus', 400, AT)
     with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
-        budget.reserve_model('opus', 150, AT)
+        budget.reserve_model('opus', 400, AT)
     fw = forward.ForwardBudget(tmp_path)
-    fw.reserve_model('opus', 150, AT)
+    fw.reserve_model('opus', 400, AT)
     with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
-        budget.reserve_probe('opus', 150, AT)
-    for _ in range(150):
-        budget.reserve_model('gpt', 150, AT)
+        budget.reserve_probe('opus', 400, AT)
+    for _ in range(400):
+        budget.reserve_model('gpt', 400, AT)
     with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
-        budget.reserve_model('gpt', 150, AT)
+        budget.reserve_model('gpt', 400, AT)
     budget.stop_model('gpt', AT)
     with pytest.raises(ReplayError, match='MODEL_USAGE_LIMIT'):
-        forward.ForwardBudget(tmp_path).reserve_model('gpt', 150, AT)
+        forward.ForwardBudget(tmp_path).reserve_model('gpt', 400, AT)
 
 
 def test_credit_error_is_a_durable_hard_stop_and_optional_api_stays_off(tmp_path, monkeypatch):
@@ -320,7 +320,7 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
             body = {'news': [{'id': 1, 'headline': 'SMLL lowers guidance', 'source': 'synthetic', 'symbols': ['SMLL'],
                              'created_at': iso(at-timedelta(hours=1)), 'updated_at': iso(at-timedelta(hours=1))}]}
         elif parsed.path == '/v2/assets':
-            body = [{'id': 'synthetic-' + s, 'symbol': s, 'class': 'us_equity', 'name': s, 'status': 'active', 'shortable': True,
+            body = [{'id': 'synthetic-' + s, 'symbol': s, 'class': 'us_equity', 'name': s, 'exchange': 'NASDAQ', 'status': 'active', 'shortable': True,
                      'easy_to_borrow': True} for s in sn.STOCKS + sn.ETFS + sn.BENCHMARKS + ('SMLL',)] if params['status'] == 'active' else []
         elif parsed.path == '/files/company_tickers.json':
             body = {'0': {'ticker': 'SMLL', 'cik_str': 1}}

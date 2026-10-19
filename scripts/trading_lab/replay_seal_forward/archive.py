@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant
 from scripts.trading_lab.replay_bench import marketdata as md
-from . import spec
+from . import spec, quality
 
 # A query reaching 365 calendar days (>= 250 sessions) before T separates a missing history from
 # a legitimately short one for the 200-session rule; the grant's daily bars start 2025-01-01.
@@ -93,6 +93,7 @@ class Archive:
         self.bars, self.news, self.filings, self.assets = DiskBars(self.root), {}, {}, {}
         asset_records, asset_fingerprints = {}, {}
         self.ambiguous_assets = set()
+        self.invalid_bars, self.invalid_news = {}, {}
         self.requests, self.objects, self.asset_statuses = [], {}, set()
         self.news_windows = []
         self.filing_symbols = set()
@@ -138,30 +139,47 @@ class Archive:
                 for symbol, rows in body.get('bars', {}).items():
                     symbol = symbol.replace('/USD', '-USD')
                     for row in rows:
-                        self.bars.put(symbol, row, received)
+                        try:
+                            try:
+                                instant(row['t'])
+                            except (KeyError, TypeError, ValueError, AttributeError, ReplayError):
+                                raise ReplayError('INVALID_BAR') from None
+                            self.bars.put(symbol, row, received)
+                        except ReplayError as error:
+                            if error.code not in ('INVALID_BAR', 'ARCHIVE_REVISION_CONFLICT'):
+                                raise
+                            self.invalid_bars[symbol] = 'INVALID_BAR' if error.code == 'INVALID_BAR' else 'CONTRADICTORY_BARS'
             elif origin == md.ALPACA and path == '/v1beta1/news':
                 self.news_windows.append((params, pagination))
                 for row in body.get('news', []):
-                    identity = row['id']
+                    identity = row.get('id', 'invalid-' + spec.sha256_canonical(row))
                     prior = revisions.get(('news', identity))
                     if prior is None or received >= prior:
                         fingerprint = spec.sha256_canonical(row)
                         if received == prior and news_fingerprints[identity] != fingerprint:
-                            raise ReplayError('ARCHIVE_REVISION_CONFLICT', {'kind': 'news', 'identity': identity})
+                            self.invalid_news[str(identity)] = 'CONTRADICTORY_NEWS'
+                            self.news.pop(identity, None)
+                            continue
                         news_fingerprints[identity] = fingerprint
+                    if str(identity) in self.invalid_news:
+                        continue
                     fields = ('id', 'headline', 'source', 'symbols', 'created_at', 'updated_at')
-                    put('news', row['id'], {k: row.get(k) for k in fields}, self.news)
+                    put('news', identity, {k: row.get(k) for k in fields}, self.news)
             elif path == '/v2/assets' and origin in ('https://paper-api.alpaca.markets', 'https://api.alpaca.markets'):
                 # Real Alpaca assets have no listing-date field. Listing history is
                 # established from dated bars, never from an invented asset field.
                 status = params.get('status', 'active')
                 self.asset_statuses.update(('active', 'inactive') if status == 'all' else (status,))
                 for row in body:
+                    if not isinstance(row.get('symbol'), str) or not row['symbol']:
+                        continue
                     symbol = row['symbol']
                     fingerprint = spec.sha256_canonical({k: v for k, v in row.items() if k != 'id'})
                     asset_fingerprints.setdefault(symbol, set()).add(fingerprint)
                     asset_records.setdefault(symbol, row)
             elif origin == 'https://data.sec.gov' and path.startswith('/submissions/CIK'):
+                if spec.spec()['unblock_2_amendment']['sec_policy']['state'] == 'UNAVAILABLE':
+                    continue
                 cik = path.removeprefix('/submissions/CIK').removesuffix('.json')
                 if body.get('cik') != cik or len(cik) != 10 or not cik.isdigit():
                     raise ReplayError('SEC_CIK_IDENTITY_MISMATCH')
@@ -228,3 +246,21 @@ class Archive:
     def proof(self):
         return {'index_hash': spec.sha256_canonical(self.index),
                 'cache_directory': str(self.cache.relative_to(self.root)), 'objects': self.objects}
+
+
+class UnavailableArchive:
+    """An absent data index excludes its day, with no invented source evidence."""
+    def __init__(self, reason):
+        self.reason = reason
+        self.bars, self.news, self.filings, self.assets = {}, {}, {}, {}
+        self.ambiguous_assets, self.filing_symbols = set(), set()
+        self.invalid_bars, self.invalid_news, self.objects = {}, {}, {}
+
+    def require_assets(self):
+        raise ReplayError(self.reason)
+
+    def require_news(self, start, end):
+        raise ReplayError(self.reason)
+
+    def proof(self):
+        return {'state': 'EXCLUDED', 'reason': self.reason, 'objects': {}}

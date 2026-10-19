@@ -1,7 +1,7 @@
-"""Serial no-tool dispatch, 150-call nightly caps per model, durable no-refund intents.
+"""Serial no-tool dispatch, 400-call nightly caps per model, durable no-refund intents.
 
-Opus rides the subscription by default (150/night, and every Opus call of the UTC day stays inside
-the 150/day replay grant, keeping one call for the same-day forward session). An optional API-key
+Opus rides the subscription by default (400/night, and every Opus call of the UTC day stays inside
+the 400/day replay grant, keeping one call for the same-day forward session). An optional API-key
 path for Opus (grant replay-bench-api-v1) exists but is off unless explicitly enabled; a
 "Credit balance is too low" answer is a durable hard stop in either mode.
 """
@@ -22,7 +22,7 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from . import schemas, spec
 
 
-NIGHT_CAP = 150
+NIGHT_CAP = 400
 OPUS_DAY_KEYS = ('model:opus', 'forward:model:opus', 'probe:opus')
 CREDIT_STOP = 'api-credit-stop.json'
 
@@ -51,7 +51,7 @@ class DuelBudget(Budget):
             if family == 'gpt' and day.get(key, 0) + day.get('probe:gpt', 0) >= min(limit, night_limit, NIGHT_CAP):
                 raise ReplayError('BUDGET_EXHAUSTED')
             if family == 'opus':
-                # Inside the 150/day grant across night, forward and probe; keep the forward call.
+                # Inside the 400/day grant across night, forward and probe; keep the forward call.
                 reserve = 1 if forward_session(at) and not day.get('forward:model:opus') else 0
                 if sum(day.get(k, 0) for k in OPUS_DAY_KEYS) + reserve >= limit:
                     raise ReplayError('BUDGET_EXHAUSTED')

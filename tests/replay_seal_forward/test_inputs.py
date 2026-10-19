@@ -52,7 +52,10 @@ def fixture(root, T=T):
     for status in ('active', 'inactive'):
         add(root, objects, 'https://paper-api.alpaca.markets', '/v2/assets', {'status': status, 'asset_class': 'us_equity'},
             [{'id': 'synthetic-asset', 'class': 'us_equity', 'exchange': 'NASDAQ', 'symbol': 'SMLL',
-              'name': 'Synthetic Company', 'status': 'inactive', 'tradable': False}] if status == 'inactive' else [])
+              'name': 'Synthetic Company', 'status': 'inactive', 'tradable': False}] if status == 'inactive' else
+            [dict(id='synthetic-' + symbol, symbol=symbol, name='Synthetic Company',
+                  exchange='NASDAQ', status='active', **{'class':'us_equity'})
+             for symbol in sn.STOCKS + sn.ETFS + sn.BENCHMARKS])
     add(root, objects, 'https://data.sec.gov', '/submissions/CIK0000000001.json', {},
         {'cik': '0000000001', 'tickers': ['SMLL'], 'filings': {'recent': {'form': ['8-K', '8-K'],
          'acceptanceDateTime': ['2026-07-14T09:00:00Z', '2026-07-15T08:00:00Z'],
@@ -71,8 +74,7 @@ def test_strict_news_updated_before_T_and_creation_fields_only():
     assert inputs.news_at([dict(row, updated_at=iso(T))], T) == []
     assert inputs.news_at([dict(row, updated_at=iso(T + timedelta(minutes=5)))], T) == []
     assert inputs.news_at([dict(row, created_at=iso(T), updated_at=iso(T))], T) == []
-    with pytest.raises(ReplayError, match='NEWS_EDIT_CLOCK_MISSING'):
-        inputs.news_at([dict(row, updated_at=None)], T)
+    assert inputs.news_at([dict(row, updated_at=None)], T) == []
     assert inputs.news_at([dict(row, updated_at=iso(T-timedelta(hours=2)))], T) == []
 
 
@@ -112,8 +114,10 @@ def test_index_hash_pagination_raw_feed_and_receipts_fail_closed(tmp_path):
     with pytest.raises(ReplayError, match='LIVE_ARCHIVE_RECEIVED_AFTER_T'):
         archive.Archive(tmp_path, index, before=T)
     data.asset_statuses.remove('inactive')
-    with pytest.raises(ReplayError, match='ACTIVE_AND_INACTIVE'):
-        inputs.build(data, T, 'a'*64)
+    bundles = inputs.build(data, T, 'a'*64)
+    assert bundles['ab']['manifest']['data_quality']['excluded_day']
+    assert bundles['ab']['context']['universe'] == []
+    assert bundles['cd']['context']['candidates'] == []
     data.news_windows[0][1]['next_page_token'] = 'missing'
     with pytest.raises(ReplayError, match='NEWS_ARCHIVE_COVERAGE_MISSING'):
         data.require_news(T - timedelta(hours=72), T)
@@ -163,8 +167,8 @@ def test_same_receipt_news_body_conflicts_remain_rejected(tmp_path):
     add(tmp_path, objects, md.ALPACA, '/v1beta1/news', {'start': iso(T-timedelta(hours=73)), 'end': iso(T)},
         {'news': [original], 'next_page_token': None})
     index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
-    with pytest.raises(ReplayError, match='ARCHIVE_REVISION_CONFLICT'):
-        archive.Archive(tmp_path, index)
+    loaded = archive.Archive(tmp_path, index)
+    assert inputs.build(loaded, T, 'a'*64)['ab']['manifest']['data_quality']['counts_by_reason']['CONTRADICTORY_NEWS'] == 1
 
 
 def test_disk_bar_index_preserves_latest_full_rows_and_rejects_conflicts(tmp_path):
@@ -185,8 +189,8 @@ def test_disk_bar_index_preserves_latest_full_rows_and_rejects_conflicts(tmp_pat
     add(tmp_path, objects, md.ALPACA, '/v2/stocks/bars', dict(params,start=iso(T-timedelta(days=502))),
         {'bars':{'SMLL':[dict(fresh,c=106)]}}, received='2026-10-18T20:00:00Z')
     index.write_text(json.dumps({'schema':'replay-vendor-request-index-v1','objects':objects}))
-    with pytest.raises(ReplayError,match='ARCHIVE_REVISION_CONFLICT'):
-        archive.Archive(tmp_path,index)
+    loaded = archive.Archive(tmp_path, index)
+    assert loaded.invalid_bars['SMLL'] == 'CONTRADICTORY_BARS'
 
 
 def test_vendor_asset_UUID_duplicates_agree_and_contradictions_exclude_uniformly(tmp_path):
@@ -216,11 +220,13 @@ def test_vendor_asset_UUID_duplicates_agree_and_contradictions_exclude_uniformly
         assert bundle['manifest']['asset_metadata_exclusions']['excluded_count'] == 1
 
 
-def test_no_partial_manifest_on_missing_archive_and_no_rebuild(tmp_path, monkeypatch):
+def test_missing_archive_seals_excluded_days_and_admitted_inputs_cannot_rebuild(tmp_path, monkeypatch):
     monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
     monkeypatch.setattr(inputs, 'paired_label_exclusions', lambda root: [])
-    with pytest.raises(ReplayError, match='VENDOR_REQUEST_INDEX_MISSING'):
-        ex.build_inputs(tmp_path)
+    result = ex.build_inputs(tmp_path / 'missing')
+    assert result['status'] == 'BUILT'
+    proof = ex.input_proof(tmp_path / 'missing')
+    assert proof['data_quality']['excluded_days'] == 64
     assert not (tmp_path / spec.STATE_DIR / 'input-manifest.json').exists()
     data, _ = fixture(tmp_path)
     monkeypatch.setattr(ex, 'planned', lambda p, g: ['2026-07-15'])
@@ -241,8 +247,9 @@ def test_long_weekend_requires_news_since_actual_previous_close(tmp_path):
     at = instant('2026-07-06T12:00:00Z')
     data, _ = fixture(tmp_path, at)
     assert md.previous_close(at) < at - timedelta(hours=72)
-    with pytest.raises(ReplayError, match='NEWS_ARCHIVE_COVERAGE_MISSING'):
-        inputs.build(data, at, 'a'*64)
+    bundles = inputs.build(data, at, 'a'*64)
+    assert bundles['ab']['manifest']['data_quality']['excluded_day']
+    assert bundles['cd']['context']['candidates'] == []
 
 
 def test_live_snapshot_freezes_real_receipt_cutoff_and_refuses_tampering(tmp_path, monkeypatch):
@@ -340,11 +347,14 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
             assert result['counts'][family]['b_v1_no_reviewer:1d:paired_missing_label'] == 1
 
 
-def test_missing_asset_metadata_still_blocks_and_is_not_a_contradiction(tmp_path):
+def test_missing_asset_metadata_excludes_uniformly_and_is_not_a_contradiction(tmp_path):
     data, _ = fixture(tmp_path)
     del data.assets['SMLL']
-    with pytest.raises(ReplayError, match='CANDIDATE_ASSET_METADATA_MISSING'):
-        inputs.build(data, T, 'a'*64)
+    bundles = inputs.build(data, T, 'a'*64)
+    assert bundles['cd']['context']['candidates'] == []
+    for bundle in bundles.values():
+        assert bundle['manifest']['rejections']['SMLL'] == 'CANDIDATE_ASSET_METADATA_MISSING'
+        assert bundle['manifest']['data_quality']['counts_by_reason']['CANDIDATE_ASSET_METADATA_MISSING'] == 1
 
 
 def test_asset_contradiction_across_receipts_excludes_the_symbol(tmp_path):
@@ -377,3 +387,63 @@ def test_paired_label_exclusion_source_is_required_and_digest_bound(tmp_path, mo
     source.write_text(json.dumps({'missing':[]}))
     with pytest.raises(ReplayError, match='PAIRED_LABEL_EXCLUSION_SOURCE_CHANGED'):
         inputs.paired_label_exclusions(tmp_path)
+
+
+@pytest.mark.parametrize('change,reason', [
+    ({'updated_at': None}, 'NEWS_CLOCK_MISSING'),
+    ({'created_at': 'invalid'}, 'NEWS_CLOCK_INVALID'),
+    ({'updated_at': '2026-07-01T00:00:00Z'}, 'NEWS_CLOCK_CONTRADICTORY'),
+    ({'symbols': None}, 'NEWS_FIELDS_INVALID'),
+])
+def test_bad_required_news_data_is_excluded_and_counted_in_both_bundles(tmp_path, change, reason):
+    data, _ = fixture(tmp_path)
+    data.news[1].update(change)
+    bundles = inputs.build(data, T, 'a'*64)
+    for bundle in bundles.values():
+        assert bundle['manifest']['data_quality']['counts_by_reason'][reason] == 1
+    assert bundles['cd']['context']['candidates'] == []
+
+
+@pytest.mark.parametrize('failure,reason', [
+    ('missing_history', 'CANDIDATE_HISTORY_COVERAGE_MISSING'),
+    ('invalid_bar', 'INVALID_BAR'),
+    ('invalid_metadata', 'INVALID_ASSET_METADATA'),
+])
+def test_candidate_required_data_excludes_before_ranking(tmp_path, failure, reason):
+    data, _ = fixture(tmp_path)
+    if failure == 'missing_history':
+        data.requests = [r for r in data.requests if r[1] != '/v2/stocks/bars']
+    elif failure == 'invalid_bar':
+        data.invalid_bars['SMLL'] = 'INVALID_BAR'
+    else:
+        data.assets['SMLL']['class'] = None
+    bundles = inputs.build(data, T, 'a'*64)
+    assert bundles['cd']['context']['candidates'] == []
+    assert bundles['ab']['context']['universe']
+    assert all(b['manifest']['rejections']['SMLL'] == reason for b in bundles.values())
+
+
+def test_missing_benchmark_excludes_whole_day_but_integrity_failure_still_blocks(tmp_path):
+    data, _ = fixture(tmp_path)
+    del data.assets['SPY']
+    bundles = inputs.build(data, T, 'a'*64)
+    assert bundles['ab']['context']['universe'] == []
+    assert bundles['cd']['context']['candidates'] == []
+    assert all(b['manifest']['data_quality']['excluded_day'] for b in bundles.values())
+    def corrupt(*args):
+        raise ReplayError('ARCHIVE_OBJECT_HASH_MISMATCH')
+    data.require_news = corrupt
+    with pytest.raises(ReplayError, match='ARCHIVE_OBJECT_HASH_MISMATCH'):
+        inputs.build(data, T, 'a'*64)
+
+
+def test_missing_live_index_produces_a_shared_excluded_day(tmp_path, monkeypatch):
+    from scripts.trading_lab.replay_seal_forward import forward
+    monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
+    monkeypatch.setattr(spec, 'code_hash', lambda: 'c'*64)
+    value = forward.snapshot(tmp_path, forward.decision_time('2026-10-20'))
+    assert value['contexts']['ab']['universe'] == []
+    assert value['contexts']['cd']['candidates'] == []
+    for manifest in value['manifests'].values():
+        assert manifest['data_quality']['excluded_day']
+        assert manifest['data_quality']['counts_by_reason']['LIVE_VENDOR_REQUEST_INDEX_MISSING'] == 1

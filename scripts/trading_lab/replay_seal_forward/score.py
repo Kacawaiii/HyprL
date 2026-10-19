@@ -2,6 +2,7 @@
 from collections import Counter, defaultdict
 from datetime import timedelta
 import json
+import math
 from pathlib import Path
 
 from scripts.trading_lab.replay_bench import labels as lb, marketdata as md, run as parent, snapshot as sn
@@ -9,7 +10,7 @@ from scripts.trading_lab.replay_bench.score import allocate_pnl, period_days
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant, iso, now
 from scripts.trading_lab.replay_bench.storage import atomic_json
 from scripts.trading_lab.sources.canonical import sha256_canonical
-from . import commitment, experiment as ex, fills, metrics, run, schemas, spec, stats
+from . import commitment, experiment as ex, fills, metrics, run, schemas, spec, stats, quality
 
 
 def spy_mark(at, spy_rows, anchors):
@@ -38,19 +39,46 @@ def crypto_outcome(day, asset, anchors, spy_rows, start):
     return values[-1], {day: values[1], times[-1].date().isoformat(): values[2] - values[1]}
 
 
+class CheckedAnchors(lb.MinuteAnchors):
+    """Malformed fills are absent evidence, never substituted prices."""
+    def stock(self, day, anchor, symbols):
+        rows = super().stock(day, anchor, symbols)
+        return {s: r for s, r in rows.items() if r and quality.valid_number(r.get('p'))}
+
+    def crypto(self, at):
+        rows = super().crypto(at)
+        return {s: r for s, r in rows.items() if r and quality.valid_number(r.get('o'))}
+
+
 class Outcomes:
     def __init__(self, transport, first, last, costs, *, decision_time=None):
+        transport = quality.DataTransport(transport)
         self.transport, self.last, self.costs = transport, last, costs
         self.decision_time = decision_time or parent.decision_time
         from types import SimpleNamespace
         end = last + 'T23:59:59Z'
-        bars, _ = md.stock_bars(transport, list(sn.STOCKS + sn.ETFS + sn.BENCHMARKS), parent.DATA_START, end)
-        crypto, _ = md.crypto_bars(transport, list(sn.CRYPTO), parent.DATA_START, end)
-        bars.update(crypto)
+        self.data_errors = {}
+        bars = {}
+        for names, fetch in ((sn.STOCKS + sn.ETFS + sn.BENCHMARKS, md.stock_bars), (sn.CRYPTO, md.crypto_bars)):
+            try:
+                values, _ = fetch(transport, list(names), parent.DATA_START, end)
+                for symbol, rows in values.items():
+                    try:
+                        for row in rows:
+                            quality.validate_bar(row)
+                        (md.crypto_rows if symbol in sn.CRYPTO else md.session_rows)(rows)
+                    except ReplayError as error:
+                        self.data_errors[symbol] = quality.require_data_error(error)
+                        values[symbol] = []
+                bars.update(values)
+            except ReplayError as error:
+                for symbol in names:
+                    self.data_errors[symbol] = quality.require_data_error(error)
         self.universe = SimpleNamespace(bars=bars)
-        self.anchors = lb.MinuteAnchors(transport)
+        self.anchors = CheckedAnchors(transport)
         self.cells, self.cache, self.news_bars, self.ratios = {}, {}, {}, {}
         self.excluded = set(getattr(transport, 'excluded_labels', ()))
+        self.exclusion_reasons = {}
 
     def _ratios(self, symbol, raw):
         """Raw/adjusted close ratios; None when adjusted evidence is not in the sealed cache."""
@@ -62,7 +90,7 @@ class Outcomes:
                         for b in (body.get('bars') or {}).get(symbol, [])]
                 self.ratios[symbol] = fills.adjustment_ratios(raw, rows)
             except ReplayError as error:
-                if error.code not in ('OFFLINE_CACHE_MISS', 'PREDICTION_CACHE_NOT_SEALED'):
+                if error.code not in ('OFFLINE_CACHE_MISS', 'SEALED_SOURCE_DATA_MISSING'):
                     raise
                 self.ratios[symbol] = None
         return self.ratios[symbol]
@@ -78,6 +106,25 @@ class Outcomes:
         return None if None in flags else False
 
     def get(self, group, day, asset, h):
+        fills.entry(day, self.decision_time(day), asset in sn.CRYPTO)
+        key = (group, day, asset, h)
+        if key in self.exclusion_reasons:
+            return None
+        try:
+            if asset in self.data_errors or 'SPY' in self.data_errors:
+                raise ReplayError(self.data_errors.get(asset, self.data_errors.get('SPY')))
+            result = self._get(group, day, asset, h)
+            if result is not None and any(not quality.valid_number(result[k], positive=False) for k in ('cost', 'vol')):
+                raise ReplayError('INVALID_PRICE')
+            if result is not None and not math.isfinite(result['rel']):
+                raise ReplayError('INVALID_PRICE')
+            return result
+        except ReplayError as error:
+            self.exclusion_reasons[key] = quality.require_data_error(error)
+            self.cache[key] = None
+            return None
+
+    def _get(self, group, day, asset, h):
         key = (group, day, asset, h)
         T = self.decision_time(day)
         crypto = asset in sn.CRYPTO
@@ -94,6 +141,8 @@ class Outcomes:
             return None
         exit_day = following[h - 1].session_date
         if group == 'ab':
+            if lb.daily_stats(md.session_rows(self.universe.bars.get('SPY', [])), T) is None:
+                raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
             if day not in self.cells:
                 self.cells[day] = lb.label_universe_day(day, self.universe.bars, self.anchors, self.costs, last_day=self.last,
                                                         decision_at=T, crypto_entry=fills.crypto_entry(T))
@@ -101,7 +150,7 @@ class Outcomes:
             horizon = str(h) + 'd'
             if not cell or horizon not in cell:
                 raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
-            spy_rows = md.session_rows(self.universe.bars['SPY'])
+            spy_rows = md.session_rows(self.universe.bars.get('SPY', []))
             rel = cell[horizon]['rel']
             action = False
             if crypto:
@@ -121,13 +170,18 @@ class Outcomes:
                     iso(instant(spec.spec()['periods']['dev'][0] + 'T12:00:00Z') - timedelta(days=45)),
                     self.last + 'T23:59:59Z')
             bars = self.news_bars[asset]
+            for values in bars.values():
+                for bar in values:
+                    quality.validate_bar(bar)
             spy_rows = md.session_rows(bars.get('SPY', []))
+            if lb.daily_stats(spy_rows, T) is None:
+                raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
             prices = self.entry_prices(day, start, [asset, 'SPY'])
             label = lb.label_news_view({'symbol': asset, 'holding_sessions': h, 'view': 'UP'}, day, bars, self.costs,
                                       spy_rows, decision_at=T, entry_prices=prices, last_day=self.last)
             if label['state'] != 'LABELED':
                 raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
-            rows = md.session_rows(bars[asset])
+            rows = md.session_rows(bars.get(asset, []))
             stats = lb.daily_stats(rows, T)
             _, path = lb.marked_path(day, asset, rows, spy_rows, h, 1, 0, entry_prices=prices)
             action = self.corporate_action([asset, 'SPY'], bars, day, exit_day)
@@ -143,7 +197,7 @@ class Outcomes:
         fixed = list(sn.STOCKS + sn.ETFS + ('SPY',))
         requested = fixed if set(symbols) <= set(fixed) else symbols
         trades = self.anchors.stock(day, start.strftime('%H:%M:%S'), requested)
-        if any(not trades.get(s) for s in symbols):
+        if any(not trades.get(s) or not quality.valid_number(trades[s].get('p')) for s in symbols):
             raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
         return {s: trades[s]['p'] for s in symbols}
 
@@ -206,7 +260,9 @@ def within_test_cut(outcome, period, family):
 
 def frozen_primary_rate(observed):
     rate = json.loads(ex.FREEZE.read_text())['frozen_dev_base_rate']
-    if (rate.get('n', 0) <= 0 or not 0 <= rate['successes'] <= rate['n'] or observed is None or
+    if observed is None and rate.get('n') == 0:
+        observed = {'n': 0, 'successes': 0}
+    if (rate.get('n', -1) < 0 or not 0 <= rate['successes'] <= rate['n'] or observed is None or
             any(observed[k] != rate[k] for k in ('n', 'successes'))):
         raise ReplayError('DEV_BASE_RATE_DRIFT')
     return dict(rate, p=(rate['successes'] + 1) / (rate['n'] + 2))
@@ -282,6 +338,8 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
         sealed = run.shared_snapshot(root, period, 'ab' if group == 'anon' else group, day, ex.offline(root, transport))
         if sealed['snapshot_hash'] != record['snapshot_hash']:
             raise ReplayError('SNAPSHOT_HASH_MISMATCH')
+        for reason, number in sealed['manifest'].get('data_quality', {}).get('counts_by_reason', {}).items():
+            counts[family]['input:' + group + ':' + reason] += number
         flags = sealed['manifest'].get('borrow_flags', {})
         context = sealed['context']
         assets = [c['symbol'] for c in context['candidates']] if group == 'cd' else context['universe']
@@ -299,6 +357,7 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 if outcome is None:
                     reason = ('paired_missing_label' if ('cd' if group == 'cd' else 'ab', day, row['asset'],
                               int(row['horizon'][:-1])) in getattr(outcomes, 'excluded', set()) else 'censored_or_crypto5d')
+                    reason = getattr(outcomes, 'exclusion_reasons', {}).get(('cd' if group == 'cd' else 'ab', day, row['asset'], int(row['horizon'][:-1])), reason)
                     counts[family][panel + ':' + reason] += 1
                     continue
                 if not within_test_cut(outcome, period, family) or outcome.get('corporate_action') is True:
@@ -322,6 +381,7 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 if outcome is None:
                     reason = ('paired_missing_label' if ('cd' if group == 'cd' else 'ab', day, asset, h)
                               in getattr(outcomes, 'excluded', set()) else 'censored_trade')
+                    reason = getattr(outcomes, 'exclusion_reasons', {}).get(('cd' if group == 'cd' else 'ab', day, asset, h), reason)
                     counts[family][panel + ':' + reason] += 1
                     continue
                 if not within_test_cut(outcome, period, family):

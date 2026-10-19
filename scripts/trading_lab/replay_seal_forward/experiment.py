@@ -11,8 +11,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v6.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v6.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v7.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v7.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -83,7 +83,7 @@ def input_proof(root):
 def build_inputs(root):
     import os
     import tempfile
-    from .archive import Archive
+    from .archive import Archive, UnavailableArchive
     from .inputs import build, declaration, paired_label_exclusions
     root = Path(root)
     directory = root / spec.STATE_DIR
@@ -93,18 +93,25 @@ def build_inputs(root):
     method_hash = sha256_canonical(declaration(root))
     excluded_labels = paired_label_exclusions(root)
     index = root / 'archive_index.json'
-    if not index.is_file():
-        raise ReplayError('VENDOR_REQUEST_INDEX_MISSING')
-    archive = Archive(root, index)
-    # Fail before producing any partial seal if inactive assets are absent.
-    archive.require_assets()
+    archive = Archive(root, index) if index.is_file() else UnavailableArchive('VENDOR_REQUEST_INDEX_MISSING')
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(prefix='input-build-', dir=directory) as stage:
         stage = Path(stage)
         snapshots = {}
+        from collections import Counter, defaultdict
+        counts, identities = Counter(), defaultdict(set)
+        excluded_days = []
         for period in ('dev', 'test'):
             for day in planned(period, 'ab'):
                 bundles = build(archive, parent.decision_time(day), method_hash)
+                quality = bundles['ab']['manifest']['data_quality']
+                counts.update(quality['counts_by_reason'])
+                if quality['excluded_day']:
+                    excluded_days.append(day)
+                for row in quality['records']:
+                    identities[row['reason']].add(row['scope'] + ':' + row['identity'])
+                atomic_json(directory / 'build-progress.json', {'period': period, 'day': day,
+                    'days_built': len(snapshots) // 2 + 1, 'data_quality_occurrences': dict(counts)})
                 for group, bundle in bundles.items():
                     key = period + '/' + group + '/' + day
                     file = stage / (key + '.json.gz')
@@ -113,16 +120,21 @@ def build_inputs(root):
         value = {'schema': 'replay-input-bundles-v2', 'spec_hash': spec.SPEC_HASH,
                  'method_hash': method_hash, 'provenance': spec.PROVENANCE,
                  'residual_risks': spec.spec()['residual_risks'], 'snapshots': snapshots,
-                 'archive_index_hash': archive.proof()['index_hash'],
+                 'archive_index_hash': archive.proof().get('index_hash'), 'archive_state': archive.proof().get('state', 'AVAILABLE'),
                  'prediction_cache': archive.objects, 'outcome_cache': archive.objects}
         value['paired_missing_labels'] = excluded_labels
+        value['data_quality'] = {'occurrences_by_reason': dict(counts),
+            'unique_by_reason': {k: {'count': len(v), 'identities_sha256': sha256_canonical(sorted(v))}
+                                 for k, v in sorted(identities.items())},
+            'excluded_days': len(excluded_days), 'excluded_days_sha256': sha256_canonical(excluded_days)}
         target = directory / 'snapshots'
         if target.exists():
             raise ReplayError('INPUT_SNAPSHOT_DIRECTORY_ALREADY_EXISTS')
         os.replace(stage, target)
         # The TemporaryDirectory cleanup tolerates its moved staging directory.
         atomic_json(directory / 'input-manifest.json', value)
-    return {'status': 'BUILT', 'manifest_hash': sha256_canonical(value), 'snapshot_count': len(snapshots)}
+    return {'status': 'BUILT', 'manifest_hash': sha256_canonical(value), 'snapshot_count': len(snapshots),
+            'data_quality': value['data_quality']}
 
 
 def offline(root, transport, *, outcomes=False):
@@ -132,7 +144,7 @@ def offline(root, transport, *, outcomes=False):
     other.allowed_cache = dict(proof['prediction_cache'])
     other.excluded_labels = {(r['group'], r['day'], r['asset'], r['h']) for r in proof.get('paired_missing_labels', [])}
     if outcomes:
-        if not proof.get('outcome_cache'):
+        if 'outcome_cache' not in proof:
             raise ReplayError('OUTCOME_CACHE_NOT_SEALED')
         for key, digest in proof['outcome_cache'].items():
             if key in other.allowed_cache and other.allowed_cache[key] != digest:
@@ -146,9 +158,9 @@ def frozen_payload(root):
     from .forward import SCHEMA, forward_config_hash
     from .stats import PRIMARY
     rate = json.loads((Path(root) / spec.STATE_DIR / 'dev-label-base-rate.json').read_text())
-    if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', 0) <= 0 or rate.get('panel') != PRIMARY['panel']:
+    if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', -1) < 0 or rate.get('panel') != PRIMARY['panel']:
         raise ReplayError('DEV_BASE_RATE_NOT_FROZEN')
-    return {'schema': 'replay-duel-test-freeze-v6', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+    return {'schema': 'replay-duel-test-freeze-v7', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
             'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
@@ -165,7 +177,7 @@ def frozen_payload(root):
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v6', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v7', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -189,7 +201,7 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):

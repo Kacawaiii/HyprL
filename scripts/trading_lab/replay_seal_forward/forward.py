@@ -17,10 +17,10 @@ from scripts.trading_lab.replay_bench import marketdata as md, run as parent, sn
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant, iso, now
 from scripts.trading_lab.replay_bench.storage import atomic_json
 from . import commitment, experiment as ex, fills, inputs, models, schemas, spec, stats
-from .archive import Archive
+from .archive import Archive, UnavailableArchive
 
 PROVENANCE = 'LIVE_FORWARD'
-STATE_DIR = 'live-forward-v4'
+STATE_DIR = 'live-forward-v5'
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['analyst', 'news'],
           'properties': {'analyst': schemas.ANALYST_SCHEMA, 'news': schemas.NEWS_SCHEMA}}
 
@@ -92,8 +92,13 @@ def snapshot(root, at):
         return dict(value, snapshot_hash=saved_hash)
     index = Path(root) / 'live-archive' / day / 'archive_index.json'
     if not index.is_file():
-        raise ReplayError('LIVE_VENDOR_REQUEST_INDEX_MISSING')
-    archive = Archive(root, index, before=T)
+        archive = UnavailableArchive('LIVE_VENDOR_REQUEST_INDEX_MISSING')
+    else:
+        try:
+            archive = Archive(root, index, before=T)
+        except ReplayError as error:
+            from .quality import require_data_error
+            archive = UnavailableArchive(require_data_error(error))
     bundles = inputs.build(archive, T, sha256_canonical(inputs.declaration(root)))
     for group in bundles:
         bundles[group]['context']['provenance'] = PROVENANCE
@@ -171,6 +176,11 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
         if (directory(root, day) / (family + '-failure.json')).is_file():
             statuses[family] = json.loads((directory(root, day) / (family + '-failure.json')).read_text())['error']
             continue
+        if sealed['manifests']['ab'].get('data_quality', {}).get('excluded_day'):
+            statuses[family] = 'DATA_QUALITY_EXCLUDED'
+            atomic_json(directory(root, day) / (family + '-failure.json'),
+                        {'error': 'DATA_QUALITY_EXCLUDED', 'at': iso(at), 'snapshot_hash': sealed['snapshot_hash']})
+            continue
         try:
             output, call = client.call(family, text, SCHEMA, tag='live-forward:' + day + ':' + sealed['snapshot_hash'])
             schemas.analyst(output['analyst'], sealed['contexts']['ab'])
@@ -193,7 +203,7 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
         published = {'ledger_commit': receipt['ledger_commit'], 'published_at': receipt['published_at']}
     except ReplayError as error:
         published = {'error': error.code}
-    ok = all(v in ('SAVED', 'RECEIVED') for v in statuses.values()) and 'error' not in published
+    ok = all(v in ('SAVED', 'RECEIVED', 'DATA_QUALITY_EXCLUDED') for v in statuses.values()) and 'error' not in published
     result = {'status': 'DONE' if ok else 'BLOCKED', 'provenance': PROVENANCE, 'session': day, 'models': statuses,
               'call_order': list(order(day)), 'snapshot_hash': sealed['snapshot_hash'], 'publication': published}
     atomic_json(directory(root, day) / 'status.json', result)
@@ -295,6 +305,8 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                     continue
                 outcome = outcomes.get(group, day, row['asset'], h)
                 if outcome is None:
+                    reason = outcomes.exclusion_reasons.get((group, day, row['asset'], h), 'censored_or_missing_label')
+                    exclusions[family + ':' + reason] += 1
                     continue
                 if outcome.get('corporate_action') is True:
                     exclusions[family + ':CORPORATE_ACTION_FORECAST_WINDOW'] += 1
@@ -317,6 +329,8 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                     continue
                 outcome = outcomes.get('cd', day, view['symbol'], h)
                 if outcome is None:
+                    reason = outcomes.exclusion_reasons.get(('cd', day, view['symbol'], h), 'censored_or_missing_label')
+                    exclusions[family + ':' + reason] += 1
                     continue
                 trades.append(trade(day, family, 'cd', view['symbol'], str(h) + 'd', view['view'], outcome, h,
                                     costs, flags, sealed, exclusions, signed_outcome))

@@ -6,7 +6,8 @@ import statistics
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.replay_bench import marketdata as md, snapshot as sn
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant, iso
-from . import spec
+from . import spec, quality
+from scripts.trading_lab.trader_agent.config import TraderError
 
 RISKS = ['vendor corrections of historical bars', "headline text is the vendor's latest version, last edited before T",
          'universe survivorship for names without Alpaca history', 'news vendor coverage gaps',
@@ -41,9 +42,9 @@ def paired_label_exclusions(root):
 def news_at(rows, T):
     out = []
     for row in rows:
+        if quality.news_reason(row):
+            continue
         created = instant(row['created_at'])
-        if not row.get('updated_at'):
-            raise ReplayError('NEWS_EDIT_CLOCK_MISSING')
         updated = instant(row['updated_at'])
         if updated < created:
             continue  # Operator 2026-10-19: uniform data-quality exclusion.
@@ -58,7 +59,16 @@ def news_at(rows, T):
 
 
 def rows_at(bars, T, *, crypto=False):
-    bars = [b for b in bars if instant(b['t']) < T]
+    visible = []
+    for bar in bars:
+        try:
+            at = instant(bar['t'])
+        except (KeyError, TypeError, ValueError, AttributeError, ReplayError):
+            raise ReplayError('INVALID_BAR') from None
+        if at < T:
+            quality.validate_bar(bar)
+            visible.append(bar)
+    bars = visible
     rows = md.crypto_rows(bars) if crypto else md.session_rows(bars)
     rows = [r for r in rows if r['close_at'] < T]
     if len({r['bar_open_at'] for r in rows}) != len(rows):
@@ -81,19 +91,28 @@ def small_mid(rows, T):
     from scripts.trading_lab.trader_agent.data import price_summary
     try:
         stats = price_summary(rows, 'candidate', T, False)
-    except Exception as error:
-        return getattr(error, 'code', 'PRICE_INVALID')
+    except TraderError as error:
+        return quality.require_data_error(error)
     return dict(stats, mean_dollar_volume_50d=dollar, history_sessions=len(rows))
 
 
 def build(archive, T, method_hash):
-    archive.require_assets()
+    from collections import Counter
+    day_errors = []
+    try:
+        archive.require_assets()
+    except ReplayError as error:
+        day_errors.append(quality.require_data_error(error))
     start = md.previous_close(T)
     earliest = min(T - timedelta(hours=72), start)
-    archive.require_news(earliest, T)
+    try:
+        archive.require_news(earliest, T)
+    except ReplayError as error:
+        day_errors.append(quality.require_data_error(error))
     visible = [n for n in news_at(archive.news.values(), T) if instant(n['created_at']) >= earliest]
-    invalid_news = [n['id'] for n in archive.news.values() if n.get('updated_at') and
-                    instant(n['updated_at']) < instant(n['created_at'])]
+    news_errors = {str(n['id']): quality.news_reason(n) for n in archive.news.values() if quality.news_reason(n)}
+    news_errors.update(getattr(archive, 'invalid_news', {}))
+    invalid_news = sorted(news_errors)
     sec_policy = spec.spec()['unblock_2_amendment']['sec_policy']
     filings_unavailable = sec_policy['state'] == 'UNAVAILABLE'
     prices, eligible, excluded = {}, [], []
@@ -105,18 +124,27 @@ def build(archive, T, method_hash):
     for n in visible:
         bind('news', n['id'], n)
     for asset in sn.UNIVERSE + sn.BENCHMARKS:
-        if asset in archive.ambiguous_assets and asset in sn.UNIVERSE:
-            excluded.append({'symbol': asset, 'reason': 'CONTRADICTORY_ASSET_METADATA'})
-            continue
-        bars = archive.bars.get(asset, [])
-        if not any(instant(b['t']) < instant('2026-07-01T00:00:00Z') for b in bars):
-            raise ReplayError('FIXED_UNIVERSE_PRE_JULY_HISTORY_MISSING', asset)
-        rows = rows_at(bars, T, crypto=asset in sn.CRYPTO)
         from scripts.trading_lab.trader_agent.data import price_summary
         try:
+            if asset in archive.ambiguous_assets:
+                raise ReplayError('CONTRADICTORY_ASSET_METADATA')
+            if asset in getattr(archive, 'invalid_bars', {}):
+                raise ReplayError(archive.invalid_bars[asset])
+            if asset not in sn.CRYPTO:
+                reason = quality.asset_reason(archive.assets.get(asset))
+                if reason:
+                    raise ReplayError(reason)
+            bars = archive.bars.get(asset, [])
+            rows = rows_at(bars, T, crypto=asset in sn.CRYPTO)
+            if not any(instant(b['t']) < instant('2026-07-01T00:00:00Z') for b in bars):
+                raise ReplayError('FIXED_UNIVERSE_PRE_JULY_HISTORY_MISSING', asset)
             prices[asset] = price_summary(rows, asset, T, asset in sn.CRYPTO)
-        except Exception as error:
-            raise ReplayError('FIXED_UNIVERSE_HISTORY_INCOMPLETE', asset) from error
+        except (ReplayError, TraderError) as error:
+            reason = quality.require_data_error(error)
+            excluded.append({'symbol': asset, 'reason': reason})
+            if asset in sn.BENCHMARKS:
+                day_errors.append(reason)
+            continue
         for row in rows[-21:]:
             bind('bar', asset + ':' + iso(row['bar_open_at']), {k: iso(v) if hasattr(v, 'tzinfo') else v for k, v in row.items()})
         if asset in sn.UNIVERSE:
@@ -152,14 +180,22 @@ def build(archive, T, method_hash):
             rejections[symbol] = 'CONTRADICTORY_ASSET_METADATA'
             continue
         asset = archive.assets.get(symbol)
-        if asset is None:
-            raise ReplayError('CANDIDATE_ASSET_METADATA_MISSING', symbol)
+        reason = quality.asset_reason(asset)
+        if reason:
+            rejections[symbol] = reason
+            continue
         bind('asset', symbol, asset)
         if asset['class'] != 'us_equity' or re.search(r'\bETF\b', asset.get('name', ''), re.I):
             rejections[symbol] = 'NOT_COMPANY_EQUITY'
             continue
-        archive.require_bar_history(symbol, T)
-        rows = rows_at(archive.bars.get(symbol, []), T)
+        try:
+            if symbol in getattr(archive, 'invalid_bars', {}):
+                raise ReplayError(archive.invalid_bars[symbol])
+            archive.require_bar_history(symbol, T)
+            rows = rows_at(archive.bars.get(symbol, []), T)
+        except ReplayError as error:
+            rejections[symbol] = quality.require_data_error(error)
+            continue
         for r in rows:
             bind('universe-bar', symbol + ':' + iso(r['bar_open_at']),
                  {k: iso(v) if hasattr(v, 'tzinfo') else v for k, v in r.items()})
@@ -193,13 +229,23 @@ def build(archive, T, method_hash):
                 'items': [{'id': k, 'sha256': v} for k, v in sorted(items.items())],
                 'rejections': rejections, 'candidate_count': len(candidates), 'shown_count': len(shown),
                 'borrow_flags': borrow}
-    manifest['news_data_quality'] = {'rule': 'updated_at < created_at excluded uniformly',
+    manifest['news_data_quality'] = {'rule': 'missing, invalid or contradictory required news fields excluded uniformly',
                                     'excluded_count': len(invalid_news),
                                     'excluded_ids_sha256': sha256_canonical(sorted(invalid_news))}
     manifest['sec_availability'] = sec_policy
     manifest['asset_metadata_exclusions'] = {'rule': 'exclude contradictory asset metadata uniformly',
         'excluded_count': len(archive.ambiguous_assets),
         'excluded_symbols_sha256': sha256_canonical(sorted(archive.ambiguous_assets))}
+    if day_errors:
+        ab.update(universe=[], prices={}, headlines={})
+        cd['candidates'] = []
+    records = ([dict(scope='news', identity=k, reason=v) for k, v in sorted(news_errors.items())] +
+               [dict(scope='fixed', identity=r['symbol'], reason=r['reason']) for r in excluded] +
+               [dict(scope='candidate', identity=k, reason=v) for k, v in sorted(rejections.items())] +
+               [dict(scope='day', identity=iso(T), reason=r) for r in sorted(set(day_errors))])
+    manifest['data_quality'] = {'rule': 'uniform shared exclusions before model calls; no repair or retry',
+        'counts_by_reason': dict(Counter(r['reason'] for r in records)),
+        'excluded_day': bool(day_errors), 'records': records, 'records_sha256': sha256_canonical(records)}
     return {g: sn.seal(c, dict(manifest, group=g), T) for g, c in (('ab', ab), ('cd', cd))}
 
 
