@@ -9,7 +9,7 @@ from scripts.trading_lab.replay_bench.storage import atomic_json
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from . import experiment as ex, fills, inputs, spec
 from .archive import Archive
-from .collect import BARS_FROM, Collector, equities, news_symbols, sec_or_unavailable
+from .collect import BARS_FROM, Collector, equities, news_symbols, news_rows, sec_or_unavailable
 from .score import Outcomes
 
 
@@ -133,7 +133,7 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
     index = directory / 'archive_index.json'
     earliest = min(T - timedelta(hours=72), md.previous_close(T))
     try:
-        rows, _ = md.news(collector, iso(earliest), iso(T))
+        rows = news_rows(collector, iso(earliest), iso(T))
         names = equities(collector, news_symbols(rows, md.previous_close(T), T))
         md.stock_bars(collector, sorted(set(sn.STOCKS + sn.ETFS + sn.BENCHMARKS) | names), BARS_FROM, iso(T))
         md.crypto_bars(collector, list(sn.CRYPTO), BARS_FROM, iso(T))
@@ -159,6 +159,8 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
     index = directory / 'outcome-cache' / 'archive_index.json'
     last = at.date().isoformat()
     labels = 0
+    from collections import Counter
+    exclusions = Counter()
     try:
         for file in sorted((Path(root) / forward.STATE_DIR).glob('????-??-??/snapshot.json.gz')):
             day = file.parent.name
@@ -186,10 +188,13 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
                 try:
                     result = outcomes.get(group, day, asset, h)
                     labels += result is not None
+                    if result is None:
+                        reason = outcomes.exclusion_reasons.get((group, day, asset, h), 'censored_or_missing_label')
+                        exclusions[reason] += 1
                 except ReplayError as error:
                     if error.code not in ('INCOMPLETE_LABEL_COVERAGE', 'MISSING_CRYPTO_MARK',
                                           'MISSING_SYNCHRONIZED_SPY_MARK', 'INCOMPLETE_MARK_PATH'):
                         raise
     finally:
         collector.save(index)
-    return {'labels': labels, 'requests': collector.requests, 'index_hash': sha256_canonical(json.loads(index.read_text()))}
+    return {'labels': labels, 'exclusions_by_reason': dict(exclusions), 'requests': collector.requests, 'index_hash': sha256_canonical(json.loads(index.read_text()))}

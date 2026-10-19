@@ -318,7 +318,9 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
         params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         if parsed.path == '/v1beta1/news':
             body = {'news': [{'id': 1, 'headline': 'SMLL lowers guidance', 'source': 'synthetic', 'symbols': ['SMLL'],
-                             'created_at': iso(at-timedelta(hours=1)), 'updated_at': iso(at-timedelta(hours=1))}]}
+                             'created_at': iso(at-timedelta(hours=1)), 'updated_at': iso(at-timedelta(hours=1))},
+                             {'id': 2, 'headline': 'bad clock', 'source': 'synthetic', 'symbols': ['BAD'],
+                              'created_at': None, 'updated_at': None}]}
         elif parsed.path == '/v2/assets':
             body = [{'id': 'synthetic-' + s, 'symbol': s, 'class': 'us_equity', 'name': s, 'exchange': 'NASDAQ', 'status': 'active', 'shortable': True,
                      'easy_to_borrow': True} for s in sn.STOCKS + sn.ETFS + sn.BENCHMARKS + ('SMLL',)] if params['status'] == 'active' else []

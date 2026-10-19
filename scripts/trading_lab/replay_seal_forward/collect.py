@@ -199,10 +199,18 @@ class Collector:
         return len(objects)
 
 
+def news_rows(collector, start, end):
+    """Preserve captured news, including bad clocks, until the shared input filter."""
+    params = {'start': start, 'end': end, 'limit': 50, 'sort': 'asc', 'include_content': 'false'}
+    return [row for body, _ in md.paginate(collector, '/v1beta1/news', params, 'news')
+            for row in body.get('news', [])]
+
+
 def news_symbols(rows, start, end):
     """Symbols that could become c/d candidates: 1-2 tagged equities, not fixed names or known ETFs."""
     out = set()
-    for row in rows:
+    from .inputs import news_at
+    for row in news_at(rows, end):
         created = instant(row['created_at'])
         if not start <= created < end or not 1 <= len(row.get('symbols') or []) <= 2:
             continue
@@ -244,7 +252,7 @@ def historical_inputs(collector, *, news_from='2026-06-26T00:00:00Z', news_to='2
                       bars_to='2026-10-17T00:00:00Z'):
     """Prediction inputs for every dev/test session: one paginated all-symbol news query,
     active+inactive assets and raw SIP daily bars from 2025-01-01 for every possible candidate."""
-    rows, _ = md.news(collector, news_from, news_to)
+    rows = news_rows(collector, news_from, news_to)
     names = equities(collector, news_symbols(rows, instant(news_from), instant(news_to)))
     fixed = list(sn.STOCKS + sn.ETFS + sn.BENCHMARKS)
     md.stock_bars(collector, sorted(set(fixed) | names), BARS_FROM, bars_to)

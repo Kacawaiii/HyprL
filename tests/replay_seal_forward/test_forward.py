@@ -240,3 +240,20 @@ def test_first_session_gate_and_whole_missing_day_are_enforced_by_scorer(tmp_pat
     fw.directory(tmp_path, '2026-10-20').rename(fw.directory(tmp_path, '2026-10-19'))
     with pytest.raises(ReplayError, match='FORWARD_BEFORE_FIRST_SESSION'):
         fw.score(tmp_path, None, clock=lambda: T.replace(hour=21), write=False)
+
+
+def test_shared_data_quality_day_exclusion_publishes_hashes_without_model_calls(tmp_path, runtime, ledger, monkeypatch):
+    client, calls = runtime
+    value = sealed()
+    value.pop('snapshot_hash')
+    value['contexts']['ab']['universe'] = []
+    for manifest in value['manifests'].values():
+        manifest['data_quality'] = {'excluded_day': True, 'counts_by_reason': {'NEWS_ARCHIVE_COVERAGE_MISSING': 1}}
+    value['snapshot_hash'] = sha256_canonical(value)
+    monkeypatch.setattr(fw, 'snapshot', lambda root, at: value)
+    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
+    assert result['status'] == 'DONE'
+    assert result['models'] == {'opus': 'DATA_QUALITY_EXCLUDED', 'gpt': 'DATA_QUALITY_EXCLUDED'}
+    assert calls == []
+    receipt = commitment.published(tmp_path, 'forward', '2026-10-20')
+    assert set(receipt['line']['hashes']) == {'snapshot', 'opus', 'gpt'}
