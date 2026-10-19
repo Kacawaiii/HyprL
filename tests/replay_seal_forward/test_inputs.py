@@ -45,7 +45,7 @@ def fixture(root, T=T):
         {'bars': {md.crypto_pair(s): daily for s in sn.CRYPTO}, 'next_page_token': None})
     n = {'id': 1, 'headline': 'SMLL cuts guidance 0000000001-26-000001', 'summary': 'FUTURE RESULT NEVER SHOWN',
          'content': 'later edited body', 'source': 'benzinga', 'symbols': ['SMLL'],
-         'created_at': iso(T - timedelta(hours=1)), 'updated_at': iso(T + timedelta(hours=1)),
+         'created_at': iso(T - timedelta(hours=1)), 'updated_at': iso(T - timedelta(minutes=30)),
          'url': 'https://example.invalid/future-story'}
     add(root, objects, md.ALPACA, '/v1beta1/news', {'start': iso(T-timedelta(hours=72)), 'end': iso(T)},
         {'news': [n], 'next_page_token': None})
@@ -62,13 +62,16 @@ def fixture(root, T=T):
     return archive.Archive(root, index), index
 
 
-def test_strict_news_and_exact_edit_threshold():
+def test_strict_news_updated_before_T_and_creation_fields_only():
+    # Audit item 4: updated_at < T strictly replaces the former 24 h edit tolerance.
     row = {'id': 1, 'headline': 'headline', 'source': 'benzinga', 'symbols': ['SMLL'],
-           'created_at': iso(T - timedelta(hours=1)), 'updated_at': iso(T + timedelta(hours=23)),
+           'created_at': iso(T - timedelta(hours=1)), 'updated_at': iso(T - timedelta(microseconds=1)),
            'summary': 'hidden', 'content': 'hidden', 'url': 'https://example.invalid/hidden'}
     assert inputs.news_at([row], T) == [{k: row[k] for k in ('id', 'headline', 'source', 'symbols', 'created_at')}]
-    assert inputs.news_at([dict(row, updated_at=iso(T + timedelta(hours=23, microseconds=1)))], T) == []
-    assert inputs.news_at([dict(row, created_at=iso(T))], T) == []
+    assert inputs.news_at([dict(row, updated_at=iso(T))], T) == []
+    assert inputs.news_at([dict(row, updated_at=iso(T + timedelta(minutes=5)))], T) == []
+    assert inputs.news_at([dict(row, created_at=iso(T), updated_at=iso(T))], T) == []
+    assert inputs.news_at([dict(row, updated_at=None)], T)[0]['created_at'] == row['created_at']
 
 
 def test_raw_timestamps_completed_intervals_and_200_50_boundaries(tmp_path):
@@ -176,7 +179,7 @@ def test_live_snapshot_freezes_real_receipt_cutoff_and_refuses_tampering(tmp_pat
         forward.snapshot(tmp_path, at)
 
 
-def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, monkeypatch):
+def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, monkeypatch, ledger):
     from types import SimpleNamespace
     from scripts.trading_lab.replay_seal_forward import run, score, schemas
     import hashlib
@@ -210,13 +213,24 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
             assert record['provenance'] == 'APPROXIMATE_POINT_IN_TIME'
             assert record['residual_risks'] == inputs.RISKS
     class Outcomes:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             pass
         def get(self, group, day, asset, h):
             return {'rel': .02, 'cost': .003, 'vol': .01, 'cluster': 'synthetic',
                     'gross_path': {day: .02}, 'available_at': iso(T+timedelta(days=h, hours=8))}
+    # Audit item 3: nothing is scored before its response hashes are public.
+    with pytest.raises(ReplayError, match='DECISION_HASH_NOT_PUBLISHED'):
+        score.score(tmp_path, 'dev', SimpleNamespace(), outcome_factory=Outcomes)
+    receipt = ex.publish_pending(tmp_path, ledger, '2026-10-19')
+    assert len(receipt['line']['hashes']) == 6 and ex.publish_pending(tmp_path, ledger, '2026-10-19') is None
     result = score.score(tmp_path, 'dev', SimpleNamespace(), outcome_factory=Outcomes)
     assert result['status'] == 'SCORED' and result['provenance'] == 'APPROXIMATE_POINT_IN_TIME'
+    # Audit items 6, 7 and 10: EXPLORATORY label, declared primary endpoint, failure counts.
+    assert result['evidence_class'] == 'EXPLORATORY'
+    assert result['primary_endpoint']['panel'] == 'a_v1_as_live:1d' and result['primary_endpoint']['verdict'] == 'NO_WINNER'
+    assert result['failures'] == {f: {'failed_or_retried_stages': 0, 'missing_planned_days': 0} for f in ex.FAMILIES}
+    table = (ex.result_path(tmp_path, 'dev').with_suffix('.md')).read_text()
+    assert 'EXPLORATORY' in table and 'No winner' in table and 'Failures' in table
     for family in ex.FAMILIES:
         assert result['models'][family]['b_v1_no_reviewer:1d']['n_forecasts'] == len(sn.UNIVERSE)
         assert result['models'][family]['b_v1_no_reviewer:1d']['abstention_rate'] == 1

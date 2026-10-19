@@ -1,4 +1,3 @@
-from copy import deepcopy
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -10,7 +9,7 @@ import pytest
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant, iso
 from scripts.trading_lab.replay_bench import run as parent
 from scripts.trading_lab.replay_bench.storage import atomic_json
-from scripts.trading_lab.replay_seal_forward import experiment as ex, forward as fw, models, spec
+from scripts.trading_lab.replay_seal_forward import commitment, experiment as ex, forward as fw, models, spec
 from scripts.trading_lab.replay_seal_forward import score as scoring
 from scripts.trading_lab.sources.canonical import sha256_canonical
 
@@ -21,7 +20,8 @@ def sealed():
     a = {'schema': 'replay-context-v1', 'universe': ['AAPL'], 'headlines': {'AAPL': {'items': []}},
          'prices': {}, 'decision_time': iso(T), 'provenance': 'LIVE_FORWARD'}
     c = {'schema': 'replay-news-context-v1', 'candidates': [], 'decision_time': iso(T), 'provenance': 'LIVE_FORWARD'}
-    value = {'contexts': {'ab': a, 'cd': c}, 'decision_time': iso(T), 'provenance': 'LIVE_FORWARD'}
+    value = {'contexts': {'ab': a, 'cd': c}, 'decision_time': iso(T), 'provenance': 'LIVE_FORWARD',
+             'manifests': {'ab': {'borrow_flags': {}}, 'cd': {'borrow_flags': {}}}}
     return dict(value, snapshot_hash=sha256_canonical(value))
 
 
@@ -32,13 +32,15 @@ def output():
 
 
 @pytest.fixture
-def runtime(tmp_path, monkeypatch):
+def runtime(tmp_path, monkeypatch, ledger):
     monkeypatch.setattr(spec, 'code_hash', lambda: 'c'*64)
     monkeypatch.setattr(ex, 'committed', lambda: None)
     monkeypatch.setattr(ex, 'head', lambda: 'sha')
-    file = tmp_path / 'freeze.json'; file.write_text('{}')
+    file = tmp_path / 'freeze.json'
+    file.write_text(json.dumps({'forward_config_hashes': {f: fw.forward_config_hash(f) for f in ex.FAMILIES},
+                                'forward_first_session': '2026-10-19'}))
     monkeypatch.setattr(ex, 'FREEZE', file)
-    monkeypatch.setattr(ex, 'frozen_payload', lambda root: {})
+    monkeypatch.setattr(ex, 'frozen_payload', lambda root: json.loads(file.read_text()))
     monkeypatch.setattr(fw, 'snapshot', lambda root, at: sealed())
     calls = []
     def runner(args, **kwargs):
@@ -70,24 +72,41 @@ def test_exchange_window_dst_holidays_and_no_backfill():
         fw.window(fw.decision_time('2026-10-18'))
 
 
-def test_one_call_each_identical_inputs_probability_on_abstention_and_resume(tmp_path, runtime):
+def test_one_call_each_identical_inputs_published_before_open_and_resume(tmp_path, runtime, ledger):
     client, calls = runtime
-    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
+    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
     assert result['status'] == 'DONE' and len(calls) == 2
     assert calls[0][1] == calls[1][1]
     assert 'LIVE_FORWARD' in calls[0][1]
-    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
+    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
     assert len(calls) == 2
+    hashes = {'snapshot': result['snapshot_hash']}
     for family in ex.FAMILIES:
         value = json.loads((fw.directory(tmp_path, '2026-10-19') / (family+'.json')).read_text())
         assert value['provenance'] == 'LIVE_FORWARD' and value['decision_time'] == iso(T)
         assert value['snapshot_hash'] == result['snapshot_hash']
         assert value['output']['analyst']['views'][0]['p_outperform'] == .7
+        hashes[family] = value['decision_hash']
     with pytest.raises(ReplayError, match='FORWARD_CALL_ALREADY_RESERVED'):
         client.budget.reserve_model('opus', 150, T)
+    # Audit item 3: hash-only line pushed on the ledger branch and posted to #journal-des-ordres before 09:30.
+    receipt = commitment.published(tmp_path, 'forward', '2026-10-19')
+    assert receipt['line']['hashes'] == hashes and instant(receipt['published_at']) < fw.publication_deadline('2026-10-19')
+    pushed = subprocess.run(['git', '--git-dir', str(ledger.remote), 'show', commitment.BRANCH + ':' + commitment.LEDGER_FILE],
+                            capture_output=True, text=True, check=True).stdout
+    assert [json.loads(l)['hashes'] for l in pushed.splitlines()] == [hashes]
+    assert result['snapshot_hash'] in ledger.log.read_text() and 'AAPL' not in pushed + ledger.log.read_text()
 
 
-def test_timeout_never_retries_and_other_family_completes(tmp_path, runtime):
+def test_call_order_alternates_by_session():
+    # Audit item 10.
+    assert fw.order('2026-10-19') == ('opus', 'gpt')
+    assert fw.order('2026-10-20') == ('gpt', 'opus')
+    assert fw.order('2026-10-23') == ('opus', 'gpt')
+    assert fw.order('2026-10-26') == ('gpt', 'opus')
+
+
+def test_timeout_never_retries_and_other_family_completes(tmp_path, runtime, ledger):
     client, calls = runtime
     original = client.runner
     attempts = []
@@ -97,49 +116,114 @@ def test_timeout_never_retries_and_other_family_completes(tmp_path, runtime):
             raise subprocess.TimeoutExpired(args, 1)
         return original(args, **kwargs)
     client.runner = runner
-    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
+    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
     assert result['status'] == 'BLOCKED'
     assert result['models']['opus'] == 'CALL_OUTCOME_UNKNOWN'
-    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
+    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
     assert attempts == ['claude', 'codex']
+    # The failure itself is committed publicly, never hidden.
+    receipt = commitment.published(tmp_path, 'forward', '2026-10-19')
+    assert receipt['line']['hashes']['opus'] == 'FAILED:CALL_OUTCOME_UNKNOWN'
 
 
-def test_tampered_saved_decision_refused(tmp_path, runtime):
+def test_tampered_saved_decision_refused(tmp_path, runtime, ledger):
     client, _ = runtime
-    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
+    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
     file = fw.directory(tmp_path, '2026-10-19') / 'opus.json'
     value = json.loads(file.read_text()); value['output']['analyst']['views'][0]['p_outperform'] = .1
     atomic_json(file, value)
     with pytest.raises(ReplayError, match='FORWARD_DECISION_BINDING_MISMATCH'):
-        fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
+        fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
 
 
-def test_mature_labels_only_and_weekly_at_most_once(tmp_path, runtime, monkeypatch):
-    client, calls = runtime
-    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T)
-    file = fw.directory(tmp_path, '2026-10-19') / 'snapshot.json.gz'
-    parent.write_json(file, sealed())
+class FakeOutcomes:
     seen = []
-    class Outcomes:
-        def __init__(self, *args):
-            pass
-        def get(self, group, day, asset, h):
-            seen.append((asset, h))
-            return {'rel': .01, 'cost': .003}
-    monkeypatch.setattr(scoring, 'Outcomes', Outcomes)
+    def __init__(self, *args, **kwargs):
+        self.decision_time = kwargs['decision_time']
+    def get(self, group, day, asset, h):
+        FakeOutcomes.seen.append((asset, h))
+        return {'rel': .01, 'cost': .003}
+
+
+def scored_setup(tmp_path, runtime, ledger, monkeypatch):
+    client, _ = runtime
+    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
+    parent.write_json(fw.directory(tmp_path, '2026-10-19') / 'snapshot.json.gz', sealed())
+    FakeOutcomes.seen = []
+    monkeypatch.setattr(scoring, 'Outcomes', FakeOutcomes)
+
+
+def test_mature_labels_only_failures_reported_and_weekly_at_most_once(tmp_path, runtime, ledger, monkeypatch):
+    scored_setup(tmp_path, runtime, ledger, monkeypatch)
     values = fw.score(tmp_path, None, clock=lambda: T.replace(hour=21))
-    assert len(values['rows']) == 2 and seen == [('AAPL', 1), ('AAPL', 1)]
+    assert len(values['rows']) == 2 and FakeOutcomes.seen == [('AAPL', 1), ('AAPL', 1)]
     assert all(r['horizon'] == '1d' and r['brier'] == pytest.approx(.09) for r in values['rows'])
+    assert values['evidence_class'] == 'LIVE_FORWARD' and values['primary_endpoint']['verdict'] == 'NO_WINNER'
+    assert values['failures'] == {f: {'failed_sessions': [], 'count': 0} for f in ex.FAMILIES}
     friday = instant('2026-10-23T21:15:00Z')
     values['scored_at'] = iso(friday)
-    atomic_json(tmp_path/'live-forward-v1/scores.json', values)
+    atomic_json(tmp_path/fw.STATE_DIR/'scores.json', values)
     deliveries = []
     def deliver(args, **kwargs):
         deliveries.append((args, kwargs['input']))
         return subprocess.CompletedProcess(args, 0, 'discord\n', '')
     fw.weekly(tmp_path, notify=Path('/synthetic/notify'), clock=lambda: friday, runner=deliver)
     assert deliveries[0][0] == ['/synthetic/notify', 'brouillons']
-    assert 'n=1' in deliveries[0][1] and 'n=0' in deliveries[0][1]
+    text = deliveries[0][1]
+    assert 'n=1' in text and 'n=0' in text and 'jours en échec=0' in text and 'No winner' in text
     with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
         fw.weekly(tmp_path, notify=Path('/synthetic/notify'), clock=lambda: friday, runner=deliver)
     assert len(deliveries) == 1
+
+
+def test_failed_day_counted_not_dropped(tmp_path, runtime, ledger, monkeypatch):
+    client, _ = runtime
+    def runner(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, 'not json', '')
+    client.runner = runner
+    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
+    parent.write_json(fw.directory(tmp_path, '2026-10-19') / 'snapshot.json.gz', sealed())
+    monkeypatch.setattr(scoring, 'Outcomes', FakeOutcomes)
+    values = fw.score(tmp_path, None, clock=lambda: T.replace(hour=21))
+    assert values['rows'] == []
+    assert values['failures']['opus']['count'] == 1 and values['failures']['gpt']['count'] == 1
+    assert values['failures']['opus']['failed_sessions'][0]['session'] == '2026-10-19'
+
+
+def test_scorer_checks_frozen_forward_config_first_session_and_publication(tmp_path, runtime, ledger, monkeypatch):
+    # Audit item 9: forward.score enforces the freeze itself, not only the CLI.
+    scored_setup(tmp_path, runtime, ledger, monkeypatch)
+    frozen = json.loads(ex.FREEZE.read_text())
+    ex.FREEZE.write_text(json.dumps(dict(frozen, forward_config_hashes=dict(frozen['forward_config_hashes'], gpt='0'*64))))
+    with pytest.raises(ReplayError, match='FORWARD_CONFIG_NOT_FROZEN'):
+        fw.score(tmp_path, None, clock=lambda: T.replace(hour=21))
+    ex.FREEZE.write_text(json.dumps(dict(frozen, forward_first_session='2026-10-20')))
+    with pytest.raises(ReplayError, match='FORWARD_BEFORE_FIRST_SESSION'):
+        fw.score(tmp_path, None, clock=lambda: T.replace(hour=21))
+    ex.FREEZE.write_text(json.dumps(frozen))
+    receipt = commitment.receipt_path(tmp_path, 'forward', '2026-10-19')
+    value = json.loads(receipt.read_text())
+    late = dict(value, published_at=iso(instant('2026-10-19T13:30:00Z')))
+    atomic_json(receipt, late)
+    with pytest.raises(ReplayError, match='PUBLISHED_TOO_LATE'):
+        fw.score(tmp_path, None, clock=lambda: T.replace(hour=21))
+    receipt.unlink()
+    with pytest.raises(ReplayError, match='DECISION_HASH_NOT_PUBLISHED'):
+        fw.score(tmp_path, None, clock=lambda: T.replace(hour=21))
+
+
+def test_publication_retry_only_before_open(tmp_path, runtime, ledger):
+    client, _ = runtime
+    ledger.notify.write_text('#!/bin/sh\necho telegram-fallback\n')
+    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
+    assert result['status'] == 'BLOCKED' and result['publication'] == {'error': 'COMMITMENT_DISCORD_UNCONFIRMED'}
+    parent.write_json(fw.directory(tmp_path, '2026-10-19') / 'snapshot.json.gz', sealed())
+    ledger.notify.write_text('#!/bin/sh\ncat > /dev/null\necho discord\n')
+    with pytest.raises(ReplayError, match='DEADLINE_PASSED'):
+        fw.publish_pending(tmp_path, ledger=ledger, clock=lambda: instant('2026-10-19T13:30:00Z'))
+    ledger.clock = lambda: T + timedelta(minutes=15)
+    done = fw.publish_pending(tmp_path, ledger=ledger, clock=lambda: T + timedelta(minutes=15))
+    assert done['status'] == 'PUBLISHED'
+    pushed = subprocess.run(['git', '--git-dir', str(ledger.remote), 'show', commitment.BRANCH + ':' + commitment.LEDGER_FILE],
+                            capture_output=True, text=True, check=True).stdout
+    assert len(pushed.splitlines()) == 1
