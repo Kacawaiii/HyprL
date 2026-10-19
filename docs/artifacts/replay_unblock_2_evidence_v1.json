@@ -1,0 +1,95 @@
+{
+  "admission": {
+    "build_inputs": "CANDIDATE_ASSET_METADATA_MISSING",
+    "forward_decisions": 0,
+    "freeze_committed": true,
+    "input_manifest_present": false,
+    "input_seal_committed": false,
+    "replay_decisions": 0,
+    "seal_inputs": "PER_DAY_INPUT_MANIFESTS_MISSING"
+  },
+  "archive": {
+    "captured_objects_unchanged": true,
+    "index_sha256": "f5a612a46fc8101edcaf728558ec6723191fc3852e4e573553c269fdde4284a9",
+    "objects": 2089
+  },
+  "assets": {
+    "candidate_symbols": 5191,
+    "contradictory_candidates_count": 76,
+    "contradictory_candidates_sha256": "b8a6e71a247c40d45448c4b78a2307c411ec6a92cf0dbb5c45812b040f28013f",
+    "contradictory_global": 237,
+    "contradictory_symbols_sha256": "8d197603dfee16f728fd8288b3441a762ed5eaf99f0e61f3761f9f008a2f7a35",
+    "missing_candidates_count": 150,
+    "missing_candidates_sha256": "ba4f55cbfeb254b1bfab135c80f4f6ee094bca89751f0e83f799416c1faa0e63"
+  },
+  "checks": {
+    "compilation": "PASS",
+    "git_diff_check": "PASS",
+    "gpt_guard_passed": 10,
+    "mandatory_repository": {
+      "failed": 0,
+      "passed": 505,
+      "seconds": 369.24,
+      "skipped_expected": 1
+    },
+    "replay_forward": {
+      "failed": 0,
+      "passed": 169,
+      "seconds": 49.6
+    },
+    "unit_drafts_verified": 14
+  },
+  "code_commit": "d97737a89a0ce6ae5ba6609ff7e067443b205116",
+  "code_hash": "ff5f1c0cfcfbcc6df662be478cab3aa669a9bf88c2f54f621b69fbef315a7bff",
+  "freeze_hash": "6510242adec945541cf5d614fc3631b649e3071349b62b3ba632081fc73d2712",
+  "labels": {
+    "excluded_keys_sha256": "32a8c0be96ca47b022702980adea702290dd74b4e887874e3d117abcfe1f1476",
+    "new_retries": 0,
+    "recomputed_dev_primary": {
+      "n": 1214,
+      "outcomes_sha256": "eb5fd2f9545feb62ff07ffc4e76e0ccd4073789cf4317ee2a3167e6ee4989dc3",
+      "panel": "a_v1_as_live:1d",
+      "spec_hash": "5603b6349b9989cff7c50107bb8078edb6d60a85ff927c26d94de95dcf91f850",
+      "successes": 590
+    },
+    "retained_paired_exclusions": 658,
+    "retry_record_sha256": "987d2c4910d9f4edc2dc8953b46281443279b5cfb6e8d3b94b44187a118bcd03"
+  },
+  "method_hash": "8135acbf31f434d7f6e1cc0022f9df9cd7cca3c630d51555fff210da5e705e0b",
+  "probe4": {
+    "answers_graded": 0,
+    "answers_read": 0,
+    "closure_sha256": "7053903566e03964223975bce53cbb09fade1465400a7d47e84022e2b32b3927",
+    "preserved_envelopes": 4,
+    "status": "NOT RUN"
+  },
+  "research_timers": {
+    "armed": 0,
+    "failed_transient_units_remaining": 0,
+    "first_session_armed": null,
+    "unit_drafts_verified": 14
+  },
+  "schema": "replay-unblock-2-evidence-v1",
+  "sec": {
+    "reason": "OPERATOR_REVISION_10",
+    "scope": "every day and both families; cached filings withheld; collection stopped without retry",
+    "state": "UNAVAILABLE"
+  },
+  "sessions": {
+    "anon_dev": 11,
+    "dev": 43,
+    "test": 21
+  },
+  "spec_hash": "5603b6349b9989cff7c50107bb8078edb6d60a85ff927c26d94de95dcf91f850",
+  "status": "BLOCKED",
+  "test_end": {
+    "gpt": "2026-09-30",
+    "opus": "2026-09-30"
+  },
+  "this_task": {
+    "model_calls": 0,
+    "orders": 0,
+    "probe_calls": 0,
+    "source_http_requests": 0
+  }
+}
