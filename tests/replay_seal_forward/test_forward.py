@@ -257,3 +257,8 @@ def test_shared_data_quality_day_exclusion_publishes_hashes_without_model_calls(
     assert calls == []
     receipt = commitment.published(tmp_path, 'forward', '2026-10-20')
     assert set(receipt['line']['hashes']) == {'snapshot', 'opus', 'gpt'}
+    parent.write_json(fw.directory(tmp_path, '2026-10-20') / 'snapshot.json.gz', value)
+    scored = fw.score(tmp_path, SimpleNamespace(), clock=lambda: T + timedelta(hours=8))
+    assert all(row['count'] == 0 for row in scored['failures'].values())
+    assert scored['exclusions']['opus:input:NEWS_ARCHIVE_COVERAGE_MISSING'] == 1
+    assert scored['exclusions']['gpt:input:NEWS_ARCHIVE_COVERAGE_MISSING'] == 1

@@ -280,7 +280,11 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
             # Never a silent drop: a missing decision is a reported failed day.
             failure = snapshot_file.parent / (family + '-failure.json')
             code = json.loads(failure.read_text())['error'] if failure.is_file() else 'DECISION_MISSING'
-            failures[family].append({'session': day, 'error': code})
+            if code == 'DATA_QUALITY_EXCLUDED':
+                for reason, number in sealed['manifests']['ab']['data_quality']['counts_by_reason'].items():
+                    exclusions[family + ':input:' + reason] += number
+            else:
+                failures[family].append({'session': day, 'error': code})
         if not present:
             continue
         flags = sealed['manifests']['ab'].get('borrow_flags', {})
@@ -298,6 +302,7 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
             for group, row in panels:
                 h = int(row['horizon'][:-1])
                 if row['asset'] in sn.CRYPTO and h != 1:
+                    exclusions[family + ':CRYPTO_5D'] += 1
                     continue
                 crypto = row['asset'] in sn.CRYPTO
                 mature = fills.entry(day, T, True) + timedelta(days=1) if crypto else following[h-1].close_at
