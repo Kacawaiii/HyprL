@@ -62,14 +62,23 @@ def outcome(signed, rel, cost, vol, h):
             'outperform': rel > 0, 'R': net / (vol * math.sqrt(h)) if vol else None}
 
 
-def label_universe_day(day, universe_bars, anchors, costs, *, last_day=LAST_SESSION):
-    """1d and 5d outcomes for every universe asset on one day (views and baselines share them)."""
-    T = instant(day + 'T12:00:00Z')
+def label_universe_day(day, universe_bars, anchors, costs, *, last_day=LAST_SESSION, decision_at=None,
+                       crypto_entry=None):
+    """1d and 5d outcomes for every universe asset on one day (views and baselines share them).
+
+    Stock entries are anchored to the actual session open (+30 s), never to a fixed UTC clock, so a
+    daylight-saving change cannot move a fill before the decision. A fill at or before the decision
+    is refused."""
+    T = decision_at or instant(day + 'T12:00:00Z')
     session = md.sessions(day, day)[0]
     fee = costs['fee_per_side']
     rows = {a: (md.crypto_rows if a in sn.CRYPTO else md.session_rows)(universe_bars.get(a, []))
             for a in sn.UNIVERSE + sn.BENCHMARKS}
-    entry_anchor = '13:30:30'
+    entry_at = session.open_at + timedelta(seconds=30)
+    crypto_start = crypto_entry or instant(day + 'T13:31:00Z')
+    if entry_at <= T or crypto_start <= T:
+        raise ReplayError('ENTRY_NOT_AFTER_DECISION', day)
+    entry_anchor = entry_at.strftime('%H:%M:%S')
     exit_at = session.close_at - timedelta(minutes=5)
     exit_anchor = exit_at.strftime('%H:%M:%S')
     symbols = list(sn.STOCKS + sn.ETFS + ('SPY',))
@@ -92,7 +101,7 @@ def label_universe_day(day, universe_bars, anchors, costs, *, last_day=LAST_SESS
         cell = {'stats': stats, 'cost': cost, 'cluster': sn.CLUSTERS[asset],
                 'momentum_up': stats['r20'] > (0 if crypto else spy_stats['r20'])}
         if crypto:
-            start = instant(day + 'T13:31:00Z')
+            start = crypto_start
             if (start + timedelta(days=1)).date().isoformat() <= last_day:
                 a, b = anchors.crypto(start).get(asset), anchors.crypto(start + timedelta(days=1)).get(asset)
                 if a and b:

@@ -8,8 +8,9 @@ from scripts.trading_lab.replay_bench import marketdata as md, snapshot as sn
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant, iso
 from . import spec
 
-RISKS = ['vendor corrections of historical bars', 'headline edits within 24 h',
-         'universe survivorship for names without Alpaca history', 'news vendor coverage gaps']
+RISKS = ['vendor corrections of historical bars', "headline text is the vendor's latest version, last edited before T",
+         'universe survivorship for names without Alpaca history', 'news vendor coverage gaps',
+         'asset borrow flags are the collection-time values, not point-in-time']
 
 
 def declaration(root):
@@ -28,10 +29,11 @@ def news_at(rows, T):
         updated = instant(row.get('updated_at') or row['created_at'])
         if updated < created:
             raise ReplayError('NEWS_EDIT_CLOCK_INVALID')
-        if created >= T or updated - created > timedelta(hours=24) or md.PROTECTED.intersection(row['symbols']):
+        # Operator decision 2026-10-18: both clocks strictly before T, no edit tolerance.
+        if created >= T or updated >= T or md.PROTECTED.intersection(row['symbols']):
             continue
-        # No summary, article, author, URL or last-edit text enters selection or
-        # the model. The URL is an opaque citation identifier required by schema.
+        # Only creation-time fields: no summary, article, author, URL or later-edited
+        # content enters selection or the model. The URL is an opaque citation id.
         out.append({'id': row['id'], 'headline': row['headline'], 'source': row['source'],
                     'symbols': sorted(row['symbols']), 'created_at': iso(created)})
     return sorted(out, key=lambda r: (r['created_at'], r['id']), reverse=True)
@@ -153,10 +155,14 @@ def build(archive, T, method_hash):
                       'filings_state': 'AVAILABLE' if symbol in archive.filing_symbols else 'UNAVAILABLE'})
     cd = {'schema': 'replay-news-context-v1', 'session': T.date().isoformat(), 'decision_time': iso(T),
           'news_window_start': iso(start), 'candidates': shown, 'limitations': RISKS, 'provenance': spec.PROVENANCE}
+    # Scoring-only borrow flags (never shown to a model): hard-to-borrow shorts are excluded.
+    borrow = {s: {k: archive.assets[s].get(k) for k in ('shortable', 'easy_to_borrow')}
+              for s in list(sn.STOCKS + sn.ETFS + sn.BENCHMARKS) + [c['symbol'] for c in shown] if s in archive.assets}
     manifest = {'schema': 'replay-per-day-input-manifest-v2', 'decision_time': iso(T), 'spec_hash': spec.SPEC_HASH,
                 'method_hash': method_hash, 'provenance': spec.PROVENANCE, 'residual_risks': RISKS,
                 'items': [{'id': k, 'sha256': v} for k, v in sorted(items.items())],
-                'rejections': rejections, 'candidate_count': len(candidates), 'shown_count': len(shown)}
+                'rejections': rejections, 'candidate_count': len(candidates), 'shown_count': len(shown),
+                'borrow_flags': borrow}
     return {g: sn.seal(c, dict(manifest, group=g), T) for g, c in (('ab', ab), ('cd', cd))}
 
 

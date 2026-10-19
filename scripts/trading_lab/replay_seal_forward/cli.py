@@ -9,7 +9,7 @@ from scripts.trading_lab.replay_bench.grant import Grant, ReplayError, Transport
 from scripts.trading_lab.replay_bench.storage import atomic_json, owned
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from . import audit, experiment as ex, forward, spec
-from .models import Models, DuelBudget
+from .models import Models, DuelBudget, api_billing
 
 
 def progress_report(root, result):
@@ -24,7 +24,7 @@ def progress_report(root, result):
         ex.check_freeze(root)
         frozen = json.loads(ex.FREEZE.read_text())
         from scripts.trading_lab.replay_bench import run as parent
-        for path in sorted((root / 'live-forward-v1').glob('????-??-??/snapshot.json.gz')):
+        for path in sorted((root / forward.STATE_DIR).glob('????-??-??/snapshot.json.gz')):
             sealed = parent.read_json(path)
             check = dict(sealed)
             if (check.pop('snapshot_hash') != sha256_canonical(check) or
@@ -69,7 +69,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('status', 'audit', 'freeze', 'build-inputs', 'seal-inputs'):
         sub.add_parser(name)
-    for name in ('night', 'forward', 'forward-score', 'weekly'):
+    for name in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
         sub.add_parser(name).add_argument('--expected-commit', required=True)
     sub.add_parser('score').add_argument('period', choices=('dev', 'test'))
     args = parser.parse_args(argv)
@@ -102,8 +102,12 @@ def main(argv=None):
                 result = ex.build_inputs(root)
             elif args.command == 'forward':
                 budget = forward.ForwardBudget(root)
-                client = Models(grant, budget, root / 'live-forward-v1' / 'transcripts', window=forward.window)
+                client = Models(grant, budget, root / forward.STATE_DIR / 'transcripts', window=forward.window,
+                                billing=api_billing(root), scope='forward')
                 result = forward.run(root, client, expected_commit=args.expected_commit)
+            elif args.command == 'forward-publish':
+                from . import commitment
+                result = forward.publish_pending(root, ledger=commitment.from_environment(root))
             elif args.command == 'weekly':
                 notify = os.environ.get('REPLAY_NOTIFY')
                 if not notify:
@@ -112,7 +116,7 @@ def main(argv=None):
             else:
                 transport = Transport(grant, budget, root / 'cache', offline=True)
                 if args.command == 'night':
-                    client = Models(grant, budget, root / spec.STATE_DIR / 'transcripts')
+                    client = Models(grant, budget, root / spec.STATE_DIR / 'transcripts', billing=api_billing(root))
                     result = ex.night(root, budget, transport, client, expected_commit=args.expected_commit)
                 elif args.command == 'score':
                     from .score import score
@@ -127,7 +131,7 @@ def main(argv=None):
                     transport.allowed_cache = archive.objects
                     result = forward.score(root, transport, outcome_proof=archive.proof())
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)
-        if args.command in ('night', 'forward', 'forward-score', 'weekly'):
+        if args.command in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
             progress_report(root, result)
         print(json.dumps(result, sort_keys=True, indent=2, allow_nan=False))
         return 2 if result.get('status') == 'BLOCKED' else 0
@@ -135,7 +139,7 @@ def main(argv=None):
         result = {'status': 'BLOCKED', 'error': error.code if isinstance(error, ReplayError) else 'INVALID_OR_MISSING_INPUT'}
         if root is not None:
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)
-            if args.command in ('night', 'forward', 'forward-score', 'weekly'):
+            if args.command in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
                 progress_report(root, result)
         print(json.dumps(result), file=sys.stderr)
         return 2

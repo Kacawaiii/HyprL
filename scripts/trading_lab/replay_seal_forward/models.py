@@ -1,4 +1,10 @@
-"""Serial no-tool subscription dispatch, separate 60-call caps, durable no-refund intents."""
+"""Serial no-tool dispatch, 150-call nightly caps per model, durable no-refund intents.
+
+Opus rides the subscription by default (150/night, and every Opus call of the UTC day stays inside
+the 150/day replay grant, keeping one call for the same-day forward session). An optional API-key
+path for Opus (grant replay-bench-api-v1) exists but is off unless explicitly enabled; a
+"Credit balance is too low" answer is a durable hard stop in either mode.
+"""
 import hashlib
 import json
 import os
@@ -15,19 +21,43 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from . import schemas, spec
 
 
+NIGHT_CAP = 150
+OPUS_DAY_KEYS = ('model:opus', 'forward:model:opus', 'probe:opus')
+CREDIT_STOP = 'api-credit-stop.json'
+
+
+def forward_session(at):
+    """True when this UTC date carries a forward decision (its 09:05 New York falls on it)."""
+    from scripts.trading_lab.replay_bench import marketdata as md
+    day = iso(at)[:10]
+    return day >= spec.spec()['forward']['first_session'] and bool(md.sessions(day, day))
+
+
 class DuelBudget(Budget):
     """Share the legacy budget file, but each subscription has its own ceiling and stop."""
-    def reserve_model(self, family, limit, at, night_limit=60):
+    def reserve_model(self, family, limit, at, night_limit=NIGHT_CAP):
         if family not in ('opus', 'gpt'):
             raise ReplayError('MODEL_NOT_ALLOWED')
+        if (self.path.parent / CREDIT_STOP).exists() and family == 'opus':
+            raise ReplayError('API_CREDIT_EXHAUSTED')
         with self._locked() as data:
             day = data.setdefault(iso(at)[:10], {})
             if day.get('stopped:' + family) or family == 'opus' and day.get('stopped'):
                 raise ReplayError('MODEL_USAGE_LIMIT')
             key = 'model:' + family
-            if day.get(key, 0) >= min(limit, night_limit, 60):
+            if day.get(key, 0) >= min(limit, night_limit, NIGHT_CAP):
                 raise ReplayError('BUDGET_EXHAUSTED')
+            if family == 'opus':
+                # Inside the 150/day grant across night, forward and probe; keep the forward call.
+                reserve = 1 if forward_session(at) and not day.get('forward:model:opus') else 0
+                if sum(day.get(k, 0) for k in OPUS_DAY_KEYS) + reserve >= limit:
+                    raise ReplayError('BUDGET_EXHAUSTED')
             day[key] = day.get(key, 0) + 1
+
+    def credit_stop(self, at):
+        atomic_json(self.path.parent / CREDIT_STOP, {'state': 'API_CREDIT_EXHAUSTED', 'at': iso(at),
+                                                     'note': 'hard stop; the operator removes this file'})
+        self.stop_model('opus', at)
 
     def stop_model(self, family, at):
         with self._locked() as data:
@@ -100,6 +130,8 @@ def decode(raw, err, returncode, family, schema):
     errors = err + ''.join(json.dumps(e) for e in events if e.get('type') in ('error', 'turn.failed') or e.get('is_error'))
     if not events:
         errors += raw
+    if family == 'opus' and ('credit balance is too low' in errors.lower() or 'credit balance is too low' in raw.lower()):
+        raise ReplayError('API_CREDIT_EXHAUSTED')
     if any(x in errors.lower() for x in (*QUOTA, '429', 'quota exceeded', 'codex limit')):
         raise ReplayError('MODEL_USAGE_LIMIT')
     if returncode or not events:
@@ -132,11 +164,64 @@ def decode(raw, err, returncode, family, schema):
     return output, reported
 
 
+class ApiBilling:
+    """Optional Opus API-key billing (grant replay-bench-api-v1). Off unless REPLAY_OPUS_BILLING=api.
+
+    The key is read from the grant's key file at dispatch only (never logged). Spend is summed from
+    total_cost_usd in a durable ledger before every call: $60 for the replay, $10 per month forward.
+    """
+    def __init__(self, grant_file, ledger_file, *, clock=now):
+        self.grant = json.loads(Path(grant_file).read_text())
+        if self.grant.get('id') != 'replay-bench-api-v1':
+            raise ReplayError('API_GRANT_INVALID')
+        self.ledger, self.clock = Path(ledger_file), clock
+        if not now() < instant(self.grant['expires'] + 'T23:59:59Z'):
+            raise ReplayError('API_GRANT_EXPIRED')
+
+    def key(self):
+        file = Path(self.grant['claude_api']['key_file'])
+        if not file.is_file():
+            raise ReplayError('API_KEY_FILE_MISSING')
+        values = dict(l.split('=', 1) for l in file.read_text().splitlines() if '=' in l and not l.startswith('#'))
+        if not values.get('ANTHROPIC_API_KEY', '').strip():
+            raise ReplayError('API_KEY_FILE_MISSING')
+        return values['ANTHROPIC_API_KEY'].strip().strip('"')
+
+    def spent(self, scope, month=None):
+        rows = json.loads(self.ledger.read_text()) if self.ledger.is_file() else []
+        return sum(r['cost_usd'] for r in rows if r['scope'] == scope and (month is None or r['at'][:7] == month))
+
+    def check(self, scope):
+        cap = self.grant['claude_api']['replay_cap_usd' if scope == 'replay' else 'forward_duel_cap_usd_per_month']
+        if self.spent(scope, None if scope == 'replay' else iso(self.clock())[:7]) >= cap:
+            raise ReplayError('API_DOLLAR_CAP_REACHED')
+
+    def record(self, scope, raw):
+        try:
+            cost = float(json.loads(raw).get('total_cost_usd') or 0)
+        except (ValueError, AttributeError):
+            cost = 0.0
+        rows = json.loads(self.ledger.read_text()) if self.ledger.is_file() else []
+        rows.append({'scope': scope, 'cost_usd': cost, 'at': iso(self.clock())})
+        atomic_json(self.ledger, rows)
+
+
+def api_billing(root):
+    if os.environ.get('REPLAY_OPUS_BILLING', 'subscription') != 'api':
+        return None
+    grant = os.environ.get('REPLAY_API_GRANT')
+    if not grant:
+        raise ReplayError('API_GRANT_NOT_CONFIGURED')
+    return ApiBilling(grant, Path(root) / 'api-ledger.json')
+
+
 class Models:
-    def __init__(self, grant, budget, transcripts, *, runner=subprocess.run, clock=now, window=night_remaining):
+    def __init__(self, grant, budget, transcripts, *, runner=subprocess.run, clock=now, window=night_remaining,
+                 billing=None, scope='replay'):
         self.grant, self.budget, self.runner, self.clock = grant, budget, runner, clock
         self.window = window
         self.transcripts = Path(transcripts)
+        self.billing, self.scope = billing, scope
 
     def call(self, family, prompt, schema, *, tag, timeout=900):
         if family not in spec.spec()['models']['identities']:
@@ -161,7 +246,11 @@ class Models:
         self.grant.check()
         # GPT research authorization is the operator's new task, pinned in the new spec;
         # the original HTTP grant is unchanged and still retires GPT in the live engine.
-        limit = min(60, self.grant.model_limit('opus')) if family == 'opus' else 60
+        limit = min(NIGHT_CAP, self.grant.model_limit('opus')) if family == 'opus' else NIGHT_CAP
+        api = self.billing is not None and family == 'opus'
+        if api:
+            self.billing.check(self.scope)
+            key = self.billing.key()
         self.budget.reserve_model(family, limit, at)
         record = {'state': 'INTENT', 'family': family, 'at': iso(at), 'tag': tag,
                   'spec_hash': spec.SPEC_HASH, 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()}
@@ -177,13 +266,18 @@ class Models:
                 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_THREAD_ID', 'OPENAI_API_KEY',
                 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL')}
             env.update(CLAUDE_CODE_DISABLE_AUTO_MEMORY='1', CLAUDE_CODE_DISABLE_CLAUDE_MDS='1', CLAUDE_CODE_SIMPLE='1')
+            if api:
+                env['ANTHROPIC_API_KEY'] = key
             try:
                 result = self.runner(argv(family, schema, schema_file), input=prompt, text=True, capture_output=True,
                                      cwd=str(cwd), env=env, timeout=min(timeout, remaining - 1))
             except (subprocess.TimeoutExpired, OSError):
                 raise ReplayError('CALL_OUTCOME_UNKNOWN', identity) from None
-        record.update(state='RECEIVED', raw=result.stdout or '', err=result.stderr or '', returncode=result.returncode)
+        record.update(state='RECEIVED', raw=result.stdout or '', err=result.stderr or '', returncode=result.returncode,
+                      billing='api' if api else 'subscription')
         atomic_json(path, record)
+        if api:
+            self.billing.record(self.scope, record['raw'])
         return self._decode(record, family, prompt, schema, identity)
 
     def _decode(self, record, family, prompt, schema, identity):
@@ -194,6 +288,10 @@ class Models:
                 record['state'] = 'USAGE_LIMIT'
                 atomic_json(self.transcripts / (identity + '.json'), record)
                 self.budget.stop_model(family, instant(record['at']))
+            elif error.code == 'API_CREDIT_EXHAUSTED':
+                record['state'] = 'CREDIT_STOP'
+                atomic_json(self.transcripts / (identity + '.json'), record)
+                self.budget.credit_stop(instant(record['at']))
             raise
         return output, {'family': family, 'model': spec.spec()['models']['identities'][family], 'reported': reported,
                         'identity_evidence': 'CLI_REQUEST_ONLY' if not reported else 'CLI_REPORTED',

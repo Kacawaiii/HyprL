@@ -13,6 +13,10 @@ from scripts.trading_lab.replay_bench.grant import ReplayError, instant
 from scripts.trading_lab.replay_bench import marketdata as md
 from . import spec
 
+# A query reaching 365 calendar days (>= 250 sessions) before T separates a missing history from
+# a legitimately short one for the 200-session rule; the grant's daily bars start 2025-01-01.
+HISTORY_DAYS = 365
+
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -61,6 +65,9 @@ class Archive:
                     continue
                 symbols = params['symbols'].split(',')
                 md.guard(symbols, params['start'], params['end'])
+                # Adjusted bars only detect corporate actions at scoring; they never become inputs.
+                if path == '/v2/stocks/bars' and params.get('adjustment') == 'all' and params.get('feed') == 'sip':
+                    continue
                 if path == '/v2/stocks/bars' and (params.get('adjustment') != 'raw' or params.get('feed') != 'sip'):
                     raise ReplayError('RAW_SIP_BARS_REQUIRED')
                 for symbol, rows in body.get('bars', {}).items():
@@ -122,7 +129,8 @@ class Archive:
         for origin, path, params, body in self.requests:
             if (origin != md.ALPACA or path != '/v2/stocks/bars' or params.get('timeframe') != '1Day' or
                     symbol not in params['symbols'].split(',') or
-                    instant(params['start']) > T - timedelta(days=550) or instant(params['end']) < T):
+                    params.get('adjustment') != 'raw' or
+                    instant(params['start']) > T - timedelta(days=HISTORY_DAYS) or instant(params['end']) < T):
                 continue
             group = tuple(sorted((k, str(v)) for k, v in params.items() if k != 'page_token'))
             groups.setdefault(group, {})[params.get('page_token')] = body.get('next_page_token')

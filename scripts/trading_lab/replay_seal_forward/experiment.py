@@ -1,5 +1,6 @@
 """Common plans, committed configurations, sealed offline inputs, once-only paired test."""
 from copy import copy
+from datetime import timedelta
 import json
 from pathlib import Path
 import subprocess
@@ -10,8 +11,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v2.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v3.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v3.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -34,6 +35,20 @@ def planned(period, group):
         raise ReplayError('PERIOD_OR_GROUP_NOT_ALLOWED')
     days = parent.sessions(*spec.spec()['periods'][period])
     return days[::4] if group == 'anon' else days
+
+
+def test_cut():
+    """Per-model last test day from the committed freeze (probe4 rule), else the period end."""
+    frozen = json.loads(FREEZE.read_text()) if FREEZE.is_file() else {}
+    return frozen.get('test_end', {f: spec.spec()['periods']['test'][1] for f in FAMILIES})
+
+
+def planned_for(period, group, family):
+    days = planned(period, group)
+    if period == 'test':
+        end = test_cut()[family]
+        days = [d for d in days if d <= end]
+    return days
 
 
 def input_proof(root):
@@ -125,24 +140,26 @@ def offline(root, transport, *, outcomes=False):
 
 def frozen_payload(root):
     evidence = audit.evidence(root)
-    from .forward import SCHEMA
-    return {'schema': 'replay-duel-test-freeze-v2', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
-            'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v1.json').read_text())),
+    from .forward import SCHEMA, forward_config_hash
+    from .stats import PRIMARY
+    return {'schema': 'replay-duel-test-freeze-v3', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+            'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
+            'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
+            'primary_endpoint': PRIMARY,
             'config_payloads': {f: {g: spec.config_payload('test', g, f) for g in ('ab', 'cd')} for f in FAMILIES},
             'config_hashes': {f: {g: spec.config_hash('test', g, f) for g in ('ab', 'cd')} for f in FAMILIES},
             'test_days': planned('test', 'ab'), 'input_seal_required': True,
             'base_rate_rule': spec.spec()['statistics']['base_rate'],
             'paired_test_rule': spec.spec()['statistics']['paired_test'],
-            'forward_config_hashes': {f: sha256_canonical({'spec_hash': spec.SPEC_HASH,
-                'code_hash': spec.code_hash(), 'family': f, 'schema': SCHEMA,
-                'forward': spec.spec()['forward']}) for f in FAMILIES}}
+            'forward_config_hashes': {f: forward_config_hash(f) for f in FAMILIES},
+            'forward_first_session': spec.spec()['forward']['first_session']}
 
 
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v2', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v3', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -166,7 +183,7 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if list((Path(root) / 'duel-v1').glob('test_started_*.json')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):
@@ -184,7 +201,7 @@ def record_path(root, period, group, family, day):
 
 def complete(root, period, family):
     return all(record_path(root, period, g, family, d).is_file()
-               for g in (GROUPS if period == 'dev' else ('ab', 'cd')) for d in planned(period, g))
+               for g in (GROUPS if period == 'dev' else ('ab', 'cd')) for d in planned_for(period, g, family))
 
 
 def result_path(root, period):
@@ -203,7 +220,7 @@ def ready_test(root):
     return sha256_canonical(value)
 
 
-def claim_test(root, family):
+def claim_test(root, family, ledger=None):
     dev_hash = ready_test(root)
     path = Path(root) / spec.STATE_DIR / ('test_started_' + family + '.json')
     binding = {'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())), 'spec_hash': spec.SPEC_HASH,
@@ -213,7 +230,14 @@ def claim_test(root, family):
         if any(value.get(k) != v for k, v in binding.items()):
             raise ReplayError('TEST_ALREADY_STARTED_WITH_OTHER_CONFIG')
     else:
-        atomic_json(path, dict(binding, started_at=iso(now()), commit=head()))
+        value = dict(binding, started_at=iso(now()), commit=head())
+        atomic_json(path, value)
+    # The test-start marker is public (hash only) before any test call.
+    from . import commitment
+    if commitment.published(root, 'replay-test-start', family) is None:
+        if ledger is None:
+            raise ReplayError('TEST_START_NOT_PUBLISHED')
+        ledger.publish('replay-test-start', family, {'test_start_marker': sha256_canonical(value)})
 
 
 def status(root, budget, clock=now):
@@ -223,8 +247,8 @@ def status(root, budget, clock=now):
         input_proof(root)
     except ReplayError as error:
         reasons.append(error.code)
-    plans = {f: {p: {g: {'days': len(planned(p, g)),
-                        'completed_days': sum(record_path(root, p, g, f, d).is_file() for d in planned(p, g))}
+    plans = {f: {p: {g: {'days': len(planned_for(p, g, f)),
+                        'completed_days': sum(record_path(root, p, g, f, d).is_file() for d in planned_for(p, g, f))}
                         for g in (GROUPS if p == 'dev' else ('ab', 'cd'))} for p in ('dev', 'test')} for f in FAMILIES}
     return {'status': 'BLOCKED' if reasons else 'READY', 'reasons': reasons, 'plans': plans,
             'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head(),
@@ -233,16 +257,16 @@ def status(root, budget, clock=now):
             'subscription_stops': {f: budget.model_stopped(f, clock()) for f in FAMILIES}}
 
 
-def run_one(root, period, group, day, family, transport, client):
+def run_one(root, period, group, day, family, transport, client, ledger=None):
     check_freeze(root, test=period == 'test')
     transport = offline(root, transport)
     if period == 'test':
-        claim_test(root, family)
+        claim_test(root, family, ledger)
     expected = meta(root, period, group, family)
     path = record_path(root, period, group, family, day)
     if path.exists():
         return run.checked(path, expected)
-    if day not in planned(period, group):
+    if day not in planned_for(period, group, family):
         raise ReplayError('DAY_NOT_PLANNED')
     value = run.decide(root, period, group, day, family, transport, client, expected, path)
     append_event(Path(root) / spec.STATE_DIR / 'trials.jsonl', dict(event='DAY_COMPLETED', period=period,
@@ -250,7 +274,30 @@ def run_one(root, period, group, day, family, transport, client):
     return value
 
 
-def night(root, budget, transport, client, *, expected_commit):
+def publish_pending(root, ledger, night):
+    """Publish every stored response hash not yet public (hash-only ledger + Discord)."""
+    from . import commitment
+    from .score import record_key
+    public = commitment.published_hashes(root, 'replay-night', now() + timedelta(days=1))
+    pending = {}
+    for family in FAMILIES:
+        for period in ('dev', 'test'):
+            for group in (GROUPS if period == 'dev' else ('ab', 'cd')):
+                for day in planned_for(period, group, family):
+                    path = record_path(root, period, group, family, day)
+                    if path.is_file():
+                        key = record_key(family, period, group, day)
+                        value = parent.read_json(path)['decision_hash']
+                        if public.get(key) != value:
+                            pending[key] = value
+    if not pending:
+        return None
+    digest = sha256_canonical(sorted(pending.items()))
+    return ledger.publish('replay-night', night + '-' + digest[:12], pending,
+                          summary=f'{len(pending)} réponses replay, empreinte {digest}')
+
+
+def night(root, budget, transport, client, *, expected_commit, ledger=None):
     from scripts.trading_lab.replay_bench.models import night_remaining
     from .score import score
     night_remaining(now())
@@ -259,23 +306,37 @@ def night(root, budget, transport, client, *, expected_commit):
     current = status(root, budget)
     if current['status'] == 'BLOCKED':
         return current
-    unavailable = {}
-    for period in ('dev', 'test'):
-        for group in (GROUPS if period == 'dev' else ('ab', 'cd')):
-            for day in planned(period, group):
-                # Alternating first model; each pair sees the exact same sealed context.
-                order = FAMILIES if planned(period, group).index(day) % 2 == 0 else FAMILIES[::-1]
-                for family in order:
-                    if family in unavailable:
-                        continue
-                    try:
-                        run_one(root, period, group, day, family, transport, client)
-                    except ReplayError as error:
-                        if error.code not in ('MODEL_USAGE_LIMIT', 'BUDGET_EXHAUSTED'):
-                            raise
-                        unavailable[family] = error.code
-        if not all(complete(root, period, f) for f in FAMILIES):
-            return dict(status(root, budget), status='BLOCKED', subscription_stops=unavailable,
-                        reasons=['PERIOD_DECISIONS_INCOMPLETE'])
-        score(root, period, transport)
-    return {'status': 'DONE', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head()}
+    if ledger is None:
+        from . import commitment
+        ledger = commitment.from_environment(root)
+    tag = iso(now())[:10]
+    unavailable, failures = {}, {}
+    try:
+        for period in ('dev', 'test'):
+            for group in (GROUPS if period == 'dev' else ('ab', 'cd')):
+                for index, day in enumerate(planned(period, group)):
+                    # Alternating first model; each pair sees the exact same sealed context.
+                    order = FAMILIES if index % 2 == 0 else FAMILIES[::-1]
+                    for family in order:
+                        if family in unavailable or day not in planned_for(period, group, family):
+                            continue
+                        try:
+                            run_one(root, period, group, day, family, transport, client, ledger)
+                        except ReplayError as error:
+                            if error.code not in ('MODEL_USAGE_LIMIT', 'BUDGET_EXHAUSTED', 'API_CREDIT_EXHAUSTED'):
+                                failures.setdefault(family, []).append({'day': day, 'group': group, 'error': error.code})
+                                raise
+                            unavailable[family] = error.code
+            if not all(complete(root, period, f) for f in FAMILIES):
+                publish_pending(root, ledger, tag)
+                return dict(status(root, budget), status='BLOCKED', subscription_stops=unavailable,
+                            failures=failures, reasons=['PERIOD_DECISIONS_INCOMPLETE'])
+            publish_pending(root, ledger, tag)
+            score(root, period, transport)
+    finally:
+        try:
+            publish_pending(root, ledger, tag)
+        except ReplayError:
+            pass
+    return {'status': 'DONE', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head(),
+            'failures': failures}
