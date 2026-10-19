@@ -114,6 +114,43 @@ def test_credit_error_is_a_durable_hard_stop_and_optional_api_stays_off(tmp_path
         forward.ForwardBudget(tmp_path).reserve_model('opus', 150, instant('2026-10-21T13:05:00Z'))
 
 
+def test_failed_probe_envelopes_are_rejected_even_with_an_answer():
+    raw = json.dumps({'type': 'result', 'subtype': 'success', 'is_error': True,
+                      'result': 'Not logged in. Please run /login', 'modelUsage': {}})
+    with pytest.raises(ReplayError, match='MODEL_FAILED'):
+        models.decode(raw, '', 1, 'opus', {})
+    events = [{'type': 'thread.started'}, {'type': 'item.completed', 'item': {'type': 'error', 'message': 'synthetic CLI failure'}},
+              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': '{}'}}, {'type': 'turn.completed'}]
+    with pytest.raises(ReplayError, match='TAINTED_RUN'):
+        models.decode('\n'.join(json.dumps(e) for e in events), '', 0, 'gpt', {})
+
+
+def test_gpt_launch_disables_code_mode_and_local_warning_sources(tmp_path):
+    args = models.argv('gpt', {}, tmp_path/'schema.json')
+    assert 'suppress_unstable_features_warning=true' in args
+    for name in ('shell_tool', 'unified_exec', 'code_mode', 'code_mode_only', 'code_mode_host', 'apps', 'plugins'):
+        index = args.index(name)
+        assert args[index-1] == '--disable'
+    assert '--ignore-user-config' in args and '--ignore-rules' in args and '--no-daemon' in args
+
+
+def test_tainted_quota_envelope_still_stops_later_dispatches(tmp_path):
+    calls = []
+    def runner(args, **kwargs):
+        calls.append(args)
+        events = [{'type': 'thread.started'}, {'type': 'item.completed',
+                  'item': {'type': 'error', 'message': 'usage limit reached'}}, {'type': 'turn.completed'}]
+        return subprocess.CompletedProcess(args, 0, '\n'.join(json.dumps(e) for e in events), '')
+    budget = models.DuelBudget(tmp_path)
+    client = models.Models(SimpleNamespace(check=lambda: None, model_limit=lambda _: 150), budget,
+                           tmp_path/'transcripts', clock=lambda: AT, window=lambda _: 900, runner=runner)
+    with pytest.raises(ReplayError, match='TAINTED_RUN'):
+        client.call('gpt', 'synthetic', {}, tag='first')
+    with pytest.raises(ReplayError, match='MODEL_USAGE_LIMIT'):
+        client.call('gpt', 'synthetic', {}, tag='second')
+    assert len(calls) == 1
+
+
 def test_api_unknown_spend_blocks_and_scopes_enforce_dollar_caps(tmp_path, grants):
     _, paths = grants
     billing = models.ApiBilling(paths['api'], tmp_path/'billing.json', clock=lambda: AT)

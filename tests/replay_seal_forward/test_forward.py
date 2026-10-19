@@ -173,9 +173,10 @@ def test_mature_labels_only_failures_reported_and_weekly_at_most_once(tmp_path, 
     text = ''.join(d[1] for d in deliveries)
     assert all(len(d[1]) <= 1800 for d in deliveries)
     assert '"n": 1' in text and '"n": 0' in text and 'jours en échec=0' in text and 'No winner' in text
+    sent = list(deliveries)
     with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
         fw.weekly(tmp_path, notify=Path('/synthetic/notify'), clock=lambda: friday, runner=deliver)
-    assert len(deliveries) == 1
+    assert deliveries == sent
 
 
 def test_failed_day_counted_not_dropped(tmp_path, runtime, ledger, monkeypatch):

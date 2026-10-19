@@ -65,6 +65,16 @@ def test_primary_per_model_keeps_unpaired_rows_and_refuses_different_targets():
         stats.primary_endpoint(rows(.9), other, .5)
 
 
+def test_replay_primary_baseline_is_the_committed_dev_census_and_drift_is_refused(tmp_path, monkeypatch):
+    from scripts.trading_lab.replay_seal_forward.score import frozen_primary_rate
+    freeze = tmp_path/'freeze.json'
+    freeze.write_text(json.dumps({'frozen_dev_base_rate': {'n': 20, 'successes': 8}}))
+    monkeypatch.setattr(ex, 'FREEZE', freeze)
+    assert frozen_primary_rate({'n': 20, 'successes': 8})['p'] == pytest.approx(9/22)
+    with pytest.raises(Exception, match='DEV_BASE_RATE_DRIFT'):
+        frozen_primary_rate({'n': 20, 'successes': 9})
+
+
 def test_replay_call_order_uses_day_ordinal_for_all_groups_and_no_test_anonymization():
     days = ex.planned('dev', 'ab')
     assert ex.call_order(days[0]) == ('opus', 'gpt')

@@ -123,6 +123,16 @@ def test_index_hash_pagination_raw_feed_and_receipts_fail_closed(tmp_path):
         archive.Archive(tmp_path, index)
 
 
+def test_live_receipt_equal_to_T_is_not_before_the_decision(tmp_path):
+    objects = []
+    add(tmp_path, objects, md.ALPACA, '/v1beta1/news', {'start': iso(T-timedelta(hours=72)), 'end': iso(T)},
+        {'news': [], 'next_page_token': None}, received=iso(T))
+    index = tmp_path/'archive_index.json'
+    index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
+    with pytest.raises(ReplayError, match='LIVE_ARCHIVE_RECEIVED_AFTER_T'):
+        archive.Archive(tmp_path, index, before=T)
+
+
 def test_missing_primary_archive_abstains_without_deleting_candidate(tmp_path):
     data, _ = fixture(tmp_path)
     data.filings.clear(); data.filing_symbols.clear()
@@ -216,6 +226,9 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
     monkeypatch.setattr(ex, 'INPUT_SEAL', tmp_path/'public-seal.json')
     monkeypatch.setattr(ex, 'check_freeze', lambda *a, **kw: None)
     monkeypatch.setattr(spec, 'code_hash', lambda: 'c'*64)
+    freeze = tmp_path/'synthetic-freeze.json'
+    freeze.write_text(json.dumps({'frozen_dev_base_rate': {'n': len(sn.UNIVERSE), 'successes': len(sn.UNIVERSE)}}))
+    monkeypatch.setattr(ex, 'FREEZE', freeze)
     ex.build_inputs(tmp_path)
     class Client:
         def call(self, family, text, schema, *, tag):

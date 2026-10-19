@@ -105,10 +105,11 @@ def argv(family, schema, schema_file):
     args = ['codex', '--no-daemon', 'exec', '--strict-config', '--ignore-user-config', '--ignore-rules', '--ephemeral',
             '--sandbox', 'read-only', '--skip-git-repo-check', '--model', identities[family],
             '-c', 'web_search="disabled"', '-c', 'project_doc_max_bytes=0',
+            '-c', 'suppress_unstable_features_warning=true',
             '-c', 'developer_instructions=' + json.dumps(SYSTEM),
             '-c', 'model_reasoning_effort="medium"',
             '-c', 'model_provider="openai"', '-c', 'forced_login_method="chatgpt"']
-    for feature in ('shell_tool', 'code_mode_host', 'multi_agent', 'multi_agent_v2', 'apps', 'plugins',
+    for feature in ('shell_tool', 'unified_exec', 'code_mode', 'code_mode_only', 'code_mode_host', 'multi_agent', 'multi_agent_v2', 'apps', 'plugins',
                     'hooks', 'browser_use', 'computer_use', 'image_generation', 'skill_search',
                     'view_image', 'sleep_tool', 'tool_suggest', 'memories', 'goals',
                     'unbounded_connection_retries', 'remote_plugin'):
@@ -145,14 +146,22 @@ def decode(raw, err, returncode, family, schema):
         events = gpt_events(raw) if family == 'gpt' else [strict_json(raw)]
     except (TraderError, ValueError, TypeError):
         events = []
-    for event in events:
-        no_tools(event)
-    errors = err + ''.join(json.dumps(e) for e in events if e.get('type') in ('error', 'turn.failed') or e.get('is_error'))
+    errors = err + ''.join(json.dumps(e) for e in events if e.get('type') in ('error', 'turn.failed') or
+                          e.get('is_error') or e.get('item', {}).get('type') == 'error')
     if not events:
         errors += raw
-    if family == 'opus' and ('credit balance is too low' in errors.lower() or 'credit balance is too low' in raw.lower()):
+    credit = family == 'opus' and ('credit balance is too low' in errors.lower() or 'credit balance is too low' in raw.lower())
+    quota = any(x in errors.lower() for x in (*QUOTA, '429', 'quota exceeded', 'codex limit'))
+    for event in events:
+        try:
+            no_tools(event)
+        except ReplayError as error:
+            # Reject tainted output AND retain a quota/credit stop. A tainted
+            # envelope cannot erase the provider's stop for a later dispatch.
+            raise ReplayError(error.code, {'usage_limit': quota, 'credit_stop': credit}) from None
+    if credit:
         raise ReplayError('API_CREDIT_EXHAUSTED')
-    if any(x in errors.lower() for x in (*QUOTA, '429', 'quota exceeded', 'codex limit')):
+    if quota:
         raise ReplayError('MODEL_USAGE_LIMIT')
     if returncode or not events:
         raise ReplayError('MODEL_FAILED' if returncode else 'MODEL_JSON_INVALID')
@@ -346,14 +355,15 @@ class Models:
         try:
             output, reported = decode(record['raw'], record['err'], record['returncode'], family, schema)
         except ReplayError as error:
-            if error.code == 'MODEL_USAGE_LIMIT':
-                record['state'] = 'USAGE_LIMIT'
-                atomic_json(self.transcripts / (identity + '.json'), record)
-                self.budget.stop_model(family, instant(record['at']))
-            elif error.code == 'API_CREDIT_EXHAUSTED':
+            flags = error.evidence if isinstance(error.evidence, dict) else {}
+            if error.code == 'API_CREDIT_EXHAUSTED' or flags.get('credit_stop'):
                 record['state'] = 'CREDIT_STOP'
                 atomic_json(self.transcripts / (identity + '.json'), record)
                 self.budget.credit_stop(instant(record['at']))
+            elif error.code == 'MODEL_USAGE_LIMIT' or flags.get('usage_limit'):
+                record['state'] = 'USAGE_LIMIT'
+                atomic_json(self.transcripts / (identity + '.json'), record)
+                self.budget.stop_model(family, instant(record['at']))
             raise
         return output, {'family': family, 'model': spec.spec()['models']['identities'][family], 'reported': reported,
                         'identity_evidence': 'CLI_REQUEST_ONLY' if not reported else 'CLI_REPORTED',

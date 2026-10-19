@@ -156,10 +156,11 @@ def ask(directory, family, budget, *, runner=subprocess.run, clock=now):
     try:
         output, reported = models.decode(result.stdout or '', result.stderr or '', result.returncode, family, shape)
     except ReplayError as error:
-        if error.code == 'MODEL_USAGE_LIMIT':
-            budget.stop_model(family, at)
-        elif error.code == 'API_CREDIT_EXHAUSTED':
+        flags = error.evidence if isinstance(error.evidence, dict) else {}
+        if error.code == 'API_CREDIT_EXHAUSTED' or flags.get('credit_stop'):
             budget.credit_stop(at)
+        elif error.code == 'MODEL_USAGE_LIMIT' or flags.get('usage_limit'):
+            budget.stop_model(family, at)
         raise
     value = {'model': spec.spec()['models']['identities'][family], 'reported': reported, 'at': iso(at),
              'prompt_sha256': prereg['prompt_sha256'], 'answers': output, 'raw': result.stdout}

@@ -201,6 +201,14 @@ def within_test_cut(outcome, period, family):
     return period != 'test' or instant(outcome['available_at']).date().isoformat() <= ex.test_cut()[family]
 
 
+def frozen_primary_rate(observed):
+    rate = json.loads(ex.FREEZE.read_text())['frozen_dev_base_rate']
+    if (rate.get('n', 0) <= 0 or not 0 <= rate['successes'] <= rate['n'] or observed is None or
+            any(observed[k] != rate[k] for k in ('n', 'successes'))):
+        raise ReplayError('DEV_BASE_RATE_DRIFT')
+    return dict(rate, p=(rate['successes'] + 1) / (rate['n'] + 2))
+
+
 def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
     root = Path(root)
     proof = ex.input_proof(root)
@@ -344,6 +352,7 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
     paired = metrics.paired(*[[r for r in named[f] if (r['panel'], r['session'], r['asset'], r['horizon']) in common]
                               for f in ex.FAMILIES], ex.planned(period, 'ab'))
     rates = baseline_rates(forecasts['opus']) if period == 'dev' else dev_rates
+    rates[stats.PRIMARY['panel']] = frozen_primary_rate(rates.get(stats.PRIMARY['panel']))
     primary = stats.primary_endpoint(named['opus'], named['gpt'], rates.get(stats.PRIMARY['panel'], {}).get('p'))
     if period == 'dev':
         primary['base_rate_note'] = 'dev uses its own in-sample rate: diagnostic only, not the frozen test baseline'
