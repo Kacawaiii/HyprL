@@ -9,7 +9,7 @@ from scripts.trading_lab.replay_bench.storage import atomic_json
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from . import experiment as ex, fills, inputs, spec
 from .archive import Archive
-from .collect import BARS_FROM, Collector, equities, news_symbols, sec_submissions
+from .collect import BARS_FROM, Collector, equities, news_symbols, sec_or_unavailable
 from .score import Outcomes
 
 
@@ -67,6 +67,52 @@ def historical_outcomes(root, collector, *, include_news=True):
     return {'labels': counts, 'missing_labels': len(missing), 'dev_base_rate': value}
 
 
+def retry_missing_labels(root, collector, plan_file):
+    """One bounded recheck of a pre-existing missing-label census, before inference."""
+    import hashlib
+    target = Path(root) / spec.STATE_DIR / 'missing-label-retry.json'
+    intent = target.with_suffix('.intent')
+    if target.exists() or intent.exists():
+        raise ReplayError('MISSING_LABEL_RETRY_ALREADY_ATTEMPTED')
+    payload = Path(plan_file).read_bytes()
+    plan = json.loads(payload)['missing']
+    keys = [(r['period'], r['group'], r['day'], r['asset'], r['h']) for r in plan]
+    if not keys or len(set(keys)) != len(keys):
+        raise ReplayError('MISSING_LABEL_PLAN_INVALID')
+    atomic_json(intent, {'plan_sha256': hashlib.sha256(payload).hexdigest(), 'labels': len(plan), 'at': iso(now())})
+    collector.scoring_symbols = {md.crypto_pair(r['asset']) if r['asset'] in sn.CRYPTO else r['asset'] for r in plan}
+    collector.scoring_symbols.update(sn.STOCKS + sn.ETFS + sn.BENCHMARKS)
+    collector.scoring_symbols.update(md.crypto_pair(s) for s in sn.CRYPTO)
+    collector.retry_missing = True
+    remaining, recovered = [], 0
+    for period in ('dev', 'test'):
+        outcomes = Outcomes(collector, *spec.spec()['periods'][period], spec.spec()['costs'])
+        for row in [r for r in plan if r['period'] == period]:
+            try:
+                result = outcomes.get(row['group'], row['day'], row['asset'], row['h'])
+            except ReplayError as error:
+                if error.code not in ('INCOMPLETE_LABEL_COVERAGE', 'MISSING_CRYPTO_MARK',
+                                      'MISSING_SYNCHRONIZED_SPY_MARK', 'INCOMPLETE_MARK_PATH'):
+                    raise
+                remaining.append(dict(row, error=error.code))
+            else:
+                if result is None:
+                    remaining.append(dict(row, error='LABEL_UNAVAILABLE'))
+                else:
+                    recovered += 1
+    collector.retry_missing = False
+    value = {'spec_hash': spec.SPEC_HASH, 'plan_sha256': hashlib.sha256(payload).hexdigest(),
+             'attempted_labels': len(plan), 'recovered_labels': recovered, 'missing': remaining,
+             'refreshed_requests': len(collector.retried_keys), 'paired': True}
+    atomic_json(target, value)
+    # Recompute the entire fixed panel and its baseline from captured responses;
+    # never migrate the previous protocol's base rate or outcomes.
+    value['census'] = historical_outcomes(root, collector, include_news=False)
+    atomic_json(target, value)
+    return {'attempted_labels': len(plan), 'recovered_labels': recovered, 'remaining_labels': len(remaining),
+            'refreshed_requests': len(collector.retried_keys), 'census': value['census']}
+
+
 def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collector):
     from . import forward
     at = clock()
@@ -94,7 +140,7 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
         bundles = inputs.build(archive, T, sha256_canonical(inputs.declaration(root)))
         shown = [c['symbol'] for c in bundles['cd']['context']['candidates']]
         if shown:
-            sec_submissions(collector, shown)
+            sec_or_unavailable(collector, shown, root)
         collector.save(index)
     finally:
         collector.save(index)

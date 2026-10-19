@@ -6,7 +6,12 @@ request URL and compressed object is checked before interpreting vendor-shaped d
 import gzip
 import hashlib
 import json
+from collections import OrderedDict
+from collections.abc import Mapping
 from pathlib import Path
+import sqlite3
+import tempfile
+import weakref
 from urllib.parse import urlencode
 
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant
@@ -22,6 +27,59 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _close_bars(connection, temporary):
+    connection.close()
+    temporary.cleanup()
+
+
+class DiskBars(Mapping):
+    """Disposable exact-row index; only 64 symbols' histories stay in memory.
+
+    The immutable vendor objects remain the evidence. This scratch database is
+    rebuilt on every read, never reused as an admitted store or input proof.
+    """
+    def __init__(self, root):
+        temporary = tempfile.TemporaryDirectory(prefix='archive-read-', dir=root)
+        self.connection = sqlite3.connect(str(Path(temporary.name) / 'bars.sqlite'))
+        weakref.finalize(self, _close_bars, self.connection, temporary)
+        self.connection.execute('PRAGMA journal_mode=OFF')
+        self.connection.execute('PRAGMA synchronous=OFF')
+        self.connection.execute('CREATE TABLE bars (symbol TEXT, at TEXT, received TEXT, body TEXT, PRIMARY KEY(symbol,at)) WITHOUT ROWID')
+        self.symbols, self.cache = set(), OrderedDict()
+
+    def put(self, symbol, row, received):
+        stamp = received.isoformat(timespec='microseconds')
+        body = json.dumps(row, sort_keys=True, separators=(',', ':'))
+        cursor = self.connection.execute('INSERT OR IGNORE INTO bars VALUES (?,?,?,?)', (symbol, row['t'], stamp, body))
+        if not cursor.rowcount:
+            prior, old = self.connection.execute('SELECT received,body FROM bars WHERE symbol=? AND at=?',
+                                                 (symbol, row['t'])).fetchone()
+            if stamp > prior:
+                self.connection.execute('UPDATE bars SET received=?,body=? WHERE symbol=? AND at=?',
+                                        (stamp, body, symbol, row['t']))
+            elif stamp == prior and json.loads(old) != row:
+                raise ReplayError('ARCHIVE_REVISION_CONFLICT', {'kind': 'bars:' + symbol, 'identity': row['t']})
+        self.symbols.add(symbol)
+        self.cache.pop(symbol, None)
+
+    def __getitem__(self, symbol):
+        if symbol not in self.symbols:
+            raise KeyError(symbol)
+        if symbol not in self.cache:
+            self.cache[symbol] = [json.loads(row[0]) for row in self.connection.execute(
+                'SELECT body FROM bars WHERE symbol=? ORDER BY at', (symbol,))]
+            if len(self.cache) > 64:
+                self.cache.popitem(last=False)
+        self.cache.move_to_end(symbol)
+        return self.cache[symbol]
+
+    def __iter__(self):
+        return iter(sorted(self.symbols))
+
+    def __len__(self):
+        return len(self.symbols)
+
+
 class Archive:
     def __init__(self, root, index, *, before=None):
         self.root = Path(root).resolve()
@@ -32,13 +90,14 @@ class Archive:
         self.index = json.loads(index.read_text())
         if self.index.get('schema') != 'replay-vendor-request-index-v1':
             raise ReplayError('ARCHIVE_INDEX_INVALID')
-        self.bars, self.news, self.filings, self.assets = {}, {}, {}, {}
+        self.bars, self.news, self.filings, self.assets = DiskBars(self.root), {}, {}, {}
         asset_records = {}
         self.ambiguous_assets = set()
         self.requests, self.objects, self.asset_statuses = [], {}, set()
         self.news_windows = []
         self.filing_symbols = set()
         revisions = {}
+        news_fingerprints = {}
         for item in self.index['objects']:
             origin, path, params = item['origin'], item['path'], item.get('params', {})
             url = origin + path + ('?' + urlencode(sorted(params.items())) if params else '')
@@ -54,7 +113,10 @@ class Archive:
                 raise ReplayError('LIVE_ARCHIVE_RECEIVED_AFTER_T')
             body = entry['body']
             self.objects[key] = item['sha256']
-            self.requests.append((origin, path, params, body))
+            # Coverage needs pagination metadata only. Keeping every scoring response
+            # and article body duplicates the private cache and exceeds host memory.
+            pagination = {'next_page_token': body.get('next_page_token')} if isinstance(body, dict) else {}
+            self.requests.append((origin, path, params, pagination))
             def put(kind, identity, value, target):
                 prior = revisions.get((kind, identity))
                 if prior is None or received > prior:
@@ -75,13 +137,20 @@ class Archive:
                     raise ReplayError('RAW_SIP_BARS_REQUIRED')
                 for symbol, rows in body.get('bars', {}).items():
                     symbol = symbol.replace('/USD', '-USD')
-                    dest = self.bars.setdefault(symbol, {})
                     for row in rows:
-                        put('bars:' + symbol, row['t'], row, dest)
+                        self.bars.put(symbol, row, received)
             elif origin == md.ALPACA and path == '/v1beta1/news':
-                self.news_windows.append((params, body))
+                self.news_windows.append((params, pagination))
                 for row in body.get('news', []):
-                    put('news', row['id'], row, self.news)
+                    identity = row['id']
+                    prior = revisions.get(('news', identity))
+                    if prior is None or received >= prior:
+                        fingerprint = spec.sha256_canonical(row)
+                        if received == prior and news_fingerprints[identity] != fingerprint:
+                            raise ReplayError('ARCHIVE_REVISION_CONFLICT', {'kind': 'news', 'identity': identity})
+                        news_fingerprints[identity] = fingerprint
+                    fields = ('id', 'headline', 'source', 'symbols', 'created_at', 'updated_at')
+                    put('news', row['id'], {k: row.get(k) for k in fields}, self.news)
             elif path == '/v2/assets' and origin in ('https://paper-api.alpaca.markets', 'https://api.alpaca.markets'):
                 # Real Alpaca assets have no listing-date field. Listing history is
                 # established from dated bars, never from an invented asset field.
@@ -115,7 +184,7 @@ class Archive:
                 self.ambiguous_assets.add(symbol)
             else:
                 self.assets[symbol] = rows[0]
-        self.bars = {s: sorted(rows.values(), key=lambda r: r['t']) for s, rows in self.bars.items()}
+        self.bars.connection.commit()
 
     def require_news(self, start, end):
         """Verify a complete paginated all-symbol query covers this interval."""

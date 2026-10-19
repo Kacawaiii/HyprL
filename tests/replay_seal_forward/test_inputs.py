@@ -140,6 +140,54 @@ def test_missing_primary_archive_abstains_without_deleting_candidate(tmp_path):
     assert not inputs.primary_filter([{'symbol': 'SMLL', 'news_ids': [1]}], ctx)[0]
 
 
+def test_uniform_news_and_sec_exclusions_apply_before_selection(tmp_path):
+    data, _ = fixture(tmp_path)
+    original = dict(data.news[1])
+    data.news[2] = dict(original, id=2, updated_at=iso(T-timedelta(hours=2)))
+    data.index['sec_availability'] = {'state': 'UNAVAILABLE', 'reason': 'HTTP_403'}
+    bundles = inputs.build(data, T, 'a'*64)
+    for bundle in bundles.values():
+        assert bundle['manifest']['news_data_quality']['excluded_count'] == 1
+    candidate = bundles['cd']['context']['candidates'][0]
+    assert [h['news_id'] for h in candidate['headlines']] == [1]
+    assert candidate['filings_state'] == 'UNAVAILABLE' and candidate['filings'] == []
+    assert bundles['ab']['context']['archives']['edgar']['state'] == 'UNAVAILABLE'
+
+
+def test_same_receipt_news_body_conflicts_remain_rejected(tmp_path):
+    data, index = fixture(tmp_path)
+    objects = json.loads(index.read_text())['objects']
+    # Bodies are not held in memory, but their conflicts must still fail closed.
+    original = dict(data.news[1], content='conflicting body')
+    add(tmp_path, objects, md.ALPACA, '/v1beta1/news', {'start': iso(T-timedelta(hours=73)), 'end': iso(T)},
+        {'news': [original], 'next_page_token': None})
+    index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
+    with pytest.raises(ReplayError, match='ARCHIVE_REVISION_CONFLICT'):
+        archive.Archive(tmp_path, index)
+
+
+def test_disk_bar_index_preserves_latest_full_rows_and_rejects_conflicts(tmp_path):
+    data, index = fixture(tmp_path)
+    objects = json.loads(index.read_text())['objects']
+    original = data.bars['SMLL'][-1]
+    params = {'start':iso(T-timedelta(days=500)), 'end':iso(T), 'symbols':'SMLL',
+              'timeframe':'1Day', 'feed':'sip', 'adjustment':'raw'}
+    fresh = dict(original, c=105, n=42, vw=103.5)
+    add(tmp_path, objects, md.ALPACA, '/v2/stocks/bars', params, {'bars':{'SMLL':[fresh]}},
+        received='2026-10-18T20:00:00Z')
+    add(tmp_path, objects, md.ALPACA, '/v2/stocks/bars', dict(params,start=iso(T-timedelta(days=501))),
+        {'bars':{'SMLL':[dict(original,c=99)]}}, received='2026-10-18T17:00:00Z')
+    index.write_text(json.dumps({'schema':'replay-vendor-request-index-v1','objects':objects}))
+    loaded = archive.Archive(tmp_path,index)
+    assert loaded.bars['SMLL'][-1] == fresh
+    assert len(loaded.bars['SMLL']) == len(data.bars['SMLL'])
+    add(tmp_path, objects, md.ALPACA, '/v2/stocks/bars', dict(params,start=iso(T-timedelta(days=502))),
+        {'bars':{'SMLL':[dict(fresh,c=106)]}}, received='2026-10-18T20:00:00Z')
+    index.write_text(json.dumps({'schema':'replay-vendor-request-index-v1','objects':objects}))
+    with pytest.raises(ReplayError,match='ARCHIVE_REVISION_CONFLICT'):
+        archive.Archive(tmp_path,index)
+
+
 def test_vendor_asset_UUIDs_are_identities_and_symbol_ambiguity_stays_rejected(tmp_path):
     data, index = fixture(tmp_path)
     objects = json.loads(index.read_text())['objects']
@@ -215,7 +263,8 @@ def test_live_snapshot_freezes_real_receipt_cutoff_and_refuses_tampering(tmp_pat
         forward.snapshot(tmp_path, at)
 
 
-def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, monkeypatch, ledger):
+@pytest.mark.parametrize('paired_missing', [False, True])
+def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, monkeypatch, ledger, paired_missing):
     from types import SimpleNamespace
     from scripts.trading_lab.replay_seal_forward import run, score, schemas
     import hashlib
@@ -226,8 +275,13 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
     monkeypatch.setattr(ex, 'check_freeze', lambda *a, **kw: None)
     monkeypatch.setattr(spec, 'code_hash', lambda: 'c'*64)
     freeze = tmp_path/'synthetic-freeze.json'
-    freeze.write_text(json.dumps({'frozen_dev_base_rate': {'n': len(sn.UNIVERSE), 'successes': len(sn.UNIVERSE)}}))
+    expected = len(sn.UNIVERSE) - int(paired_missing)
+    freeze.write_text(json.dumps({'frozen_dev_base_rate': {'n': expected, 'successes': expected}}))
     monkeypatch.setattr(ex, 'FREEZE', freeze)
+    coverage = tmp_path/spec.STATE_DIR/'outcome-collection.json'
+    coverage.parent.mkdir(parents=True)
+    coverage.write_text(json.dumps({'missing': [dict(group='ab', day='2026-07-15', asset=sn.UNIVERSE[0], h=1)]
+                                   if paired_missing else []}))
     ex.build_inputs(tmp_path)
     class Client:
         def call(self, family, text, schema, *, tag):
@@ -252,9 +306,11 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
             assert record['provenance'] == 'APPROXIMATE_POINT_IN_TIME'
             assert record['residual_risks'] == inputs.RISKS
     class Outcomes:
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, transport, *args, **kwargs):
+            self.excluded = transport.excluded_labels
         def get(self, group, day, asset, h):
+            if (group, day, asset, h) in self.excluded:
+                return None
             return {'rel': .02, 'cost': .003, 'vol': .01, 'cluster': 'synthetic',
                     'gross_path': {day: .02}, 'available_at': iso(T+timedelta(days=h, hours=8))}
     # Audit item 3: nothing is scored before its response hashes are public.
@@ -271,5 +327,8 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
     table = (ex.result_path(tmp_path, 'dev').with_suffix('.md')).read_text()
     assert 'EXPLORATORY' in table and 'No winner' in table and 'Failures' in table
     for family in ex.FAMILIES:
-        assert result['models'][family]['b_v1_no_reviewer:1d']['n_forecasts'] == len(sn.UNIVERSE)
+        assert result['models'][family]['b_v1_no_reviewer:1d']['n_forecasts'] == expected
         assert result['models'][family]['b_v1_no_reviewer:1d']['abstention_rate'] == 1
+        if paired_missing:
+            assert result['counts'][family]['a_v1_as_live:1d:paired_missing_label'] == 1
+            assert result['counts'][family]['b_v1_no_reviewer:1d:paired_missing_label'] == 1

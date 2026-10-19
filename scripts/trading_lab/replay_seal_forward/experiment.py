@@ -114,6 +114,8 @@ def build_inputs(root):
                  'residual_risks': spec.spec()['residual_risks'], 'snapshots': snapshots,
                  'archive_index_hash': archive.proof()['index_hash'],
                  'prediction_cache': archive.objects, 'outcome_cache': archive.objects}
+        coverage = directory / 'outcome-collection.json'
+        value['paired_missing_labels'] = json.loads(coverage.read_text())['missing'] if coverage.is_file() else []
         target = directory / 'snapshots'
         if target.exists():
             raise ReplayError('INPUT_SNAPSHOT_DIRECTORY_ALREADY_EXISTS')
@@ -128,6 +130,7 @@ def offline(root, transport, *, outcomes=False):
     other = copy(transport)
     other.offline = True
     other.allowed_cache = dict(proof['prediction_cache'])
+    other.excluded_labels = {(r['group'], r['day'], r['asset'], r['h']) for r in proof.get('paired_missing_labels', [])}
     if outcomes:
         if not proof.get('outcome_cache'):
             raise ReplayError('OUTCOME_CACHE_NOT_SEALED')

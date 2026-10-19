@@ -82,6 +82,66 @@ def test_collector_stops_4xx_and_cannot_record_a_receipt_at_T(tmp_path, grants):
     assert not list((tmp_path/'cache').rglob('*.gz'))
 
 
+def test_sec_refusal_is_persistent_and_global(tmp_path, grants):
+    authority, _ = grants
+    calls = []
+    def forbidden(url, headers):
+        calls.append(url)
+        raise ReplayError('HTTP_403')
+    collector = collect.Collector(authority, Budget(tmp_path/'collector'), tmp_path/'cache',
+        sec_user_agent='synthetic', getter=forbidden, clock=lambda: AT)
+    assert collect.sec_or_unavailable(collector, ['SMLL'], tmp_path) == 0
+    assert collect.sec_or_unavailable(collector, ['OTHER'], tmp_path) == 0
+    assert len(calls) == 1
+    index = tmp_path/'archive_index.json'
+    collector.save(index)
+    assert json.loads(index.read_text())['sec_availability']['state'] == 'UNAVAILABLE'
+
+
+def test_incomplete_price_response_is_refreshed_once_and_preserved(tmp_path, grants):
+    authority, _ = grants
+    keys = tmp_path/'keys.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
+    calls = []
+    def getter(url, headers):
+        calls.append(url)
+        return b'{"bars":{"SMLL":[]},"next_page_token":null}'
+    collector = collect.Collector(authority, Budget(tmp_path/'collector'), tmp_path/'cache', alpaca_env=keys,
+        getter=getter, sleep=lambda _: None, clock=lambda: AT)
+    params = {'start':'2026-07-01T00:00:00Z', 'end':'2026-07-02T00:00:00Z', 'symbols':'SMLL',
+              'timeframe':'1Day', 'feed':'sip', 'adjustment':'raw'}
+    collector.get(md.ALPACA, '/v2/stocks/bars', params)
+    original = next((tmp_path/'cache').rglob('*.gz')).read_bytes()
+    collector.retry_missing = True
+    for _ in range(3):
+        collector.get(md.ALPACA, '/v2/stocks/bars', params)
+    assert len(calls) == 2
+    assert next((tmp_path/'missing-label-originals').rglob('*.gz')).read_bytes() == original
+
+
+def test_missing_label_retry_freezes_remaining_keys_and_refuses_a_second_job(tmp_path, monkeypatch):
+    plan = tmp_path/'plan.json'
+    rows = [dict(period='dev', group='ab', day='2026-07-01', asset=a, h=1, error='INCOMPLETE_LABEL_COVERAGE')
+            for a in ('NVDA', 'AAPL')]
+    plan.write_text(json.dumps({'missing':rows}))
+    class Outcomes:
+        def __init__(self, *args):
+            pass
+        def get(self, group, day, asset, h):
+            if asset == 'AAPL':
+                raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
+            return {'rel':.01}
+    monkeypatch.setattr(collect_plan, 'Outcomes', Outcomes)
+    monkeypatch.setattr(collect_plan, 'historical_outcomes', lambda *a, **kw: {'synthetic':True})
+    collector = SimpleNamespace(retried_keys=set())
+    result = collect_plan.retry_missing_labels(tmp_path, collector, plan)
+    assert result['attempted_labels'] == 2 and result['recovered_labels'] == result['remaining_labels'] == 1
+    frozen = json.loads((tmp_path/spec.STATE_DIR/'missing-label-retry.json').read_text())
+    assert frozen['paired'] is True and frozen['missing'] == [rows[1]]
+    with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
+        collect_plan.retry_missing_labels(tmp_path, collector, plan)
+
+
 def test_150_nightly_cap_inside_opus_daily_cap_and_forward_reservation(tmp_path):
     budget = models.DuelBudget(tmp_path)
     for _ in range(149):

@@ -50,6 +50,7 @@ class Outcomes:
         self.universe = SimpleNamespace(bars=bars)
         self.anchors = lb.MinuteAnchors(transport)
         self.cells, self.cache, self.news_bars, self.ratios = {}, {}, {}, {}
+        self.excluded = set(getattr(transport, 'excluded_labels', ()))
 
     def _ratios(self, symbol, raw):
         """Raw/adjusted close ratios; None when adjusted evidence is not in the sealed cache."""
@@ -82,6 +83,8 @@ class Outcomes:
         crypto = asset in sn.CRYPTO
         # Refuse any designed fill at or before the decision (and its dispatch window).
         start = fills.entry(day, T, crypto)
+        if key in self.excluded:
+            return None
         if key in self.cache:
             return self.cache[key]
         following = md.sessions(day, (T + timedelta(days=21)).date().isoformat())
@@ -294,7 +297,9 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 panel = name + ':' + row['horizon']
                 outcome = outcomes.get('cd' if group == 'cd' else 'ab', day, row['asset'], int(row['horizon'][:-1]))
                 if outcome is None:
-                    counts[family][panel + ':censored_or_crypto5d'] += 1
+                    reason = ('paired_missing_label' if ('cd' if group == 'cd' else 'ab', day, row['asset'],
+                              int(row['horizon'][:-1])) in getattr(outcomes, 'excluded', set()) else 'censored_or_crypto5d')
+                    counts[family][panel + ':' + reason] += 1
                     continue
                 if not within_test_cut(outcome, period, family) or outcome.get('corporate_action') is True:
                     counts[family][panel + ':excluded_cut_or_corporate_action'] += 1
@@ -315,7 +320,9 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                     continue
                 outcome = outcomes.get('cd' if group == 'cd' else 'ab', day, asset, h)
                 if outcome is None:
-                    counts[family][panel + ':censored_trade'] += 1
+                    reason = ('paired_missing_label' if ('cd' if group == 'cd' else 'ab', day, asset, h)
+                              in getattr(outcomes, 'excluded', set()) else 'censored_trade')
+                    counts[family][panel + ':' + reason] += 1
                     continue
                 if not within_test_cut(outcome, period, family):
                     counts[family][panel + ':excluded_probe_cut_boundary'] += 1

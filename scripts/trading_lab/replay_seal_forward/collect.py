@@ -94,6 +94,7 @@ class Collector:
         self.refresh = refresh
         self.refresh_news, self.before = refresh_news, before
         self.index, self.requests, self._last = {}, 0, {}
+        self.retry_missing, self.retried_keys = False, set()
         self.offline = False
         self.scoring_symbols = set()
 
@@ -130,6 +131,16 @@ class Collector:
         key = hashlib.sha256(url.encode()).hexdigest()
         file = self.cache / key[:2] / (key + '.json.gz')
         refresh = self.refresh or self.refresh_news and path == '/v1beta1/news'
+        if self.retry_missing and key not in self.retried_keys and file.exists() and ('bars' in path or 'trades' in path):
+            prior = json.loads(gzip.decompress(file.read_bytes()))['body']
+            rows = prior.get('trades' if 'trades' in path else 'bars', {}) or {}
+            if any(not rows.get(s) for s in params.get('symbols', '').split(',')):
+                self.retried_keys.add(key)  # Durable job intent prevents reruns after a crash.
+                backup = self.cache.parent / 'missing-label-originals' / key[:2] / (hashlib.sha256(file.read_bytes()).hexdigest() + '.json.gz')
+                backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if not backup.exists():
+                    backup.write_bytes(file.read_bytes())
+                self._fetch(name, origin, url, file)
         if not file.exists() or (refresh and key not in self.index):
             self._fetch(name, origin, url, file)
         entry = json.loads(gzip.decompress(file.read_bytes()))
@@ -180,8 +191,12 @@ class Collector:
         if merge and index_file.is_file():
             objects = {o['cache_key']: o for o in json.loads(index_file.read_text())['objects']}
         objects.update(self.index)
-        atomic_json(index_file, {'schema': 'replay-vendor-request-index-v1',
-                                 'objects': [objects[k] for k in sorted(objects)]})
+        value = {'schema': 'replay-vendor-request-index-v1', 'objects': [objects[k] for k in sorted(objects)]}
+        # The global fallback also applies to fresh forward-day archives.
+        policy = self.budget.path.parent.parent / 'sec-availability.json'
+        if policy.is_file():
+            value['sec_availability'] = json.loads(policy.read_text())
+        atomic_json(index_file, value)
         return len(objects)
 
 
@@ -218,6 +233,23 @@ def sec_submissions(collector, symbols):
     return len(done)
 
 
+def sec_or_unavailable(collector, symbols, root):
+    """A refusal is a global research policy, never a symbol/day selection."""
+    target = Path(root) / 'sec-availability.json'
+    if target.is_file() and json.loads(target.read_text()).get('state') == 'UNAVAILABLE':
+        return 0
+    try:
+        count = sec_submissions(collector, symbols)
+    except ReplayError as error:
+        if error.code not in ('HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'):
+            raise
+        atomic_json(target, {'state': 'UNAVAILABLE', 'reason': error.code,
+                             'scope': 'all days and both families', 'at': iso(now())})
+        return 0
+    atomic_json(target, {'state': 'AVAILABLE', 'ciks': count})
+    return count
+
+
 def historical_inputs(collector, *, news_from='2026-06-26T00:00:00Z', news_to='2026-10-09T12:00:00Z',
                       bars_to='2026-10-17T00:00:00Z'):
     """Prediction inputs for every dev/test session: one paginated all-symbol news query,
@@ -239,7 +271,9 @@ def main(argv=None):
     parser.add_argument('--alpaca-env', default=os.environ.get('REPLAY_ALPACA_ENV'))
     parser.add_argument('--sec-agent-file', default=os.environ.get('REPLAY_SEC_AGENT_FILE'))
     parser.add_argument('--expected-commit')
-    parser.add_argument('command', choices=('historical', 'historical-sec', 'historical-outcomes', 'historical-fixed-outcomes', 'live', 'live-outcomes'))
+    parser.add_argument('--missing-plan', type=Path)
+    parser.add_argument('command', choices=('historical', 'historical-sec', 'historical-outcomes', 'historical-fixed-outcomes',
+                                           'retry-missing-labels', 'live', 'live-outcomes'))
     args = parser.parse_args(argv)
     from . import spec
     root = Path(args.data_root).expanduser().resolve()
@@ -258,7 +292,7 @@ def main(argv=None):
     result = {'command': args.command}
     try:
         with owned(root / 'collector'):
-            if args.command.startswith('historical'):
+            if args.command.startswith('historical') or args.command == 'retry-missing-labels':
                 collector = Collector(grants, Budget(root / 'collector'), root / 'cache',
                                       alpaca_env=args.alpaca_env, sec_user_agent=agent)
                 index = root / 'archive_index.json'
@@ -267,7 +301,10 @@ def main(argv=None):
                         result.update(historical_inputs(collector))
                     elif args.command == 'historical-sec':
                         from .collect_plan import shown_candidates
-                        result['ciks'] = sec_submissions(collector, shown_candidates(root) | set(sn.STOCKS))
+                        result['ciks'] = sec_or_unavailable(collector, shown_candidates(root) | set(sn.STOCKS), root)
+                    elif args.command == 'retry-missing-labels':
+                        from .collect_plan import retry_missing_labels
+                        result.update(retry_missing_labels(root, collector, args.missing_plan))
                     else:
                         from .collect_plan import historical_outcomes
                         result.update(historical_outcomes(root, collector, include_news=args.command != 'historical-fixed-outcomes'))
