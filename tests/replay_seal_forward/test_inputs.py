@@ -447,3 +447,19 @@ def test_missing_live_index_produces_a_shared_excluded_day(tmp_path, monkeypatch
     for manifest in value['manifests'].values():
         assert manifest['data_quality']['excluded_day']
         assert manifest['data_quality']['counts_by_reason']['LIVE_VENDOR_REQUEST_INDEX_MISSING'] == 1
+
+
+def test_excluded_day_also_completes_anonymized_control_without_model_calls(tmp_path, monkeypatch):
+    from scripts.trading_lab.replay_seal_forward import run
+    data, _ = fixture(tmp_path)
+    del data.assets['SPY']
+    bundle = inputs.build(data, T, 'a'*64)['ab']
+    monkeypatch.setattr(run, 'shared_snapshot', lambda *a: bundle)
+    class Client:
+        def call(self, *a, **kw):
+            pytest.fail('Excluded day consumed a model call')
+    records = [run.decide(tmp_path, 'dev', 'anon', '2026-07-15', family, None, Client(),
+                          {'config_hash': 'a'*64}, tmp_path/(family+'.json.gz')) for family in ex.FAMILIES]
+    assert records[0]['shown_context_hash'] == records[1]['shown_context_hash']
+    assert all(r['calls'] == {} and r['data_quality_excluded_day'] for r in records)
+    assert all(r['forecasts']['b_v1_no_reviewer'] == [] for r in records)

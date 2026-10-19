@@ -133,6 +133,7 @@ def anonymize(sealed, seed):
              'url': f"https://news.invalid/{news_ids[i['news_id']]}"} for i in group['items']]}
     anon = {k: v for k, v in context.items() if k not in ('provenance', 'limitations')}
     anon.update(schema='research-context-v2', universe=[codes[a] for a in context['universe']], prices=prices, headlines=headlines,
-                exclusions=[dict(e, asset=codes.get(e['asset'], e['asset'])) for e in context['exclusions']],
+                exclusions=[dict({k: v for k, v in e.items() if k not in ('asset', 'symbol')},
+                                 asset=symbol(e.get('asset', e.get('symbol')))) for e in context['exclusions']],
                 limitations=NEUTRAL_LIMITATIONS)
     return shift(anon, day), {code: asset for asset, code in codes.items()}
