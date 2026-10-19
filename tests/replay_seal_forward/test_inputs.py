@@ -223,6 +223,7 @@ def test_vendor_asset_UUID_duplicates_agree_and_contradictions_exclude_uniformly
 def test_missing_archive_seals_excluded_days_and_admitted_inputs_cannot_rebuild(tmp_path, monkeypatch):
     monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
     monkeypatch.setattr(inputs, 'paired_label_exclusions', lambda root: [])
+    monkeypatch.setattr(ex, 'INPUT_SEAL', tmp_path / 'public-seal.json')
     result = ex.build_inputs(tmp_path / 'missing')
     assert result['status'] == 'BUILT'
     proof = ex.input_proof(tmp_path / 'missing')
@@ -230,7 +231,6 @@ def test_missing_archive_seals_excluded_days_and_admitted_inputs_cannot_rebuild(
     assert not (tmp_path / spec.STATE_DIR / 'input-manifest.json').exists()
     data, _ = fixture(tmp_path)
     monkeypatch.setattr(ex, 'planned', lambda p, g: ['2026-07-15'])
-    monkeypatch.setattr(ex, 'INPUT_SEAL', tmp_path / 'public-seal.json')
     result = ex.build_inputs(tmp_path)
     assert result['snapshot_count'] == 4
     proof = ex.input_proof(tmp_path)
