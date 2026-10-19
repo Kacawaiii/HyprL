@@ -113,3 +113,16 @@ def test_missing_sealed_request_is_data_quality_but_bound_object_damage_is_integ
     transport.allowed_cache[hashlib.sha256((origin+path).encode()).hexdigest()] = 'a'*64
     with pytest.raises(ReplayError, match='PREDICTION_CACHE_NOT_SEALED'):
         source.get(origin, path)
+
+
+def test_invalid_fill_values_are_counted_exclusions_and_never_divide_or_crash():
+    class InvalidFill(Vendor):
+        def get(self, origin, path, params):
+            result = super().get(origin, path, params)
+            if path == '/v2/stocks/trades':
+                result[0]['trades']['SMLL'][0]['p'] = None
+            return result
+    outcomes = score.Outcomes(InvalidFill(), '2026-11-02', '2026-11-06', spec.spec()['costs'],
+                              decision_time=forward.decision_time)
+    assert outcomes.get('cd', '2026-11-02', 'SMLL', 2) is None
+    assert outcomes.exclusion_reasons[('cd', '2026-11-02', 'SMLL', 2)] == 'INVALID_PRICE'

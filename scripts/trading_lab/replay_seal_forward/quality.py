@@ -75,7 +75,7 @@ class DataTransport:
 
     def get(self, origin, path, params=None):
         try:
-            return self.transport.get(origin, path, params)
+            result = self.transport.get(origin, path, params)
         except ReplayError as error:
             if error.code == 'PREDICTION_CACHE_NOT_SEALED':
                 import hashlib
@@ -86,3 +86,18 @@ class DataTransport:
                 if allowed is not None and key not in allowed:
                     raise ReplayError('SEALED_SOURCE_DATA_MISSING') from None
             raise
+        body = result[0]
+        if path == '/v2/stocks/trades':
+            try:
+                for rows in (body.get('trades') or {}).values():
+                    for row in rows:
+                        instant(row['t'])
+                        if not valid_number(row['p']):
+                            raise ValueError
+            except (KeyError, TypeError, ValueError, AttributeError, ReplayError):
+                raise ReplayError('INVALID_PRICE') from None
+        elif path == '/v1beta3/crypto/us/bars' and (params or {}).get('timeframe') == '1Min':
+            for rows in (body.get('bars') or {}).values():
+                for row in rows:
+                    validate_bar(row)
+        return result
