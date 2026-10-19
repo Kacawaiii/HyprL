@@ -100,6 +100,7 @@ def test_missing_required_outcome_cache_is_shared_exclusion_but_hash_mismatch_bl
 
 def test_missing_sealed_request_is_data_quality_but_bound_object_damage_is_integrity(tmp_path):
     import hashlib
+    from urllib.parse import urlencode
     from scripts.trading_lab.replay_seal_forward.quality import DataTransport
     from scripts.trading_lab.replay_bench.grant import Transport, Budget
     transport = Transport(SimpleNamespace(payload={'scope': {}}, check=lambda: None), Budget(tmp_path),
@@ -107,12 +108,14 @@ def test_missing_sealed_request_is_data_quality_but_bound_object_damage_is_integ
     transport.allowed_cache = {}
     source = DataTransport(transport)
     origin, path = md.ALPACA, '/v2/stocks/bars'
+    params = {'symbols': 'AAPL', 'start': '2026-07-15T00:00:00Z', 'end': '2026-07-16T00:00:00Z',
+              'timeframe': '1Day', 'feed': 'sip', 'adjustment': 'raw'}
     with pytest.raises(ReplayError, match='SEALED_SOURCE_DATA_MISSING'):
-        source.get(origin, path)
+        source.get(origin, path, params)
     # A once-bound object that vanished is an integrity failure; no exclusion hides it.
-    transport.allowed_cache[hashlib.sha256((origin+path).encode()).hexdigest()] = 'a'*64
+    transport.allowed_cache[hashlib.sha256((origin+path+'?'+urlencode(sorted(params.items()))).encode()).hexdigest()] = 'a'*64
     with pytest.raises(ReplayError, match='PREDICTION_CACHE_NOT_SEALED'):
-        source.get(origin, path)
+        source.get(origin, path, params)
 
 
 def test_invalid_fill_values_are_counted_exclusions_and_never_divide_or_crash():
