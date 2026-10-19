@@ -91,7 +91,7 @@ class Archive:
         if self.index.get('schema') != 'replay-vendor-request-index-v1':
             raise ReplayError('ARCHIVE_INDEX_INVALID')
         self.bars, self.news, self.filings, self.assets = DiskBars(self.root), {}, {}, {}
-        asset_records = {}
+        asset_records, asset_fingerprints = {}, {}
         self.ambiguous_assets = set()
         self.requests, self.objects, self.asset_statuses = [], {}, set()
         self.news_windows = []
@@ -157,7 +157,10 @@ class Archive:
                 status = params.get('status', 'active')
                 self.asset_statuses.update(('active', 'inactive') if status == 'all' else (status,))
                 for row in body:
-                    put('assets', row['id'], row, asset_records)
+                    symbol = row['symbol']
+                    fingerprint = spec.sha256_canonical({k: v for k, v in row.items() if k != 'id'})
+                    asset_fingerprints.setdefault(symbol, set()).add(fingerprint)
+                    asset_records.setdefault(symbol, row)
             elif origin == 'https://data.sec.gov' and path.startswith('/submissions/CIK'):
                 cik = path.removeprefix('/submissions/CIK').removesuffix('.json')
                 if body.get('cik') != cik or len(cik) != 10 or not cik.isdigit():
@@ -172,18 +175,13 @@ class Archive:
                     for form, accepted, accession in zip(*(recent.get(k, []) for k in keys)):
                         put('filings:' + symbol, accession, {'form': form, 'accession': accession,
                             'accepted_at': md.iso(md.acceptance_upper_bound(accepted))}, dest)
-        # Vendor asset identity is its UUID, not its symbol. Real inactive lists
-        # contain multiple UUIDs with identical metadata for the same ticker.
-        # Distinct metadata stay ambiguous; input selection must refuse them.
-        by_symbol = {}
-        for identity, row in sorted(asset_records.items()):
-            by_symbol.setdefault(row['symbol'], []).append(row)
-        for symbol, rows in by_symbol.items():
-            metadata = {spec.sha256_canonical({k: v for k, v in r.items() if k != 'id'}) for r in rows}
-            if len(metadata) != 1:
+        # UUID-only duplicates are compatible. Every other contradiction excludes
+        # the symbol globally, including contradictions across different receipts.
+        for symbol, row in asset_records.items():
+            if len(asset_fingerprints[symbol]) != 1:
                 self.ambiguous_assets.add(symbol)
             else:
-                self.assets[symbol] = rows[0]
+                self.assets[symbol] = row
         self.bars.connection.commit()
 
     def require_news(self, start, end):

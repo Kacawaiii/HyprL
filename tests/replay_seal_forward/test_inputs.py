@@ -89,19 +89,20 @@ def test_raw_timestamps_completed_intervals_and_200_50_boundaries(tmp_path):
     assert inputs.rows_at([future], T) == []
 
 
-def test_bundles_exclude_later_bodies_acceptance_at_T_and_keep_inactive(tmp_path):
+def test_bundles_withhold_all_cached_filings_and_bodies_and_keep_inactive(tmp_path):
     data, _ = fixture(tmp_path)
     bundles = inputs.build(data, T, 'a'*64)
     ctx = bundles['cd']['context']
     assert [c['symbol'] for c in ctx['candidates']] == ['SMLL']
-    assert [f['accession'] for f in ctx['candidates'][0]['filings']] == ['0000000001-26-000001']
+    assert ctx['candidates'][0]['filings'] == []
+    assert ctx['candidates'][0]['filings_state'] == 'UNAVAILABLE'
     assert 'FUTURE RESULT' not in json.dumps(bundles)
     assert 'future-story' not in json.dumps(bundles)
     assert 'summary' not in ctx['candidates'][0]['headlines'][0]
     assert ctx['provenance'] == 'APPROXIMATE_POINT_IN_TIME'
     assert bundles['cd']['manifest']['residual_risks'] == inputs.RISKS
     kept, evidence = inputs.primary_filter([{'symbol': 'SMLL', 'news_ids': [1]}], ctx)
-    assert kept == {'SMLL'} and evidence['SMLL'] == ['0000000001-26-000001']
+    assert kept == set() and evidence['SMLL'] == []
     ctx['candidates'][0]['headlines'][0]['title'] = 'unrelated story'
     assert not inputs.primary_filter([{'symbol': 'SMLL', 'news_ids': [1]}], ctx)[0]
 
@@ -188,7 +189,7 @@ def test_disk_bar_index_preserves_latest_full_rows_and_rejects_conflicts(tmp_pat
         archive.Archive(tmp_path,index)
 
 
-def test_vendor_asset_UUIDs_are_identities_and_symbol_ambiguity_stays_rejected(tmp_path):
+def test_vendor_asset_UUID_duplicates_agree_and_contradictions_exclude_uniformly(tmp_path):
     data, index = fixture(tmp_path)
     objects = json.loads(index.read_text())['objects']
     row = dict(data.assets['SMLL'], id='second-synthetic-uuid')
@@ -208,12 +209,16 @@ def test_vendor_asset_UUIDs_are_identities_and_symbol_ambiguity_stays_rejected(t
     index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
     result = archive.Archive(tmp_path, index)
     assert result.ambiguous_assets == {'SMLL'}
-    with pytest.raises(ReplayError, match='CANDIDATE_ASSET_IDENTITY_AMBIGUOUS'):
-        inputs.build(result, T, 'a'*64)
+    bundles = inputs.build(result, T, 'a'*64)
+    assert bundles['cd']['context']['candidates'] == []
+    for bundle in bundles.values():
+        assert bundle['manifest']['rejections']['SMLL'] == 'CONTRADICTORY_ASSET_METADATA'
+        assert bundle['manifest']['asset_metadata_exclusions']['excluded_count'] == 1
 
 
 def test_no_partial_manifest_on_missing_archive_and_no_rebuild(tmp_path, monkeypatch):
     monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
+    monkeypatch.setattr(inputs, 'paired_label_exclusions', lambda root: [])
     with pytest.raises(ReplayError, match='VENDOR_REQUEST_INDEX_MISSING'):
         ex.build_inputs(tmp_path)
     assert not (tmp_path / spec.STATE_DIR / 'input-manifest.json').exists()
@@ -282,6 +287,7 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
     coverage.parent.mkdir(parents=True)
     coverage.write_text(json.dumps({'missing': [dict(group='ab', day='2026-07-15', asset=sn.UNIVERSE[0], h=1)]
                                    if paired_missing else []}))
+    monkeypatch.setattr(inputs, 'paired_label_exclusions', lambda root: json.loads(coverage.read_text())['missing'])
     ex.build_inputs(tmp_path)
     class Client:
         def call(self, family, text, schema, *, tag):
@@ -332,3 +338,42 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
         if paired_missing:
             assert result['counts'][family]['a_v1_as_live:1d:paired_missing_label'] == 1
             assert result['counts'][family]['b_v1_no_reviewer:1d:paired_missing_label'] == 1
+
+
+def test_missing_asset_metadata_still_blocks_and_is_not_a_contradiction(tmp_path):
+    data, _ = fixture(tmp_path)
+    del data.assets['SMLL']
+    with pytest.raises(ReplayError, match='CANDIDATE_ASSET_METADATA_MISSING'):
+        inputs.build(data, T, 'a'*64)
+
+
+def test_asset_contradiction_across_receipts_excludes_the_symbol(tmp_path):
+    data, index = fixture(tmp_path)
+    objects = json.loads(index.read_text())['objects']
+    row = dict(data.assets['SMLL'], shortable=False)
+    objects = [o for o in objects if not (o['path'] == '/v2/assets' and o['params']['status'] == 'active')]
+    add(tmp_path, objects, 'https://paper-api.alpaca.markets', '/v2/assets',
+        {'status': 'active', 'asset_class': 'us_equity'}, [row], received='2026-10-19T00:00:00Z')
+    index.write_text(json.dumps({'schema':'replay-vendor-request-index-v1','objects':objects}))
+    result = archive.Archive(tmp_path, index)
+    assert result.ambiguous_assets == {'SMLL'}
+    assert inputs.build(result, T, 'a'*64)['cd']['context']['candidates'] == []
+
+
+def test_paired_label_exclusion_source_is_required_and_digest_bound(tmp_path, monkeypatch):
+    rows = [{'group':'ab','day':'2026-07-01','asset':'AAPL','h':1}]
+    source = tmp_path/'duel-v5/missing-label-retry.json'
+    source.parent.mkdir()
+    source.write_text(json.dumps({'missing':rows}))
+    artifacts = tmp_path/'docs/artifacts'
+    artifacts.mkdir(parents=True)
+    labels = {'retry_record_sha256':archive.digest(source), 'remaining_excluded':1,
+              'excluded_keys_sha256':sha256_canonical([('ab','2026-07-01','AAPL',1)])}
+    (artifacts/'replay_unblock_evidence_v1.json').write_text(json.dumps({'labels':labels}))
+    config = spec.spec()
+    monkeypatch.setattr(spec, 'spec', lambda: config)
+    monkeypatch.setattr(spec, 'ROOT', tmp_path)
+    assert inputs.paired_label_exclusions(tmp_path) == rows
+    source.write_text(json.dumps({'missing':[]}))
+    with pytest.raises(ReplayError, match='PAIRED_LABEL_EXCLUSION_SOURCE_CHANGED'):
+        inputs.paired_label_exclusions(tmp_path)

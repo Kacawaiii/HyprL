@@ -22,6 +22,22 @@ def declaration(root):
     return values[0]
 
 
+def paired_label_exclusions(root):
+    """Explicitly retain the operator-decided 658 keys, bound to committed evidence."""
+    import json
+    from pathlib import Path
+    evidence = json.loads((spec.ROOT / 'docs/artifacts' /
+                          spec.spec()['unblock_2_amendment']['missing_labels_source_artifact']).read_text())['labels']
+    source = Path(root) / 'duel-v5' / 'missing-label-retry.json'
+    if not source.is_file() or spec.file_hash(source) != evidence['retry_record_sha256']:
+        raise ReplayError('PAIRED_LABEL_EXCLUSION_SOURCE_CHANGED')
+    rows = json.loads(source.read_text())['missing']
+    keys = sorted((r['group'], r['day'], r['asset'], r['h']) for r in rows)
+    if len(keys) != evidence['remaining_excluded'] or sha256_canonical(keys) != evidence['excluded_keys_sha256']:
+        raise ReplayError('PAIRED_LABEL_EXCLUSION_KEYS_CHANGED')
+    return rows
+
+
 def news_at(rows, T):
     out = []
     for row in rows:
@@ -78,7 +94,8 @@ def build(archive, T, method_hash):
     visible = [n for n in news_at(archive.news.values(), T) if instant(n['created_at']) >= earliest]
     invalid_news = [n['id'] for n in archive.news.values() if n.get('updated_at') and
                     instant(n['updated_at']) < instant(n['created_at'])]
-    filings_unavailable = archive.index.get('sec_availability', {}).get('state') == 'UNAVAILABLE'
+    sec_policy = spec.spec()['unblock_2_amendment']['sec_policy']
+    filings_unavailable = sec_policy['state'] == 'UNAVAILABLE'
     prices, eligible, excluded = {}, [], []
     items = {}
     def bind(kind, identity, value):
@@ -88,6 +105,9 @@ def build(archive, T, method_hash):
     for n in visible:
         bind('news', n['id'], n)
     for asset in sn.UNIVERSE + sn.BENCHMARKS:
+        if asset in archive.ambiguous_assets and asset in sn.UNIVERSE:
+            excluded.append({'symbol': asset, 'reason': 'CONTRADICTORY_ASSET_METADATA'})
+            continue
         bars = archive.bars.get(asset, [])
         if not any(instant(b['t']) < instant('2026-07-01T00:00:00Z') for b in bars):
             raise ReplayError('FIXED_UNIVERSE_PRE_JULY_HISTORY_MISSING', asset)
@@ -129,7 +149,8 @@ def build(archive, T, method_hash):
     keywords = spec.spec()['variants']['c_news_small_mid']['negative_keywords']
     for symbol, news in sorted(by_symbol.items()):
         if symbol in archive.ambiguous_assets:
-            raise ReplayError('CANDIDATE_ASSET_IDENTITY_AMBIGUOUS', symbol)
+            rejections[symbol] = 'CONTRADICTORY_ASSET_METADATA'
+            continue
         asset = archive.assets.get(symbol)
         if asset is None:
             raise ReplayError('CANDIDATE_ASSET_METADATA_MISSING', symbol)
@@ -175,7 +196,10 @@ def build(archive, T, method_hash):
     manifest['news_data_quality'] = {'rule': 'updated_at < created_at excluded uniformly',
                                     'excluded_count': len(invalid_news),
                                     'excluded_ids_sha256': sha256_canonical(sorted(invalid_news))}
-    manifest['sec_availability'] = archive.index.get('sec_availability', {})
+    manifest['sec_availability'] = sec_policy
+    manifest['asset_metadata_exclusions'] = {'rule': 'exclude contradictory asset metadata uniformly',
+        'excluded_count': len(archive.ambiguous_assets),
+        'excluded_symbols_sha256': sha256_canonical(sorted(archive.ambiguous_assets))}
     return {g: sn.seal(c, dict(manifest, group=g), T) for g, c in (('ab', ab), ('cd', cd))}
 
 

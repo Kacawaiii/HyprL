@@ -20,7 +20,7 @@ from . import commitment, experiment as ex, fills, inputs, models, schemas, spec
 from .archive import Archive
 
 PROVENANCE = 'LIVE_FORWARD'
-STATE_DIR = 'live-forward-v3'
+STATE_DIR = 'live-forward-v4'
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['analyst', 'news'],
           'properties': {'analyst': schemas.ANALYST_SCHEMA, 'news': schemas.NEWS_SCHEMA}}
 

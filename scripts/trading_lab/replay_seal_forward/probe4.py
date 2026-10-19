@@ -93,6 +93,8 @@ def grade(prereg, answers):
 
 
 def preregister(directory, collector):
+    if spec.spec()['probe']['probe4'].get('status') == 'NOT RUN':
+        raise ReplayError('PROBE4_CLOSED_NOT_RUN')
     target = Path(directory) / PREREGISTRATION
     if target.exists():
         raise ReplayError('PROBE4_ALREADY_PREREGISTERED')
@@ -139,6 +141,8 @@ def retry_authorization(directory, family):
 
 
 def ask(directory, family, budget, *, runner=subprocess.run, clock=now, authorized_retry=False):
+    if spec.spec()['probe']['probe4'].get('status') == 'NOT RUN':
+        raise ReplayError('PROBE4_CLOSED_NOT_RUN')
     models.require_systemd(runner)
     prereg, _ = committed_preregistration(directory)
     if authorized_retry:
@@ -186,6 +190,19 @@ def ask(directory, family, budget, *, runner=subprocess.run, clock=now, authoriz
 
 
 def evidence(directory):
+    policy = spec.spec()['probe']['probe4']
+    if policy.get('status') == 'NOT RUN':
+        file = spec.ROOT / 'docs/artifacts' / policy['closure_artifact']
+        value = json.loads(file.read_text())
+        if sha256_canonical(value) != policy['closure_sha256']:
+            raise ReplayError('PROBE4_CLOSURE_HASH_MISMATCH')
+        # Hash opaque envelope bytes only. Never decode or grade these answers.
+        for family, attempts in value['families'].items():
+            for prefix, key in (('', 'original_response_sha256'), ('retry-', 'retry_response_sha256')):
+                response = Path(directory) / f'probe4-{prefix}answers-{family}.response'
+                if hashlib.sha256(response.read_bytes()).hexdigest() != attempts[key]:
+                    raise ReplayError('PROBE4_ENVELOPE_HASH_MISMATCH', family)
+        return value
     prereg, public = committed_preregistration(directory)
     out = {'preregistration_sha256': public['preregistration_sha256'], 'families': {}}
     for family in ('opus', 'gpt'):

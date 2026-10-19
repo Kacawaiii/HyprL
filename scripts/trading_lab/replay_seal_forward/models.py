@@ -127,14 +127,24 @@ def require_systemd(runner):
         raise ReplayError('MODEL_SYSTEMD_REQUIRED')
 
 
+def benign_diagnostic(item):
+    """Only the two operator-approved CLI diagnostics; never a model answer."""
+    message = item.get('message', '')
+    return item.get('type') == 'error' and isinstance(message, str) and (
+        message.startswith('Under-development features enabled: ') or
+        message == ('Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; '
+                    'enable `features.code_mode_host` and install `codex-code-mode-host`.'))
+
+
 def no_tools(event):
-    """Fail closed on every non-message Codex item, even on error or cached response."""
+    """Scan every event, including children of approved CLI diagnostics and cached output."""
     if event.get('type', '').startswith('item.'):
-        if event.get('item', {}).get('type') not in ('agent_message', 'reasoning'):
+        item = event.get('item', {})
+        if item.get('type') not in ('agent_message', 'reasoning', 'error'):
             raise ReplayError('TAINTED_RUN')
     for key in ('type', 'name', 'tool_name'):
         name = str(event.get(key, '')).lower()
-        if any(x in name for x in ('tool_use', 'tool_call', 'web_search', 'web_fetch', 'command_execution',
+        if name in ('tool', 'exec', 'web') or name.startswith(('tool.', 'exec.', 'web.')) or any(x in name for x in ('tool_use', 'tool_call', 'web_search', 'web_fetch', 'command_execution',
                                    'file_change', 'function_call', 'exec_command', 'apply_patch')):
             raise ReplayError('TAINTED_RUN')
     if event.get('permission_denials'):
@@ -182,7 +192,8 @@ def decode(raw, err, returncode, family, schema):
             raise ReplayError('MODEL_IDENTITY_CHANGED')
         output = event.get('structured_output')
     else:
-        if any(e.get('type') in ('error', 'turn.failed') for e in events):
+        if any(e.get('type') in ('error', 'turn.failed') or
+               (e.get('item', {}).get('type') == 'error' and not benign_diagnostic(e['item'])) for e in events):
             raise ReplayError('MODEL_FAILED')
         if sum(e.get('type') == 'thread.started' for e in events) != 1 or sum(e.get('type') == 'turn.completed' for e in events) != 1:
             raise ReplayError('MODEL_ENVELOPE_INVALID')

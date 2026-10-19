@@ -1,0 +1,32 @@
+{
+  "answers_graded": 0,
+  "answers_read": 0,
+  "decision_date": "2026-10-19",
+  "families": {
+    "gpt": {
+      "accepted_answers": 0,
+      "attempts": 2,
+      "binding_retry_error": "TAINTED_RUN",
+      "graded_answers": 0,
+      "original_error": "TAINTED_RUN",
+      "original_response_sha256": "9cf27699e595edf96ca8c148c8a1946c9470fc248747b514d9ad168323bf278c",
+      "retry_response_sha256": "681638ee794220d4dcf234ab001930450c9ec38dfe7dbb28b222a3f131dc0110"
+    },
+    "opus": {
+      "accepted_answers": 0,
+      "attempts": 2,
+      "binding_retry_error": "MODEL_USAGE_LIMIT",
+      "graded_answers": 0,
+      "original_error": "MODEL_FAILED",
+      "original_response_sha256": "adb857674bc9beeecb13751424bddc1f744095ebe67b5016145e5c46879852f0",
+      "retry_response_sha256": "417de617d12aabb7188a66c94358d2a3342d194674b14009fefe37a3b2029325"
+    }
+  },
+  "rule": "Preserve all four envelopes without redecoding, reading or grading answers; no further probe calls. Conservatively exclude everything after the last probed month for both families.",
+  "schema": "replay-memory-probe4-closure-v1",
+  "status": "NOT RUN",
+  "test_end": {
+    "gpt": "2026-09-30",
+    "opus": "2026-09-30"
+  }
+}

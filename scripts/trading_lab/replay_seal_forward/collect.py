@@ -109,6 +109,8 @@ class Collector:
         return {'User-Agent': self.sec_user_agent, 'Accept': 'application/json'}
 
     def get(self, origin, path, params=None):
+        if origin in (SEC_WWW, SEC_DATA):
+            raise ReplayError('SEC_COLLECTION_DISABLED')
         params = dict(params or {})
         self.grants.check()
         name = self.grants.route(origin, path, params)
@@ -192,10 +194,7 @@ class Collector:
             objects = {o['cache_key']: o for o in json.loads(index_file.read_text())['objects']}
         objects.update(self.index)
         value = {'schema': 'replay-vendor-request-index-v1', 'objects': [objects[k] for k in sorted(objects)]}
-        # The global fallback also applies to fresh forward-day archives.
-        policy = self.budget.path.parent.parent / 'sec-availability.json'
-        if policy.is_file():
-            value['sec_availability'] = json.loads(policy.read_text())
+        value['sec_availability'] = spec.spec()['unblock_2_amendment']['sec_policy']
         atomic_json(index_file, value)
         return len(objects)
 
@@ -212,13 +211,15 @@ def news_symbols(rows, start, end):
 
 
 def equities(collector, symbols):
-    assets = {}
+    records, fingerprints = {}, {}
     for status in ('active', 'inactive'):
         body, _ = collector.get(PAPER, '/v2/assets', {'status': status, 'asset_class': 'us_equity'})
         for row in body:
-            assets.setdefault(row['symbol'], row)
-    return {s for s in symbols if s in assets and assets[s].get('class') == 'us_equity'
-            and not re.search(r'\bETF\b', assets[s].get('name', ''), re.I)}
+            symbol = row['symbol']
+            fingerprints.setdefault(symbol, set()).add(sha256_canonical({k:v for k,v in row.items() if k != 'id'}))
+            records.setdefault(symbol, row)
+    return {s for s in symbols if s in records and len(fingerprints[s]) == 1 and records[s].get('class') == 'us_equity'
+            and not re.search(r'\bETF\b', records[s].get('name', ''), re.I)}
 
 
 def sec_submissions(collector, symbols):
@@ -234,20 +235,9 @@ def sec_submissions(collector, symbols):
 
 
 def sec_or_unavailable(collector, symbols, root):
-    """A refusal is a global research policy, never a symbol/day selection."""
-    target = Path(root) / 'sec-availability.json'
-    if target.is_file() and json.loads(target.read_text()).get('state') == 'UNAVAILABLE':
-        return 0
-    try:
-        count = sec_submissions(collector, symbols)
-    except ReplayError as error:
-        if error.code not in ('HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'):
-            raise
-        atomic_json(target, {'state': 'UNAVAILABLE', 'reason': error.code,
-                             'scope': 'all days and both families', 'at': iso(now())})
-        return 0
-    atomic_json(target, {'state': 'AVAILABLE', 'ciks': count})
-    return count
+    """Revision 10 operator policy: no collection and no retry, including cached SEC."""
+    atomic_json(Path(root) / 'sec-availability.json', spec.spec()['unblock_2_amendment']['sec_policy'])
+    return 0
 
 
 def historical_inputs(collector, *, news_from='2026-06-26T00:00:00Z', news_to='2026-10-09T12:00:00Z',
@@ -300,8 +290,7 @@ def main(argv=None):
                     if args.command == 'historical':
                         result.update(historical_inputs(collector))
                     elif args.command == 'historical-sec':
-                        from .collect_plan import shown_candidates
-                        result['ciks'] = sec_or_unavailable(collector, shown_candidates(root) | set(sn.STOCKS), root)
+                        result['ciks'] = sec_or_unavailable(collector, (), root)
                     elif args.command == 'retry-missing-labels':
                         from .collect_plan import retry_missing_labels
                         result.update(retry_missing_labels(root, collector, args.missing_plan))

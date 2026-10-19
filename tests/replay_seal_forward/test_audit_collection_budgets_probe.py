@@ -71,18 +71,20 @@ def test_collector_stops_4xx_and_cannot_record_a_receipt_at_T(tmp_path, grants):
     authority, _ = grants
     def forbidden(url, headers):
         raise ReplayError('HTTP_403')
+    keys = tmp_path/'keys.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
     collector = collect.Collector(authority, Budget(tmp_path/'budget'), tmp_path/'cache',
-                                  sec_user_agent='synthetic', getter=forbidden, sleep=lambda _: None, clock=lambda: AT)
+                                  alpaca_env=keys, getter=forbidden, sleep=lambda _: None, clock=lambda: AT)
     with pytest.raises(ReplayError, match='HTTP_403'):
-        collector.get(collect.SEC_WWW, '/files/company_tickers.json')
-    assert collector.budget.used('www.sec.gov', AT) == 1
+        collector.get(md.ALPACA, '/v1beta1/news')
+    assert collector.budget.used('data.alpaca.markets', AT) == 1
     collector.before = AT
     with pytest.raises(ReplayError, match='DEADLINE_PASSED'):
-        collector.get(collect.SEC_WWW, '/files/company_tickers.json')
+        collector.get(md.ALPACA, '/v1beta1/news')
     assert not list((tmp_path/'cache').rglob('*.gz'))
 
 
-def test_sec_refusal_is_persistent_and_global(tmp_path, grants):
+def test_sec_operator_unavailable_never_dispatches_and_is_global(tmp_path, grants):
     authority, _ = grants
     calls = []
     def forbidden(url, headers):
@@ -92,7 +94,9 @@ def test_sec_refusal_is_persistent_and_global(tmp_path, grants):
         sec_user_agent='synthetic', getter=forbidden, clock=lambda: AT)
     assert collect.sec_or_unavailable(collector, ['SMLL'], tmp_path) == 0
     assert collect.sec_or_unavailable(collector, ['OTHER'], tmp_path) == 0
-    assert len(calls) == 1
+    assert len(calls) == 0
+    with pytest.raises(ReplayError, match='SEC_COLLECTION_DISABLED'):
+        collector.get(collect.SEC_WWW, '/files/company_tickers.json')
     index = tmp_path/'archive_index.json'
     collector.save(index)
     assert json.loads(index.read_text())['sec_availability']['state'] == 'UNAVAILABLE'
@@ -119,27 +123,10 @@ def test_incomplete_price_response_is_refreshed_once_and_preserved(tmp_path, gra
     assert next((tmp_path/'missing-label-originals').rglob('*.gz')).read_bytes() == original
 
 
-def test_missing_label_retry_freezes_remaining_keys_and_refuses_a_second_job(tmp_path, monkeypatch):
-    plan = tmp_path/'plan.json'
-    rows = [dict(period='dev', group='ab', day='2026-07-01', asset=a, h=1, error='INCOMPLETE_LABEL_COVERAGE')
-            for a in ('NVDA', 'AAPL')]
-    plan.write_text(json.dumps({'missing':rows}))
-    class Outcomes:
-        def __init__(self, *args):
-            pass
-        def get(self, group, day, asset, h):
-            if asset == 'AAPL':
-                raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
-            return {'rel':.01}
-    monkeypatch.setattr(collect_plan, 'Outcomes', Outcomes)
-    monkeypatch.setattr(collect_plan, 'historical_outcomes', lambda *a, **kw: {'synthetic':True})
-    collector = SimpleNamespace(retried_keys=set())
-    result = collect_plan.retry_missing_labels(tmp_path, collector, plan)
-    assert result['attempted_labels'] == 2 and result['recovered_labels'] == result['remaining_labels'] == 1
-    frozen = json.loads((tmp_path/spec.STATE_DIR/'missing-label-retry.json').read_text())
-    assert frozen['paired'] is True and frozen['missing'] == [rows[1]]
-    with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
-        collect_plan.retry_missing_labels(tmp_path, collector, plan)
+def test_missing_label_retry_is_closed_without_reading_or_dispatching(tmp_path):
+    with pytest.raises(ReplayError, match='MISSING_LABEL_RETRY_CLOSED'):
+        collect_plan.retry_missing_labels(tmp_path, SimpleNamespace(), tmp_path/'no-new-plan.json')
+    assert not list(tmp_path.iterdir())
 
 
 def test_150_nightly_cap_inside_opus_daily_cap_and_forward_reservation(tmp_path):
@@ -181,7 +168,7 @@ def test_failed_probe_envelopes_are_rejected_even_with_an_answer():
         models.decode(raw, '', 1, 'opus', {})
     events = [{'type': 'thread.started'}, {'type': 'item.completed', 'item': {'type': 'error', 'message': 'synthetic CLI failure'}},
               {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': '{}'}}, {'type': 'turn.completed'}]
-    with pytest.raises(ReplayError, match='TAINTED_RUN'):
+    with pytest.raises(ReplayError, match='MODEL_FAILED'):
         models.decode('\n'.join(json.dumps(e) for e in events), '', 0, 'gpt', {})
 
 
@@ -199,7 +186,8 @@ def test_tainted_quota_envelope_still_stops_later_dispatches(tmp_path):
     def runner(args, **kwargs):
         calls.append(args)
         events = [{'type': 'thread.started'}, {'type': 'item.completed',
-                  'item': {'type': 'error', 'message': 'usage limit reached'}}, {'type': 'turn.completed'}]
+                  'item': {'type': 'error', 'message': 'usage limit reached'}},
+                  {'type': 'item.completed', 'item': {'type': 'command_execution'}}, {'type': 'turn.completed'}]
         return subprocess.CompletedProcess(args, 0, '\n'.join(json.dumps(e) for e in events), '')
     budget = models.DuelBudget(tmp_path)
     client = models.Models(SimpleNamespace(check=lambda: None, model_limit=lambda _: 150), budget,
@@ -234,7 +222,7 @@ def prereg():
     return {'questions': questions, 'criteria': probe4.rule(questions), 'rule': probe4.rule(questions)['text']}
 
 
-def test_probe4_is_balanced_flag_rule_cuts_only_flagged_model(tmp_path, monkeypatch):
+def test_historical_probe_rule_stays_fixed_and_current_test_cuts_are_uniform(tmp_path, monkeypatch):
     value = prereg()
     always = {q['id']: 'up' for q in value['questions']}
     correct = {q['id']: 'up' if q['up'] else 'down' for q in value['questions']}
@@ -243,72 +231,66 @@ def test_probe4_is_balanced_flag_rule_cuts_only_flagged_model(tmp_path, monkeypa
     flagged = probe4.grade(value, correct)
     assert flagged['flagged'] and flagged['test_end'] == '2026-09-30'
     freeze = tmp_path/'freeze.json'
-    freeze.write_text(json.dumps({'test_end': {'opus': '2026-09-30', 'gpt': '2026-10-09'}}))
+    freeze.write_text(json.dumps({'test_end': {'opus': '2026-09-30', 'gpt': '2026-09-30'}}))
     monkeypatch.setattr(ex, 'FREEZE', freeze)
     assert max(ex.planned_for('test', 'ab', 'opus')) == '2026-09-30'
-    assert max(ex.planned_for('test', 'ab', 'gpt')) == '2026-10-09'
+    assert max(ex.planned_for('test', 'ab', 'gpt')) == '2026-09-30'
     from scripts.trading_lab.replay_seal_forward.score import within_test_cut
     assert within_test_cut({'available_at': '2026-09-30T20:00:00Z'}, 'test', 'opus')
     assert not within_test_cut({'available_at': '2026-10-01T20:00:00Z'}, 'test', 'opus')
-    assert within_test_cut({'available_at': '2026-10-01T20:00:00Z'}, 'test', 'gpt')
-    assert probe4.grade(value, always)['test_end'] == '2026-10-09'
+    assert not within_test_cut({'available_at': '2026-10-01T20:00:00Z'}, 'test', 'gpt')
+    assert probe4.grade(value, always)['test_end'] == '2026-09-30'
     bad = dict(value, criteria=dict(value['criteria'], pooled_threshold=0))
     with pytest.raises(ReplayError, match='PROBE4_RULE_CHANGED'):
         probe4.grade(bad, correct)
 
 
-def test_probe4_requires_committed_digest_and_never_retries_unknown_call(tmp_path, monkeypatch):
+def test_probe4_keeps_committed_digest_and_closed_calls_never_dispatch(tmp_path, monkeypatch):
     target = tmp_path/probe4.PREREGISTRATION
     target.write_text(json.dumps(prereg()))
     public = dict(preregistration_sha256='0'*64)
     monkeypatch.setattr(subprocess, 'check_output', lambda *a, **kw: json.dumps(public).encode())
     with pytest.raises(ReplayError, match='PREREGISTRATION_HASH_MISMATCH'):
         probe4.committed_preregistration(tmp_path)
-    value = prereg()
-    import hashlib
-    value['prompt_sha256'] = hashlib.sha256(probe4.prompt(value['questions']).encode()).hexdigest()
-    monkeypatch.setattr(probe4, 'committed_preregistration', lambda _: (value, {}))
     attempts = []
-    def timeout(args, **kwargs):
+    def runner(*args, **kwargs):
         attempts.append(args)
-        raise subprocess.TimeoutExpired(args, 1)
+        pytest.fail('closed probe must never dispatch')
     budget = models.DuelBudget(tmp_path/'budget')
-    with pytest.raises(ReplayError, match='CALL_OUTCOME_UNKNOWN'):
-        probe4.ask(tmp_path, 'opus', budget, runner=timeout, clock=lambda: AT)
-    with pytest.raises(ReplayError, match='ALREADY_ASKED'):
-        probe4.ask(tmp_path, 'opus', budget, runner=timeout, clock=lambda: AT)
-    assert len(attempts) == 1
+    for family in ('opus', 'gpt'):
+        for retry in (False, True):
+            with pytest.raises(ReplayError, match='PROBE4_CLOSED_NOT_RUN'):
+                probe4.ask(tmp_path, family, budget, runner=runner, authorized_retry=retry)
+    assert attempts == [] and not budget.path.exists()
 
 
-def test_authorized_probe_retry_preserves_original_and_is_binding(tmp_path, monkeypatch):
+def test_closed_probe_evidence_hashes_opaque_envelopes_without_decoding(tmp_path, monkeypatch):
     import hashlib
-    value = prereg()
-    value['prompt_sha256'] = hashlib.sha256(probe4.prompt(value['questions']).encode()).hexdigest()
-    monkeypatch.setattr(probe4, 'committed_preregistration', lambda _: (value, {}))
-    original = tmp_path/'probe4-answers-opus.response'
-    original.write_text('{"synthetic_rejected":true}')
-    original_bytes = original.read_bytes()
-    public = {'attempts_per_family': 2, 'original_response_sha256': {
-        'opus': hashlib.sha256(original_bytes).hexdigest()}}
-    monkeypatch.setattr(subprocess, 'check_output', lambda *a, **kw: json.dumps(public).encode())
-    attempts = []
-    def timeout(args, **kw):
-        attempts.append(args)
-        raise subprocess.TimeoutExpired(args, 1)
-    budget = models.DuelBudget(tmp_path/'budget')
-    budget.reserve_probe('opus', 150, AT)
-    with pytest.raises(ReplayError, match='CALL_OUTCOME_UNKNOWN'):
-        probe4.ask(tmp_path, 'opus', budget, runner=timeout, clock=lambda: AT, authorized_retry=True)
-    with pytest.raises(ReplayError, match='ALREADY_ASKED'):
-        probe4.ask(tmp_path, 'opus', budget, runner=timeout, clock=lambda: AT, authorized_retry=True)
-    assert len(attempts) == 1 and original.read_bytes() == original_bytes
-    assert budget.used('probe:opus', AT) == 2
+    public = {'status': 'NOT RUN', 'families': {}, 'test_end': {f:'2026-09-30' for f in ex.FAMILIES}}
+    for family in ex.FAMILIES:
+        public['families'][family] = {}
+        for prefix, key in (('', 'original_response_sha256'), ('retry-', 'retry_response_sha256')):
+            file = tmp_path/f'probe4-{prefix}answers-{family}.response'
+            file.write_bytes(b'opaque envelope, not JSON')
+            public['families'][family][key] = hashlib.sha256(file.read_bytes()).hexdigest()
+    artifacts = tmp_path/'docs/artifacts'
+    artifacts.mkdir(parents=True)
+    config = spec.spec()
+    policy = config['probe']['probe4']
+    policy['closure_sha256'] = sha256_canonical(public)
+    (artifacts/policy['closure_artifact']).write_text(json.dumps(public))
+    monkeypatch.setattr(spec, 'ROOT', tmp_path)
+    monkeypatch.setattr(spec, 'spec', lambda: config)
+    assert probe4.evidence(tmp_path) == public
+    (tmp_path/'probe4-answers-gpt.response').write_bytes(b'changed')
+    with pytest.raises(ReplayError, match='PROBE4_ENVELOPE_HASH_MISMATCH'):
+        probe4.evidence(tmp_path)
 
 
 def test_real_model_calls_require_systemd_before_reserving_or_dispatching(tmp_path, monkeypatch):
     monkeypatch.delenv('INVOCATION_ID', raising=False)
     budget = models.DuelBudget(tmp_path)
-    with pytest.raises(ReplayError, match='MODEL_SYSTEMD_REQUIRED'):
+    with pytest.raises(ReplayError, match='PROBE4_CLOSED_NOT_RUN'):
         probe4.ask(tmp_path, 'opus', budget)
     client = models.Models(SimpleNamespace(), budget, tmp_path/'transcripts')
     with pytest.raises(ReplayError, match='MODEL_SYSTEMD_REQUIRED'):
@@ -367,3 +349,29 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
     with pytest.raises(ReplayError, match='OUTSIDE_LIVE_COLLECTION_WINDOW'):
         collect_plan.live(tmp_path, authority, key, 'synthetic', clock=lambda: T, collector_factory=factory)
     assert len(requests) == count
+
+
+@pytest.mark.parametrize('scope', ['replay', 'forward'])
+@pytest.mark.parametrize('tool', [None, 'command_execution', 'web_search', 'mcp_tool_call'])
+def test_gpt_cli_diagnostics_require_an_event_stream_without_tools(tmp_path, scope, tool):
+    events = [{'type': 'thread.started'},
+              {'type': 'item.completed', 'item': {'type': 'error', 'message':
+               'Under-development features enabled: skip_host_skill_discovery. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in config.toml.'}},
+              {'type': 'item.completed', 'item': {'type': 'error', 'message':
+               'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.'}},
+              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': '{"ok":true}'}},
+              {'type': 'turn.completed'}]
+    if tool:
+        events.insert(2, {'type': 'item.completed', 'item': {'type': tool}})
+    def runner(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, '\n'.join(json.dumps(e) for e in events), '')
+    budget = (forward.ForwardBudget if scope == 'forward' else models.DuelBudget)(tmp_path)
+    client = models.Models(SimpleNamespace(check=lambda: None, model_limit=lambda _: 150), budget,
+                           tmp_path/'transcripts', clock=lambda: AT, window=lambda _: 900,
+                           runner=runner, scope=scope)
+    if tool:
+        with pytest.raises(ReplayError, match='TAINTED_RUN'):
+            client.call('gpt', 'synthetic', {}, tag='diagnostics')
+    else:
+        output, _ = client.call('gpt', 'synthetic', {}, tag='diagnostics')
+        assert output == {'ok': True}

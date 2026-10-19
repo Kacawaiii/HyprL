@@ -69,6 +69,8 @@ def historical_outcomes(root, collector, *, include_news=True):
 
 def retry_missing_labels(root, collector, plan_file):
     """One bounded recheck of a pre-existing missing-label census, before inference."""
+    if spec.spec()['revision'] >= 10:
+        raise ReplayError('MISSING_LABEL_RETRY_CLOSED')
     import hashlib
     target = Path(root) / spec.STATE_DIR / 'missing-label-retry.json'
     intent = target.with_suffix('.intent')

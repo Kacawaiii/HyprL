@@ -8,7 +8,7 @@ def test_new_freeze_binds_method_models_code_schema_and_forward():
     frozen = json.loads(ex.FREEZE.read_text())
     assert frozen['spec_hash'] == spec.SPEC_HASH
     assert frozen['code_hash'] == spec.code_hash()
-    assert frozen['test_days'] == ex.planned('test', 'ab') and len(frozen['test_days']) == 28
+    assert frozen['test_days'] == ex.planned('test', 'ab') and len(frozen['test_days']) == 21
     assert frozen['input_seal_required'] is True
     assert spec.spec()['schema_sha256'] == sha256_canonical(schemas.SCHEMAS)
     for f in ex.FAMILIES:
