@@ -19,6 +19,8 @@ import time
 from scripts.trading_lab.replay_bench.grant import (Budget, ReplayError, http_get, instant, iso, load_env, now)
 from scripts.trading_lab.replay_bench.storage import atomic_json, owned
 from scripts.trading_lab.replay_bench import marketdata as md, snapshot as sn
+from scripts.trading_lab.sources.canonical import sha256_canonical
+from . import spec
 
 COLLECTION_GRANT = 'replay-data-collection-v1'
 PAPER = 'https://paper-api.alpaca.markets'
@@ -48,6 +50,9 @@ class Grants:
             raise ReplayError('COLLECTION_GRANT_INVALID')
         if self.payloads['replay-bench-v1'].get('authorization') != 'replay-bench-v1':
             raise ReplayError('GRANT_INVALID')
+        if (sha256_canonical(self.payloads[COLLECTION_GRANT]) != spec.spec()['data_collection']['collection_grant_sha256'] or
+                sha256_canonical(self.payloads['replay-bench-v1']) != spec.spec()['authorization']['payload_sha256']):
+            raise ReplayError('COLLECTION_GRANT_HASH_MISMATCH')
         self.check()
 
     def check(self):
@@ -79,7 +84,7 @@ class Collector:
     """Same cache layout and URL hash as replay_bench.grant.Transport, plus a request index."""
 
     def __init__(self, grants, budget, cache_root, *, alpaca_env=None, sec_user_agent=None,
-                 getter=http_get, sleep=time.sleep, clock=now, refresh=False):
+                 getter=http_get, sleep=time.sleep, clock=now, refresh=False, refresh_news=False, before=None):
         self.grants, self.budget, self.getter, self.sleep, self.clock = grants, budget, getter, sleep, clock
         self.cache = Path(cache_root)
         self.cache.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -87,8 +92,10 @@ class Collector:
         self.sec_user_agent = sec_user_agent
         # Live polling reads a fresh receipt for the same URL only in a fresh per-day cache.
         self.refresh = refresh
+        self.refresh_news, self.before = refresh_news, before
         self.index, self.requests, self._last = {}, 0, {}
         self.offline = False
+        self.scoring_symbols = set()
 
     def _headers(self, origin):
         if origin in (md.ALPACA, PAPER):
@@ -102,18 +109,28 @@ class Collector:
 
     def get(self, origin, path, params=None):
         params = dict(params or {})
+        self.grants.check()
         name = self.grants.route(origin, path, params)
         if origin == md.ALPACA and ('bars' in path or 'trades' in path):
             if not params.get('start') or not params.get('end') or not params.get('symbols'):
                 raise ReplayError('BOUNDED_PRICE_QUERY_REQUIRED')
             md.guard(params['symbols'].split(','), params['start'], params['end'])
+            symbols = set(params['symbols'].split(','))
+            if params.get('timeframe') == '1Min' or 'trades' in path:
+                if not symbols <= self.scoring_symbols:
+                    raise ReplayError('SCORING_SYMBOL_NOT_FORECAST')
+            elif params.get('timeframe') != '1Day':
+                raise ReplayError('TIMEFRAME_NOT_GRANTED')
+            if path == '/v2/stocks/bars' and (params.get('feed') != 'sip' or params.get('adjustment') not in ('raw', 'all')):
+                raise ReplayError('RAW_OR_ADJUSTED_SIP_REQUIRED')
         if origin == md.ALPACA and path == '/v1beta1/news' and params.get('symbols'):
             md.guard(params['symbols'].split(','), params['start'], params['end'])
         from urllib.parse import urlencode
         url = origin + path + ('?' + urlencode(sorted(params.items())) if params else '')
         key = hashlib.sha256(url.encode()).hexdigest()
         file = self.cache / key[:2] / (key + '.json.gz')
-        if not file.exists() or (self.refresh and key not in self.index):
+        refresh = self.refresh or self.refresh_news and path == '/v1beta1/news'
+        if not file.exists() or (refresh and key not in self.index):
             self._fetch(name, origin, url, file)
         entry = json.loads(gzip.decompress(file.read_bytes()))
         self.index[key] = {'origin': origin, 'path': path, 'params': params, 'cache_key': key,
@@ -122,19 +139,20 @@ class Collector:
                                'body_sha256': entry['body_sha256'], 'cached': True}
 
     def _fetch(self, name, origin, url, file):
-        limit = self.grants.daily_limit(name, origin)
         host = origin.split('//')[1]
-        if limit is not None:
-            self.budget.reserve(host, limit, self.clock())
-        else:
-            self.budget.reserve('collect:' + host, 10 ** 9, self.clock())
+        # Keep the older daily host ceiling as an additional bound even for collection-v1.
+        limit = self.grants.daily_limit(name, origin) or (1500 if 'sec.gov' in host else 3000)
         delay = 5
+        limiter = 'sec' if origin in (SEC_WWW, SEC_DATA) else 'alpaca'
         for attempt in range(6):
-            wait = SPACING[origin] - (time.monotonic() - self._last.get(origin, 0))
+            wait = SPACING[origin] - (time.monotonic() - self._last.get(limiter, 0))
             if wait > 0:
                 self.sleep(wait)
             self.grants.check()
-            self._last[origin] = time.monotonic()
+            if self.before is not None and self.clock() >= self.before:
+                raise ReplayError('LIVE_COLLECTION_DEADLINE_PASSED')
+            self.budget.reserve(host, limit, self.clock())
+            self._last[limiter] = time.monotonic()
             try:
                 raw = self.getter(url, self._headers(origin))
                 break
@@ -147,6 +165,8 @@ class Collector:
                 delay *= 2
         self.requests += 1
         received = iso(self.clock())
+        if self.before is not None and instant(received) >= self.before:
+            raise ReplayError('LIVE_COLLECTION_DEADLINE_PASSED')
         body = json.loads(raw)
         file.parent.mkdir(exist_ok=True, mode=0o700)
         temp = file.with_suffix('.tmp')
@@ -218,13 +238,19 @@ def main(argv=None):
     parser.add_argument('--authorization', default=os.environ.get('REPLAY_AUTHORIZATION'))
     parser.add_argument('--alpaca-env', default=os.environ.get('REPLAY_ALPACA_ENV'))
     parser.add_argument('--sec-agent-file', default=os.environ.get('REPLAY_SEC_AGENT_FILE'))
-    parser.add_argument('command', choices=('historical', 'historical-sec', 'historical-outcomes', 'live', 'live-outcomes'))
+    parser.add_argument('--expected-commit')
+    parser.add_argument('command', choices=('historical', 'historical-sec', 'historical-outcomes', 'historical-fixed-outcomes', 'live', 'live-outcomes'))
     args = parser.parse_args(argv)
     from . import spec
     root = Path(args.data_root).expanduser().resolve()
     if root == spec.ROOT or spec.ROOT in root.parents:
         raise SystemExit('DATA_ROOT_MUST_BE_OUTSIDE_GIT')
     grants = Grants(args.collection_grant, args.authorization)
+    if args.expected_commit:
+        from . import experiment
+        experiment.committed()
+        if experiment.head() != args.expected_commit:
+            raise SystemExit('INSTALLED_SHA_MISMATCH')
     agent = None
     if args.sec_agent_file:
         # The contact stays in a private file and is never logged or committed.
@@ -236,15 +262,17 @@ def main(argv=None):
                 collector = Collector(grants, Budget(root / 'collector'), root / 'cache',
                                       alpaca_env=args.alpaca_env, sec_user_agent=agent)
                 index = root / 'archive_index.json'
-                if args.command == 'historical':
-                    result.update(historical_inputs(collector))
-                elif args.command == 'historical-sec':
-                    from .collect_plan import shown_candidates
-                    result['ciks'] = sec_submissions(collector, shown_candidates(root))
-                else:
-                    from .collect_plan import historical_outcomes
-                    result.update(historical_outcomes(root, collector))
-                result['index_objects'] = collector.save(index)
+                try:
+                    if args.command == 'historical':
+                        result.update(historical_inputs(collector))
+                    elif args.command == 'historical-sec':
+                        from .collect_plan import shown_candidates
+                        result['ciks'] = sec_submissions(collector, shown_candidates(root) | set(sn.STOCKS))
+                    else:
+                        from .collect_plan import historical_outcomes
+                        result.update(historical_outcomes(root, collector, include_news=args.command != 'historical-fixed-outcomes'))
+                finally:
+                    result['index_objects'] = collector.save(index)
             else:
                 from .collect_plan import live, live_outcomes
                 result.update((live if args.command == 'live' else live_outcomes)(root, grants, args.alpaca_env, agent))

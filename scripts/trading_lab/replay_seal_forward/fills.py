@@ -57,7 +57,8 @@ def adjustment_ratios(raw_rows, adjusted_rows):
 def corporate_action(ratios, first, last):
     """True when the raw/adjusted ratio moves inside (first, last]: a split or dividend took effect."""
     days = sorted(d for d in ratios if first <= d <= last)
-    if not days or days[0] != first or days[-1] != last:
+    expected = [s.session_date for s in md.sessions(first, last)]
+    if not expected or days != expected:
         return None
     values = [ratios[d] for d in days]
     return max(values) / min(values) - 1 > 1e-6

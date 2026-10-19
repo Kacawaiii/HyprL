@@ -11,8 +11,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v3.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v3.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v4.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v4.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -142,11 +142,14 @@ def frozen_payload(root):
     evidence = audit.evidence(root)
     from .forward import SCHEMA, forward_config_hash
     from .stats import PRIMARY
-    return {'schema': 'replay-duel-test-freeze-v3', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+    rate = json.loads((Path(root) / spec.STATE_DIR / 'dev-label-base-rate.json').read_text())
+    if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', 0) <= 0 or rate.get('panel') != PRIMARY['panel']:
+        raise ReplayError('DEV_BASE_RATE_NOT_FROZEN')
+    return {'schema': 'replay-duel-test-freeze-v4', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
             'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
-            'primary_endpoint': PRIMARY,
+            'primary_endpoint': PRIMARY, 'frozen_dev_base_rate': rate,
             'config_payloads': {f: {g: spec.config_payload('test', g, f) for g in ('ab', 'cd')} for f in FAMILIES},
             'config_hashes': {f: {g: spec.config_hash('test', g, f) for g in ('ab', 'cd')} for f in FAMILIES},
             'test_days': planned('test', 'ab'), 'input_seal_required': True,
@@ -159,7 +162,7 @@ def frozen_payload(root):
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v3', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v4', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -183,7 +186,7 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):
@@ -238,6 +241,20 @@ def claim_test(root, family, ledger=None):
         if ledger is None:
             raise ReplayError('TEST_START_NOT_PUBLISHED')
         ledger.publish('replay-test-start', family, {'test_start_marker': sha256_canonical(value)})
+    commitment.require(root, 'replay-test-start', family, {'test_start_marker': sha256_canonical(value)}, now())
+
+
+def failure_summary(root):
+    file = Path(root) / spec.STATE_DIR / 'failures.jsonl'
+    rows = [json.loads(l) for l in file.read_text().splitlines()] if file.is_file() else []
+    return {f: {'failed_attempts': sum(r['family'] == f for r in rows),
+                'failed_days': sorted({r['day'] for r in rows if r['family'] == f}),
+                'errors': [r for r in rows if r['family'] == f]} for f in FAMILIES}
+
+
+def call_order(day):
+    days = sorted(set(planned('dev', 'ab') + planned('test', 'ab')))
+    return FAMILIES if days.index(day) % 2 == 0 else FAMILIES[::-1]
 
 
 def status(root, budget, clock=now):
@@ -254,7 +271,8 @@ def status(root, budget, clock=now):
             'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head(),
             'memory_floor': evidence['floor'], 'probe_evidence_hash': evidence['evidence_hash'],
             'calls_used_today': {f: budget.used('model:' + f, clock()) for f in FAMILIES},
-            'subscription_stops': {f: budget.model_stopped(f, clock()) for f in FAMILIES}}
+            'subscription_stops': {f: budget.model_stopped(f, clock()) for f in FAMILIES},
+            'failures': failure_summary(root)}
 
 
 def run_one(root, period, group, day, family, transport, client, ledger=None):
@@ -268,7 +286,12 @@ def run_one(root, period, group, day, family, transport, client, ledger=None):
         return run.checked(path, expected)
     if day not in planned_for(period, group, family):
         raise ReplayError('DAY_NOT_PLANNED')
-    value = run.decide(root, period, group, day, family, transport, client, expected, path)
+    try:
+        value = run.decide(root, period, group, day, family, transport, client, expected, path)
+    except ReplayError as error:
+        append_event(Path(root) / spec.STATE_DIR / 'failures.jsonl',
+                     {'family': family, 'period': period, 'group': group, 'day': day, 'error': error.code, 'at': iso(now())})
+        raise
     append_event(Path(root) / spec.STATE_DIR / 'trials.jsonl', dict(event='DAY_COMPLETED', period=period,
         group=group, day=day, family=family, config_hash=expected['config_hash'], decision_hash=value['decision_hash']))
     return value
@@ -290,6 +313,15 @@ def publish_pending(root, ledger, night):
                         value = parent.read_json(path)['decision_hash']
                         if public.get(key) != value:
                             pending[key] = value
+    # Include partial, invalid and usage-limited responses too, even when the
+    # day never produced a complete decision record.
+    for file in sorted((Path(root) / spec.STATE_DIR / 'transcripts').glob('*.json')):
+        value = json.loads(file.read_text())
+        if value.get('state') != 'INTENT' and 'raw' in value:
+            key = 'response:' + file.stem
+            digest = sha256_canonical({k: value[k] for k in ('raw', 'err', 'returncode')})
+            if public.get(key) != digest:
+                pending[key] = digest
     if not pending:
         return None
     digest = sha256_canonical(sorted(pending.items()))
@@ -316,7 +348,7 @@ def night(root, budget, transport, client, *, expected_commit, ledger=None):
             for group in (GROUPS if period == 'dev' else ('ab', 'cd')):
                 for index, day in enumerate(planned(period, group)):
                     # Alternating first model; each pair sees the exact same sealed context.
-                    order = FAMILIES if index % 2 == 0 else FAMILIES[::-1]
+                    order = call_order(day)
                     for family in order:
                         if family in unavailable or day not in planned_for(period, group, family):
                             continue
@@ -330,7 +362,7 @@ def night(root, budget, transport, client, *, expected_commit, ledger=None):
             if not all(complete(root, period, f) for f in FAMILIES):
                 publish_pending(root, ledger, tag)
                 return dict(status(root, budget), status='BLOCKED', subscription_stops=unavailable,
-                            failures=failures, reasons=['PERIOD_DECISIONS_INCOMPLETE'])
+                            failures=failure_summary(root), reasons=['PERIOD_DECISIONS_INCOMPLETE'])
             publish_pending(root, ledger, tag)
             score(root, period, transport)
     finally:
@@ -339,4 +371,4 @@ def night(root, budget, transport, client, *, expected_commit, ledger=None):
         except ReplayError:
             pass
     return {'status': 'DONE', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head(),
-            'failures': failures}
+            'failures': failure_summary(root)}

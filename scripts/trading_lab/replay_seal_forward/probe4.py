@@ -79,7 +79,9 @@ def grade(prereg, answers):
     items = prereg['questions']
     if set(answers) != {q['id'] for q in items} or not set(answers.values()) <= {'up', 'down'}:
         raise ReplayError('PROBE4_RESPONSE_INVALID')
-    r = prereg['rule']
+    r = prereg['criteria']
+    if r != rule(items):
+        raise ReplayError('PROBE4_RULE_CHANGED')
     correct = {q['id']: answers[q['id']] == ('up' if q['up'] else 'down') for q in items}
     by_window = {w: sum(correct[q['id']] for q in items if q['window'] == w) for w in r['window_thresholds']}
     pooled = sum(correct.values())
@@ -98,13 +100,17 @@ def preregister(directory, collector):
     bars, _ = md.stock_bars(collector, symbols, '2026-09-29T00:00:00Z', '2026-10-17T00:00:00Z')
     closes = {s: {b['t'][:10]: b['c'] for b in rows} for s, rows in bars.items()}
     items = questions(closes)
-    value = {'questions': items, 'rule': rule(items), 'prompt_sha256': hashlib.sha256(prompt(items).encode()).hexdigest(),
+    if any(sum(q['window'] == f'{a}..{b}' for q in items) < 10 for a, b in WINDOWS):
+        raise ReplayError('PROBE4_INSUFFICIENT_QUESTIONS')
+    value = {'questions': items, 'rule': rule(items)['text'], 'criteria': rule(items),
+             'prompt_sha256': hashlib.sha256(prompt(items).encode()).hexdigest(),
              'models': spec.spec()['models']['identities'], 'created_at': iso(now()),
              'source': 'Alpaca SIP raw daily closes (grant replay-data-collection-v1)'}
     atomic_json(target, value)
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     public = {'schema': 'replay-memory-probe4-v1', 'preregistration_sha256': digest, 'n_questions': len(items),
-              'windows': [f'{a}..{b}' for a, b in WINDOWS], 'rule': value['rule'], 'prompt_sha256': value['prompt_sha256'],
+              'windows': [f'{a}..{b}' for a, b in WINDOWS], 'rule': value['rule'], 'criteria': value['criteria'],
+              'prompt_sha256': value['prompt_sha256'],
               'models': value['models'], 'note': 'Digest only; questions and answers stay private until graded.'}
     atomic_json(ARTIFACT, public)
     return public
@@ -122,13 +128,13 @@ def committed_preregistration(directory):
 def ask(directory, family, budget, *, runner=subprocess.run, clock=now):
     prereg, _ = committed_preregistration(directory)
     target = Path(directory) / f'probe4-answers-{family}.json'
-    if target.exists():
+    if target.exists() or target.with_suffix('.intent').exists():
         raise ReplayError('PROBE4_ALREADY_ASKED')
     text, shape = prompt(prereg['questions']), schema(prereg['questions'])
     if hashlib.sha256(text.encode()).hexdigest() != prereg['prompt_sha256']:
         raise ReplayError('PROBE4_PROMPT_HASH_MISMATCH')
     at = clock()
-    budget.reserve('probe:' + family, 1, at)
+    budget.reserve_probe(family, 150, at)
     atomic_json(target.with_suffix('.intent'), {'at': iso(at), 'family': family})
     with tempfile.TemporaryDirectory(prefix='probe4-') as private:
         cwd = Path(private) / 'empty'
@@ -139,9 +145,22 @@ def ask(directory, family, budget, *, runner=subprocess.run, clock=now):
             'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_THREAD_ID', 'OPENAI_API_KEY',
             'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL')}
         env.update(CLAUDE_CODE_DISABLE_AUTO_MEMORY='1', CLAUDE_CODE_DISABLE_CLAUDE_MDS='1', CLAUDE_CODE_SIMPLE='1')
-        result = runner(models.argv(family, shape, schema_file), input=text, text=True, capture_output=True,
-                        cwd=str(cwd), env=env, timeout=900)
-    output, reported = models.decode(result.stdout or '', result.stderr or '', result.returncode, family, shape)
+        try:
+            result = runner(models.argv(family, shape, schema_file), input=text, text=True, capture_output=True,
+                            cwd=str(cwd), env=env, timeout=900)
+        except (subprocess.TimeoutExpired, OSError):
+            raise ReplayError('CALL_OUTCOME_UNKNOWN') from None
+    # Preserve an unsuccessful/uncertain call too. No second probe after inspecting a response.
+    atomic_json(target.with_suffix('.response'), {'raw': result.stdout or '', 'err': result.stderr or '',
+                                                 'returncode': result.returncode, 'at': iso(at)})
+    try:
+        output, reported = models.decode(result.stdout or '', result.stderr or '', result.returncode, family, shape)
+    except ReplayError as error:
+        if error.code == 'MODEL_USAGE_LIMIT':
+            budget.stop_model(family, at)
+        elif error.code == 'API_CREDIT_EXHAUSTED':
+            budget.credit_stop(at)
+        raise
     value = {'model': spec.spec()['models']['identities'][family], 'reported': reported, 'at': iso(at),
              'prompt_sha256': prereg['prompt_sha256'], 'answers': output, 'raw': result.stdout}
     atomic_json(target, value)
@@ -175,6 +194,8 @@ def main(argv=None):
     parser.add_argument('--alpaca-env')
     args = parser.parse_args(argv)
     try:
+        from scripts.trading_lab.replay_bench.grant import Grant
+        Grant(args.authorization or os.environ.get('REPLAY_AUTHORIZATION')).check()
         if args.command == 'preregister':
             from .collect import Collector, Grants
             collector = Collector(Grants(args.collection_grant, args.authorization), Budget(Path(args.data_root) / 'collector'),

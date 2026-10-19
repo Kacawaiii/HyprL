@@ -75,7 +75,7 @@ def label_universe_day(day, universe_bars, anchors, costs, *, last_day=LAST_SESS
     rows = {a: (md.crypto_rows if a in sn.CRYPTO else md.session_rows)(universe_bars.get(a, []))
             for a in sn.UNIVERSE + sn.BENCHMARKS}
     entry_at = session.open_at + timedelta(seconds=30)
-    crypto_start = crypto_entry or instant(day + 'T13:31:00Z')
+    crypto_start = crypto_entry or T + timedelta(minutes=15)
     if entry_at <= T or crypto_start <= T:
         raise ReplayError('ENTRY_NOT_AFTER_DECISION', day)
     entry_anchor = entry_at.strftime('%H:%M:%S')
@@ -115,9 +115,10 @@ def label_universe_day(day, universe_bars, anchors, costs, *, last_day=LAST_SESS
                 spy_day = {x['bar_open_at'].date().isoformat(): x for x in rows['SPY']}
                 first, last = day, following[4].session_date
                 if all(k in d for d in (by_day, spy_day) for k in (first, last)):
-                    ra = by_day[last]['close'] / by_day[first]['open'] - 1
-                    rs = spy_day[last]['close'] / spy_day[first]['open'] - 1
-                    cell['5d'] = {'rel': ra - rs, 'abs': ra}
+                    if entry_bars.get(asset) and entry_bars.get('SPY'):
+                        ra = by_day[last]['close'] / entry_bars[asset]['p'] - 1
+                        rs = spy_day[last]['close'] / entry_bars['SPY']['p'] - 1
+                        cell['5d'] = {'rel': ra - rs, 'abs': ra}
         out[asset] = cell
     out['_spy'] = {'1d': spy_1d}
     return out
@@ -149,24 +150,27 @@ def baselines_universe(day, cells, horizon, seed):
     return out
 
 
-def label_news_view(view, day, bars, costs, spy_rows, *, horizon=None, signed=None):
+def label_news_view(view, day, bars, costs, spy_rows, *, horizon=None, signed=None,
+                    decision_at=None, entry_prices=None, last_day=LAST_SESSION):
     """c/d: enter at the decision session's open, exit at the close of session h; SPY over the same sessions."""
     h = horizon or view['holding_sessions']
-    T = instant(day + 'T12:00:00Z')
+    T = decision_at or instant(day + 'T12:00:00Z')
     rows = md.session_rows(bars.get(view['symbol'], []))
     stats = daily_stats(rows, T)
     following = md.sessions(day, (instant(day + 'T00:00:00Z') + timedelta(days=21)).date().isoformat())
     if stats is None or len(following) < h:
         return {'state': 'UNLABELED'}
     last = following[h - 1].session_date
-    if last > LAST_SESSION:
+    if last > last_day:
         return {'state': 'PENDING', 'exit_session': last}
     by_day = {r['bar_open_at'].date().isoformat(): r for r in rows}
     spy = {r['bar_open_at'].date().isoformat(): r for r in spy_rows}
     if not all(k in d for d in (by_day, spy) for k in (day, last)):
         return {'state': 'UNLABELED'}
-    ra = by_day[last]['close'] / by_day[day]['open'] - 1
-    rs = spy[last]['close'] / spy[day]['open'] - 1
+    entry, spy_entry = ((entry_prices[view['symbol']], entry_prices['SPY']) if entry_prices else
+                        (by_day[day]['open'], spy[day]['open']))
+    ra = by_day[last]['close'] / entry - 1
+    rs = spy[last]['close'] / spy_entry - 1
     if signed is None:
         signed = 1 if view['view'] == 'UP' else -1
     cost = 2 * (costs['fee_per_side'] + tier(stats['dollar_volume'], costs))
@@ -175,7 +179,7 @@ def label_news_view(view, day, bars, costs, spy_rows, *, horizon=None, signed=No
     return result
 
 
-def marked_path(day, asset, rows, spy_rows, horizon, signed, cost):
+def marked_path(day, asset, rows, spy_rows, horizon, signed, cost, *, entry_prices=None):
     """Daily changes of asset minus SPY, on fixed entry notional, with entry/exit costs.
 
     Returns (exit session, daily P&L). No outcome at the next close is booked on the decision day.
@@ -189,7 +193,8 @@ def marked_path(day, asset, rows, spy_rows, horizon, signed, cost):
     days = [s.session_date for s in following]
     if any(d not in table for d in days for table in (prices, spy)):
         raise ReplayError('INCOMPLETE_MARK_PATH', asset)
-    entry, spy_entry = prices[day]['open'], spy[day]['open']
+    entry, spy_entry = ((entry_prices[asset], entry_prices['SPY']) if entry_prices else
+                        (prices[day]['open'], spy[day]['open']))
     previous = 0.0
     path = {}
     for index, d in enumerate(days):
@@ -199,8 +204,8 @@ def marked_path(day, asset, rows, spy_rows, horizon, signed, cost):
     return days[-1], path
 
 
-def crypto_path(day, asset, anchors, signed, cost):
-    start = instant(day + 'T13:31:00Z')
+def crypto_path(day, asset, anchors, signed, cost, *, decision_at=None):
+    start = (decision_at or instant(day + 'T12:00:00Z')) + timedelta(minutes=15)
     middle = (start + timedelta(days=1)).replace(hour=0, minute=0)
     end = start + timedelta(days=1)
     a, m, b = (anchors.crypto(at).get(asset) for at in (start, middle, end))

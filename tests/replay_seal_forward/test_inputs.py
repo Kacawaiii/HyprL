@@ -71,7 +71,10 @@ def test_strict_news_updated_before_T_and_creation_fields_only():
     assert inputs.news_at([dict(row, updated_at=iso(T))], T) == []
     assert inputs.news_at([dict(row, updated_at=iso(T + timedelta(minutes=5)))], T) == []
     assert inputs.news_at([dict(row, created_at=iso(T), updated_at=iso(T))], T) == []
-    assert inputs.news_at([dict(row, updated_at=None)], T)[0]['created_at'] == row['created_at']
+    with pytest.raises(ReplayError, match='NEWS_EDIT_CLOCK_MISSING'):
+        inputs.news_at([dict(row, updated_at=None)], T)
+    with pytest.raises(ReplayError, match='NEWS_EDIT_CLOCK_INVALID'):
+        inputs.news_at([dict(row, updated_at=iso(T-timedelta(hours=2)))], T)
 
 
 def test_raw_timestamps_completed_intervals_and_200_50_boundaries(tmp_path):
@@ -128,6 +131,30 @@ def test_missing_primary_archive_abstains_without_deleting_candidate(tmp_path):
     assert not inputs.primary_filter([{'symbol': 'SMLL', 'news_ids': [1]}], ctx)[0]
 
 
+def test_vendor_asset_UUIDs_are_identities_and_symbol_ambiguity_stays_rejected(tmp_path):
+    data, index = fixture(tmp_path)
+    objects = json.loads(index.read_text())['objects']
+    row = dict(data.assets['SMLL'], id='second-synthetic-uuid')
+    # Same response receipt, different UUID, same metadata: valid vendor shape.
+    original = dict(data.assets['SMLL'])
+    objects = [o for o in objects if not (o['path'] == '/v2/assets' and o['params']['status'] == 'inactive')]
+    add(tmp_path, objects, 'https://paper-api.alpaca.markets', '/v2/assets',
+        {'status': 'inactive', 'asset_class': 'us_equity'}, [original, row])
+    index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
+    result = archive.Archive(tmp_path, index)
+    assert result.assets['SMLL']['class'] == 'us_equity'
+    assert not result.ambiguous_assets
+    row = dict(row, id='third-synthetic-uuid', shortable=False)
+    objects = [o for o in objects if not (o['path'] == '/v2/assets' and o['params']['status'] == 'inactive')]
+    add(tmp_path, objects, 'https://paper-api.alpaca.markets', '/v2/assets',
+        {'status': 'inactive', 'asset_class': 'us_equity'}, [original, row])
+    index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
+    result = archive.Archive(tmp_path, index)
+    assert result.ambiguous_assets == {'SMLL'}
+    with pytest.raises(ReplayError, match='CANDIDATE_ASSET_IDENTITY_AMBIGUOUS'):
+        inputs.build(result, T, 'a'*64)
+
+
 def test_no_partial_manifest_on_missing_archive_and_no_rebuild(tmp_path, monkeypatch):
     monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
     with pytest.raises(ReplayError, match='VENDOR_REQUEST_INDEX_MISSING'):
@@ -159,9 +186,9 @@ def test_long_weekend_requires_news_since_actual_previous_close(tmp_path):
 def test_live_snapshot_freezes_real_receipt_cutoff_and_refuses_tampering(tmp_path, monkeypatch):
     from scripts.trading_lab.replay_seal_forward import forward
     from scripts.trading_lab.replay_bench import run as parent
-    at = instant('2026-10-19T13:05:00Z')
+    at = instant('2026-10-20T13:05:00Z')
     data, index = fixture(tmp_path, at)
-    target = tmp_path/'live-archive/2026-10-19/archive_index.json'
+    target = tmp_path/'live-archive/2026-10-20/archive_index.json'
     target.parent.mkdir(parents=True)
     target.write_bytes(index.read_bytes())
     import shutil
@@ -172,7 +199,7 @@ def test_live_snapshot_freezes_real_receipt_cutoff_and_refuses_tampering(tmp_pat
     assert first['provenance'] == 'LIVE_FORWARD'
     assert all(c['provenance'] == 'LIVE_FORWARD' for c in first['contexts'].values())
     assert forward.snapshot(tmp_path, at+timedelta(minutes=1)) == first
-    path = forward.directory(tmp_path, '2026-10-19')/'snapshot.json.gz'
+    path = forward.directory(tmp_path, '2026-10-20')/'snapshot.json.gz'
     value = parent.read_json(path); value['contexts']['ab']['universe'] = []
     parent.write_json(path, value)
     with pytest.raises(ReplayError, match='FORWARD_SNAPSHOT_HASH_MISMATCH'):
@@ -228,7 +255,7 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
     # Audit items 6, 7 and 10: EXPLORATORY label, declared primary endpoint, failure counts.
     assert result['evidence_class'] == 'EXPLORATORY'
     assert result['primary_endpoint']['panel'] == 'a_v1_as_live:1d' and result['primary_endpoint']['verdict'] == 'NO_WINNER'
-    assert result['failures'] == {f: {'failed_or_retried_stages': 0, 'missing_planned_days': 0} for f in ex.FAMILIES}
+    assert all(r['failed_or_retried_stages'] == r['missing_planned_days'] == r['failed_attempts'] == 0 for r in result['failures'].values())
     table = (ex.result_path(tmp_path, 'dev').with_suffix('.md')).read_text()
     assert 'EXPLORATORY' in table and 'No winner' in table and 'Failures' in table
     for family in ex.FAMILIES:

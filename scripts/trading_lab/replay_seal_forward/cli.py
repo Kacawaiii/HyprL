@@ -43,6 +43,7 @@ def progress_report(root, result):
                         value['provenance'] != forward.PROVENANCE):
                     valid = False
                     break
+                forward.check_record(root, path.parent.name, family, value, sealed, frozen)
             if valid:
                 done = True
                 break
@@ -122,7 +123,7 @@ def main(argv=None):
                     from .score import score
                     result = score(root, args.period, transport)
                 else:
-                    index = root / 'live-archive' / 'outcomes_index.json'
+                    index = root / 'live-archive' / 'outcome-cache' / 'archive_index.json'
                     if not index.is_file():
                         raise ReplayError('LIVE_OUTCOME_REQUEST_INDEX_MISSING')
                     from .archive import Archive
@@ -138,6 +139,7 @@ def main(argv=None):
     except (ReplayError, FileNotFoundError, ValueError, KeyError, TypeError) as error:
         result = {'status': 'BLOCKED', 'error': error.code if isinstance(error, ReplayError) else 'INVALID_OR_MISSING_INPUT'}
         if root is not None:
+            result['failures'] = ex.failure_summary(root)
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)
             if args.command in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
                 progress_report(root, result)

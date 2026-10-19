@@ -7,6 +7,7 @@ path for Opus (grant replay-bench-api-v1) exists but is off unless explicitly en
 """
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -47,6 +48,8 @@ class DuelBudget(Budget):
             key = 'model:' + family
             if day.get(key, 0) >= min(limit, night_limit, NIGHT_CAP):
                 raise ReplayError('BUDGET_EXHAUSTED')
+            if family == 'gpt' and day.get(key, 0) + day.get('probe:gpt', 0) >= min(limit, night_limit, NIGHT_CAP):
+                raise ReplayError('BUDGET_EXHAUSTED')
             if family == 'opus':
                 # Inside the 150/day grant across night, forward and probe; keep the forward call.
                 reserve = 1 if forward_session(at) and not day.get('forward:model:opus') else 0
@@ -58,6 +61,23 @@ class DuelBudget(Budget):
         atomic_json(self.path.parent / CREDIT_STOP, {'state': 'API_CREDIT_EXHAUSTED', 'at': iso(at),
                                                      'note': 'hard stop; the operator removes this file'})
         self.stop_model('opus', at)
+
+    def reserve_probe(self, family, limit, at):
+        if family not in ('opus', 'gpt'):
+            raise ReplayError('MODEL_NOT_ALLOWED')
+        if family == 'opus' and (self.path.parent / CREDIT_STOP).exists():
+            raise ReplayError('API_CREDIT_EXHAUSTED')
+        with self._locked() as data:
+            day = data.setdefault(iso(at)[:10], {})
+            if day.get('stopped:' + family) or family == 'opus' and day.get('stopped'):
+                raise ReplayError('MODEL_USAGE_LIMIT')
+            if day.get('probe:' + family, 0):
+                raise ReplayError('PROBE4_ALREADY_ASKED')
+            if family == 'opus' and sum(day.get(k, 0) for k in OPUS_DAY_KEYS) >= limit:
+                raise ReplayError('BUDGET_EXHAUSTED')
+            if family == 'gpt' and day.get('model:gpt', 0) + day.get('probe:gpt', 0) >= limit:
+                raise ReplayError('BUDGET_EXHAUSTED')
+            day['probe:' + family] = 1
 
     def stop_model(self, family, at):
         with self._locked() as data:
@@ -171,16 +191,19 @@ class ApiBilling:
     total_cost_usd in a durable ledger before every call: $60 for the replay, $10 per month forward.
     """
     def __init__(self, grant_file, ledger_file, *, clock=now):
+        self.grant_file = Path(grant_file)
         self.grant = json.loads(Path(grant_file).read_text())
         if self.grant.get('id') != 'replay-bench-api-v1':
             raise ReplayError('API_GRANT_INVALID')
+        if sha256_canonical(self.grant) != spec.spec()['data_collection']['api_grant_sha256']:
+            raise ReplayError('API_GRANT_HASH_MISMATCH')
         self.ledger, self.clock = Path(ledger_file), clock
-        if not now() < instant(self.grant['expires'] + 'T23:59:59Z'):
+        if not self.clock() < instant(self.grant['expires'] + 'T23:59:59Z'):
             raise ReplayError('API_GRANT_EXPIRED')
 
     def key(self):
         file = Path(self.grant['claude_api']['key_file'])
-        if not file.is_file():
+        if not file.is_file() or file.stat().st_mode & 0o077:
             raise ReplayError('API_KEY_FILE_MISSING')
         values = dict(l.split('=', 1) for l in file.read_text().splitlines() if '=' in l and not l.startswith('#'))
         if not values.get('ANTHROPIC_API_KEY', '').strip():
@@ -189,21 +212,46 @@ class ApiBilling:
 
     def spent(self, scope, month=None):
         rows = json.loads(self.ledger.read_text()) if self.ledger.is_file() else []
-        return sum(r['cost_usd'] for r in rows if r['scope'] == scope and (month is None or r['at'][:7] == month))
+        return sum(r.get('cost_usd', 0) for r in rows if r['scope'] == scope and (month is None or r['at'][:7] == month))
 
     def check(self, scope):
-        cap = self.grant['claude_api']['replay_cap_usd' if scope == 'replay' else 'forward_duel_cap_usd_per_month']
-        if self.spent(scope, None if scope == 'replay' else iso(self.clock())[:7]) >= cap:
-            raise ReplayError('API_DOLLAR_CAP_REACHED')
-
-    def record(self, scope, raw):
-        try:
-            cost = float(json.loads(raw).get('total_cost_usd') or 0)
-        except (ValueError, AttributeError):
-            cost = 0.0
+        if scope not in ('replay', 'forward'):
+            raise ReplayError('API_SCOPE_INVALID')
+        if json.loads(self.grant_file.read_text()) != self.grant:
+            raise ReplayError('API_GRANT_CHANGED')
+        if self.clock() >= instant(self.grant['expires'] + 'T23:59:59Z'):
+            raise ReplayError('API_GRANT_EXPIRED')
         rows = json.loads(self.ledger.read_text()) if self.ledger.is_file() else []
-        rows.append({'scope': scope, 'cost_usd': cost, 'at': iso(self.clock())})
+        if any(r.get('state') in ('INTENT', 'UNKNOWN') for r in rows):
+            raise ReplayError('API_SPEND_UNKNOWN')
+        cap = self.grant['claude_api']['replay_cap_usd' if scope == 'replay' else 'forward_duel_cap_usd_per_month']
+        remaining = cap - self.spent(scope, None if scope == 'replay' else iso(self.clock())[:7])
+        if remaining <= 0:
+            raise ReplayError('API_DOLLAR_CAP_REACHED')
+        return remaining
+
+    def begin(self, scope, identity):
+        remaining = self.check(scope)
+        rows = json.loads(self.ledger.read_text()) if self.ledger.is_file() else []
+        rows.append({'scope': scope, 'identity': identity, 'state': 'INTENT', 'at': iso(self.clock())})
         atomic_json(self.ledger, rows)
+        return remaining
+
+    def record(self, scope, identity, raw, *, credit_stop=False):
+        try:
+            cost = float(json.loads(raw)['total_cost_usd'])
+            if not math.isfinite(cost) or cost < 0:
+                raise ValueError
+        except (ValueError, TypeError, KeyError, AttributeError):
+            cost = 0.0 if credit_stop else None
+        rows = json.loads(self.ledger.read_text()) if self.ledger.is_file() else []
+        row = next(r for r in rows if r.get('identity') == identity and r['scope'] == scope)
+        row.update(state='KNOWN' if cost is not None else 'UNKNOWN')
+        if cost is not None:
+            row['cost_usd'] = cost
+        atomic_json(self.ledger, rows)
+        if cost is None:
+            raise ReplayError('API_SPEND_UNKNOWN')
 
 
 def api_billing(root):
@@ -252,6 +300,8 @@ class Models:
             self.billing.check(self.scope)
             key = self.billing.key()
         self.budget.reserve_model(family, limit, at)
+        if api:
+            api_remaining = self.billing.begin(self.scope, identity)
         record = {'state': 'INTENT', 'family': family, 'at': iso(at), 'tag': tag,
                   'spec_hash': spec.SPEC_HASH, 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()}
         atomic_json(path, record)
@@ -269,16 +319,28 @@ class Models:
             if api:
                 env['ANTHROPIC_API_KEY'] = key
             try:
-                result = self.runner(argv(family, schema, schema_file), input=prompt, text=True, capture_output=True,
+                args = argv(family, schema, schema_file)
+                if api:
+                    args += ['--max-budget-usd', str(api_remaining)]
+                result = self.runner(args, input=prompt, text=True, capture_output=True,
                                      cwd=str(cwd), env=env, timeout=min(timeout, remaining - 1))
             except (subprocess.TimeoutExpired, OSError):
                 raise ReplayError('CALL_OUTCOME_UNKNOWN', identity) from None
         record.update(state='RECEIVED', raw=result.stdout or '', err=result.stderr or '', returncode=result.returncode,
                       billing='api' if api else 'subscription')
         atomic_json(path, record)
+        try:
+            value = self._decode(record, family, prompt, schema, identity)
+        except ReplayError as error:
+            if api:
+                try:
+                    self.billing.record(self.scope, identity, record['raw'], credit_stop=error.code == 'API_CREDIT_EXHAUSTED')
+                except ReplayError:
+                    pass
+            raise
         if api:
-            self.billing.record(self.scope, record['raw'])
-        return self._decode(record, family, prompt, schema, identity)
+            self.billing.record(self.scope, identity, record['raw'])
+        return value
 
     def _decode(self, record, family, prompt, schema, identity):
         try:

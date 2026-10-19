@@ -1,21 +1,17 @@
 """Anonymized control: identities, calendar dates and price levels are coded.
 
 Fixes the parent mask: headline `symbols` are coded, news ids are renumbered (vendor ids are
-sequential and date the story), every timestamp is moved onto a neutral epoch that keeps
-weekdays and relative day numbers, SPY/QQQ levels are rescaled, executives and products tied
+sequential and date the story), every timestamp becomes a relative day number and UTC time, SPY/QQQ levels are rescaled, executives and products tied
 to a ticker are masked, and ticker masks are case-sensitive and word-bounded so that ordinary
 words such as "cost", "cat" or "link" survive.
 """
-from datetime import timedelta
 import random
 import re
 
 from scripts.trading_lab.trader_agent.news_queries import QUERIES
 from scripts.trading_lab.replay_bench import marketdata as md, snapshot as sn
-from scripts.trading_lab.replay_bench.grant import instant, iso
+from scripts.trading_lab.replay_bench.grant import instant
 
-# Day 0 of the neutral calendar is Monday 2000-01-03; the decision falls in the second week.
-EPOCH = instant('2000-01-03T00:00:00Z')
 PEOPLE_AND_PRODUCTS = {
     'AAPL': ['Tim Cook', 'iPhone', 'iPad', 'MacBook', 'Vision Pro', 'App Store', 'Apple Intelligence'],
     'MSFT': ['Satya Nadella', 'Nadella', 'Copilot', 'Xbox', 'LinkedIn', 'Activision'],
@@ -55,25 +51,32 @@ def mask_patterns(codes):
     """Case-sensitive, word-bounded; longer names first so 'Meta Platforms' wins over 'Meta'."""
     names = []
     for asset, code in codes.items():
-        values = set(sn.ALIASES.get(asset, []) + PEOPLE_AND_PRODUCTS.get(asset, []))
-        values |= {asset, md.crypto_pair(asset), sn.alpaca_news_symbol(asset)}
+        tickers = {asset, md.crypto_pair(asset), sn.alpaca_news_symbol(asset), asset.removesuffix('-USD')}
+        values = {v for v in sn.ALIASES.get(asset, []) + PEOPLE_AND_PRODUCTS.get(asset, [])
+                  if v.upper() not in tickers}
         query = QUERIES.get(asset, '').strip('"')
-        if query and asset not in sn.ETFS:
+        if query and asset not in sn.ETFS and query.upper() not in tickers:
             values.add(query)
-        names += [(v, code) for v in values if v]
+        names += [(v, code, re.I) for v in values if v]
+        names += [(v, code, 0) for v in tickers if v]
     names.sort(key=lambda item: (-len(item[0]), item[0]))
-    return [(re.compile(r'(?<![A-Za-z0-9])\$?' + re.escape(name) + r'(?![A-Za-z0-9])'), code) for name, code in names]
+    return [(re.compile(r'(?<![\w])\$?' + re.escape(name) + r'(?![\w])', flags), code)
+            for name, code, flags in names]
 
 
-def shift(value, delta):
+def relative_date(value, day):
+    at = instant(value if 'T' in value else value + 'T00:00:00Z')
+    label = f'DAY{(at.date() - day.date()).days:+d}'
+    return label + (at.strftime(' %H:%M:%S UTC') if 'T' in value else '')
+
+
+def shift(value, day):
     if isinstance(value, dict):
-        return {k: shift(v, delta) for k, v in value.items()}
+        return {k: shift(v, day) for k, v in value.items()}
     if isinstance(value, list):
-        return [shift(v, delta) for v in value]
+        return [shift(v, day) for v in value]
     if isinstance(value, str) and DATE.match(value):
-        if 'T' in value:
-            return iso(instant(value) + delta)
-        return (instant(value + 'T00:00:00Z') + delta).date().isoformat()
+        return relative_date(value, day)
     return value
 
 
@@ -88,16 +91,20 @@ def anonymize(sealed, seed):
              **{a: f'COIN_{i + 1}' for i, a in enumerate(coins)}}
     patterns = mask_patterns(codes)
 
+    day = instant(context['decision_time']).replace(hour=0, minute=0, second=0, microsecond=0)
+
     def mask(text):
         for pattern, code in patterns:
             text = pattern.sub(code, text)
+        text = re.sub(r'\b\d{4}-\d{2}-\d{2}\b', lambda m: relative_date(m[0], day), text)
+        # Month/day and quarter/year labels can also reveal the real calendar.
+        text = re.sub(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|'
+                      r'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2}(?:,?\s+\d{4})?\b',
+                      'CALENDAR_DATE', text, flags=re.I)
+        text = re.sub(r'\b(?:Q[1-4]\s*)?(?:19|20)\d{2}\b', 'CALENDAR_PERIOD', text)
+        text = re.sub(r'\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b', 'CALENDAR_DATE', text)
         return text
 
-    T = instant(context['decision_time'])
-    day = T.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Whole weeks keep weekdays and session spacing; the year and month disappear.
-    weeks = (day - EPOCH).days // 7 - 1
-    delta = -timedelta(weeks=weeks)
     others, news_ids = {}, {}
 
     def symbol(s):
@@ -125,7 +132,7 @@ def anonymize(sealed, seed):
              'symbols': [symbol(s) for s in i.get('symbols', [])], 'published_at': i['published_at'],
              'url': f"https://news.invalid/{news_ids[i['news_id']]}"} for i in group['items']]}
     anon = {k: v for k, v in context.items() if k not in ('provenance', 'limitations')}
-    anon.update(universe=[codes[a] for a in context['universe']], prices=prices, headlines=headlines,
+    anon.update(schema='research-context-v2', universe=[codes[a] for a in context['universe']], prices=prices, headlines=headlines,
                 exclusions=[dict(e, asset=codes.get(e['asset'], e['asset'])) for e in context['exclusions']],
                 limitations=NEUTRAL_LIMITATIONS)
-    return shift(anon, delta), {code: asset for asset, code in codes.items()}
+    return shift(anon, day), {code: asset for asset, code in codes.items()}

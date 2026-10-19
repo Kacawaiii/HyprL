@@ -26,7 +26,9 @@ def news_at(rows, T):
     out = []
     for row in rows:
         created = instant(row['created_at'])
-        updated = instant(row.get('updated_at') or row['created_at'])
+        if not row.get('updated_at'):
+            raise ReplayError('NEWS_EDIT_CLOCK_MISSING')
+        updated = instant(row['updated_at'])
         if updated < created:
             raise ReplayError('NEWS_EDIT_CLOCK_INVALID')
         # Operator decision 2026-10-18: both clocks strictly before T, no edit tolerance.
@@ -122,6 +124,8 @@ def build(archive, T, method_hash):
     candidates, rejections = [], {}
     keywords = spec.spec()['variants']['c_news_small_mid']['negative_keywords']
     for symbol, news in sorted(by_symbol.items()):
+        if symbol in archive.ambiguous_assets:
+            raise ReplayError('CANDIDATE_ASSET_IDENTITY_AMBIGUOUS', symbol)
         asset = archive.assets.get(symbol)
         if asset is None:
             raise ReplayError('CANDIDATE_ASSET_METADATA_MISSING', symbol)

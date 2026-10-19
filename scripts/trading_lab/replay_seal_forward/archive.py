@@ -33,6 +33,8 @@ class Archive:
         if self.index.get('schema') != 'replay-vendor-request-index-v1':
             raise ReplayError('ARCHIVE_INDEX_INVALID')
         self.bars, self.news, self.filings, self.assets = {}, {}, {}, {}
+        asset_records = {}
+        self.ambiguous_assets = set()
         self.requests, self.objects, self.asset_statuses = [], {}, set()
         self.news_windows = []
         self.filing_symbols = set()
@@ -48,7 +50,7 @@ class Archive:
                 raise ReplayError('ARCHIVE_OBJECT_HASH_MISMATCH')
             entry = json.loads(gzip.decompress(file.read_bytes()))
             received = instant(entry['received_at'])
-            if before is not None and received > before:
+            if before is not None and received >= before:
                 raise ReplayError('LIVE_ARCHIVE_RECEIVED_AFTER_T')
             body = entry['body']
             self.objects[key] = item['sha256']
@@ -59,7 +61,8 @@ class Archive:
                     target[identity] = value
                     revisions[kind, identity] = received
                 elif received == prior and target[identity] != value:
-                    raise ReplayError('ARCHIVE_REVISION_CONFLICT')
+                    raise ReplayError('ARCHIVE_REVISION_CONFLICT', {'kind': kind, 'identity': identity,
+                        'prior_sha256': spec.sha256_canonical(target[identity]), 'new_sha256': spec.sha256_canonical(value)})
             if origin == md.ALPACA and path in ('/v2/stocks/bars', '/v1beta3/crypto/us/bars'):
                 if params.get('timeframe') != '1Day':
                     continue
@@ -85,7 +88,7 @@ class Archive:
                 status = params.get('status', 'active')
                 self.asset_statuses.update(('active', 'inactive') if status == 'all' else (status,))
                 for row in body:
-                    put('assets', row['symbol'], row, self.assets)
+                    put('assets', row['id'], row, asset_records)
             elif origin == 'https://data.sec.gov' and path.startswith('/submissions/CIK'):
                 cik = path.removeprefix('/submissions/CIK').removesuffix('.json')
                 if body.get('cik') != cik or len(cik) != 10 or not cik.isdigit():
@@ -100,6 +103,18 @@ class Archive:
                     for form, accepted, accession in zip(*(recent.get(k, []) for k in keys)):
                         put('filings:' + symbol, accession, {'form': form, 'accession': accession,
                             'accepted_at': md.iso(md.acceptance_upper_bound(accepted))}, dest)
+        # Vendor asset identity is its UUID, not its symbol. Real inactive lists
+        # contain multiple UUIDs with identical metadata for the same ticker.
+        # Distinct metadata stay ambiguous; input selection must refuse them.
+        by_symbol = {}
+        for identity, row in sorted(asset_records.items()):
+            by_symbol.setdefault(row['symbol'], []).append(row)
+        for symbol, rows in by_symbol.items():
+            metadata = {spec.sha256_canonical({k: v for k, v in r.items() if k != 'id'}) for r in rows}
+            if len(metadata) != 1:
+                self.ambiguous_assets.add(symbol)
+            else:
+                self.assets[symbol] = rows[0]
         self.bars = {s: sorted(rows.values(), key=lambda r: r['t']) for s, rows in self.bars.items()}
 
     def require_news(self, start, end):

@@ -33,10 +33,12 @@ def receipt_path(root, kind, key):
 
 
 def _hash_only(hashes):
+    if not isinstance(hashes, dict) or not hashes:
+        raise ReplayError('COMMITMENT_NOT_HASH_ONLY')
     for name, value in hashes.items():
-        ok = isinstance(value, str) and (len(value) == 64 and set(value) <= HEX or value.startswith('FAILED:'))
-        if not ok or len(name) > 120:
-            raise ReplayError('COMMITMENT_NOT_HASH_ONLY', name)
+        ok = isinstance(value, str) and len(value) == 64 and set(value) <= HEX
+        if not ok or not isinstance(name, str) or len(name) > 120 or not name.replace(':', '').replace('_', '').replace('-', '').isalnum():
+            raise ReplayError('COMMITMENT_NOT_HASH_ONLY')
 
 
 class Ledger:
@@ -57,12 +59,20 @@ class Ledger:
         line = {'kind': kind, 'key': key, 'hashes': dict(sorted(hashes.items())), 'protocol_spec_hash': spec.SPEC_HASH}
         old = json.loads(path.read_text()) if path.is_file() else None
         if old:
+            if old['line'].get('protocol_spec_hash') != spec.SPEC_HASH:
+                raise ReplayError('COMMITMENT_PROTOCOL_MISMATCH')
             if old['line']['hashes'] != line['hashes']:
                 raise ReplayError('COMMITMENT_CONFLICT', kind + ':' + key)
             if old['state'] == 'PUBLISHED':
-                return old
+                verified = published(self.root, kind, key)
+                if verified is None:
+                    raise ReplayError('COMMITMENT_RECEIPT_INVALID')
+                return verified
         if self._git('rev-parse', '--abbrev-ref', 'HEAD') != BRANCH:
             raise ReplayError('LEDGER_WRONG_BRANCH')
+        changes = self._git('status', '--porcelain', '--untracked-files=all').splitlines()
+        if any(l[3:] != LEDGER_FILE for l in changes):
+            raise ReplayError('LEDGER_UNRELATED_CHANGES')
         if old:
             # Resume an interrupted publication with the very same line: never a second entry.
             line = old['line']
@@ -77,18 +87,25 @@ class Ledger:
                 stream.write(entry + '\n')
         if self._git('status', '--porcelain', '--', LEDGER_FILE):
             self._git('add', LEDGER_FILE)
-            self._git('commit', '-q', '-m', f'ledger: {kind} {key}', '-m', 'Hash-only commitment; no data.')
+            self._git('commit', '-q', '-m', f'ledger: {kind} {key}', '-m',
+                      'Hash-only commitment; no data.\n\nCo-Authored-By: Codex <codex@openai.com>')
         commit = self._git('rev-parse', 'HEAD')
         self._git('push', '-q', 'origin', BRANCH)
-        message = '\n'.join([f'Engagement HyprL {kind} {key} (hash uniquement)'] +
-                            [f'{name}: {value}' for name, value in sorted(hashes.items())][:12] +
-                            ([summary] if summary else []) +
-                            [f'ledger {BRANCH} @ {commit[:12]}, {len(hashes)} hash(es), ligne sha256 {sha256_canonical(line)[:16]}'])
-        result = self.runner([str(self.notify), CHANNEL], input=message, capture_output=True, text=True, timeout=60)
-        if result.returncode or (result.stdout or '').strip() != 'discord':
-            raise ReplayError('COMMITMENT_DISCORD_UNCONFIRMED')
+        header = f'Engagement HyprL {kind} {key}\nledger {BRANCH} @ {commit}\n'
+        messages, message = [], header
+        for name, value in sorted(hashes.items()):
+            item = f'{name}: {value}\n'
+            if len(message) + len(item) > 1800:
+                messages.append(message)
+                message = header
+            message += item
+        messages.append(message)
+        for message in messages:
+            result = self.runner([str(self.notify), CHANNEL], input=message, capture_output=True, text=True, timeout=40)
+            if result.returncode or (result.stdout or '').strip() != 'discord':
+                raise ReplayError('COMMITMENT_DISCORD_UNCONFIRMED')
         receipt = {'state': 'PUBLISHED', 'line': line, 'line_sha256': sha256_canonical(line), 'ledger_commit': commit,
-                   'route': 'discord', 'channel': CHANNEL, 'published_at': iso(self.clock())}
+                   'route': 'discord', 'channel': CHANNEL, 'published_at': iso(self.clock()), 'messages': len(messages)}
         atomic_json(path, receipt)
         return receipt
 
@@ -98,8 +115,23 @@ def published(root, kind, key):
     if not path.is_file():
         return None
     value = json.loads(path.read_text())
-    if value.get('state') != 'PUBLISHED' or value.get('line_sha256') != sha256_canonical(value['line']):
+    line = value.get('line', {})
+    if (value.get('state') != 'PUBLISHED' or value.get('line_sha256') != sha256_canonical(line) or
+            line.get('kind') != kind or line.get('key') != key or line.get('protocol_spec_hash') != spec.SPEC_HASH or
+            value.get('route') != 'discord' or value.get('channel') != CHANNEL):
         return None
+    _hash_only(line.get('hashes'))
+    if instant(value['published_at']) < instant(line['committed_at']):
+        return None
+    worktree = os.environ.get('REPLAY_LEDGER_WORKTREE')
+    if not worktree:
+        raise ReplayError('COMMITMENT_NOT_CONFIGURED')
+    ledger = Ledger(root, worktree, 'unused')
+    remote = 'refs/remotes/origin/' + BRANCH
+    ledger._git('merge-base', '--is-ancestor', value['ledger_commit'], remote)
+    lines = ledger._git('show', value['ledger_commit'] + ':' + LEDGER_FILE).splitlines()
+    if json.dumps(line, sort_keys=True, separators=(',', ':')) not in lines:
+        raise ReplayError('COMMITMENT_LEDGER_MISMATCH')
     return value
 
 
@@ -121,9 +153,9 @@ def published_hashes(root, kind, before):
     out = {}
     directory = receipts_dir(root) / kind
     for file in sorted(directory.glob('*.json')) if directory.is_dir() else []:
-        value = json.loads(file.read_text())
-        if (value.get('state') == 'PUBLISHED' and value.get('line_sha256') == sha256_canonical(value['line'])
-                and instant(value['published_at']) < before):
+        raw = json.loads(file.read_text())
+        value = published(root, kind, raw['line']['key'])
+        if value is not None and instant(value['published_at']) < before:
             out.update(value['line']['hashes'])
     return out
 

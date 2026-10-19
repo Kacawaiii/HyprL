@@ -13,7 +13,7 @@ def git(*args, cwd=None):
 
 
 @pytest.fixture
-def ledger(tmp_path):
+def ledger(tmp_path, monkeypatch):
     remote, work = tmp_path / 'ledger-remote.git', tmp_path / 'ledger-work'
     git('init', '-q', '--bare', str(remote))
     git('init', '-q', '-b', commitment.BRANCH, str(work))
@@ -29,5 +29,6 @@ def ledger(tmp_path):
     notify.write_text('#!/bin/sh\ncat >> ' + str(log) + '\necho "--" >> ' + str(log) + '\necho discord\n')
     os.chmod(notify, 0o700)
     value = commitment.Ledger(tmp_path, work, notify)
+    monkeypatch.setenv('REPLAY_LEDGER_WORKTREE', str(work))
     value.remote, value.log = remote, log
     return value

@@ -10,16 +10,22 @@ import tempfile
 
 def units(root, environment, cli_directory, commit):
     commands = {'hyprl-replay-bench': 'night', 'hyprl-research-forward': 'forward',
-                'hyprl-research-forward-score': 'forward-score', 'hyprl-research-forward-weekly': 'weekly'}
+                'hyprl-research-forward-score': 'forward-score', 'hyprl-research-forward-weekly': 'weekly',
+                'hyprl-research-forward-publish': 'forward-publish',
+                'hyprl-research-collect-live': 'live', 'hyprl-research-collect-outcomes': 'live-outcomes'}
     calendars = {'night': '*-*-* 00:30:00 UTC', 'forward': 'Mon..Fri *-*-* 09:05:00 America/New_York',
                  'forward-score': 'Mon..Fri *-*-* 16:45:00 America/New_York',
-                 'weekly': 'Fri *-*-* 17:15:00 America/New_York'}
+                 'weekly': 'Fri *-*-* 17:15:00 America/New_York',
+                 'forward-publish': 'Mon..Fri *-*-* 09:20:00 America/New_York',
+                 'live': 'Mon..Fri *-*-* 04..08:00/5:00 America/New_York\nOnCalendar=Mon..Fri *-*-* 09:00,03:00 America/New_York',
+                 'live-outcomes': 'Mon..Fri *-*-* 16:35:00 America/New_York'}
     values = {}
     for name, command in commands.items():
+        module = 'collect' if command in ('live', 'live-outcomes') else 'cli'
         service = '\n'.join(['[Unit]', 'Description=HyprL research seal/forward ' + command, '', '[Service]',
             'Type=exec', 'WorkingDirectory=' + str(root), 'EnvironmentFile=' + str(environment),
             'Environment=PATH=' + str(cli_directory) + ':/usr/bin:/bin',
-            'ExecStart=' + sys.executable + ' -m scripts.trading_lab.replay_seal_forward.cli ' + command + ' --expected-commit ' + commit,
+            'ExecStart=' + sys.executable + ' -m scripts.trading_lab.replay_seal_forward.' + module + ' ' + command + ' --expected-commit ' + commit,
             'UMask=0077', 'NoNewPrivileges=yes', 'Nice=15', 'CPUQuota=50%', 'MemoryMax=700M',
             'RuntimeMaxSec=' + ('18000' if command == 'night' else '600'), 'TimeoutStopSec=20',
             'KillMode=control-group', 'Restart=no', 'SuccessExitStatus=2', ''])
@@ -69,10 +75,10 @@ def main(argv=None):
                 expected = any('-m scripts.trading_lab.' + protocol + '.cli night --expected-commit ' in text
                                for protocol in ('replay_bench', 'replay_duel', 'replay_seal_forward'))
             elif name.endswith('.service'):
-                command = {'hyprl-research-forward.service': 'forward',
-                           'hyprl-research-forward-score.service': 'forward-score',
-                           'hyprl-research-forward-weekly.service': 'weekly'}[name]
-                expected = '-m scripts.trading_lab.replay_seal_forward.cli ' + command + ' --expected-commit ' in text
+                command = name.removesuffix('.service').removeprefix('hyprl-research-')
+                command = {'forward-weekly': 'weekly', 'collect-live': 'live', 'collect-outcomes': 'live-outcomes'}.get(command, command)
+                module = 'collect' if command in ('live', 'live-outcomes') else 'cli'
+                expected = '-m scripts.trading_lab.replay_seal_forward.' + module + ' ' + command + ' --expected-commit ' in text
             else:
                 expected = 'Unit=' + name.removesuffix('.timer') + '.service' in text
             if not expected:

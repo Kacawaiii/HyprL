@@ -78,12 +78,12 @@ class Outcomes:
 
     def get(self, group, day, asset, h):
         key = (group, day, asset, h)
-        if key in self.cache:
-            return self.cache[key]
         T = self.decision_time(day)
         crypto = asset in sn.CRYPTO
         # Refuse any designed fill at or before the decision (and its dispatch window).
         start = fills.entry(day, T, crypto)
+        if key in self.cache:
+            return self.cache[key]
         following = md.sessions(day, (T + timedelta(days=21)).date().isoformat())
         if (crypto and h != 1) or following[h - 1].session_date > self.last or (
                 crypto and (start + timedelta(days=1)).date().isoformat() > self.last):
@@ -107,7 +107,9 @@ class Outcomes:
             elif h == 1:
                 path = {day: rel}
             else:
-                _, path = lb.marked_path(day, asset, md.session_rows(self.universe.bars[asset]), spy_rows, h, 1, 0)
+                prices = self.entry_prices(day, start, [asset, 'SPY'])
+                _, path = lb.marked_path(day, asset, md.session_rows(self.universe.bars[asset]), spy_rows, h, 1, 0,
+                                         entry_prices=prices)
                 action = self.corporate_action([asset, 'SPY'], self.universe.bars, day, exit_day)
             result = {'rel': rel, 'cost': cell['cost'], 'vol': cell['stats']['vol_20d'], 'cluster': cell['cluster']}
         else:
@@ -117,12 +119,14 @@ class Outcomes:
                     self.last + 'T23:59:59Z')
             bars = self.news_bars[asset]
             spy_rows = md.session_rows(bars.get('SPY', []))
-            label = lb.label_news_view({'symbol': asset, 'holding_sessions': h, 'view': 'UP'}, day, bars, self.costs, spy_rows)
+            prices = self.entry_prices(day, start, [asset, 'SPY'])
+            label = lb.label_news_view({'symbol': asset, 'holding_sessions': h, 'view': 'UP'}, day, bars, self.costs,
+                                      spy_rows, decision_at=T, entry_prices=prices, last_day=self.last)
             if label['state'] != 'LABELED':
                 raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
             rows = md.session_rows(bars[asset])
             stats = lb.daily_stats(rows, T)
-            _, path = lb.marked_path(day, asset, rows, spy_rows, h, 1, 0)
+            _, path = lb.marked_path(day, asset, rows, spy_rows, h, 1, 0, entry_prices=prices)
             action = self.corporate_action([asset, 'SPY'], bars, day, exit_day)
             result = {'rel': label['rel'], 'cost': label['cost'], 'vol': stats['vol_20d'], 'cluster': 'smallmid'}
         if abs(sum(path.values()) - result['rel']) > 1e-9:
@@ -132,8 +136,16 @@ class Outcomes:
         self.cache[key] = result
         return result
 
+    def entry_prices(self, day, start, symbols):
+        fixed = list(sn.STOCKS + sn.ETFS + ('SPY',))
+        requested = fixed if set(symbols) <= set(fixed) else symbols
+        trades = self.anchors.stock(day, start.strftime('%H:%M:%S'), requested)
+        if any(not trades.get(s) for s in symbols):
+            raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
+        return {s: trades[s]['p'] for s in symbols}
 
-def signed_outcome(outcome, view, h, costs=None, flags=None):
+
+def signed_outcome(outcome, view, h, costs=None, flags=None, hedge_flags=None):
     """Net of both legs' costs and borrow on the short leg; excluded windows return (None, reason).
 
     The SPY-relative trade is long one leg and short the other: UP shorts SPY, DOWN shorts the
@@ -142,7 +154,8 @@ def signed_outcome(outcome, view, h, costs=None, flags=None):
     sign = 1 if view == 'UP' else -1
     if outcome.get('corporate_action'):
         return None, 'CORPORATE_ACTION_WINDOW'
-    if sign < 0 and fills.hard_to_borrow(flags):
+    short_flags = flags if sign < 0 else hedge_flags
+    if fills.hard_to_borrow(short_flags):
         return None, 'HARD_TO_BORROW'
     entry = outcome['cost'] + (fills.hedge_cost(costs) if costs else 0)
     borrow = fills.borrow_cost(outcome['entry_day'], outcome['exit_day']) if costs and 'entry_day' in outcome else 0
@@ -152,7 +165,8 @@ def signed_outcome(outcome, view, h, costs=None, flags=None):
     days = sorted(path)
     path[days[0]] -= entry / 2
     path[days[-1]] -= entry / 2 + borrow
-    checked = costs is not None and outcome.get('corporate_action') is not None
+    checked = (costs is not None and outcome.get('corporate_action') is not None and short_flags is not None and
+               all(short_flags.get(k) is True for k in ('shortable', 'easy_to_borrow')))
     return (result, path), ('NET_FULL_COSTS' if checked else 'GROSS_DIAGNOSTIC')
 
 
@@ -183,6 +197,10 @@ def record_key(family, period, group, day):
     return ':'.join((family, period, group, day))
 
 
+def within_test_cut(outcome, period, family):
+    return period != 'test' or instant(outcome['available_at']).date().isoformat() <= ex.test_cut()[family]
+
+
 def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
     root = Path(root)
     proof = ex.input_proof(root)
@@ -204,6 +222,18 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
     for (family, group, day), record in records.items():
         if public.get(record_key(family, period, group, day)) != record['decision_hash']:
             raise ReplayError('DECISION_HASH_NOT_PUBLISHED', record_key(family, period, group, day))
+        for call in record['calls'].values():
+            if 'transcript' in call:
+                value = json.loads((root / spec.STATE_DIR / 'transcripts' / (call['transcript'] + '.json')).read_text())
+                digest = sha256_canonical({k: value[k] for k in ('raw', 'err', 'returncode')})
+                if public.get('response:' + call['transcript']) != digest:
+                    raise ReplayError('RESPONSE_HASH_NOT_PUBLISHED')
+    if period == 'test':
+        for family in ex.FAMILIES:
+            marker = json.loads((root / spec.STATE_DIR / ('test_started_' + family + '.json')).read_text())
+            calls = [instant(c['called_at']) for (f, _, _), r in records.items() if f == family for c in r['calls'].values()]
+            commitment.require(root, 'replay-test-start', family, {'test_start_marker': sha256_canonical(marker)},
+                               min(calls) if calls else at)
     binding = {'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'decision_hashes': hashes,
                'input_proof_hash': sha256_canonical(proof), 'dev_result_hash': dev_hash}
     path = ex.result_path(root, period)
@@ -258,6 +288,9 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 if outcome is None:
                     counts[family][panel + ':censored_or_crypto5d'] += 1
                     continue
+                if not within_test_cut(outcome, period, family) or outcome.get('corporate_action') is True:
+                    counts[family][panel + ':excluded_cut_or_corporate_action'] += 1
+                    continue
                 forecasts[family].append(dict(panel=panel, session=day, asset=row['asset'], horizon=row['horizon'],
                                               p=row['p_outperform'], outperform=outcome['rel'] > 0,
                                               cluster=outcome['cluster'], available_at=outcome['available_at']))
@@ -276,7 +309,10 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 if outcome is None:
                     counts[family][panel + ':censored_trade'] += 1
                     continue
-                signed, label = signed_outcome(outcome, v['view'], h, costs, flags.get(asset))
+                if not within_test_cut(outcome, period, family):
+                    counts[family][panel + ':excluded_probe_cut_boundary'] += 1
+                    continue
+                signed, label = signed_outcome(outcome, v['view'], h, costs, flags.get(asset), flags.get('SPY'))
                 if signed is None:
                     counts[family][panel + ':excluded_' + label.lower()] += 1
                     continue
@@ -311,8 +347,9 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
     primary = stats.primary_endpoint(named['opus'], named['gpt'], rates.get(stats.PRIMARY['panel'], {}).get('p'))
     if period == 'dev':
         primary['base_rate_note'] = 'dev uses its own in-sample rate: diagnostic only, not the frozen test baseline'
-    failures = {f: {'failed_or_retried_stages': sum(v for k, v in counts[f].items() if k.startswith('failures:')),
-                    'missing_planned_days': 0} for f in ex.FAMILIES}
+    failures = {f: dict(ex.failure_summary(root)[f],
+                       failed_or_retried_stages=sum(v for k, v in counts[f].items() if k.startswith('failures:')),
+                       missing_planned_days=0) for f in ex.FAMILIES}
     result = dict(binding, status='SCORED', period=period, provenance=spec.PROVENANCE, evidence_class='EXPLORATORY',
                   evidence_note=spec.spec()['evidence']['replay'],
                   residual_risks=spec.spec()['residual_risks'], models=summaries, forecasts=forecasts,
