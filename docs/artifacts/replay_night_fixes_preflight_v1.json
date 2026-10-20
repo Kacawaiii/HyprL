@@ -1,0 +1,46 @@
+{
+  "checks": {
+    "apps_web": "unchanged",
+    "external_test_connections": "denied; synthetic loopback allowed",
+    "private_fomc_fixtures": "ran in place",
+    "replay_forward_suites": {
+      "passed": 204
+    },
+    "required_suite": {
+      "expected_absent_hyprl_api_skip": 1,
+      "passed": 505
+    }
+  },
+  "code_hash": "c1e3df485273a28a0687967cdce8b96e09a4c9118325d2109ae50c2e217bcccc",
+  "forward_history_check": {
+    "aapl_sessions": 450,
+    "authorized_requests": 54,
+    "first_aapl_session": "2025-01-02",
+    "full_pipeline_candidates_shown": 40,
+    "full_pipeline_fixed_present": 35,
+    "full_pipeline_requests": 53,
+    "last_aapl_session": "2026-10-19",
+    "model_calls": 0,
+    "publications": 0,
+    "session": "2026-10-20"
+  },
+  "freeze_hash": "28c7d7b38dc434729e5f12ad41402053e79db89bd0eb53ff54e28e4f34bbe652",
+  "input_contexts_unchanged": 128,
+  "input_manifest_hash": "510f992a188705edb47f7c00941d992f105616d4c42a2c011283954527d8f5fa",
+  "input_seal_hash": "19c9113f9932cd6b92ef463ff6ad613a7938968273bf9abb08d871f1d28c9d7f",
+  "new_model_calls_at_preflight": 0,
+  "orders": 0,
+  "prior_envelopes": {
+    "gpt:INTENT": 1,
+    "gpt:RECEIVED": 6,
+    "opus:RECEIVED": 7
+  },
+  "protected_holdout_requests": 0,
+  "schema": "replay-night-fixes-preflight-evidence-v1",
+  "sessions_passing_pipeline_guard": 64,
+  "source_archive_objects": 2089,
+  "source_envelopes_unchanged": true,
+  "source_input_seal_hash": "5aa02b9efdcf8173394ec76035768145b820db8c3522c08ba24d9a334371960a",
+  "spec_hash": "1c48d0ccafdc207f3fac4e4f832e18bd843ba6d6e8e14ecbaf42d4b1b0ee156e",
+  "stage": "before any new model dispatch"
+}
