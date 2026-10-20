@@ -69,6 +69,21 @@ def test_failed_push_or_discord_never_creates_a_publication_receipt(ledger, tmp_
     assert len((ledger.worktree / commitment.LEDGER_FILE).read_text().splitlines()) == 1
 
 
+def test_push_failure_explicitly_names_remote_branch_and_alerts(ledger, monkeypatch):
+    original, events = ledger.runner, []
+    monkeypatch.setenv('REPLAY_NOTIFY', str(ledger.notify))
+    def runner(args, **kwargs):
+        events.append(args)
+        if args[0] == 'git' and 'push' in args:
+            assert args[-2:] == ['origin', 'ledger/forward-duel']
+            return subprocess.CompletedProcess(args, 1, '', '')
+        return original(args, **kwargs)
+    ledger.runner = runner
+    with pytest.raises(ReplayError, match='LEDGER_GIT_FAILED'):
+        ledger.publish('forward', '2026-10-20', {'opus':'a'*64})
+    assert [str(ledger.notify), 'alertes'] in events
+
+
 def test_replay_start_marker_is_published_before_dispatch_and_partial_responses_are_committed(ledger, tmp_path, monkeypatch):
     monkeypatch.setattr(ex, 'ready_test', lambda _: 'a'*64)
     monkeypatch.setattr(ex, 'seal_payload', lambda _: {'seal': 'b'*64})

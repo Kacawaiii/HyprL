@@ -38,6 +38,8 @@ def shared_snapshot(root, period, group, day, transport=None):
     value = parent.read_json(path)
     if sn.seal(value['context'], value['manifest'], parent.decision_time(day)) != value:
         raise ReplayError('SNAPSHOT_HASH_MISMATCH')
+    from .quality import require_pipeline_health
+    require_pipeline_health(value['manifest'])
     return value
 
 

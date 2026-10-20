@@ -1,5 +1,6 @@
 """Common plans, committed configurations, sealed offline inputs, once-only paired test."""
 from copy import copy
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -11,8 +12,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v8.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v8.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v9.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v9.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -104,6 +105,8 @@ def build_inputs(root):
         for period in ('dev', 'test'):
             for day in planned(period, 'ab'):
                 bundles = build(archive, parent.decision_time(day), method_hash)
+                from .quality import require_pipeline_health
+                require_pipeline_health(bundles['ab']['manifest'])
                 quality = bundles['ab']['manifest']['data_quality']
                 counts.update(quality['counts_by_reason'])
                 if quality['excluded_day']:
@@ -137,6 +140,59 @@ def build_inputs(root):
             'data_quality': value['data_quality']}
 
 
+def refresh_inputs(root):
+    """Explicit input-only reseal, from a committed predecessor seal; never model records."""
+    from . import quality
+    from scripts.trading_lab.replay_bench import snapshot as sn
+    from scripts.trading_lab.replay_bench.grant import instant
+    root = Path(root)
+    rule = spec.spec()['input_refresh']
+    source_seal = json.loads((spec.ROOT / 'docs/artifacts' / rule['source_seal_artifact']).read_text())
+    if sha256_canonical(source_seal) != rule['source_seal_sha256']:
+        raise ReplayError('INPUT_SOURCE_SEAL_CHANGED')
+    source = root / rule['source_state_dir']
+    old = json.loads((source / 'input-manifest.json').read_text())
+    if (sha256_canonical(old) != source_seal['input_proof_hash'] or
+            old['spec_hash'] != source_seal['spec_hash']):
+        raise ReplayError('INPUT_SOURCE_MANIFEST_CHANGED')
+    target = root / spec.STATE_DIR
+    if INPUT_SEAL.exists() or (target / 'input-manifest.json').exists() or (target / 'snapshots').exists():
+        raise ReplayError('INPUTS_ALREADY_BUILT_OR_TEST_STARTED')
+    for kind in ('prediction_cache', 'outcome_cache'):
+        for key, digest in old[kind].items():
+            if len(key) != 64 or any(c not in '0123456789abcdef' for c in key):
+                raise ReplayError('INPUT_CACHE_KEY_INVALID')
+            file = root / 'cache' / key[:2] / (key + '.json.gz')
+            if root.resolve() not in file.resolve().parents or spec.file_hash(file) != digest:
+                raise ReplayError('INPUT_CACHE_HASH_MISMATCH')
+    snapshots = {}
+    for key, digest in old['snapshots'].items():
+        file = source / 'snapshots' / (key + '.json.gz')
+        if source.resolve() not in file.resolve().parents or spec.file_hash(file) != digest:
+            raise ReplayError('INPUT_BUNDLE_HASH_MISMATCH')
+        bundle = parent.read_json(file)
+        T = instant(bundle['manifest']['decision_time'])
+        if sn.seal(bundle['context'], bundle['manifest'], T) != bundle:
+            raise ReplayError('SNAPSHOT_HASH_MISMATCH')
+        quality.require_pipeline_health(bundle['manifest'])
+        manifest = dict(bundle['manifest'], spec_hash=spec.SPEC_HASH)
+        refreshed = sn.seal(bundle['context'], manifest, T)
+        output = target / 'snapshots' / (key + '.json.gz')
+        parent.write_json(output, refreshed)
+        snapshots[key] = spec.file_hash(output)
+    rate = json.loads((source / 'dev-label-base-rate.json').read_text())
+    predecessor = json.loads((spec.ROOT / 'docs/artifacts' / rule['source_seal_artifact'].replace('input_seal', 'test_freeze')).read_text())
+    if (sha256_canonical(predecessor) != source_seal['freeze_hash'] or rate != predecessor['frozen_dev_base_rate']):
+        raise ReplayError('DEV_BASE_RATE_CHANGED')
+    atomic_json(target / 'dev-label-base-rate.json', dict(rate, spec_hash=spec.SPEC_HASH))
+    value = dict(old, spec_hash=spec.SPEC_HASH, snapshots=snapshots,
+                 source_input_seal_sha256=rule['source_seal_sha256'])
+    atomic_json(target / 'input-manifest.json', value)
+    input_proof(root)
+    return {'status': 'BUILT', 'snapshot_count': len(snapshots), 'contexts_unchanged': True,
+            'source_input_seal_sha256': rule['source_seal_sha256'], 'manifest_hash': sha256_canonical(value)}
+
+
 def offline(root, transport, *, outcomes=False):
     proof = input_proof(root)
     other = copy(transport)
@@ -160,7 +216,7 @@ def frozen_payload(root):
     rate = json.loads((Path(root) / spec.STATE_DIR / 'dev-label-base-rate.json').read_text())
     if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', -1) < 0 or rate.get('panel') != PRIMARY['panel']:
         raise ReplayError('DEV_BASE_RATE_NOT_FROZEN')
-    return {'schema': 'replay-duel-test-freeze-v8', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+    return {'schema': 'replay-duel-test-freeze-v9', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
             'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
@@ -177,7 +233,7 @@ def frozen_payload(root):
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v8', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v9', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -201,7 +257,7 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):
@@ -282,10 +338,14 @@ def status(root, budget, clock=now):
     plans = {f: {p: {g: {'days': len(planned_for(p, g, f)),
                         'completed_days': sum(record_path(root, p, g, f, d).is_file() for d in planned_for(p, g, f))}
                         for g in (GROUPS if p == 'dev' else ('ab', 'cd'))} for p in ('dev', 'test')} for f in FAMILIES}
+    from .models import OPUS_DAY_KEYS, GPT_DAY_KEYS
+    totals = {family: sum(budget.used(key, clock()) for key in keys)
+              for family, keys in (('opus', OPUS_DAY_KEYS), ('gpt', GPT_DAY_KEYS))}
     return {'status': 'BLOCKED' if reasons else 'READY', 'reasons': reasons, 'plans': plans,
             'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head(),
             'memory_floor': evidence['floor'], 'probe_evidence_hash': evidence['evidence_hash'],
             'calls_used_today': {f: budget.used('model:' + f, clock()) for f in FAMILIES},
+            'total_calls_used_today': totals, 'calls_remaining_today': {f:max(0, 400-n) for f,n in totals.items()},
             'subscription_stops': {f: budget.model_stopped(f, clock()) for f in FAMILIES},
             'failures': failure_summary(root)}
 
@@ -330,7 +390,7 @@ def publish_pending(root, ledger, night):
                             pending[key] = value
     # Include partial, invalid and usage-limited responses too, even when the
     # day never produced a complete decision record.
-    for file in sorted((Path(root) / spec.STATE_DIR / 'transcripts').glob('*.json')):
+    for file in sorted((Path(root) / spec.STATE_DIR / 'transcripts').rglob('*.json')):
         value = json.loads(file.read_text())
         if value.get('state') != 'INTENT' and 'raw' in value:
             key = 'response:' + file.stem
@@ -345,9 +405,9 @@ def publish_pending(root, ledger, night):
 
 
 def night(root, budget, transport, client, *, expected_commit, ledger=None):
-    from scripts.trading_lab.replay_bench.models import night_remaining
     from .score import score
-    night_remaining(now())
+    from .continuation import verify_sources
+    verify_sources(root)
     if head() != expected_commit:
         raise ReplayError('INSTALLED_SHA_MISMATCH')
     current = status(root, budget)
@@ -357,26 +417,39 @@ def night(root, budget, transport, client, *, expected_commit, ledger=None):
         from . import commitment
         ledger = commitment.from_environment(root)
     tag = iso(now())[:10]
-    unavailable, failures = {}, {}
+    unavailable = {family: stop for family in FAMILIES if (stop := budget.model_stopped(family, now()))}
+    def worker(period, family):
+        # Each family advances independently through exactly the same sealed day
+        # bundles. No family can consume the other's allowance or stop its worker.
+        for group in (GROUPS if period == 'dev' else ('ab', 'cd')):
+            for day in planned_for(period, group, family):
+                if family in unavailable:
+                    return unavailable[family]
+                try:
+                    run_one(root, period, group, day, family, transport, client, ledger)
+                except ReplayError as error:
+                    return error.code
+        return None
     try:
         for period in ('dev', 'test'):
-            for group in (GROUPS if period == 'dev' else ('ab', 'cd')):
-                for index, day in enumerate(planned(period, group)):
-                    # Alternating first model; each pair sees the exact same sealed context.
-                    order = call_order(day)
-                    for family in order:
-                        if family in unavailable or day not in planned_for(period, group, family):
-                            continue
-                        try:
-                            run_one(root, period, group, day, family, transport, client, ledger)
-                        except ReplayError as error:
-                            if error.code not in ('MODEL_USAGE_LIMIT', 'BUDGET_EXHAUSTED', 'API_CREDIT_EXHAUSTED'):
-                                failures.setdefault(family, []).append({'day': day, 'group': group, 'error': error.code})
-                                raise
-                            unavailable[family] = error.code
+            if period == 'test':
+                for family in FAMILIES:
+                    claim_test(root, family, ledger)
+            # TEST remains behind the shared DEV scoring gate. Publication and
+            # scoring run in this coordinator, never concurrently in two workers.
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='replay') as pool:
+                jobs = {pool.submit(worker, period, family): family for family in FAMILIES}
+                pending = set(jobs)
+                while pending:
+                    finished, pending = wait(pending, timeout=60)
+                    for job in finished:
+                        error = job.result()
+                        if error:
+                            unavailable[jobs[job]] = error
+                    runtime_report(root, budget, unavailable)
             if not all(complete(root, period, f) for f in FAMILIES):
                 publish_pending(root, ledger, tag)
-                return dict(status(root, budget), status='BLOCKED', subscription_stops=unavailable,
+                return dict(status(root, budget), status='BLOCKED', worker_stops=unavailable,
                             failures=failure_summary(root), reasons=['PERIOD_DECISIONS_INCOMPLETE'])
             publish_pending(root, ledger, tag)
             score(root, period, transport)
@@ -387,3 +460,30 @@ def night(root, budget, transport, client, *, expected_commit, ledger=None):
             pass
     return {'status': 'DONE', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'commit': head(),
             'failures': failure_summary(root)}
+
+
+def runtime_report(root, budget, stops):
+    """An hourly research heartbeat survives the interactive coding session."""
+    import os
+    target = os.environ.get('REPLAY_NIGHT_REPORT')
+    if not target:
+        return
+    target = Path(target).expanduser().resolve()
+    if target == spec.ROOT or spec.ROOT in target.parents:
+        raise ReplayError('REPORT_MUST_BE_OUTSIDE_GIT')
+    result = status(root, budget)
+    marker = '<!-- replay-night-runtime -->'
+    text = target.read_text().split(marker)[0] if target.exists() else 'STATUS: BLOCKED\n\n'
+    rows = []
+    for family in FAMILIES:
+        plans = result['plans'][family]
+        counts = {p: {g: v['completed_days'] for g, v in groups.items()} for p, groups in plans.items()}
+        rows.append(f"{family}: journées {json.dumps(counts, sort_keys=True)}, appels restants aujourd’hui "
+                    f"{result['calls_remaining_today'][family]}, arrêt {stops.get(family)}.")
+    text += (marker + '\n\nRésumé FR — ' + iso(now()) + '. ' + ' '.join(rows) +
+             ' Replay continu ; ETA en nuits non applicable, durée restante non prouvée.\n')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix('.runtime.tmp')
+    temporary.write_text(text)
+    os.chmod(temporary, 0o600)
+    temporary.replace(target)

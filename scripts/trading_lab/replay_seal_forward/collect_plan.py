@@ -115,17 +115,24 @@ def retry_missing_labels(root, collector, plan_file):
             'refreshed_requests': len(collector.retried_keys), 'census': value['census']}
 
 
-def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collector):
+def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collector, dry_run=False,
+         decision_at=None):
     from . import forward
     at = clock()
     day = at.astimezone(md.NEW_YORK).date().isoformat()
-    T = forward.decision_time(day)
+    intraday = decision_at is not None
+    if intraday and day != spec.spec()['night_fixes_amendment']['intraday']['session']:
+        raise ReplayError('NOT_INTRADAY_SESSION')
+    T = decision_at or (at + timedelta(minutes=15) if dry_run else forward.decision_time(day))
     if not md.sessions(day, day) or day < spec.spec()['forward']['first_session']:
         raise ReplayError('NOT_FORWARD_SESSION')
-    if not T.replace(hour=T.hour - 5, minute=0) <= at < T:
+    if not dry_run and not intraday and not T.replace(hour=T.hour - 5, minute=0) <= at < T:
         raise ReplayError('OUTSIDE_LIVE_COLLECTION_WINDOW')
-    directory = Path(root) / 'live-archive' / day
-    if (forward.directory(root, day) / 'snapshot.json.gz').exists():
+    directory = (Path(root) / 'forward-drill' / at.strftime('%Y%m%dT%H%M%S') if dry_run else
+                 Path(root) / 'live-archive' / day)
+    if intraday:
+        directory = directory / 'intraday'
+    if not dry_run and (forward.directory(root, day) / 'snapshot.json.gz').exists():
         raise ReplayError('LIVE_SNAPSHOT_ALREADY_SEALED')
     collector = collector_factory(grants, Budget(Path(root) / 'collector'), directory / 'cache',
                                   alpaca_env=alpaca_env, sec_user_agent=agent, clock=clock,
@@ -135,11 +142,18 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
     try:
         rows = news_rows(collector, iso(earliest), iso(T))
         names = equities(collector, news_symbols(rows, md.previous_close(T), T))
-        md.stock_bars(collector, sorted(set(sn.STOCKS + sn.ETFS + sn.BENCHMARKS) | names), BARS_FROM, iso(T))
-        md.crypto_bars(collector, list(sn.CRYPTO), BARS_FROM, iso(T))
+        # Daily inputs only need completed sessions. Including the current SIP
+        # interval requests real-time entitlement and can return 403 for a
+        # historical-data subscription, before a single history is archived.
+        midnight = T.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = iso(max(midnight, md.previous_close(T) + timedelta(seconds=1)))
+        md.stock_bars(collector, sorted(set(sn.STOCKS + sn.ETFS + sn.BENCHMARKS) | names), BARS_FROM, end)
+        md.crypto_bars(collector, list(sn.CRYPTO), BARS_FROM, iso(midnight))
         collector.save(index)
         archive = Archive(root, index, before=T)
         bundles = inputs.build(archive, T, sha256_canonical(inputs.declaration(root)))
+        from .quality import require_pipeline_health
+        require_pipeline_health(bundles['ab']['manifest'])
         shown = [c['symbol'] for c in bundles['cd']['context']['candidates']]
         if shown:
             sec_or_unavailable(collector, shown, root)
@@ -147,7 +161,9 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
     finally:
         collector.save(index)
     return {'session': day, 'received_before': iso(T), 'requests': collector.requests,
-            'objects': len(json.loads(index.read_text())['objects']), 'shown_candidates': len(shown)}
+            'objects': len(json.loads(index.read_text())['objects']), 'shown_candidates': len(shown),
+            'fixed_present': len(bundles['ab']['context']['universe']),
+            'dry_run': dry_run, 'model_calls': 0, 'publications': 0}
 
 
 def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collector):
@@ -164,6 +180,7 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
     try:
         for file in sorted((Path(root) / forward.STATE_DIR).glob('????-??-??/snapshot.json.gz')):
             day = file.parent.name
+            sealed = parent.read_json(file)
             plans = set()
             for family in ex.FAMILIES:
                 decision = file.parent / (family + '.json')
@@ -177,7 +194,13 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
                 continue
             collector.scoring_symbols.update(md.crypto_pair(a) if a in sn.CRYPTO else a for _, a, _ in plans)
             collector.scoring_symbols.add('SPY')
-            outcomes = Outcomes(collector, day, last, spec.spec()['costs'], decision_time=forward.decision_time)
+            factory, clock_for = Outcomes, forward.decision_time
+            if sealed.get('mode') == 'INTRADAY':
+                from .intraday import Outcomes as IntradayOutcomes, clock_record
+                factory = IntradayOutcomes
+                T = instant(clock_record(root, day)['decision_time'])
+                clock_for = lambda unused: T
+            outcomes = factory(collector, day, last, spec.spec()['costs'], decision_time=clock_for, live=True)
             following = md.sessions(day, (instant(day + 'T00:00:00Z') + timedelta(days=21)).date().isoformat())
             for group, asset, h in sorted(plans):
                 crypto = asset in sn.CRYPTO

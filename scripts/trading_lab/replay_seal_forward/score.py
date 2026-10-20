@@ -51,17 +51,19 @@ class CheckedAnchors(lb.MinuteAnchors):
 
 
 class Outcomes:
-    def __init__(self, transport, first, last, costs, *, decision_time=None):
+    def __init__(self, transport, first, last, costs, *, decision_time=None, live=False):
         transport = quality.DataTransport(transport)
         self.transport, self.last, self.costs = transport, last, costs
         self.decision_time = decision_time or parent.decision_time
         from types import SimpleNamespace
         end = last + 'T23:59:59Z'
+        self.daily_end = iso(md.previous_close(instant(end)) + timedelta(seconds=1)) if live else end
         self.data_errors = {}
         bars = {}
         for names, fetch in ((sn.STOCKS + sn.ETFS + sn.BENCHMARKS, md.stock_bars), (sn.CRYPTO, md.crypto_bars)):
             try:
-                values, _ = fetch(transport, list(names), parent.DATA_START, end)
+                values, _ = fetch(transport, list(names), parent.DATA_START,
+                                  self.daily_end if fetch is md.stock_bars else end)
                 for symbol, rows in values.items():
                     try:
                         for row in rows:
@@ -83,7 +85,7 @@ class Outcomes:
     def _ratios(self, symbol, raw):
         """Raw/adjusted close ratios; None when adjusted evidence is not in the sealed cache."""
         if symbol not in self.ratios:
-            params = {'symbols': symbol, 'timeframe': '1Day', 'start': parent.DATA_START, 'end': self.last + 'T23:59:59Z',
+            params = {'symbols': symbol, 'timeframe': '1Day', 'start': parent.DATA_START, 'end': self.daily_end,
                       'feed': 'sip', 'adjustment': 'all', 'limit': 10000}
             try:
                 rows = [b for body, _ in md.paginate(self.transport, '/v2/stocks/bars', params, 'bars')
@@ -168,7 +170,7 @@ class Outcomes:
             if asset not in self.news_bars:
                 self.news_bars[asset], _ = md.stock_bars(self.transport, sorted([asset, 'SPY']),
                     iso(instant(spec.spec()['periods']['dev'][0] + 'T12:00:00Z') - timedelta(days=45)),
-                    self.last + 'T23:59:59Z')
+                    self.daily_end)
             bars = self.news_bars[asset]
             for values in bars.values():
                 for bar in values:

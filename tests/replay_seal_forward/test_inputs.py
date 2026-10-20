@@ -224,10 +224,8 @@ def test_missing_archive_seals_excluded_days_and_admitted_inputs_cannot_rebuild(
     monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
     monkeypatch.setattr(inputs, 'paired_label_exclusions', lambda root: [])
     monkeypatch.setattr(ex, 'INPUT_SEAL', tmp_path / 'public-seal.json')
-    result = ex.build_inputs(tmp_path / 'missing')
-    assert result['status'] == 'BUILT'
-    proof = ex.input_proof(tmp_path / 'missing')
-    assert proof['data_quality']['excluded_days'] == 64
+    with pytest.raises(ReplayError, match='PIPELINE_DEFECT'):
+        ex.build_inputs(tmp_path / 'missing')
     assert not (tmp_path / spec.STATE_DIR / 'input-manifest.json').exists()
     data, _ = fixture(tmp_path)
     monkeypatch.setattr(ex, 'planned', lambda p, g: ['2026-07-15'])
@@ -441,12 +439,8 @@ def test_missing_live_index_produces_a_shared_excluded_day(tmp_path, monkeypatch
     from scripts.trading_lab.replay_seal_forward import forward
     monkeypatch.setattr(inputs, 'declaration', lambda root: {'synthetic': True})
     monkeypatch.setattr(spec, 'code_hash', lambda: 'c'*64)
-    value = forward.snapshot(tmp_path, forward.decision_time('2026-10-20'))
-    assert value['contexts']['ab']['universe'] == []
-    assert value['contexts']['cd']['candidates'] == []
-    for manifest in value['manifests'].values():
-        assert manifest['data_quality']['excluded_day']
-        assert manifest['data_quality']['counts_by_reason']['LIVE_VENDOR_REQUEST_INDEX_MISSING'] == 1
+    with pytest.raises(ReplayError, match='PIPELINE_DEFECT'):
+        forward.snapshot(tmp_path, forward.decision_time('2026-10-20'))
 
 
 def test_excluded_day_also_completes_anonymized_control_without_model_calls(tmp_path, monkeypatch):

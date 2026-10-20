@@ -56,7 +56,7 @@ def runtime(tmp_path, monkeypatch, ledger):
         return subprocess.CompletedProcess(args, 0, raw, '')
     grant = SimpleNamespace(check=lambda: None, model_limit=lambda family: 150)
     client = models.Models(grant, fw.ForwardBudget(tmp_path), tmp_path / 'transcripts', runner=runner,
-                           clock=lambda: T, window=fw.window)
+                           clock=lambda: T, window=fw.window, scope='forward')
     return client, calls
 
 
@@ -262,3 +262,80 @@ def test_shared_data_quality_day_exclusion_publishes_hashes_without_model_calls(
     assert all(row['count'] == 0 for row in scored['failures'].values())
     assert scored['trade_exclusions']['opus:input:NEWS_ARCHIVE_COVERAGE_MISSING'] == 1
     assert scored['trade_exclusions']['gpt:input:NEWS_ARCHIVE_COVERAGE_MISSING'] == 1
+
+
+@pytest.mark.parametrize('late', [False, True])
+def test_intraday_records_completion_clock_and_requires_publication_before_30_seconds(tmp_path, runtime, ledger, monkeypatch, late):
+    from scripts.trading_lab.replay_seal_forward import intraday, collect_plan
+    client, calls = runtime
+    at = [instant('2026-10-20T13:40:00Z')]
+    client.clock = lambda: at[0]
+    client.window = models.continuous_remaining
+    ledger.clock = lambda: at[0] + (timedelta(seconds=30) if late else timedelta())
+    monkeypatch.setattr(collect_plan, 'live', lambda *a, **k: {})
+    def snapshot(root, when, *, cutoff):
+        value = sealed()
+        value.pop('snapshot_hash')
+        value.update(decision_time=iso(cutoff), input_cutoff=iso(cutoff), mode='INTRADAY')
+        for context in value['contexts'].values():
+            context['decision_time'] = iso(cutoff)
+        value['snapshot_hash'] = sha256_canonical(value)
+        parent.write_json(fw.directory(root, '2026-10-20')/'snapshot.json.gz', value)
+        return value
+    monkeypatch.setattr(fw, 'snapshot', snapshot)
+    def sleep(seconds):
+        at[0] += timedelta(seconds=seconds)
+    result = intraday.run(tmp_path, client, expected_commit='sha', grants=None, alpaca_env=None,
+                          clock=lambda: at[0], ledger=ledger, sleep=sleep)
+    assert len(calls) == 2
+    assert result['decision_time'] == iso(at[0])
+    assert instant(result['entry_after']) == at[0] + timedelta(seconds=30)
+    assert result['status'] == ('BLOCKED' if late else 'DONE')
+    if late:
+        assert result['publication']['error'] == 'DECISION_HASH_PUBLISHED_TOO_LATE'
+    else:
+        saved = parent.read_json(fw.directory(tmp_path, '2026-10-20')/'snapshot.json.gz')
+        record = json.loads((fw.directory(tmp_path, '2026-10-20')/'opus.json').read_text())
+        fw.check_record(tmp_path, '2026-10-20', 'opus', record, saved, json.loads(ex.FREEZE.read_text()))
+    with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
+        intraday.run(tmp_path, client, expected_commit='sha', grants=None, alpaca_env=None,
+                     clock=lambda: at[0], ledger=ledger, sleep=sleep)
+    assert len(calls) == 2
+
+
+def test_intraday_first_trade_is_strict_including_provider_nanoseconds():
+    from scripts.trading_lab.replay_seal_forward import intraday
+    after = instant('2026-10-20T13:45:30.123456Z')
+    trades = [{'t': '2026-10-20T13:45:30.123456000Z', 'p': 100},
+              {'t': '2026-10-20T13:45:30.123456002Z', 'p': 102},
+              {'t': '2026-10-20T13:45:30.123456001Z', 'p': 101}]
+    transport = SimpleNamespace(get=lambda *a: ({'trades': {'AAPL': trades}}, {}))
+    assert intraday.first_trades(transport, ['AAPL'], after)['AAPL']['p'] == 101
+
+
+def test_intraday_labels_use_actual_entry_and_preserve_fixed_1d_exit():
+    from scripts.trading_lab.replay_seal_forward import intraday
+    from scripts.trading_lab.replay_bench import marketdata as md
+    at = instant('2026-10-20T14:00:00Z')
+    sessions = md.sessions('2026-09-01', '2026-10-26')
+    bars = {symbol:[{'t':s.session_date+'T04:00:00Z','o':price,'h':price,'l':price,'c':price,'v':1e6}
+                    for s in sessions] for symbol,price in [('AAPL',220),('SPY',102)]}
+    def get(origin, path, params):
+        if 'trades' in path:
+            if '19:55:00' in params['start']:
+                values = {'AAPL':[{'t':params['start'],'p':210}], 'SPY':[{'t':params['start'],'p':101}]}
+            else:
+                values = {s:[{'t':'2026-10-20T14:00:30.000000000Z','p':999},
+                             {'t':'2026-10-20T14:00:30.000000001Z','p':p}]
+                          for s,p in [('AAPL',200),('SPY',100)]}
+            return {'trades':values}, {}
+        return {'bars':{} if 'crypto' in path else bars}, {}
+    outcomes = intraday.Outcomes(SimpleNamespace(get=get), '2026-10-20', '2026-10-26', spec.spec()['costs'],
+                                decision_time=lambda day:at, live=True)
+    one = outcomes.get('ab','2026-10-20','AAPL',1)
+    five = outcomes.get('ab','2026-10-20','AAPL',5)
+    assert one['rel'] == pytest.approx(.04)
+    assert five['rel'] == pytest.approx(.08)
+    assert one['entry_at'] == '2026-10-20T14:00:30.000000001Z'
+    assert outcomes.get('ab','2026-10-20','SOL-USD',1) is None
+    assert outcomes.exclusion_reasons[('ab','2026-10-20','SOL-USD',1)] == 'INTRADAY_CRYPTO_TRADE_NOT_GRANTED'

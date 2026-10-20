@@ -90,7 +90,12 @@ class Ledger:
             self._git('commit', '-q', '-m', f'ledger: {kind} {key}', '-m',
                       'Hash-only commitment; no data.\n\nCo-Authored-By: Codex <codex@openai.com>')
         commit = self._git('rev-parse', 'HEAD')
-        self._git('push', '-q', 'origin', BRANCH)
+        try:
+            self._git('push', '-q', 'origin', BRANCH)
+        except ReplayError:
+            from .quality import alert
+            alert('LEDGER_PUSH_FAILED', runner=self.runner)
+            raise
         header = f'Engagement HyprL {kind} {key}\nledger {BRANCH} @ {commit}\n'
         messages, message = [], header
         for name, value in sorted(hashes.items()):

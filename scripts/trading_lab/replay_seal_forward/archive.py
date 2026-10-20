@@ -230,7 +230,8 @@ class Archive:
             if (origin != md.ALPACA or path != '/v2/stocks/bars' or params.get('timeframe') != '1Day' or
                     symbol not in params['symbols'].split(',') or
                     params.get('adjustment') != 'raw' or
-                    instant(params['start']) > T - timedelta(days=HISTORY_DAYS) or instant(params['end']) < T):
+                    instant(params['start']) > T - timedelta(days=HISTORY_DAYS) or
+                    instant(params['end']) < md.previous_close(T)):
                 continue
             group = tuple(sorted((k, str(v)) for k, v in params.items() if k != 'page_token'))
             groups.setdefault(group, {})[params.get('page_token')] = body.get('next_page_token')

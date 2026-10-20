@@ -38,13 +38,16 @@ def test_verify_before_replace_all_four_research_timers_with_named_timezone(tmp_
     calls = []
     monkeypatch.setattr(subprocess, 'run', lambda args, **kwargs: calls.append(args))
     module.main(args)
-    assert calls[0][:3] == ['systemd-analyze', '--user', 'verify'] and len(calls[0][3:]) == 14
+    assert calls[0][:3] == ['systemd-analyze', '--user', 'verify'] and len(calls[0][3:]) == 16
     assert (tmp_path/'backup'/service.name).is_file()
     assert 'replay_seal_forward.cli night --expected-commit sha' in service.read_text()
     assert '09:05:00 America/New_York' in (target/'hyprl-research-forward.timer').read_text()
     assert '17:15:00 America/New_York' in (target/'hyprl-research-forward-weekly.timer').read_text()
     assert all('Persistent=false' in p.read_text() for p in target.glob('*.timer'))
-    assert len([c for c in calls if c[:4] == ['systemctl', '--user', 'enable', '--now']]) == 7
+    assert len([c for c in calls if c[:4] == ['systemctl', '--user', 'enable', '--now']]) == 8
+    assert '22:45:00 UTC' in (target/'hyprl-research-forward-drill.timer').read_text()
+    assert 'RuntimeMaxSec=infinity' in service.read_text()
+    assert '*:00/15:00 UTC' in (target/'hyprl-replay-bench.timer').read_text()
 
 
 def test_verification_failure_and_unrelated_units_are_preserved(tmp_path, monkeypatch):
@@ -59,3 +62,14 @@ def test_verification_failure_and_unrelated_units_are_preserved(tmp_path, monkey
     service.write_text('ExecStart=unrelated\n')
     with pytest.raises(SystemExit, match='unrelated unit'):
         module.main(args)
+
+
+def test_refresh_keeps_existing_calendars_and_adds_0400_once(tmp_path, monkeypatch):
+    module, _, _, _ = fixture(tmp_path, monkeypatch)
+    old = '[Timer]\nOnCalendar=*-*-* 00:20:00 UTC\nOnCalendar=*-*-* 08:55:00 America/New_York\n'
+    result = module.refresh_timer_text(old)
+    assert 'OnCalendar=*-*-* 04:00:00 UTC' in result
+    assert '08:55:00 America/New_York' in result
+    assert module.refresh_timer_text(result) == result
+    with pytest.raises(SystemExit, match='Unrecognized'):
+        module.refresh_timer_text('[Timer]\nOnCalendar=daily\n')

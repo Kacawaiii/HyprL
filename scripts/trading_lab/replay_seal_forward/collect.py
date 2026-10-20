@@ -271,7 +271,7 @@ def main(argv=None):
     parser.add_argument('--expected-commit')
     parser.add_argument('--missing-plan', type=Path)
     parser.add_argument('command', choices=('historical', 'historical-sec', 'historical-outcomes', 'historical-fixed-outcomes',
-                                           'retry-missing-labels', 'live', 'live-outcomes'))
+                                           'retry-missing-labels', 'live', 'live-outcomes', 'forward-dry-run'))
     args = parser.parse_args(argv)
     from . import spec
     root = Path(args.data_root).expanduser().resolve()
@@ -309,10 +309,15 @@ def main(argv=None):
                     result['index_objects'] = collector.save(index)
             else:
                 from .collect_plan import live, live_outcomes
-                result.update((live if args.command == 'live' else live_outcomes)(root, grants, args.alpaca_env, agent))
+                if args.command == 'forward-dry-run':
+                    result.update(live(root, grants, args.alpaca_env, agent, dry_run=True))
+                else:
+                    result.update((live if args.command == 'live' else live_outcomes)(root, grants, args.alpaca_env, agent))
             result['status'] = 'DONE'
     except ReplayError as error:
         result.update(status='BLOCKED', error=error.code)
+        from .quality import alert
+        result['alert_confirmed'] = alert(error.code)
     print(json.dumps(result, sort_keys=True))
     return 0 if result['status'] == 'DONE' else 2
 

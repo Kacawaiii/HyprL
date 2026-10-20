@@ -139,8 +139,9 @@ def test_400_nightly_cap_inside_opus_daily_cap_and_forward_reservation(tmp_path)
     fw.reserve_model('opus', 400, AT)
     with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
         budget.reserve_probe('opus', 400, AT)
-    for _ in range(400):
+    for _ in range(399):
         budget.reserve_model('gpt', 400, AT)
+    fw.reserve_model('gpt', 400, AT)
     with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
         budget.reserve_model('gpt', 400, AT)
     budget.stop_model('gpt', AT)
@@ -347,6 +348,10 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
     value = forward.snapshot(tmp_path, T)
     assert value['contexts']['cd']['candidates'][0]['symbol'] == 'SMLL'
     assert value['archive']['objects']
+    for url in requests:
+        parsed = urlsplit(url)
+        if 'bars' in parsed.path:
+            assert parse_qs(parsed.query)['end'] == ['2026-10-20T00:00:00Z']
     count = len(requests)
     with pytest.raises(ReplayError, match='OUTSIDE_LIVE_COLLECTION_WINDOW'):
         collect_plan.live(tmp_path, authority, key, 'synthetic', clock=lambda: T, collector_factory=factory)

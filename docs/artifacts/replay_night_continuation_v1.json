@@ -1,0 +1,31 @@
+{
+  "counts": {
+    "INTENT": 1,
+    "RECEIVED": 13
+  },
+  "operator_decision": "2026-10-20 replay-night-fixes, decisions 2 and 3; preserve received responses and both attempts of the single zero-byte cut call.",
+  "rule": "Only exact prompt/schema/family/tag-stage matches may reference these immutable answers, under their original protocol hashes. Old model stores remain invalid under the new configuration. New decision records explicitly include original-protocol call references; no received answer may be redispatched. The identified INTENT may consume exactly one additional reservation; its outcome is binding.",
+  "schema": "replay-explicit-continuation-v1",
+  "source_code_hash": "2edfe7f65806b9737ed508e252f1dc08e60f1b320460f42526fff91436bcf2a3",
+  "source_freeze_sha256": "d98bba3b47c53ffaa2e19d094a235915318c80e040d5e8fac3fd85c277ade4ba",
+  "source_process_ended": true,
+  "source_spec_hash": "f9ee40abf6335ca15167b1dbd1df20ee0c4da4543d9ca27a293ec7dc8e7ced7f",
+  "source_state_dir": "duel-v8",
+  "transcripts": {
+    "069b99b66cf57fc5bb4e5f30df0e27601d5646ab02269e1d7d5f5d40f7407d64": "eab26f3790c195d1d56a17c66161e338a4571931c7a63cb05bb70671426a1eef",
+    "09a3ece90581fa9fcca6df166f09115a44e74242722baf5074aa73cd25d25f14": "31234223529d77e501b6f15fe1dbfad815c528217358e4ee2d43559bff32e1ca",
+    "0d19dc813c9f2a07646c145e6192cf831f723a3d7d736f8e8b601e8ad34211bd": "39c8144776cd613a48cbf19dff0d5bf557323249e0fae95fef848944b2edf8d6",
+    "1b6e6e3a718550bd4a97f4e16dbfbe5bdd4a0ede35d3b8a973947d13eb1b8ba0": "8db9c475c027e9a1f60111aea42ea880fe8093b25d400022902ba396f2751dbd",
+    "25fa04aa54f7d4ba0107ce1aa266dbb7fda613b0665b378bd0df87eac695cb1e": "d17c3010ba489f1c99a9b86635289c887fbb151a746caadebcbc6cfff8cf54f8",
+    "274f3f16f0f25719fa6b2ce567db437f324fecc9fde29720122dadd07dda45a7": "f764b87c9b120ffccf5ed8a3d816866d1705709c64252f02af8bd679d876e44e",
+    "6b07a76389bfd2ab70aa39054e043dcb8dde2481b10c434b83ee3e790f878364": "2e8106001c2437c1390c7d0fd2ec17a884ac00a80f282042f8e3ffec44d10b86",
+    "7cebee1c0355c7e4bc06fd3c5c1c5bb3912df2f6710b4557a1c4231404102b8d": "2410e586814c5df6dab4ae16c07552bac8e17dab09370f8ad30da56598bb0ca5",
+    "83b00a6af6e314b62ce2762b2056991972ddc46c46ad15139f7dbd84a435896f": "929b78e516709b9d07f4998fa76b5985dd9edaa6d6625ec678d2684ce6b4e1be",
+    "a4ef37b0fbc87329ebeb1a1c4378eca42645ec481c027d22684bbebf0803dfc4": "68031a7e94862bbafacebdbcb59684148de496ce9d9e39c8ae278d2cdacf4afd",
+    "bdfd58480bfaa7ee5d28872e860f7ac0366849b90ee921983e18c7663979c964": "1e17ca4ee16498618bdc5377b29b32ccf9990d5c6aee5a4a99f354f56cdf3f8e",
+    "db5824299361a49df84f437ffa8a0a18b714de173302b0c73c991a4bdc8f160a": "dc731e3b9878ca88ed3df9a422f019e12fdb65420127c3675ce08fd7b833891c",
+    "e4b9e8dc8f23d14d22973702203be651bbdb02e6ac41605436524f05dd36524a": "06e4b599d04e8e0e7c515ac17a5c846e3a16116b9f89864a73a0f5230fa09948",
+    "f1ff609e2315c73238d6c445aa7013534e90185bcfe9cbbbd720727bbfbb9edf": "d6ad5b6d6190c4748b800e44b4fe67e5f47e4ebd6abfa34f32884108736d4ffe"
+  },
+  "zero_byte_retry_identity": "a4ef37b0fbc87329ebeb1a1c4378eca42645ec481c027d22684bbebf0803dfc4"
+}

@@ -1,0 +1,15 @@
+{
+  "freeze_hash": "28c7d7b38dc434729e5f12ad41402053e79db89bd0eb53ff54e28e4f34bbe652",
+  "input_proof_hash": "510f992a188705edb47f7c00941d992f105616d4c42a2c011283954527d8f5fa",
+  "provenance": "APPROXIMATE_POINT_IN_TIME",
+  "residual_risks": [
+    "vendor corrections of historical bars",
+    "headline text is the vendor's latest version, last edited before T",
+    "universe survivorship for names without Alpaca history",
+    "news vendor coverage gaps",
+    "asset borrow flags are the collection-time values, not point-in-time"
+  ],
+  "schema": "replay-duel-input-seal-v9",
+  "snapshot_count": 128,
+  "spec_hash": "1c48d0ccafdc207f3fac4e4f832e18bd843ba6d6e8e14ecbaf42d4b1b0ee156e"
+}

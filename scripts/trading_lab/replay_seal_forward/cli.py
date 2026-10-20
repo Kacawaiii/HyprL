@@ -68,9 +68,9 @@ def main(argv=None):
     parser.add_argument('--data-root', default=os.environ.get('REPLAY_DATA_ROOT'), required='REPLAY_DATA_ROOT' not in os.environ)
     parser.add_argument('--authorization', default=os.environ.get('REPLAY_AUTHORIZATION'), required='REPLAY_AUTHORIZATION' not in os.environ)
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('status', 'audit', 'freeze', 'build-inputs', 'seal-inputs'):
+    for name in ('status', 'audit', 'freeze', 'build-inputs', 'refresh-inputs', 'seal-inputs'):
         sub.add_parser(name)
-    for name in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
+    for name in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
         sub.add_parser(name).add_argument('--expected-commit', required=True)
     sub.add_parser('score').add_argument('period', choices=('dev', 'test'))
     args = parser.parse_args(argv)
@@ -84,7 +84,9 @@ def main(argv=None):
         if sha256_canonical(grant.payload) != spec.spec()['authorization']['payload_sha256']:
             raise ReplayError('GRANT_HASH_MISMATCH')
         budget = DuelBudget(root)
-        with owned(root):
+        # The continuous replay owns its coordinator, leaving the independently
+        # budgeted forward and collection jobs free to run on their own schedule.
+        with owned(root / spec.STATE_DIR / 'worker' if args.command == 'night' else root):
             if hasattr(args, 'expected_commit'):
                 ex.committed()
                 if ex.head() != args.expected_commit:
@@ -101,11 +103,22 @@ def main(argv=None):
                 atomic_json(target, result)
             elif args.command == 'build-inputs':
                 result = ex.build_inputs(root)
+            elif args.command == 'refresh-inputs':
+                result = ex.refresh_inputs(root)
             elif args.command == 'forward':
                 budget = forward.ForwardBudget(root)
                 client = Models(grant, budget, root / forward.STATE_DIR / 'transcripts', window=forward.window,
                                 billing=api_billing(root), scope='forward')
                 result = forward.run(root, client, expected_commit=args.expected_commit)
+            elif args.command == 'forward-intraday':
+                from . import intraday
+                from .collect import Grants
+                budget = forward.ForwardBudget(root)
+                client = Models(grant, budget, root / forward.STATE_DIR / 'transcripts',
+                                billing=api_billing(root), scope='forward')
+                grants = Grants(os.environ['REPLAY_COLLECTION_GRANT'], args.authorization)
+                result = intraday.run(root, client, expected_commit=args.expected_commit, grants=grants,
+                                      alpaca_env=os.environ['REPLAY_ALPACA_ENV'])
             elif args.command == 'forward-publish':
                 from . import commitment
                 result = forward.publish_pending(root, ledger=commitment.from_environment(root))
@@ -132,16 +145,19 @@ def main(argv=None):
                     transport.allowed_cache = archive.objects
                     result = forward.score(root, transport, outcome_proof=archive.proof())
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)
-        if args.command in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
+        if args.command in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
             progress_report(root, result)
         print(json.dumps(result, sort_keys=True, indent=2, allow_nan=False))
         return 2 if result.get('status') == 'BLOCKED' else 0
     except (ReplayError, FileNotFoundError, ValueError, KeyError, TypeError) as error:
         result = {'status': 'BLOCKED', 'error': error.code if isinstance(error, ReplayError) else 'INVALID_OR_MISSING_INPUT'}
+        if isinstance(error, ReplayError) and error.code == 'PIPELINE_DEFECT':
+            from .quality import alert
+            result['alert_confirmed'] = alert(error.code)
         if root is not None:
             result['failures'] = ex.failure_summary(root)
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)
-            if args.command in ('night', 'forward', 'forward-publish', 'forward-score', 'weekly'):
+            if args.command in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
                 progress_report(root, result)
         print(json.dumps(result), file=sys.stderr)
         return 2

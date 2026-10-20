@@ -1,5 +1,7 @@
 """Outcome-independent data exclusions. Integrity and programming errors never enter this list."""
 import math
+import os
+import subprocess
 
 from scripts.trading_lab.replay_bench.grant import ReplayError, instant
 
@@ -14,6 +16,39 @@ DATA_ERRORS = frozenset({
     'INCOMPLETE_LABEL_COVERAGE', 'INCOMPLETE_MARK_PATH', 'MISSING_CRYPTO_MARK',
     'MISSING_SYNCHRONIZED_SPY_MARK', 'OFFLINE_CACHE_MISS',
 })
+
+
+def alert(code, *, runner=subprocess.run):
+    """A failed alert never converts the original pipeline defect into success."""
+    notify = os.environ.get('REPLAY_NOTIFY')
+    if not notify:
+        return False
+    try:
+        result = runner([notify, 'alertes'], input='HyprL research BLOCKED: ' + code,
+                        capture_output=True, text=True, timeout=40)
+        return result.returncode == 0 and (result.stdout or '').strip() == 'discord'
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def systemic_gaps(excluded, rejections, fixed, candidate_count):
+    """Eligibility filters are distinct from missing or contradictory source data."""
+    fixed_bad = sum(r['symbol'] in fixed for r in excluded)
+    candidate_bad = sum(reason in DATA_ERRORS for reason in rejections.values())
+    counts = {'fixed_excluded': fixed_bad, 'fixed_total': len(fixed),
+              'candidate_excluded': candidate_bad, 'candidate_total': candidate_count}
+    if fixed_bad * 5 > len(fixed) or candidate_bad * 2 > candidate_count:
+        raise ReplayError('PIPELINE_DEFECT', counts)
+    return counts
+
+
+def require_pipeline_health(manifest):
+    from scripts.trading_lab.replay_bench import snapshot as sn
+    records = manifest.get('data_quality', {}).get('records', [])
+    excluded = [{'symbol': r['identity']} for r in records if r['scope'] == 'fixed']
+    rejections = manifest.get('rejections', {})
+    return systemic_gaps(excluded, rejections, sn.UNIVERSE,
+                         manifest.get('candidate_count', 0) + len(rejections))
 
 
 def require_data_error(error):

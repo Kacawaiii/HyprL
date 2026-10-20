@@ -1,4 +1,4 @@
-"""Serial no-tool dispatch, 400-call nightly caps per model, durable no-refund intents.
+"""No-tool dispatch, 400-call daily caps per model, durable no-refund intents.
 
 Opus rides the subscription by default (400/night, and every Opus call of the UTC day stays inside
 the 400/day replay grant, keeping one call for the same-day forward session). An optional API-key
@@ -12,19 +12,97 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.trader_agent.config import TraderError, strict_json
 from scripts.trading_lab.trader_agent.runners import gpt_events
 from scripts.trading_lab.replay_bench.grant import Budget, ReplayError, instant, iso, now
-from scripts.trading_lab.replay_bench.models import argv as claude_argv, night_remaining, QUOTA
+from scripts.trading_lab.replay_bench.models import argv as claude_argv, QUOTA
 from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from . import schemas, spec
 
 
 NIGHT_CAP = 400
 OPUS_DAY_KEYS = ('model:opus', 'forward:model:opus', 'probe:opus')
+GPT_DAY_KEYS = ('model:gpt', 'forward:model:gpt', 'probe:gpt')
 CREDIT_STOP = 'api-credit-stop.json'
+
+
+def continuous_remaining(at):
+    """Replay has no clock window; each individual call still has its full timeout."""
+    return float('inf')
+
+
+def day_stop(day, family, at):
+    reason = day.get('stopped:' + family) or (day.get('stopped') if family == 'opus' else None)
+    reset = day.get('reset_at:' + family)
+    return reason if not reset or at < instant(reset) else None
+
+
+def active_stop(data, family, at):
+    for day in data.values():
+        reset = day.get('reset_at:' + family)
+        if reset and at < instant(reset) and day_stop(day, family, at):
+            return day_stop(day, family, at)
+    return day_stop(data.get(iso(at)[:10], {}), family, at)
+
+
+def quota_reset(record):
+    """Honor explicit provider reset clocks; otherwise retry only on the next UTC day."""
+    at = instant(record.get('received_at', record['at']))
+    fallback = at.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    def find(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ('reset_at', 'resets_at', 'retry_after_seconds'):
+                    try:
+                        candidate = (at + timedelta(seconds=float(item)) if key == 'retry_after_seconds' else
+                                     datetime.fromtimestamp(item, timezone.utc) if isinstance(item, (int, float)) else instant(item))
+                        if at < candidate <= at + timedelta(days=8):
+                            return candidate
+                    except (ValueError, TypeError, OverflowError, ReplayError):
+                        pass
+                nested = find(item)
+                if nested:
+                    return nested
+        elif isinstance(value, list):
+            for item in value:
+                nested = find(item)
+                if nested:
+                    return nested
+        return None
+    for line in [record.get('raw', ''), *record.get('raw', '').splitlines()]:
+        try:
+            reset = find(json.loads(line))
+            if reset:
+                return reset
+        except ValueError:
+            pass
+    return fallback
+
+
+def process_identity(pid):
+    try:
+        # starttime avoids confusing an exited owner with a reused process ID.
+        return Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()[19]
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
+def retryable(record, path):
+    """Only a dead owner and durable zero-byte streams prove a safe retry."""
+    if record.get('retry', 0) or record.get('raw') or record.get('err'):
+        return False
+    if not record.get('owner_pid') or not record.get('owner_start'):
+        return False
+    if process_identity(record['owner_pid']) == record['owner_start']:
+        return False
+    for suffix in ('.stdout', '.stderr'):
+        stream = path.with_suffix(suffix)
+        if not stream.is_file() or stream.stat().st_size:
+            return False
+    return True
 
 
 def forward_session(at):
@@ -43,17 +121,16 @@ class DuelBudget(Budget):
             raise ReplayError('API_CREDIT_EXHAUSTED')
         with self._locked() as data:
             day = data.setdefault(iso(at)[:10], {})
-            if day.get('stopped:' + family) or family == 'opus' and day.get('stopped'):
+            if active_stop(data, family, at):
                 raise ReplayError('MODEL_USAGE_LIMIT')
             key = 'model:' + family
             if day.get(key, 0) >= min(limit, night_limit, NIGHT_CAP):
                 raise ReplayError('BUDGET_EXHAUSTED')
-            if family == 'gpt' and day.get(key, 0) + day.get('probe:gpt', 0) >= min(limit, night_limit, NIGHT_CAP):
-                raise ReplayError('BUDGET_EXHAUSTED')
-            if family == 'opus':
+            if family in ('opus', 'gpt'):
                 # Inside the 400/day grant across night, forward and probe; keep the forward call.
-                reserve = 1 if forward_session(at) and not day.get('forward:model:opus') else 0
-                if sum(day.get(k, 0) for k in OPUS_DAY_KEYS) + reserve >= limit:
+                reserve = 1 if forward_session(at) and not day.get('forward:model:' + family) else 0
+                keys = OPUS_DAY_KEYS if family == 'opus' else GPT_DAY_KEYS
+                if sum(day.get(k, 0) for k in keys) + reserve >= limit:
                     raise ReplayError('BUDGET_EXHAUSTED')
             day[key] = day.get(key, 0) + 1
 
@@ -69,21 +146,23 @@ class DuelBudget(Budget):
             raise ReplayError('API_CREDIT_EXHAUSTED')
         with self._locked() as data:
             day = data.setdefault(iso(at)[:10], {})
-            if day.get('stopped:' + family) or family == 'opus' and day.get('stopped'):
+            if active_stop(data, family, at):
                 raise ReplayError('MODEL_USAGE_LIMIT')
             used = day.get('probe:' + family, 0)
             if used >= (2 if authorized_retry else 1):
                 raise ReplayError('PROBE4_ALREADY_ASKED')
             if family == 'opus' and sum(day.get(k, 0) for k in OPUS_DAY_KEYS) >= limit:
                 raise ReplayError('BUDGET_EXHAUSTED')
-            if family == 'gpt' and day.get('model:gpt', 0) + day.get('probe:gpt', 0) >= limit:
+            if family == 'gpt' and sum(day.get(k, 0) for k in GPT_DAY_KEYS) >= limit:
                 raise ReplayError('BUDGET_EXHAUSTED')
             day['probe:' + family] = used + 1
 
-    def stop_model(self, family, at):
+    def stop_model(self, family, at, *, reset_at=None):
         with self._locked() as data:
             day = data.setdefault(iso(at)[:10], {})
             day['stopped:' + family] = 'MODEL_USAGE_LIMIT'
+            if reset_at is not None:
+                day['reset_at:' + family] = iso(reset_at)
             # The older Opus dispatcher must also see the subscription stop.
             if family == 'opus':
                 day['stopped'] = 'MODEL_USAGE_LIMIT'
@@ -91,7 +170,7 @@ class DuelBudget(Budget):
     def model_stopped(self, family, at):
         data = json.loads(self.path.read_text()) if self.path.exists() else {}
         day = data.get(iso(at)[:10], {})
-        return day.get('stopped:' + family) or (day.get('stopped') if family == 'opus' else None)
+        return active_stop(data, family, at)
 
 
 def argv(family, schema, schema_file):
@@ -291,7 +370,7 @@ def api_billing(root):
 
 
 class Models:
-    def __init__(self, grant, budget, transcripts, *, runner=subprocess.run, clock=now, window=night_remaining,
+    def __init__(self, grant, budget, transcripts, *, runner=subprocess.run, clock=now, window=continuous_remaining,
                  billing=None, scope='replay'):
         self.grant, self.budget, self.runner, self.clock = grant, budget, runner, clock
         self.window = window
@@ -306,8 +385,29 @@ class Models:
         identity = sha256_canonical([spec.SPEC_HASH, spec.code_hash(), family, prompt, schema, tag])
         path = self.transcripts / (identity + '.json')
         saved = json.loads(path.read_text()) if path.exists() else None
-        if saved and saved['state'] == 'INTENT':
-            raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
+        retry = 0
+        source_attempt = None
+        if self.scope == 'replay' and (saved is None or saved['state'] == 'REFERENCED'):
+            from .continuation import lookup
+            source = lookup(self.transcripts.parent.parent, family, prompt, schema, tag)
+            if source:
+                original, source_attempt = source
+                if original['state'] == 'RECEIVED':
+                    if saved and saved.get('source') != source_attempt:
+                        raise ReplayError('CONTINUATION_SOURCE_CHANGED')
+                    output, metadata = self._decode(original, family, prompt, schema, source_attempt['identity'])
+                    atomic_json(path, {'state': 'REFERENCED', 'family': family, 'source': source_attempt})
+                    return output, dict(metadata, original_protocol=source_attempt)
+                retry = 1
+        if saved and saved['state'] in ('INTENT', 'INTERRUPTED'):
+            if self.scope != 'replay' or self.billing is not None or not retryable(saved, path):
+                raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
+            # Preserve the first attempt byte for byte. The next attempt is binding,
+            # including a timeout or invalid answer, and consumes another call.
+            original = path.with_suffix('.attempt-0.json')
+            if original.exists():
+                raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
+            retry = 1
         if saved and saved['state'] == 'RECEIVED':
             try:
                 return self._decode(saved, family, prompt, schema, identity)
@@ -319,6 +419,8 @@ class Models:
                 self.budget.stop_model(family, instant(saved['at']))
         at = self.clock()
         remaining = self.window(at)
+        if remaining < (max(timeout, 900) if self.scope == 'replay' else timeout):
+            raise ReplayError('INSUFFICIENT_CALL_WINDOW')
         self.grant.check()
         # GPT research authorization is the operator's new task, pinned in the new spec;
         # the original HTTP grant is unchanged and still retires GPT in the live engine.
@@ -328,10 +430,19 @@ class Models:
             self.billing.check(self.scope)
             key = self.billing.key()
         self.budget.reserve_model(family, limit, at)
+        if saved and saved['state'] == 'USAGE_LIMIT':
+            history = self.transcripts / 'history' / (identity + '-usage-' + sha256_canonical(saved)[:12] + '.json')
+            if not history.exists():
+                atomic_json(history, saved)
+        if retry and saved is not None:
+            atomic_json(path.with_suffix('.attempt-0.json'), saved)
         if api:
             api_remaining = self.billing.begin(self.scope, identity)
         record = {'state': 'INTENT', 'family': family, 'at': iso(at), 'tag': tag,
-                  'spec_hash': spec.SPEC_HASH, 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()}
+                  'spec_hash': spec.SPEC_HASH, 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
+                  'retry': retry, 'owner_pid': os.getpid(), 'owner_start': process_identity(os.getpid())}
+        if source_attempt:
+            record['source_attempt'] = source_attempt
         atomic_json(path, record)
         append_event(self.transcripts / 'calls.jsonl', dict(record, identity=identity))
         with tempfile.TemporaryDirectory(prefix='replay-duel-') as private:
@@ -354,11 +465,29 @@ class Models:
                 args = argv(family, schema, schema_file)
                 if api:
                     args += ['--max-budget-usd', str(api_remaining)]
-                result = self.runner(args, input=prompt, text=True, capture_output=True,
-                                     cwd=str(cwd), env=env, timeout=min(timeout, remaining - 1))
-            except (subprocess.TimeoutExpired, OSError):
+                if self.runner is subprocess.run:
+                    # Child writes directly to durable private files. A kill cannot
+                    # erase response bytes buffered only in the parent's pipes.
+                    with path.with_suffix('.stdout').open('w') as out, path.with_suffix('.stderr').open('w') as err:
+                        result = self.runner(args, input=prompt, text=True, stdout=out, stderr=err,
+                                             cwd=str(cwd), env=env, timeout=timeout)
+                    result.stdout = path.with_suffix('.stdout').read_text()
+                    result.stderr = path.with_suffix('.stderr').read_text()
+                else:
+                    result = self.runner(args, input=prompt, text=True, capture_output=True,
+                                         cwd=str(cwd), env=env, timeout=timeout)
+            except (subprocess.TimeoutExpired, OSError) as error:
+                def captured(value):
+                    return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+                record.update(state='INTERRUPTED', raw=captured(getattr(error, 'stdout', None)),
+                              err=captured(getattr(error, 'stderr', None)), returncode=None)
+                for key, suffix in (('raw', '.stdout'), ('err', '.stderr')):
+                    if path.with_suffix(suffix).is_file():
+                        record[key] = path.with_suffix(suffix).read_text(errors='replace')
+                atomic_json(path, record)
                 raise ReplayError('CALL_OUTCOME_UNKNOWN', identity) from None
         record.update(state='RECEIVED', raw=result.stdout or '', err=result.stderr or '', returncode=result.returncode,
+                      received_at=iso(self.clock()),
                       billing='api' if api else 'subscription')
         atomic_json(path, record)
         try:
@@ -386,7 +515,7 @@ class Models:
             elif error.code == 'MODEL_USAGE_LIMIT' or flags.get('usage_limit'):
                 record['state'] = 'USAGE_LIMIT'
                 atomic_json(self.transcripts / (identity + '.json'), record)
-                self.budget.stop_model(family, instant(record['at']))
+                self.budget.stop_model(family, instant(record['at']), reset_at=quota_reset(record))
             raise
         return output, {'family': family, 'model': spec.spec()['models']['identities'][family], 'reported': reported,
                         'identity_evidence': 'CLI_REQUEST_ONLY' if not reported else 'CLI_REPORTED',
