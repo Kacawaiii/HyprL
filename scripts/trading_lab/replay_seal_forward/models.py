@@ -343,7 +343,11 @@ class Models:
             env = {k: v for k, v in os.environ.items() if k not in (
                 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_THREAD_ID', 'OPENAI_API_KEY',
                 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL')}
-            env.update(CLAUDE_CODE_DISABLE_AUTO_MEMORY='1', CLAUDE_CODE_DISABLE_CLAUDE_MDS='1', CLAUDE_CODE_SIMPLE='1')
+            # SIMPLE disables claude.ai OAuth in the pinned CLI, even when its
+            # existing subscription credentials are valid. Keep the independent
+            # no-tool/settings/hooks/MCP/memory guards and standard OAuth auth.
+            env.pop('CLAUDE_CODE_SIMPLE', None)
+            env.update(CLAUDE_CODE_DISABLE_AUTO_MEMORY='1', CLAUDE_CODE_DISABLE_CLAUDE_MDS='1')
             if api:
                 env['ANTHROPIC_API_KEY'] = key
             try:

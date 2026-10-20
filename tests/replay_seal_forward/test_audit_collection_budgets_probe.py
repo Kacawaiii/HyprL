@@ -377,3 +377,23 @@ def test_gpt_cli_diagnostics_require_an_event_stream_without_tools(tmp_path, sco
     else:
         output, _ = client.call('gpt', 'synthetic', {}, tag='diagnostics')
         assert output == {'ok': True}
+
+
+def test_subscription_auth_keeps_explicit_isolation_without_simple_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv('CLAUDE_CODE_SIMPLE', '1')
+    def runner(args, **kwargs):
+        env=kwargs['env']
+        assert 'CLAUDE_CODE_SIMPLE' not in env
+        assert env['CLAUDE_CODE_DISABLE_AUTO_MEMORY']=='1'
+        assert env['CLAUDE_CODE_DISABLE_CLAUDE_MDS']=='1'
+        for flag,value in (('--tools',''),('--setting-sources',''),('--settings','{"disableAllHooks":true}'),
+                           ('--mcp-config','{"mcpServers":{}}')):
+            assert args[args.index(flag)+1]==value
+        assert all(flag in args for flag in ('--strict-mcp-config','--disable-slash-commands','--no-session-persistence'))
+        raw=json.dumps({'type':'result','subtype':'success','is_error':False,
+                        'modelUsage':{'claude-opus-5-5':{}},'structured_output':{}})
+        return subprocess.CompletedProcess(args,0,raw,'')
+    client=models.Models(SimpleNamespace(check=lambda:None,model_limit=lambda _:400),models.DuelBudget(tmp_path),
+                         tmp_path/'transcripts',runner=runner,clock=lambda:AT,window=lambda _:900)
+    output,_=client.call('opus','synthetic',{'type':'object','properties':{},'required':[],'additionalProperties':False},tag='oauth')
+    assert output=={}
