@@ -139,8 +139,13 @@ def validate_analyst(payload, assets, at, *, strict_before=False):
         for source in view["catalysts"]:
             if instant(source["published_at"]) > at or strict_before and instant(source['published_at']) == at:
                 raise TraderError("FUTURE_SOURCE")
-            if not source["url"].startswith("https://"):
-                raise TraderError("UNSAFE_SOURCE_URL")
+        # A non-https source is never kept, but it no longer fails the whole run: on 2026-10-20 one http:// citation
+        # failed the am run twice and the day had no trades. A view left without any safe source abstains.
+        safe = [source for source in view["catalysts"] if source["url"].startswith("https://")]
+        if len(safe) != len(view["catalysts"]):
+            view["catalysts"] = safe
+            if not safe and direction != "ABSTAIN":
+                view["view"], view["p_outperform"] = "ABSTAIN", .5
     return payload
 
 

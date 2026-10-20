@@ -966,13 +966,26 @@ def test_codex_receives_the_strict_schema_and_claude_the_full_one(ledger):
     assert json.loads(claude[claude.index('--json-schema') + 1]) == SCHEMAS['analyst']
 
 
-def test_local_validator_still_rejects_non_https_catalyst_even_though_gpt_schema_has_no_uri_format(service):
+def test_local_validator_drops_non_https_catalyst_even_though_gpt_schema_has_no_uri_format(service):
     context, _ = build_context(service.ledger.grant, service.data, at=service.clock())
     text, _ = skills()
     output = service.runner.once('analyst_claude', prompt(context, text['TRADER_SKILL.md']))
-    output['views'][0]['catalysts'][0]['url'] = 'http://example.invalid/x'
-    with pytest.raises(TraderError, match='UNSAFE_SOURCE_URL'):
-        validate_analyst(output, context['universe'], service.clock())
+    view = next(v for v in output['views'] if v['view'] != 'ABSTAIN')
+    view['catalysts'] = [dict(view['catalysts'][0], url='http://example.invalid/x')]
+    validate_analyst(output, context['universe'], service.clock())
+    assert view['catalysts'] == [] and view['view'] == 'ABSTAIN' and view['p_outperform'] == .5
+    assert not any(not s['url'].startswith('https://') for v in output['views'] for s in v['catalysts'])
+
+
+def test_local_validator_keeps_the_safe_sources_of_a_view_with_one_unsafe_source(service):
+    context, _ = build_context(service.ledger.grant, service.data, at=service.clock())
+    text, _ = skills()
+    output = service.runner.once('analyst_claude', prompt(context, text['TRADER_SKILL.md']))
+    view = next(v for v in output['views'] if v['view'] != 'ABSTAIN')
+    safe, direction, p = view['catalysts'][0], view['view'], view['p_outperform']
+    view['catalysts'] = [safe, dict(safe, url='http://example.invalid/y')]
+    validate_analyst(output, context['universe'], service.clock())
+    assert view['catalysts'] == [safe] and (view['view'], view['p_outperform']) == (direction, p)
 
 
 class FailOne(SyntheticRunner):
