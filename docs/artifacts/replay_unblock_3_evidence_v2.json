@@ -1,0 +1,200 @@
+{
+  "activity_at_seal": {
+    "model_calls_this_task": 1,
+    "orders": 0,
+    "seal_and_freeze_in_same_commit": true,
+    "source_http_requests": 0
+  },
+  "archive": {
+    "captured_objects_unchanged": true,
+    "index_hash": "f5a612a46fc8101edcaf728558ec6723191fc3852e4e573553c269fdde4284a9",
+    "objects": 2089
+  },
+  "assets": {
+    "contradictory_candidates": 76,
+    "contradictory_candidates_sha256": "b8a6e71a247c40d45448c4b78a2307c411ec6a92cf0dbb5c45812b040f28013f",
+    "contradictory_global": 237,
+    "contradictory_global_sha256": "8d197603dfee16f728fd8288b3441a762ed5eaf99f0e61f3761f9f008a2f7a35",
+    "missing_candidates": 150,
+    "missing_candidates_sha256": "ba4f55cbfeb254b1bfab135c80f4f6ee094bca89751f0e83f799416c1faa0e63"
+  },
+  "authentication_recovery": {
+    "api_key_fallback": false,
+    "budget_refunded_or_usage_stops_cleared": false,
+    "completed_days": 0,
+    "credential_mode": "0600",
+    "credentials_or_tokens_copied": false,
+    "failed_authentication_dispatches": 1,
+    "failed_response_sha256": "01002694e9a80b8c38e4b911c129402fee5ee317f3c7f6bb6ae1d786b54eab34",
+    "failed_transcript_sha256": "2089477400b8e2d7425c080d86a704229b282d5a0eee8d3f976df04cdcd7c7c3",
+    "local_auth_status": {
+      "isolated_standard_mode": {
+        "auth_method": "claude.ai",
+        "logged_in": true,
+        "provider": "firstParty",
+        "subscription": "pro"
+      },
+      "simple_mode": {
+        "auth_method": "none",
+        "logged_in": false
+      }
+    },
+    "new_spec_hash": "f9ee40abf6335ca15167b1dbd1df20ee0c4da4543d9ca27a293ec7dc8e7ced7f",
+    "oauth_credentials_owned_by_agent": true,
+    "old_spec_hash": "47e660b80a51362adddbec8653be3bcf3be6397af84d75fd204adbb8518a1761",
+    "operator_note": {
+      "cause": "EXPIRED_OAUTH_TOKEN",
+      "credential_changes_this_resume": 0,
+      "prior_simple_mode_diagnosis": "SUPERSEDED_AS_CAUSE",
+      "reported_at": "2026-10-20T00:40:00Z",
+      "token_refresh": "OPERATOR_MANAGED_OUTSIDE_TASK"
+    },
+    "production_isolation_auth_status": {
+      "apiProvider": "firstParty",
+      "authMethod": "claude.ai",
+      "loggedIn": true,
+      "subscriptionType": "pro"
+    },
+    "status": "OPERATOR_REFRESH_OUTSIDE_RESEARCH_SCOPE",
+    "valid_replay_answers": 0
+  },
+  "build": {
+    "cpu_seconds": 1001.239,
+    "ended_at": "2026-10-20T01:11:37.662882+00:00",
+    "memory_peak_bytes": 734003200,
+    "started_at": "2026-10-20T00:38:14.511665+00:00",
+    "swap_peak_bytes": 0,
+    "wall_seconds": 2003.151
+  },
+  "call_plan": {
+    "base_calls_per_family": 203,
+    "nightly_ceiling_per_family": 400,
+    "opus_forward_reservation": 1,
+    "per_family_by_period_stage": {
+      "dev": {
+        "ab": 86,
+        "anon": 11,
+        "cd": 43
+      },
+      "test": {
+        "ab": 42,
+        "anon": 0,
+        "cd": 21
+      }
+    },
+    "usage_stop_and_resume": "UNCHANGED"
+  },
+  "checks": {
+    "compilation": "PASS",
+    "git_diff_check": "PASS",
+    "mandatory_repository": {
+      "failed": 0,
+      "passed": 505,
+      "seconds": 362.46,
+      "skipped_expected": 1
+    },
+    "replay_forward": {
+      "failed": 0,
+      "passed": 184,
+      "seconds": 60.57
+    },
+    "web_changed": false
+  },
+  "code_hash": "2edfe7f65806b9737ed508e252f1dc08e60f1b320460f42526fff91436bcf2a3",
+  "contexts_identical_to_revision_11": true,
+  "data_quality": {
+    "excluded_days": 0,
+    "excluded_days_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "occurrences_by_reason": {
+      "CANDIDATE_ASSET_METADATA_MISSING": 322,
+      "CONTRADICTORY_ASSET_METADATA": 240,
+      "DOLLAR_VOLUME_50D_LT_10M": 4350,
+      "HISTORY_LT_200_SESSIONS": 921,
+      "NEWS_CLOCK_CONTRADICTORY": 64,
+      "NOT_COMPANY_EQUITY": 236
+    },
+    "unique_by_reason": {
+      "CANDIDATE_ASSET_METADATA_MISSING": {
+        "count": 150,
+        "identities_sha256": "b77a9bc27fe91419f1a19f77a30688fdb7d4aa4536e5ba785f60ca44079ef43b"
+      },
+      "CONTRADICTORY_ASSET_METADATA": {
+        "count": 76,
+        "identities_sha256": "b7399e39921fa888c7e82772719c6fbab8a6a354eb9eed94065b20cf78b92b0b"
+      },
+      "DOLLAR_VOLUME_50D_LT_10M": {
+        "count": 2113,
+        "identities_sha256": "09e20251383156a4f8aabf7397ce626cdd140518355f55a9d4ca5d2f9ebcfce9"
+      },
+      "HISTORY_LT_200_SESSIONS": {
+        "count": 424,
+        "identities_sha256": "bd168b49f7b025e13b6bf91b7598f0c0e386124362f8504a92b5e6688c124121"
+      },
+      "NEWS_CLOCK_CONTRADICTORY": {
+        "count": 1,
+        "identities_sha256": "4382ca6008070b41a986219abddb71af61c499bcd927f3825cfa59c5b0a2dd34"
+      },
+      "NOT_COMPANY_EQUITY": {
+        "count": 83,
+        "identities_sha256": "a38911d34aba5450d7e0c81fb2109ba72c083d6ca7e9881d8e7fcecee4bf6379"
+      }
+    }
+  },
+  "freeze_hash": "d98bba3b47c53ffaa2e19d094a235915318c80e040d5e8fac3fd85c277ade4ba",
+  "input_proof_hash": "241b231dd580523a249104014ccccb9e022a12f42c2c22d1788b76c1b39e3029",
+  "input_seal_hash": "5aa02b9efdcf8173394ec76035768145b820db8c3522c08ba24d9a334371960a",
+  "labels": {
+    "dev_primary": {
+      "n": 1214,
+      "outcomes_sha256": "eb5fd2f9545feb62ff07ffc4e76e0ccd4073789cf4317ee2a3167e6ee4989dc3",
+      "panel": "a_v1_as_live:1d",
+      "spec_hash": "f9ee40abf6335ca15167b1dbd1df20ee0c4da4543d9ca27a293ec7dc8e7ced7f",
+      "successes": 590
+    },
+    "dev_primary_boundary_censored": 5,
+    "dev_primary_prior_missing": 286,
+    "excluded_keys_sha256": "32a8c0be96ca47b022702980adea702290dd74b4e887874e3d117abcfe1f1476",
+    "new_retries": 0,
+    "retained_by_period_horizon": {
+      "dev:1": 286,
+      "dev:5": 152,
+      "test:1": 142,
+      "test:5": 78
+    },
+    "retained_by_reason": {
+      "INCOMPLETE_LABEL_COVERAGE": 630,
+      "MISSING_CRYPTO_MARK": 28
+    },
+    "retained_paired_exclusions": 658,
+    "retry_record_sha256": "987d2c4910d9f4edc2dc8953b46281443279b5cfb6e8d3b94b44187a118bcd03"
+  },
+  "method_hash": "01d6dfb9b1262f2dcba8a949224936d3dcb67f33017cfe908696cd20ddb401c6",
+  "observed_at": "2026-10-20T04:54:47.172073+00:00",
+  "probe4": {
+    "answers_graded": 0,
+    "answers_read": 0,
+    "new_calls": 0,
+    "preserved_envelopes": 4,
+    "status": "NOT RUN"
+  },
+  "research_schedule": {
+    "captured_before_timer_installation": true,
+    "first_forward_session": "2026-10-20",
+    "night_window_utc": [
+      "00:30",
+      "05:30"
+    ],
+    "publication_before_new_york": "09:30",
+    "suites_green_before_noon_utc": true
+  },
+  "schema": "replay-unblock-3-evidence-v2",
+  "sec": {
+    "reason": "OPERATOR_REVISION_10",
+    "scope": "every day and both families; cached filings withheld; collection stopped without retry",
+    "state": "UNAVAILABLE"
+  },
+  "snapshot_count": 128,
+  "spec_hash": "f9ee40abf6335ca15167b1dbd1df20ee0c4da4543d9ca27a293ec7dc8e7ced7f",
+  "status": "SEALED_READY",
+  "tested_commit": "74d8cc760603193a7d627f53e50ded83088a8101"
+}
