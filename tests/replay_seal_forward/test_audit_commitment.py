@@ -105,3 +105,16 @@ def test_replay_start_marker_is_published_before_dispatch_and_partial_responses_
     expected = sha256_canonical({k: raw[k] for k in ('raw', 'err', 'returncode')})
     assert published['line']['hashes'] == {'response:' + 'd'*64: expected}
     assert 'private synthetic response' not in ledger.log.read_text()
+
+
+def test_push_timeout_is_blocked_and_alerted(ledger,monkeypatch):
+    original=ledger.runner;events=[]
+    monkeypatch.setenv('REPLAY_NOTIFY',str(ledger.notify))
+    def runner(args,**kwargs):
+        events.append(args)
+        if args[0]=='git' and 'push' in args:raise subprocess.TimeoutExpired(args,120)
+        return original(args,**kwargs)
+    ledger.runner=runner
+    with pytest.raises(ReplayError,match='LEDGER_GIT_FAILED'):
+        ledger.publish('forward','2026-10-20',{'opus':'b'*64})
+    assert [str(ledger.notify),'alertes'] in events

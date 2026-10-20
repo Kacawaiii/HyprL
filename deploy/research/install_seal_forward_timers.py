@@ -40,7 +40,7 @@ def units(root, environment, cli_directory, commit):
             'ExecStart=' + sys.executable + ' -m scripts.trading_lab.replay_seal_forward.' + module + ' ' + command + ' --expected-commit ' + commit,
             'UMask=0077', 'NoNewPrivileges=yes', 'Nice=15', 'CPUQuota=50%',
             'MemoryMax=' + ('1100M' if command == 'night' else '700M'),
-            'RuntimeMaxSec=' + ('infinity' if command == 'night' else '900'), 'TimeoutStopSec=20',
+            'RuntimeMaxSec=' + ('infinity' if command == 'night' else '1800' if command == 'forward' else '900'), 'TimeoutStopSec=20',
             'KillMode=control-group', 'Restart=no', 'SuccessExitStatus=2', ''])
         timer = '\n'.join(['[Unit]', 'Description=HyprL research ' + command, '', '[Timer]',
             'OnCalendar=' + calendars[command], 'AccuracySec=1s', 'Persistent=false', 'Unit=' + name + '.service',

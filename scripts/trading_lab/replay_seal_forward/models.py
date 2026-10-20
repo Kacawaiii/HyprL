@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -79,6 +80,15 @@ def quota_reset(record):
                 return reset
         except ValueError:
             pass
+    text = record.get('raw', '') + ' ' + record.get('err', '')
+    match = re.search(r'\bresets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(UTC\)', text, re.I)
+    if match:
+        hour, minute = int(match[1]), int(match[2] or 0)
+        if match[3]:
+            hour = hour % 12 + (12 if match[3].lower() == 'pm' else 0)
+        if hour < 24 and minute < 60:
+            candidate = at.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return candidate if candidate > at else candidate + timedelta(days=1)
     return fallback
 
 
@@ -419,7 +429,7 @@ class Models:
                 self.budget.stop_model(family, instant(saved['at']))
         at = self.clock()
         remaining = self.window(at)
-        if remaining < (max(timeout, 900) if self.scope == 'replay' else timeout):
+        if remaining < max(timeout, 900):
             raise ReplayError('INSUFFICIENT_CALL_WINDOW')
         self.grant.check()
         # GPT research authorization is the operator's new task, pinned in the new spec;

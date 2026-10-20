@@ -7,6 +7,7 @@ A durable private receipt records both. Scorers refuse any decision whose hash h
 published before the deadline (forward: the session open; replay: before scoring).
 """
 import json
+import fcntl
 import os
 from pathlib import Path
 import subprocess
@@ -47,13 +48,27 @@ class Ledger:
         self.runner, self.clock = runner, clock
 
     def _git(self, *args):
-        result = self.runner(['git', '-C', str(self.worktree), *args], capture_output=True, text=True, timeout=120)
+        try:
+            result = self.runner(['git', '-C', str(self.worktree), *args], capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ReplayError('LEDGER_GIT_FAILED', args[0]) from None
         if result.returncode:
             raise ReplayError('LEDGER_GIT_FAILED', args[0])
         return (result.stdout or '').strip()
 
-    def publish(self, kind, key, hashes, *, summary=None):
+    def publish(self, kind, key, hashes, *, summary=None, deadline=None):
+        # Separate replay/forward ownership must never race the shared Git ledger.
+        receipts_dir(self.root).mkdir(parents=True, exist_ok=True, mode=0o700)
+        with (receipts_dir(self.root) / '.publisher.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return self._publish(kind, key, hashes, summary=summary, deadline=deadline)
+
+    def _publish(self, kind, key, hashes, *, summary=None, deadline=None):
         """Idempotent: an already published receipt with the same hashes is returned unchanged."""
+        def before_deadline():
+            if deadline is not None and not self.clock() < deadline:
+                raise ReplayError('DECISION_HASH_PUBLISHED_TOO_LATE')
+        before_deadline()
         _hash_only(hashes)
         path = receipt_path(self.root, kind, key)
         line = {'kind': kind, 'key': key, 'hashes': dict(sorted(hashes.items())), 'protocol_spec_hash': spec.SPEC_HASH}
@@ -90,6 +105,7 @@ class Ledger:
             self._git('commit', '-q', '-m', f'ledger: {kind} {key}', '-m',
                       'Hash-only commitment; no data.\n\nCo-Authored-By: Codex <codex@openai.com>')
         commit = self._git('rev-parse', 'HEAD')
+        before_deadline()
         try:
             self._git('push', '-q', 'origin', BRANCH)
         except ReplayError:
@@ -106,23 +122,29 @@ class Ledger:
             message += item
         messages.append(message)
         for message in messages:
-            result = self.runner([str(self.notify), CHANNEL], input=message, capture_output=True, text=True, timeout=40)
+            before_deadline()
+            try:
+                result = self.runner([str(self.notify), CHANNEL], input=message, capture_output=True, text=True, timeout=40)
+            except (OSError, subprocess.TimeoutExpired):
+                raise ReplayError('COMMITMENT_DISCORD_UNCONFIRMED') from None
             if result.returncode or (result.stdout or '').strip() != 'discord':
                 raise ReplayError('COMMITMENT_DISCORD_UNCONFIRMED')
         receipt = {'state': 'PUBLISHED', 'line': line, 'line_sha256': sha256_canonical(line), 'ledger_commit': commit,
                    'route': 'discord', 'channel': CHANNEL, 'published_at': iso(self.clock()), 'messages': len(messages)}
         atomic_json(path, receipt)
+        before_deadline()
         return receipt
 
 
-def published(root, kind, key):
+def published(root, kind, key, *, protocol_hash=None):
     path = receipt_path(root, kind, key)
     if not path.is_file():
         return None
     value = json.loads(path.read_text())
     line = value.get('line', {})
     if (value.get('state') != 'PUBLISHED' or value.get('line_sha256') != sha256_canonical(line) or
-            line.get('kind') != kind or line.get('key') != key or line.get('protocol_spec_hash') != spec.SPEC_HASH or
+            line.get('kind') != kind or line.get('key') != key or
+            line.get('protocol_spec_hash') != (protocol_hash or spec.SPEC_HASH) or
             value.get('route') != 'discord' or value.get('channel') != CHANNEL):
         return None
     _hash_only(line.get('hashes'))
@@ -140,9 +162,9 @@ def published(root, kind, key):
     return value
 
 
-def require(root, kind, key, hashes, deadline):
+def require(root, kind, key, hashes, deadline, *, protocol_hash=None):
     """The scorer gate: every given hash was published, before the deadline."""
-    receipt = published(root, kind, key)
+    receipt = published(root, kind, key, protocol_hash=protocol_hash)
     if receipt is None:
         raise ReplayError('DECISION_HASH_NOT_PUBLISHED', kind + ':' + key)
     if not instant(receipt['published_at']) < deadline:

@@ -97,12 +97,13 @@ def run(root, client, *, expected_commit, grants, alpaca_env, clock=now, ledger=
     return result
 
 
-def check_record(root, day, family, record, sealed):
+def check_record(root, day, family, record, sealed, *, expected_spec=None, expected_code=None):
     timing = clock_record(root, day)
     T, cutoff = instant(timing['decision_time']), instant(timing['input_cutoff'])
     if (day != spec.spec()['night_fixes_amendment']['intraday']['session'] or
             timing['snapshot_hash'] != sealed['snapshot_hash'] or
-            timing['spec_hash'] != spec.SPEC_HASH or timing['code_hash'] != spec.code_hash() or
+            timing['spec_hash'] != (expected_spec or spec.SPEC_HASH) or
+            timing['code_hash'] != (expected_code or spec.code_hash()) or
             sealed['decision_time'] != iso(cutoff) or sealed.get('input_cutoff') != iso(cutoff) or
             any(record.get(k) != timing[k] for k in ('clock_hash', 'decision_time', 'input_cutoff', 'entry_after')) or
             record.get('family') != family or record.get('model') != spec.spec()['models']['identities'][family] or
@@ -111,7 +112,7 @@ def check_record(root, day, family, record, sealed):
             instant(timing['entry_after']) != T + timedelta(seconds=30)):
         raise ReplayError('FORWARD_DECISION_BINDING_MISMATCH')
     commitment.require(root, 'forward', day + '-intraday', {'snapshot': sealed['snapshot_hash'], family: record['decision_hash']},
-                       instant(timing['entry_after']))
+                       instant(timing['entry_after']), protocol_hash=expected_spec)
 
 
 def trade_stamp(text):

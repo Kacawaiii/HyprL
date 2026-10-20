@@ -6,6 +6,7 @@ anything unpublished, any decision outside the frozen forward configuration, and
 the frozen first session.
 """
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta
 import json
 from math import log
@@ -21,6 +22,7 @@ from .archive import Archive, UnavailableArchive
 
 PROVENANCE = 'LIVE_FORWARD'
 STATE_DIR = 'live-forward-v7'
+DISPATCH_WINDOW = timedelta(minutes=20)
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['analyst', 'news'],
           'properties': {'analyst': schemas.ANALYST_SCHEMA, 'news': schemas.NEWS_SCHEMA}}
 
@@ -34,6 +36,24 @@ def publication_deadline(day):
     return md.sessions(day, day)[0].open_at
 
 
+def crypto_entry(T):
+    return T + timedelta(minutes=spec.spec()['forward']['crypto_entry_offset_minutes'])
+
+
+def configuration_for(sealed, active):
+    """Historical proofs retain their own registered, immutable protocol binding."""
+    if sealed.get('spec_hash') == spec.SPEC_HASH:
+        return active
+    rule = spec.spec().get('forward_legacy_freezes', {}).get(sealed.get('spec_hash'))
+    if not rule:
+        raise ReplayError('FORWARD_CONFIG_NOT_FROZEN')
+    frozen = json.loads((spec.ROOT / 'docs/artifacts' / rule['artifact']).read_text())
+    if (sha256_canonical(frozen) != rule['sha256'] or frozen['spec_hash'] != sealed['spec_hash'] or
+            frozen['code_hash'] != sealed.get('code_hash')):
+        raise ReplayError('FORWARD_CONFIG_NOT_FROZEN')
+    return frozen
+
+
 def forward_config_hash(family):
     return sha256_canonical({'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'family': family,
                              'schema': SCHEMA, 'forward': spec.spec()['forward']})
@@ -44,9 +64,9 @@ def window(at):
     T = decision_time(day)
     if day < spec.spec()['forward']['first_session'] or not md.sessions(day, day):
         raise ReplayError('NOT_FORWARD_SESSION')
-    if not T <= at < T + fills.DISPATCH_WINDOW:
+    if not T <= at < T + DISPATCH_WINDOW:
         raise ReplayError('OUTSIDE_FORWARD_WINDOW')
-    return int((T + fills.DISPATCH_WINDOW - at).total_seconds())
+    return int((T + DISPATCH_WINDOW - at).total_seconds())
 
 
 def order(day):
@@ -121,6 +141,9 @@ def snapshot(root, at, *, cutoff=None):
 
 def prompt(sealed):
     panel = dict(spec.spec()['forecast_panel'])
+    panel['crypto_spy'] = ('Crypto 1d from decision time + ' +
+        str(spec.spec()['forward']['crypto_entry_offset_minutes']) +
+        ' min to +24h, synchronized SPY marks; crypto 5d unscored. No protected BTC/ETH data.')
     recovery = ''
     if sealed.get('mode') == 'INTRADAY':
         panel['crypto_spy'] = 'Crypto forecasts retained; actual crypto trade labels unavailable under the bars-only grant.'
@@ -161,7 +184,7 @@ def publish(root, day, ledger, snapshot_hash=None):
         from .intraday import deadline
         limit = deadline(root, day)
     key = day + '-intraday' if (directory(root, day) / 'decision-clock.json').exists() else day
-    receipt = ledger.publish('forward', key, hashes, summary='duel forward LIVE_FORWARD')
+    receipt = ledger.publish('forward', key, hashes, summary='duel forward LIVE_FORWARD', deadline=limit)
     if not instant(receipt['published_at']) < limit:
         raise ReplayError('DECISION_HASH_PUBLISHED_TOO_LATE')
     return receipt
@@ -183,7 +206,7 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
     day = at.astimezone(md.NEW_YORK).date().isoformat()
     text = prompt(sealed)
     statuses = {}
-    for family in order(day):
+    def decide(family):
         file = directory(root, day) / (family + '.json')
         config_hash = forward_config_hash(family)
         if file.is_file():
@@ -193,18 +216,18 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
                     value['configuration_hash'] != config_hash or value['provenance'] != PROVENANCE):
                 raise ReplayError('FORWARD_DECISION_BINDING_MISMATCH')
             statuses[family] = 'SAVED'
-            continue
+            return
         if (directory(root, day) / (family + '-failure.json')).is_file():
             statuses[family] = json.loads((directory(root, day) / (family + '-failure.json')).read_text())['error']
-            continue
+            return
         if sealed['manifests']['ab'].get('data_quality', {}).get('excluded_day'):
             statuses[family] = 'DATA_QUALITY_EXCLUDED'
             atomic_json(directory(root, day) / (family + '-failure.json'),
                         {'error': 'DATA_QUALITY_EXCLUDED', 'at': iso(at), 'snapshot_hash': sealed['snapshot_hash']})
-            continue
+            return
         try:
             output, call = client.call(family, text, SCHEMA, tag='live-forward:' + day + ':' + sealed['snapshot_hash'],
-                                       timeout=240)
+                                       timeout=900)
             schemas.analyst(output['analyst'], sealed['contexts']['ab'])
             schemas.news(output['news'], sealed['contexts']['cd'])
             value = {'schema': 'live-forward-decision-v2', 'provenance': PROVENANCE, 'family': family,
@@ -220,6 +243,8 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
             statuses[family] = error.code
             atomic_json(directory(root, day) / (family + '-failure.json'),
                         {'error': error.code, 'at': iso(clock()), 'snapshot_hash': sealed['snapshot_hash']})
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix='forward') as pool:
+        list(pool.map(decide, order(day)))
     try:
         receipt = publish(root, day, ledger, sealed['snapshot_hash'])
         published = {'ledger_commit': receipt['ledger_commit'], 'published_at': receipt['published_at']}
@@ -250,10 +275,11 @@ def publish_pending(root, *, ledger, clock=now):
 
 def check_record(root, day, family, record, sealed, frozen):
     """Scorer gate: frozen forward configuration, first session, binding and publication before the open."""
+    frozen = configuration_for(sealed, frozen)
     check = dict(record)
     if (check.pop('decision_hash') != sha256_canonical(check) or record['snapshot_hash'] != sealed['snapshot_hash'] or
-            record['provenance'] != PROVENANCE or sealed.get('spec_hash') != spec.SPEC_HASH or
-            sealed.get('code_hash') != spec.code_hash()):
+            record['provenance'] != PROVENANCE or sealed.get('spec_hash') != frozen['spec_hash'] or
+            sealed.get('code_hash') != frozen['code_hash']):
         raise ReplayError('FORWARD_DECISION_BINDING_MISMATCH')
     if record['configuration_hash'] != frozen['forward_config_hashes'][family]:
         raise ReplayError('FORWARD_CONFIG_NOT_FROZEN')
@@ -261,11 +287,12 @@ def check_record(root, day, family, record, sealed, frozen):
         raise ReplayError('FORWARD_BEFORE_FIRST_SESSION')
     if sealed.get('mode') == 'INTRADAY':
         from .intraday import check_record as check_intraday
-        return check_intraday(root, day, family, record, sealed)
+        return check_intraday(root, day, family, record, sealed,
+                              expected_spec=frozen['spec_hash'], expected_code=frozen['code_hash'])
     T = decision_time(day)
     if (record.get('family') != family or record.get('model') != spec.spec()['models']['identities'][family] or
             record.get('decision_time') != iso(T) or sealed.get('decision_time') != iso(T) or
-            not T <= instant(record['call']['called_at']) <= instant(record['stored_at']) < T + fills.DISPATCH_WINDOW):
+            not T <= instant(record['call']['called_at']) <= instant(record['stored_at']) < T + DISPATCH_WINDOW):
         raise ReplayError('FORWARD_DECISION_BINDING_MISMATCH')
     if day < frozen['forward_first_session'] or day < spec.spec()['forward']['first_session']:
         raise ReplayError('FORWARD_BEFORE_FIRST_SESSION')
@@ -331,7 +358,8 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
             clock_for = lambda unused: T
         else:
             T = decision_time(day)
-        outcomes = factory(transport, day, at.date().isoformat(), costs, decision_time=clock_for, live=True)
+        outcomes = factory(transport, day, at.date().isoformat(), costs, decision_time=clock_for,
+                           crypto_entry=crypto_entry, live=True)
         following = md.sessions(day, (T + timedelta(days=21)).date().isoformat())
         for family in present:
             record = json.loads((snapshot_file.parent / (family + '.json')).read_text())
@@ -345,7 +373,7 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                     continue
                 crypto = row['asset'] in sn.CRYPTO
                 mature = ((T + timedelta(seconds=30) if sealed.get('mode') == 'INTRADAY' else
-                           fills.entry(day, T, True)) + timedelta(days=1) if crypto else following[h-1].close_at)
+                           crypto_entry(T)) + timedelta(days=1) if crypto else following[h-1].close_at)
                 if mature >= at:
                     continue
                 outcome = outcomes.get(group, day, row['asset'], h)
@@ -361,6 +389,7 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                 clipped = min(1-1e-6, max(1e-6, p))
                 panel = ('a_v1_as_live' if group == 'ab' else 'c_news_small_mid') + ':' + row['horizon']
                 results.append({'provenance': PROVENANCE, 'session': day, 'family': family, 'group': group,
+                    'source_spec_hash': sealed['spec_hash'], 'source_code_hash': sealed['code_hash'],
                     'panel': panel, 'asset': row['asset'], 'horizon': row['horizon'],
                     'snapshot_hash': sealed['snapshot_hash'], 'decision_hash': record['decision_hash'],
                     'outcome': y, 'outperform': bool(y), 'p': p, 'brier': (p-y)**2,

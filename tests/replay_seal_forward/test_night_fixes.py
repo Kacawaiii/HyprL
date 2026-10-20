@@ -54,6 +54,7 @@ def test_usage_reset_resumes_only_at_provider_clock_and_keeps_the_daily_count(tm
     assert budget.used('model:gpt', T) == 2
     assert not budget.model_stopped('gpt', reset)
     assert models.quota_reset({'at':T.isoformat(), 'raw':json.dumps({'error':{'resets_at':reset.isoformat()}})}) == reset
+    assert models.quota_reset({'at':T.isoformat(), 'raw':'resets 5:10pm (UTC)'}) == T.replace(hour=17,minute=10)
     later = T + timedelta(days=2)
     budget.stop_model('gpt', T, reset_at=later)
     with pytest.raises(ReplayError, match='MODEL_USAGE_LIMIT'):
@@ -177,3 +178,31 @@ def test_explicit_continuation_never_redispatches_a_received_answer(tmp_path, mo
     else:
         saved = json.loads(next(c.transcripts.glob('*.json')).read_text())
         assert saved['retry'] == 1 and saved['source_attempt']['identity'] == identity
+
+
+def test_quota_worker_resumes_while_other_worker_still_runs(tmp_path,monkeypatch):
+    from threading import Event
+    from scripts.trading_lab.replay_seal_forward import continuation,score
+    resumed=Event(); attempts=[]
+    monkeypatch.setattr(continuation,'verify_sources',lambda *a:None)
+    monkeypatch.setattr(ex,'head',lambda:'sha')
+    monkeypatch.setattr(ex,'status',lambda *a:{'status':'READY'})
+    monkeypatch.setattr(ex,'runtime_report',lambda *a:None)
+    monkeypatch.setattr(ex,'planned_for',lambda *a:['2026-07-01'])
+    monkeypatch.setattr(ex,'GROUPS',('ab',))
+    monkeypatch.setattr(ex,'publish_pending',lambda *a:None)
+    monkeypatch.setattr(ex,'complete',lambda *a:True)
+    monkeypatch.setattr(ex,'claim_test',lambda *a:None)
+    monkeypatch.setattr(ex,'failure_summary',lambda *a:{})
+    monkeypatch.setattr(score,'score',lambda *a:None)
+    def run_one(root,period,group,day,family,*a):
+        if period=='dev' and family=='opus':
+            attempts.append(family)
+            if len(attempts)==1:raise ReplayError('MODEL_USAGE_LIMIT')
+            resumed.set()
+        elif period=='dev':
+            assert resumed.wait(5),'Quota worker waited for the other worker to finish'
+    monkeypatch.setattr(ex,'run_one',run_one)
+    budget=SimpleNamespace(model_stopped=lambda *a:None)
+    result=ex.night(tmp_path,budget,None,None,expected_commit='sha',ledger=object())
+    assert result['status']=='DONE' and len(attempts)==2

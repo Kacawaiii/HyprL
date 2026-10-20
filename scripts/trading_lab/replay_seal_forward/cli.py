@@ -39,7 +39,7 @@ def progress_report(root, result):
                 value = json.loads(file.read_text())
                 check = dict(value)
                 if (check.pop('decision_hash') != sha256_canonical(check) or value['snapshot_hash'] != sealed['snapshot_hash'] or
-                        value['configuration_hash'] != frozen['forward_config_hashes'][family] or
+                        value['configuration_hash'] != forward.configuration_for(sealed, frozen)['forward_config_hashes'][family] or
                         value['provenance'] != forward.PROVENANCE):
                     valid = False
                     break

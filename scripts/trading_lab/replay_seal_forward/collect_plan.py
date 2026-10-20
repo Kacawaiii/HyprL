@@ -200,11 +200,12 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
                 factory = IntradayOutcomes
                 T = instant(clock_record(root, day)['decision_time'])
                 clock_for = lambda unused: T
-            outcomes = factory(collector, day, last, spec.spec()['costs'], decision_time=clock_for, live=True)
+            outcomes = factory(collector, day, last, spec.spec()['costs'], decision_time=clock_for,
+                               crypto_entry=forward.crypto_entry, live=True)
             following = md.sessions(day, (instant(day + 'T00:00:00Z') + timedelta(days=21)).date().isoformat())
             for group, asset, h in sorted(plans):
                 crypto = asset in sn.CRYPTO
-                mature = (fills.crypto_entry(forward.decision_time(day)) + timedelta(days=1) if crypto
+                mature = (forward.crypto_entry(clock_for(day)) + timedelta(days=1) if crypto
                           else following[h - 1].close_at)
                 if crypto and h != 1 or mature >= at:
                     continue

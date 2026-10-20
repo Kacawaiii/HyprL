@@ -1,0 +1,27 @@
+{
+  "budget_refunds": 0,
+  "checks": {
+    "apps_web": "unchanged",
+    "expected_absent_api_skip": 1,
+    "external_test_network": "denied; synthetic loopback allowed",
+    "replay_forward_passed": 209,
+    "required_passed": 505,
+    "targeted_recovery_passed": 6
+  },
+  "code_hash": "97c13145ea7863e9713af57e2ec337e22e378186402100f15cb3c22d1bf17054",
+  "freeze_hash": "715846cb72045fae91eb497ff73f282958d3c87c860b6352860121d6c9368985",
+  "input_seal_hash": "92db320bf2f8f52291927b1ad83356ecf66835fbc39032df9d86015540982428",
+  "legacy_forward_publication_margin_seconds": 26.383255,
+  "legacy_forward_records_verified": 2,
+  "no_running_call_killed": true,
+  "observed_opus_reset_utc": "2026-10-20T17:10:00Z",
+  "orders": 0,
+  "prior_unresolved_intents_preserved": 1,
+  "quota_envelopes_preserved": 1,
+  "received_envelopes_preserved": 30,
+  "revision14_model_calls": 0,
+  "schema": "replay-night-fixes-preflight-v2",
+  "spec_hash": "71f834f559ebce8a7cf42149e3a9be974269390bd1414d3a07110a727ed79195",
+  "stage": "before revision 14 dispatch",
+  "unchanged_contexts": 128
+}

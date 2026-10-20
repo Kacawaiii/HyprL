@@ -63,8 +63,8 @@ def runtime(tmp_path, monkeypatch, ledger):
 def test_exchange_window_dst_holidays_and_no_backfill():
     assert fw.decision_time('2026-10-20') == T
     assert fw.decision_time('2026-11-02') == instant('2026-11-02T14:05:00Z')
-    assert fw.window(T) == 600
-    for at in (T-timedelta(microseconds=1), T+timedelta(minutes=10)):
+    assert fw.window(T) == 1200
+    for at in (T-timedelta(microseconds=1), T+timedelta(minutes=20)):
         with pytest.raises(ReplayError, match='OUTSIDE_FORWARD_WINDOW'):
             fw.window(at)
     with pytest.raises(ReplayError, match='NOT_FORWARD_SESSION'):
@@ -121,7 +121,7 @@ def test_timeout_never_retries_and_other_family_completes(tmp_path, runtime, led
     assert result['status'] == 'BLOCKED'
     assert result['models']['opus'] == 'CALL_OUTCOME_UNKNOWN'
     fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
-    assert attempts == ['claude', 'codex']
+    assert sorted(attempts) == ['claude', 'codex']
     # The failure itself is committed publicly, never hidden.
     receipt = commitment.published(tmp_path, 'forward', '2026-10-20')
     assert receipt['line']['hashes']['opus'] == sha256_canonical(json.loads((fw.directory(tmp_path, '2026-10-20') / 'opus-failure.json').read_text()))
@@ -339,3 +339,39 @@ def test_intraday_labels_use_actual_entry_and_preserve_fixed_1d_exit():
     assert one['entry_at'] == '2026-10-20T14:00:30.000000001Z'
     assert outcomes.get('ab','2026-10-20','SOL-USD',1) is None
     assert outcomes.exclusion_reasons[('ab','2026-10-20','SOL-USD',1)] == 'INTRADAY_CRYPTO_TRADE_NOT_GRANTED'
+
+
+def test_regular_workers_overlap_and_keep_full_timeout(tmp_path, runtime, ledger):
+    from threading import Barrier
+    client, _ = runtime
+    original=client.runner
+    barrier=Barrier(2,timeout=5)
+    seen=[]
+    def runner(args,**kwargs):
+        seen.append(kwargs['timeout'])
+        barrier.wait()
+        return original(args,**kwargs)
+    client.runner=runner
+    result=fw.run(tmp_path,client,expected_commit='sha',clock=lambda:T,ledger=ledger)
+    assert result['status']=='DONE' and seen==[900,900]
+    assert fw.crypto_entry(T)==fw.publication_deadline('2026-10-20')
+
+
+def test_late_regular_dispatch_reserves_no_shortened_call(tmp_path,runtime,ledger):
+    client,calls=runtime
+    client.clock=lambda:T+timedelta(minutes=6)
+    result=fw.run(tmp_path,client,expected_commit='sha',clock=client.clock,ledger=ledger)
+    assert result['status']=='BLOCKED' and not calls
+    assert set(result['models'].values())=={'INSUFFICIENT_CALL_WINDOW'}
+    assert client.budget.used('forward:model:opus',T)==0
+    assert client.budget.used('forward:model:gpt',T)==0
+
+
+def test_legacy_forward_registry_preserves_original_binding():
+    previous=json.loads((spec.ROOT/'docs/artifacts/replay_duel_test_freeze_v9.json').read_text())
+    sealed={'spec_hash':previous['spec_hash'],'code_hash':previous['code_hash']}
+    assert fw.configuration_for(sealed,{})==previous
+    with pytest.raises(ReplayError,match='FORWARD_CONFIG_NOT_FROZEN'):
+        fw.configuration_for(dict(sealed,code_hash='0'*64),{})
+    with pytest.raises(ReplayError,match='FORWARD_CONFIG_NOT_FROZEN'):
+        fw.configuration_for(dict(sealed,spec_hash='0'*64),{})

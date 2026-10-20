@@ -51,10 +51,11 @@ class CheckedAnchors(lb.MinuteAnchors):
 
 
 class Outcomes:
-    def __init__(self, transport, first, last, costs, *, decision_time=None, live=False):
+    def __init__(self, transport, first, last, costs, *, decision_time=None, crypto_entry=None, live=False):
         transport = quality.DataTransport(transport)
         self.transport, self.last, self.costs = transport, last, costs
         self.decision_time = decision_time or parent.decision_time
+        self.crypto_entry = crypto_entry or fills.crypto_entry
         from types import SimpleNamespace
         end = last + 'T23:59:59Z'
         self.daily_end = iso(md.previous_close(instant(end)) + timedelta(seconds=1)) if live else end
@@ -131,7 +132,7 @@ class Outcomes:
         T = self.decision_time(day)
         crypto = asset in sn.CRYPTO
         # Refuse any designed fill at or before the decision (and its dispatch window).
-        start = fills.entry(day, T, crypto)
+        start = self.crypto_entry(T) if crypto else fills.entry(day, T, False)
         if key in self.excluded:
             return None
         if key in self.cache:
@@ -147,7 +148,7 @@ class Outcomes:
                 raise ReplayError('INCOMPLETE_LABEL_COVERAGE')
             if day not in self.cells:
                 self.cells[day] = lb.label_universe_day(day, self.universe.bars, self.anchors, self.costs, last_day=self.last,
-                                                        decision_at=T, crypto_entry=fills.crypto_entry(T))
+                                                        decision_at=T, crypto_entry=self.crypto_entry(T))
             cell = self.cells[day].get(asset)
             horizon = str(h) + 'd'
             if not cell or horizon not in cell:

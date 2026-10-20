@@ -19,43 +19,44 @@ def admission():
 
 
 def lookup(root, family, prompt, schema, tag):
-    source_state = spec.spec()['input_refresh']['source_state_dir']
-    if not (Path(root) / source_state / 'transcripts').exists():
+    if not any(Path(root).glob('duel-v*/transcripts')):
         return None
     value = admission()
-    source = Path(root) / value['source_state_dir'] / 'transcripts'
     wanted = hashlib.sha256(prompt.encode()).hexdigest()
     matches = []
-    for identity, digest in value['transcripts'].items():
-        path = source / (identity + '.json')
-        if spec.file_hash(path) != digest:
-            raise ReplayError('CONTINUATION_SOURCE_CHANGED')
-        record = json.loads(path.read_text())
-        if (record.get('family') == family and record.get('prompt_sha256') == wanted and
-                record['tag'].partition(':')[2] == tag.partition(':')[2]):
-            expected = sha256_canonical([value['source_spec_hash'], value['source_code_hash'], family,
-                                         prompt, schema, record['tag']])
-            if expected != identity or record['spec_hash'] != value['source_spec_hash']:
-                raise ReplayError('CONTINUATION_CALL_BINDING_MISMATCH')
-            matches.append((record, identity, digest))
+    for table in value.get('sources', [value]):
+        source = Path(root) / table['source_state_dir'] / 'transcripts'
+        for identity, digest in table['transcripts'].items():
+            path = source / (identity + '.json')
+            if spec.file_hash(path) != digest:
+                raise ReplayError('CONTINUATION_SOURCE_CHANGED')
+            record = json.loads(path.read_text())
+            if (record.get('family') == family and record.get('prompt_sha256') == wanted and
+                    record['tag'].partition(':')[2] == tag.partition(':')[2]):
+                expected = sha256_canonical([table['source_spec_hash'], table['source_code_hash'], family,
+                                             prompt, schema, record['tag']])
+                if expected != identity or record['spec_hash'] != table['source_spec_hash']:
+                    raise ReplayError('CONTINUATION_CALL_BINDING_MISMATCH')
+                matches.append((record, identity, digest, table))
     if len(matches) > 1:
         raise ReplayError('CONTINUATION_AMBIGUOUS')
     if not matches:
         return None
-    record, identity, digest = matches[0]
+    record, identity, digest, table = matches[0]
     if record['state'] == 'INTENT':
-        if (identity != value['zero_byte_retry_identity'] or record.get('raw') or record.get('err') or
+        if (identity != value.get('zero_byte_retry_identity') or record.get('raw') or record.get('err') or
                 not value['source_process_ended']):
             raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
     elif record['state'] != 'RECEIVED':
         raise ReplayError('CONTINUATION_INVALID_STATE')
-    return record, {'identity': identity, 'sha256': digest, 'spec_hash': value['source_spec_hash'],
-                    'code_hash': value['source_code_hash'], 'admission_sha256': sha256_canonical(value)}
+    return record, {'identity': identity, 'sha256': digest, 'spec_hash': table['source_spec_hash'],
+                    'code_hash': table['source_code_hash'], 'admission_sha256': sha256_canonical(value)}
 
 
 def verify_sources(root):
     value = admission()
-    for identity, digest in value['transcripts'].items():
-        file = Path(root) / value['source_state_dir'] / 'transcripts' / (identity + '.json')
-        if not file.is_file() or spec.file_hash(file) != digest:
-            raise ReplayError('CONTINUATION_SOURCE_CHANGED')
+    for table in value.get('sources', [value]) + value.get('preserved_intents', []):
+        for identity, digest in table['transcripts'].items():
+            file = Path(root) / table['source_state_dir'] / 'transcripts' / (identity + '.json')
+            if not file.is_file() or spec.file_hash(file) != digest:
+                raise ReplayError('CONTINUATION_SOURCE_CHANGED')
