@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from scripts.trading_lab.trader_agent.config import TraderError, strict_json
@@ -49,8 +50,61 @@ def active_stop(data, family, at):
     return day_stop(data.get(iso(at)[:10], {}), family, at)
 
 
+MONTHS = ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')
+_DATE = (r'(?:(?P<month>' + '|'.join(MONTHS) + r')[a-z]*\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+'
+         r'(?:(?P<year>\d{4}),?\s+)?)?')
+_CLOCK = r'(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]m)?'
+RESET_NOTICES = (
+    # Claude CLI: "You've hit your session limit · resets 10:30pm (UTC)" ("resets Oct 24, 10am (UTC)" past 24h).
+    re.compile(r'\bresets\s+(?:at\s+)?' + _DATE + _CLOCK + r'\s*\((?P<zone>[A-Za-z0-9_/+-]+)\)', re.I),
+    # Codex CLI: "You've hit your usage limit ... try again at 5:07 AM." ("at Oct 22nd, 2026 5:07 AM." on
+    # another day). Codex prints the host's local clock without a zone; the research host runs on UTC.
+    re.compile(r'\btry\s+again\s+at\s+' + _DATE + _CLOCK + r'(?![\d:])', re.I),
+)
+
+
+def notice_reset(match, at):
+    """First instant at which the printed reset clock has passed, strictly after the error time `at`.
+
+    A clock without a date is its next occurrence after `at` (one day later when it is not after
+    `at`). The CLIs truncate the reset to the minute, so an error inside the printed minute resets at
+    the end of that minute, never a day later.
+    """
+    hour, minute, meridiem = int(match['hour']), int(match['minute'] or 0), (match['meridiem'] or '').lower()
+    if not match['minute'] and not meridiem:
+        return None
+    if meridiem:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if meridiem == 'pm' else 0)
+    if hour > 23 or minute > 59:
+        return None
+    zone = match.groupdict().get('zone') or 'UTC'
+    try:
+        zone = timezone.utc if zone.upper() in ('UTC', 'ETC/UTC', 'GMT') else ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+    local = at.astimezone(zone)
+    if match['month']:
+        try:
+            candidate = datetime(int(match['year'] or local.year), MONTHS.index(match['month'][:3].lower()) + 1,
+                                 int(match['day']), hour, minute, tzinfo=zone)
+            if not match['year'] and candidate + timedelta(minutes=1) <= local:
+                candidate = candidate.replace(year=candidate.year + 1)
+        except ValueError:
+            return None
+    else:
+        candidate = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate + timedelta(minutes=1) <= local:
+            candidate += timedelta(days=1)
+    if candidate <= local:
+        candidate += timedelta(minutes=1)
+    candidate = candidate.astimezone(timezone.utc)
+    return candidate if at < candidate <= at + timedelta(days=8) else None
+
+
 def quota_reset(record):
-    """Honor explicit provider reset clocks; otherwise retry only on the next UTC day."""
+    """Honor explicit provider reset clocks; retry on the next UTC day only when no usable reset time is given."""
     at = instant(record.get('received_at', record['at']))
     fallback = at.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     def find(value):
@@ -81,14 +135,11 @@ def quota_reset(record):
         except ValueError:
             pass
     text = record.get('raw', '') + ' ' + record.get('err', '')
-    match = re.search(r'\bresets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(UTC\)', text, re.I)
-    if match:
-        hour, minute = int(match[1]), int(match[2] or 0)
-        if match[3]:
-            hour = hour % 12 + (12 if match[3].lower() == 'pm' else 0)
-        if hour < 24 and minute < 60:
-            candidate = at.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            return candidate if candidate > at else candidate + timedelta(days=1)
+    for pattern in RESET_NOTICES:
+        for match in pattern.finditer(text):
+            reset = notice_reset(match, at)
+            if reset:
+                return reset
     return fallback
 
 
@@ -181,6 +232,43 @@ class DuelBudget(Budget):
         data = json.loads(self.path.read_text()) if self.path.exists() else {}
         day = data.get(iso(at)[:10], {})
         return active_stop(data, family, at)
+
+    def reparse_stops(self, transcripts):
+        """Repair only existing quota resets from saved messages; never refund or dispatch."""
+        evidence, latest = [], {}
+        for file in sorted(map(Path, transcripts)):
+            record = json.loads(file.read_text())
+            family = record.get('family')
+            if family not in ('opus', 'gpt') or not (record.get('raw') or record.get('err')):
+                continue
+            try:
+                decode(record['raw'], record['err'], record['returncode'], family, {})
+            except ReplayError as error:
+                flags = error.evidence if isinstance(error.evidence, dict) else {}
+                if error.code != 'MODEL_USAGE_LIMIT' and not flags.get('usage_limit'):
+                    continue
+            else:
+                continue
+            day = iso(instant(record['at']))[:10]
+            reset = iso(quota_reset(record))
+            received = instant(record.get('received_at', record['at']))
+            item = {'day': day, 'family': family, 'sha256': spec.file_hash(file), 'reset_at': reset}
+            evidence.append(item)
+            key = (day, family)
+            if key not in latest or received > latest[key][0]:
+                latest[key] = (received, reset)
+        unresolved = []
+        with self._locked() as data:
+            for day, row in sorted(data.items()):
+                for family in ('opus', 'gpt'):
+                    reason = row.get('stopped:' + family) or (row.get('stopped') if family == 'opus' else None)
+                    if reason != 'MODEL_USAGE_LIMIT':
+                        continue
+                    if (day, family) in latest:
+                        row['reset_at:' + family] = latest[(day, family)][1]
+                    else:
+                        unresolved.append({'day': day, 'family': family})
+        return {'evidence': evidence, 'unresolved': unresolved}
 
 
 def argv(family, schema, schema_file):

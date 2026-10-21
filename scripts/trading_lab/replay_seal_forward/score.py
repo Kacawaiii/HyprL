@@ -294,7 +294,8 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
             raise ReplayError('DECISION_HASH_NOT_PUBLISHED', record_key(family, period, group, day))
         for call in record['calls'].values():
             if 'transcript' in call:
-                value = json.loads((root / spec.STATE_DIR / 'transcripts' / (call['transcript'] + '.json')).read_text())
+                from .continuation import response_record
+                value = response_record(root, call)
                 digest = sha256_canonical({k: value[k] for k in ('raw', 'err', 'returncode')})
                 if public.get('response:' + call['transcript']) != digest:
                     raise ReplayError('RESPONSE_HASH_NOT_PUBLISHED')

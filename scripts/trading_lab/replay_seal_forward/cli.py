@@ -68,10 +68,13 @@ def main(argv=None):
     parser.add_argument('--data-root', default=os.environ.get('REPLAY_DATA_ROOT'), required='REPLAY_DATA_ROOT' not in os.environ)
     parser.add_argument('--authorization', default=os.environ.get('REPLAY_AUTHORIZATION'), required='REPLAY_AUTHORIZATION' not in os.environ)
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('status', 'audit', 'freeze', 'build-inputs', 'refresh-inputs', 'seal-inputs'):
+    for name in ('status', 'audit', 'freeze', 'build-inputs', 'refresh-inputs', 'seal-inputs', 'reparse-stops'):
         sub.add_parser(name)
     for name in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
         sub.add_parser(name).add_argument('--expected-commit', required=True)
+    dry = sub.add_parser('forward-dry-run')
+    dry.add_argument('--expected-commit', required=True)
+    dry.add_argument('--session', required=True)
     sub.add_parser('score').add_argument('period', choices=('dev', 'test'))
     args = parser.parse_args(argv)
     root = None
@@ -95,6 +98,14 @@ def main(argv=None):
                 result = ex.status(root, budget)
             elif args.command == 'audit':
                 result = audit.evidence(root)
+            elif args.command == 'reparse-stops':
+                paths = list(root.glob('*/transcripts/**/*.json')) + list((root / 'transcripts').rglob('*.json'))
+                result = dict(budget.reparse_stops(paths), status='REPARSED')
+            elif args.command == 'forward-dry-run':
+                from .collect import Grants
+                Grants(os.environ['REPLAY_COLLECTION_GRANT'], args.authorization,
+                       clock=lambda: forward.decision_time(args.session))
+                result = forward.dry_run(root, args.session, grant, expected_commit=args.expected_commit)
             elif args.command in ('freeze', 'seal-inputs'):
                 target = ex.FREEZE if args.command == 'freeze' else ex.INPUT_SEAL
                 if target.exists():

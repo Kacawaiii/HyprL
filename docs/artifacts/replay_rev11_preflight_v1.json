@@ -1,0 +1,113 @@
+{
+  "base_commit": "ef63b02d939b669fa082ae019e57f9def6ac1960",
+  "checks": {
+    "replay_bench_duel_forward": {
+      "failed": 0,
+      "passed": 245
+    },
+    "required_event_api": {
+      "expected_skip": "tests/api/test_backtest_summary.py: hyprl_api not part of these branches",
+      "failed": 0,
+      "passed": 505,
+      "skipped": 1
+    }
+  },
+  "code_hash": "fc7752b4d99b6f048be695dfcd8ff815bb239d18c232755096f298438263d7fd",
+  "deployment": "REQUIRED_AFTER_COMMIT",
+  "forward_2026_10_22_dry_run": "REQUIRED_ON_DEPLOYED_COMMIT",
+  "freeze_sha256": "242fc7d500e89e38afbf043e32590fa80a113239d8fcf0323cb924a6ead250f2",
+  "input_equivalence": {
+    "contexts": 128,
+    "contexts_sha256": "71db0976beef21132af211d1b9293eb76d64ccdde66ec62592fc185b74d5f2df",
+    "input_proof_hash": "5d1a4dc6391cdef03c0fa6f35d6a56d8dbb319a7041ca9c14e9e1c92c780500a",
+    "outcome_cache_objects": 2089,
+    "paired_exclusions": 658,
+    "prediction_cache_objects": 2089,
+    "source_input_proof_hash": "68c6336ab95545760e8608df00c75f1c65b4af86ab5987e3273e8314be158636"
+  },
+  "saved_answers": {
+    "budget_counters_unchanged": true,
+    "forward_revalidated": [
+      {
+        "action": "REVALIDATED_ONLY_NO_REPUBLICATION",
+        "candidates": 40,
+        "citation_invalid_views": 1,
+        "forecasts": 80,
+        "missing_views": 30,
+        "transcript_sha256": "7aaa87e71c53073fa3b35d4e12549aa8854aee357f647b31729c7ba129272893",
+        "validation": "CITATION_NOT_IN_SNAPSHOT"
+      }
+    ],
+    "model_calls": 0,
+    "publications": 0,
+    "reused": [
+      {
+        "abstain_views_filled": 32,
+        "day": "2026-07-06",
+        "decision_hash": "36d1c50d77ac1cf66e1345cb43bde71c66cf403891926e10edb799712c81289c",
+        "family": "opus",
+        "group": "cd",
+        "original_responses": {
+          "news": "6df7c9f589523660e31184075ccbb09173971f4a762a5ab9d21d509b964c600c"
+        }
+      },
+      {
+        "abstain_views_filled": 0,
+        "day": "2026-07-01",
+        "decision_hash": "4d56c2254188365b9c7b929edb55109f9dcfde05feacbe63c0e25340e84c0c98",
+        "family": "gpt",
+        "group": "ab",
+        "original_responses": {
+          "analyst": "bdfd58480bfaa7ee5d28872e860f7ac0366849b90ee921983e18c7663979c964",
+          "reviewer": "7cebee1c0355c7e4bc06fd3c5c1c5bb3912df2f6710b4557a1c4231404102b8d"
+        }
+      }
+    ]
+  },
+  "saved_usage_stops": {
+    "evidence": [
+      {
+        "day": "2026-10-21",
+        "family": "gpt",
+        "reset_at": "2026-10-21T05:07:00Z",
+        "sha256": "44e97643fc2a686b0d14ce652c8bb5e893486f4c04aa34d36c7533dfa95d3cb4"
+      },
+      {
+        "day": "2026-10-20",
+        "family": "opus",
+        "reset_at": "2026-10-21T03:20:00Z",
+        "sha256": "ca9315c8757bbeaca2708d7e02a2a37c6b44c7c4d3251a503ffef4212b7ee24d"
+      },
+      {
+        "day": "2026-10-20",
+        "family": "opus",
+        "reset_at": "2026-10-20T22:10:00Z",
+        "sha256": "fdbe58f240917a8c89d15eb248967dcf109a8a35b24368344c599fa632c834b8"
+      },
+      {
+        "day": "2026-10-20",
+        "family": "gpt",
+        "reset_at": "2026-10-20T18:30:00Z",
+        "sha256": "f59938737befc3a3df04f5dfc368ec0687449a004ad10072e73c185358bb4a6b"
+      },
+      {
+        "day": "2026-10-20",
+        "family": "opus",
+        "reset_at": "2026-10-20T17:10:00Z",
+        "sha256": "92652f5994198efc2cf29f55765d222fe75e6e96e40fd3bdfa3b64b4e0d58931"
+      }
+    ],
+    "unresolved": [
+      {
+        "day": "2026-10-18",
+        "family": "opus"
+      },
+      {
+        "day": "2026-10-19",
+        "family": "opus"
+      }
+    ]
+  },
+  "schema": "replay-rev11-preflight-v1",
+  "spec_hash": "322ad05f8bf125035a8c41c5be3af22028e13941491183609d27ae9e369da8d7"
+}

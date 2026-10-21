@@ -12,8 +12,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v10.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v10.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v11.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v11.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -216,7 +216,7 @@ def frozen_payload(root):
     rate = json.loads((Path(root) / spec.STATE_DIR / 'dev-label-base-rate.json').read_text())
     if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', -1) < 0 or rate.get('panel') != PRIMARY['panel']:
         raise ReplayError('DEV_BASE_RATE_NOT_FROZEN')
-    return {'schema': 'replay-duel-test-freeze-v10', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+    return {'schema': 'replay-duel-test-freeze-v11', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
             'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
@@ -233,7 +233,7 @@ def frozen_payload(root):
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v10', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v11', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -257,7 +257,7 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8', 'duel-v9')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8', 'duel-v9', 'duel-v10')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):
@@ -392,8 +392,13 @@ def publish_pending(root, ledger, night):
     # day never produced a complete decision record.
     for file in sorted((Path(root) / spec.STATE_DIR / 'transcripts').rglob('*.json')):
         value = json.loads(file.read_text())
+        identity = file.stem
+        if value.get('state') == 'REFERENCED':
+            from .continuation import response_record
+            identity = value['source']['identity']
+            value = response_record(root, {'transcript': identity, 'original_protocol': value['source']})
         if value.get('state') != 'INTENT' and 'raw' in value:
-            key = 'response:' + file.stem
+            key = 'response:' + identity
             digest = sha256_canonical({k: value[k] for k in ('raw', 'err', 'returncode')})
             if public.get(key) != digest:
                 pending[key] = digest

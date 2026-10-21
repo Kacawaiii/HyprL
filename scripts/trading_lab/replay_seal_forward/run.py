@@ -114,6 +114,8 @@ def decide(root, period, group, day, family, transport, client, meta, path):
             record['calls']['news'], record['errors']['news'] = call, errors
         else:
             output = {'views': [], 'forecasts': []}
+        # Candidates the model gave no view are already explicit ABSTAIN views; count them.
+        record[schemas.VIEWS_FILLED] = output.get(schemas.VIEWS_FILLED, 0)
         # Exact primary evidence affects trading only; it never deletes a forecast.
         from .inputs import primary_filter
         keep, evidence = primary_filter(output['views'], context)

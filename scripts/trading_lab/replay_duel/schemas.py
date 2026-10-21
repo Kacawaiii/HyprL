@@ -65,10 +65,30 @@ def reviewer(output, original):
             raise ReplayError('REVIEW_RAISED_PROBABILITY')
 
 
+VIEWS_FILLED = 'abstain_views_filled'
+
+
+def abstain_view(symbol):
+    """A candidate without a model view: no opinion, no citation, no trade."""
+    # holding_sessions 2 is unused for ABSTAIN and already inside the mandatory 2d forecast label plan.
+    return {'symbol': symbol, 'view': 'ABSTAIN', 'p_outperform': .5, 'holding_sessions': 2, 'event_code': 'none',
+            'news_ids': [], 'reason': 'NO_VIEW_RETURNED', 'counter_thesis': '', 'falsifier': ''}
+
+
 def news(output, context):
+    """Validate a news answer, then normalize it in place and return it.
+
+    Operator decision, uniform for both models in replay and forward and taken before any outcome
+    was scored: a candidate symbol without a view is an ABSTAIN view (p_outperform 0.5, no news_ids,
+    no trade). Duplicate views and views for unknown symbols stay invalid; forecasts must still cover
+    every candidate x {2d, 10d}. The model-facing schema and prompts are unchanged. Validation runs
+    entirely before the fill, and the normalized output records how many views were filled.
+    """
     validate(NEWS_SCHEMA, output)
     candidates = {c['symbol']: {h['news_id'] for h in c['headlines']} for c in context['candidates']}
-    coverage([v['symbol'] for v in output['views']], candidates)
+    symbols = [v['symbol'] for v in output['views']]
+    if len(symbols) != len(set(symbols)) or not set(symbols) <= set(candidates):
+        raise ReplayError('FORECAST_COVERAGE_INVALID')
     coverage([(v['asset'], v['horizon']) for v in output['forecasts']],
              [(a, h) for a in candidates for h in ('2d', '10d')])
     for v in output['views']:
@@ -77,3 +97,7 @@ def news(output, context):
             raise ReplayError('CITATION_NOT_IN_SNAPSHOT')
         if v['view'] != 'ABSTAIN' and not v['news_ids']:
             raise ReplayError('UNSUPPORTED_VIEW')
+    missing = [s for s in candidates if s not in set(symbols)]
+    output['views'].extend(abstain_view(s) for s in missing)
+    output[VIEWS_FILLED] = len(missing)
+    return output

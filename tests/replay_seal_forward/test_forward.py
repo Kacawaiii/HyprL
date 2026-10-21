@@ -375,3 +375,39 @@ def test_legacy_forward_registry_preserves_original_binding():
         fw.configuration_for(dict(sealed,code_hash='0'*64),{})
     with pytest.raises(ReplayError,match='FORWARD_CONFIG_NOT_FROZEN'):
         fw.configuration_for(dict(sealed,spec_hash='0'*64),{})
+
+
+def test_partial_news_views_are_stored_as_abstain_and_counted(tmp_path, runtime, ledger, monkeypatch):
+    client, _ = runtime
+    symbols = ('SMLL', 'MIDD', 'TINY')
+    value = sealed()
+    value.pop('snapshot_hash')
+    value['contexts']['cd']['candidates'] = [{'symbol': s, 'filings': [], 'headlines': [{'news_id': i, 'title': s,
+        'published_at': iso(T - timedelta(hours=1)), 'url': 'https://news.invalid/' + s}]} for i, s in enumerate(symbols)]
+    value['snapshot_hash'] = sha256_canonical(value)
+    monkeypatch.setattr(fw, 'snapshot', lambda root, at: value)
+    answer = output()
+    answer['news'] = {'views': [dict(symbol='MIDD', view='UP', p_outperform=.6, holding_sessions=4, event_code='upgrade',
+                                     news_ids=[1], reason='r', counter_thesis='c', falsifier='f')],
+                      'forecasts': [dict(asset=s, horizon=h, p_outperform=.5) for s in symbols for h in ('2d', '10d')]}
+    def runner(args, **kwargs):
+        if args[0] == 'claude':
+            raw = json.dumps({'subtype': 'success', 'modelUsage': {'claude-opus-5-5': {}}, 'structured_output': answer})
+        else:
+            raw = '\n'.join(json.dumps(e) for e in [{'type': 'thread.started'},
+                {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(answer)}},
+                {'type': 'turn.completed'}])
+        return subprocess.CompletedProcess(args, 0, raw, '')
+    client.runner = runner
+    result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
+    assert result['status'] == 'DONE' and result['models'] == {'opus': 'RECEIVED', 'gpt': 'RECEIVED'}
+    for family in ex.FAMILIES:
+        news = json.loads((fw.directory(tmp_path, '2026-10-20') / (family + '.json')).read_text())['output']['news']
+        assert news['abstain_views_filled'] == 2 and [v['symbol'] for v in news['views']] == ['MIDD', 'SMLL', 'TINY']
+        assert [(v['view'], v['p_outperform'], v['news_ids']) for v in news['views'][1:]] == [('ABSTAIN', .5, [])] * 2
+
+
+def test_news_normalization_leaves_the_model_facing_contract_unchanged():
+    from scripts.trading_lab.replay_seal_forward import schemas
+    assert sha256_canonical(schemas.SCHEMAS) == spec.spec()['schema_sha256']
+    assert schemas.VIEWS_FILLED not in fw.SCHEMA['properties']['news']['properties']

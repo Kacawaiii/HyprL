@@ -78,21 +78,53 @@ def order(day):
 
 class ForwardBudget(models.DuelBudget):
     def reserve_model(self, family, limit, at, night_limit=1):
+        with self._locked() as data:
+            self.check_model(family, limit, at, data=data)
+            data.setdefault(iso(at)[:10], {})['forward:model:' + family] = 1
+
+    def check_model(self, family, limit, at, *, data=None):
+        """The real reservation gate, also available without changing counters for a dry run."""
         if family not in ex.FAMILIES:
             raise ReplayError('MODEL_NOT_ALLOWED')
         if family == 'opus' and (self.path.parent / models.CREDIT_STOP).exists():
             raise ReplayError('API_CREDIT_EXHAUSTED')
-        with self._locked() as data:
-            day = data.setdefault(iso(at)[:10], {})
-            if models.active_stop(data, family, at):
-                raise ReplayError('MODEL_USAGE_LIMIT')
-            key = 'forward:model:' + family
-            if day.get(key, 0):
-                raise ReplayError('FORWARD_CALL_ALREADY_RESERVED')
-            keys = models.OPUS_DAY_KEYS if family == 'opus' else models.GPT_DAY_KEYS
-            if sum(day.get(k, 0) for k in keys) >= limit:
-                raise ReplayError('BUDGET_EXHAUSTED')
-            day[key] = 1
+        if data is None:
+            data = json.loads(self.path.read_text()) if self.path.is_file() else {}
+        day = data.get(iso(at)[:10], {})
+        if models.active_stop(data, family, at):
+            raise ReplayError('MODEL_USAGE_LIMIT')
+        if day.get('forward:model:' + family, 0):
+            raise ReplayError('FORWARD_CALL_ALREADY_RESERVED')
+        keys = models.OPUS_DAY_KEYS if family == 'opus' else models.GPT_DAY_KEYS
+        if sum(day.get(k, 0) for k in keys) >= limit:
+            raise ReplayError('BUDGET_EXHAUSTED')
+
+
+def dry_run(root, day, grant, *, expected_commit):
+    """Check the scheduled dispatch gates without a source request, model call or publication.
+
+    Tomorrow's receipts and provider availability cannot be known today. This checks the committed
+    protocol and current durable gates at that session's dispatch clock; live inputs remain required.
+    """
+    ex.committed()
+    if ex.head() != expected_commit:
+        raise ReplayError('INSTALLED_SHA_MISMATCH')
+    ex.check_freeze(root)
+    T = decision_time(day)
+    remaining = window(T)
+    grant.check()
+    if not instant(grant.payload['granted_at']) <= T < instant(grant.payload['not_after']):
+        raise ReplayError('GRANT_EXPIRED_OR_NOT_STARTED')
+    budget = ForwardBudget(root)
+    for family in order(day):
+        limit = min(models.NIGHT_CAP, grant.model_limit('opus')) if family == 'opus' else models.NIGHT_CAP
+        budget.check_model(family, limit, T)
+        models.argv(family, SCHEMA, Path('dry-run-schema.json'))
+    return {'status': 'READY', 'session': day, 'decision_time': iso(T), 'expected_commit': expected_commit,
+            'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+            'models': {f: 'READY' for f in ex.FAMILIES}, 'call_timeout_seconds': 900,
+            'dispatch_remaining_seconds': remaining, 'model_calls': 0, 'publications': 0, 'requests': 0,
+            'live_inputs': 'REQUIRED_AT_SESSION', 'provider_availability': 'UNPROVEN_UNTIL_DISPATCH'}
 
 
 def directory(root, day):

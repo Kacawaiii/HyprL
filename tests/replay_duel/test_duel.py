@@ -81,7 +81,8 @@ def test_direction_reviewer_and_news_coverage():
         schemas.reviewer(review, a)
     ctx = context('2026-07-15', True)
     out = news_output(ctx)
-    schemas.news(out, ctx)
+    # news() normalizes the raw answer in place; validate a copy so `out` stays a raw model answer.
+    schemas.news(deepcopy(out), ctx)
     out['forecasts'][0]['asset'] = 'WRONG'
     with pytest.raises(ReplayError, match='FORECAST_COVERAGE_INVALID'):
         schemas.news(out, ctx)
@@ -93,6 +94,74 @@ def news_output(ctx):
                       for c in ctx['candidates']],
             'forecasts': [dict(asset=c['symbol'], horizon=h, p_outperform=.7)
                           for c in ctx['candidates'] for h in ('2d', '10d')]}
+
+
+def opus_like(n_candidates=40, n_views=10):
+    """Forecasts for every candidate, views only for the candidates the model has an opinion on."""
+    ctx = {'schema': 'replay-news-context-v1', 'decision_time': '2026-07-06T12:00:00Z',
+           'candidates': [{'symbol': f'S{i:02d}', 'filings': [], 'headlines': [{'news_id': i, 'title': f'S{i:02d} news',
+                           'published_at': '2026-07-06T11:00:00Z', 'url': f'https://news.invalid/{i}'}]}
+                          for i in range(n_candidates)]}
+    out = {'views': [dict(symbol=f'S{i:02d}', view='UP' if i % 2 else 'DOWN', p_outperform=.6 if i % 2 else .4,
+                          holding_sessions=5, event_code='contract_product', news_ids=[i], reason='r',
+                          counter_thesis='c', falsifier='f') for i in range(n_views)],
+           'forecasts': [dict(asset=c['symbol'], horizon=h, p_outperform=.55)
+                         for c in ctx['candidates'] for h in ('2d', '10d')]}
+    return ctx, out
+
+
+def test_news_candidates_without_a_view_become_abstain_views():
+    ctx, out = opus_like()
+    given = deepcopy(out['views'])
+    assert schemas.news(out, ctx) is out
+    assert out['views'][:10] == given and out[schemas.VIEWS_FILLED] == 30
+    assert sorted(v['symbol'] for v in out['views']) == sorted(c['symbol'] for c in ctx['candidates'])
+    for view in out['views'][10:]:
+        assert view == schemas.abstain_view(view['symbol'])
+        assert view['view'] == 'ABSTAIN' and view['p_outperform'] == .5 and view['news_ids'] == []
+    assert len(out['forecasts']) == 80
+    # Complete answers are unchanged apart from the explicit zero count.
+    ctx = context('2026-07-15', True)
+    out = news_output(ctx)
+    expected = deepcopy(out['views'])
+    schemas.news(out, ctx)
+    assert out['views'] == expected and out[schemas.VIEWS_FILLED] == 0
+
+
+@pytest.mark.parametrize('defect', ['duplicate', 'unknown', 'missing_forecast', 'unknown_forecast',
+                                    'duplicate_forecast'])
+def test_news_view_and_forecast_coverage_defects_stay_invalid(defect):
+    ctx, out = opus_like()
+    if defect == 'duplicate':
+        out['views'].append(deepcopy(out['views'][0]))
+    elif defect == 'unknown':
+        out['views'][0]['symbol'] = 'WRONG'
+    elif defect == 'missing_forecast':
+        out['forecasts'].pop()
+    elif defect == 'unknown_forecast':
+        out['forecasts'][-1]['asset'] = 'WRONG'
+    else:
+        out['forecasts'][-1] = deepcopy(out['forecasts'][0])
+    before = deepcopy(out)
+    with pytest.raises(ReplayError, match='FORECAST_COVERAGE_INVALID'):
+        schemas.news(out, ctx)
+    # Nothing is filled into an answer that fails validation.
+    assert out == before
+
+
+def test_news_filled_views_keep_existing_view_checks():
+    ctx, out = opus_like()
+    out['views'][0]['news_ids'] = [39]
+    with pytest.raises(ReplayError, match='CITATION_NOT_IN_SNAPSHOT'):
+        schemas.news(out, ctx)
+    ctx, out = opus_like()
+    out['views'][1]['p_outperform'] = .4
+    with pytest.raises(ReplayError, match='DIRECTION_INVALID'):
+        schemas.news(out, ctx)
+    ctx, out = opus_like()
+    out['views'][1]['news_ids'] = []
+    with pytest.raises(ReplayError, match='UNSUPPORTED_VIEW'):
+        schemas.news(out, ctx)
 
 
 def test_commands_are_no_tool_subscription_only():
