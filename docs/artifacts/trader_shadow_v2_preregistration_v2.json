@@ -1,0 +1,36 @@
+{
+  "schema": "trader-shadow-v2-preregistration-v2",
+  "revision": 2,
+  "spec_hash": "424c5ef79147435354a4bd5ceeaea974fc07ab553bfdcb39f276bf833c686953",
+  "initial_equity": 100000,
+  "authorization_sha256": "9ca2d2fd0c4a9d306da3f65ab2b66b7382c62b11812b756a5ce7f1aef13148bc",
+  "mode": "SHADOW_FORWARD",
+  "freeze": "before first forward decision; new runtime; no implicit migration",
+  "primary_unit": "each code-selected candidate with later entry and completed five-session-or-stop outcome",
+  "scoring": {
+    "arms": [
+      "baseline",
+      "extraction",
+      "veto",
+      "sizing",
+      "combined"
+    ],
+    "unit": "each code-selected candidate with later entry and completed five-session-or-stop outcome",
+    "factors": "extraction: zero on cited cut/dilution/accounting/legal; veto: zero on either VETO; sizing: half on either SIZE_DOWN; combined applies active factors",
+    "paired": "same candidates, baseline quote/fill/stop/horizon/costs; unused size held in cash; no capacity-reallocation claim",
+    "disable": "permanent prospective removal from combined when >=40 completed valid candidate decisions and cumulative paired net PnL delta <=0; no tuning; diagnostics retained",
+    "correctness": "semantic extraction accuracy UNMEASURED until independent operator fact adjudication; exact substring alone proves citation only",
+    "statistics": "report cluster-days; 40 is a governance threshold, not statistical significance"
+  },
+  "replay_requirement": "waived by pinned operator grant",
+  "forbidden": [
+    "broker orders",
+    "crypto",
+    "holdout research",
+    "v1 modifications",
+    "automatic promotion",
+    "forward-ledger tuning"
+  ],
+  "max_candidates_per_day": 3,
+  "canonical_sha256": "d95ba504e7e23ec27502fe90bc7f137ccb9665d8a8e41c95766aad77105bb12b"
+}
