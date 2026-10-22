@@ -192,6 +192,7 @@ def refresh(config, *, at=None, read_units=True):
             if snapshot:
                 export.write_snapshot(out, name, snapshot)
         return {'state': 'EXPORTED', 'events': len(home['events']), 'overlays': len(analysis['overlays']),
+                'omitted_overlays': analysis['omitted_overlays'],
                 'redacted_urls': sum(s.get('redactions', {}).get('secret_shaped_urls', 0)
                                      for s in (home, analysis, paper) if s)}
 

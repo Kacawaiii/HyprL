@@ -103,7 +103,7 @@ def assert_clean(value, path="$"):
 def redact_urls(snapshot):
     """Drop suspect URL values locally, then run the unchanged strict export guard.
 
-    Counts describe exported occurrences, without retaining the offending value.
+    Count candidate value occurrences, without retaining the offending value.
     Free text and forbidden fields still fail closed. Build a fresh tree so shared
     decision chains and the caller's inputs cannot hide or inherit a redaction.
     """

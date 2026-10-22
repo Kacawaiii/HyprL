@@ -105,6 +105,23 @@ def test_secret_shaped_source_url_is_redacted_and_counted_without_losing_events(
     assert radar['events'][0]['stories'][0]['url'] == bad
 
 
+def test_analysis_fits_the_api_byte_budget_and_counts_omitted_annotations(monkeypatch, tmp_path):
+    from copy import deepcopy
+    from scripts.radar import cockpit_analysis as analysis
+    from scripts.radar.cockpit_export import write_snapshot
+    radar = deepcopy(RADAR)
+    template = radar['events'][0]
+    radar['events'] = [{**template, 'id': f'{i:064x}', 'headline': f'Synthetic event {i}'} for i in range(200)]
+    monkeypatch.setattr(analysis, 'MAX_BYTES', 32_000)
+    snapshot = analysis.build_analysis(radar)
+    path = write_snapshot(tmp_path, 'analysis.json', snapshot)
+    assert path.stat().st_size <= 32_000
+    assert 0 < len(snapshot['overlays']) < 400
+    assert snapshot['omitted_overlays'] + len(snapshot['overlays']) == 400
+    assert snapshot['overlays'][-1]['label'] == 'Synthetic event 199'
+    assert RadarViews(tmp_path).dispatch('/api/v1/radar/analysis', {}) == snapshot
+
+
 @pytest.mark.parametrize('clock,blocked', [('11:41:59', False), ('11:42:00', True), ('11:45:00', True),
                                          ('12:29:59', True), ('12:30:00', False)])
 def test_refresh_window_is_utc_and_protects_its_full_runtime(clock, blocked):

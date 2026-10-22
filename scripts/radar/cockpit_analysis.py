@@ -4,9 +4,12 @@ Only explicit journal results are scored. An intent is not a fill, an open P&L i
 not a realized result, and an asset label is not evidence a radar event caused it.
 """
 from collections import defaultdict
+import json
 from urllib.parse import urlsplit
 
-from .cockpit_export import clean_url, digest, norm_symbol, number, redact_urls, text, utc_now
+from scripts.trading_lab.app_api.radar import MAX_BYTES
+
+from .cockpit_export import ExportError, clean_url, digest, norm_symbol, number, redact_urls, text, utc_now
 
 SCHEMA = 'cockpit-analysis-v1'
 PRIMARY_HOSTS = ('sec.gov', 'federalreserve.gov', 'bls.gov', 'fcc.gov')
@@ -188,6 +191,7 @@ def build_analysis(radar, trader=None, paper=None, journal=None, *, health=None,
                     prices[p['symbol']].append({'at': a.get('observed_at') or (paper or {}).get('generated_at'),
                                                'price': p['last'], 'basis': 'cached_book_mark'})
     snapshot = {'schema': SCHEMA, 'generated_at': at, 'prices': dict(prices), 'overlays': overlays[-12000:],
+                'omitted_overlays': max(0, len(overlays) - 12000),
                 'book_trades': trades[-300:], 'news': {'groups': news_stats(trades), 'minimum_n': MIN_DESCRIPTIVE_N,
                   'by_tag': [{**news_stats([{**t, 'group': 'news'} for t in trades if t['tag'] == tag])[0], 'group': tag}
                              for tag in sorted({t['tag'] for t in trades})],
@@ -206,4 +210,17 @@ def build_analysis(radar, trader=None, paper=None, journal=None, *, health=None,
                                  'Un événement est placé à sa réception, pas à la date où sa conséquence devient connue.',
                                  'Une intention Claude book ne prouve pas une exécution; son prix limite est étiqueté.',
                                  'Comparaisons descriptives, sans attribution causale ni avantage démontré.']}
-    return redact_urls(snapshot)
+    snapshot = redact_urls(snapshot)
+    if snapshot['omitted_overlays']:
+        snapshot['limitations'].append('Historique des annotations partiel; seules les dernières annotations sont conservées.')
+    # Match write_snapshot's UTF-8 encoding and the API's existing hard bound.
+    # Preserve the current tail-retention policy, with explicit omission counts.
+    while len(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8')) > MAX_BYTES:
+        if not snapshot['overlays']:
+            raise ExportError('ANALYSIS_METADATA_EXCEEDS_EXPORT_BOUND')
+        if not snapshot['omitted_overlays']:
+            snapshot['limitations'].append('Historique des annotations partiel; seules les dernières annotations sont conservées.')
+        drop = max(1, len(snapshot['overlays']) // 10)
+        snapshot['overlays'] = snapshot['overlays'][drop:]
+        snapshot['omitted_overlays'] += drop
+    return snapshot
