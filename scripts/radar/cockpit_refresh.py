@@ -101,17 +101,25 @@ def latest_radar(path):
     path = Path(path)
     if path.is_file():
         return export.read_json(path)
-    reports = []
+    best_body, best_key = None, None
     for p in path.glob('radar-*.json'):
+        body = report = None
         try:
-            r = export.read_json(p)
-            if r.get('live') and r.get('schema', '').startswith('news-radar-'):
-                reports.append(r)
+            # Keep only the winning UTF-8 body, not every expanded historical
+            # report. Bytes also avoid retaining a wide Unicode JSON string.
+            body = p.read_bytes()
+            report = json.loads(body.decode('utf-8'))
+            if report.get('live') and report.get('schema', '').startswith('news-radar-'):
+                key = (report.get('cutoff') or '', bool(report.get('review')))
+                if best_key is None or key > best_key:
+                    best_body, best_key = body, key
         except (ValueError, OSError):
             continue
-    if not reports:
+        finally:
+            body = report = None
+    if best_body is None:
         raise export.ExportError('NO_REAL_RADAR_REPORT')
-    return max(reports, key=lambda r: (r.get('cutoff') or '', bool(r.get('review'))))
+    return json.loads(best_body.decode('utf-8'))
 
 
 def refresh(config, *, at=None, read_units=True):

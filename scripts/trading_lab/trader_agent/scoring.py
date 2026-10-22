@@ -261,8 +261,12 @@ def metrics(samples, issued):
 
 def scorecard(store, *, synthetic=False, include_samples=False):
     from . import retirement_spec
-    labels = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "label")}
-    inputs = {r["payload"]["prediction_hash"]: r["payload"] for r in rows(store, "inputs")}
+    # rows() still verifies each full contract. Scoring needs neither captured
+    # input snapshots nor label source bodies; do not retain those graphs.
+    labels = {r["payload"]["prediction_hash"]: {k: r["payload"][k] for k in ('value', 'recorded_at')}
+              for r in rows(store, "label")}
+    baselines_by_prediction = {r["payload"]["prediction_hash"]: r["payload"]["baselines"]
+                               for r in rows(store, "inputs")}
     samples, issued, cohort_views = defaultdict(list), defaultdict(int), defaultdict(list)
     slot_samples, slot_issued = defaultdict(list), defaultdict(int)
     predictions = [r for r in rows(store, "prediction") if r["payload"]["synthetic"] == synthetic]
@@ -284,7 +288,7 @@ def scorecard(store, *, synthetic=False, include_samples=False):
         targets = ["raw"] if population == "crypto" else ["raw", "SPY_relative"]
         retired = p['artifact_hash'] == retirement_spec.PREREG_HASH
         baseline_role = 'reviewer_claude' if retired else 'consensus'
-        baselines = inputs[row["identity"]]["baselines"] if view["analyst"] == baseline_role else {}
+        baselines = baselines_by_prediction[row["identity"]] if view["analyst"] == baseline_role else {}
         variant = definition.get("variant")
         if retired:
             variant = retirement_spec.POPULATION + (':' + variant if variant else '')

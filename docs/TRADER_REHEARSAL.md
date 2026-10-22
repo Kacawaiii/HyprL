@@ -30,6 +30,11 @@ forbidden fields and secret-shaped free text, including on snapshot writes.
 Analysis snapshots also retain a bounded tail of annotations within the API's
 unchanged byte limit, with `omitted_overlays` and an explicit history limitation.
 Redaction counts include candidate annotations subsequently omitted for size.
+The refresh scans historical report candidates without retaining their expanded
+JSON graphs. Scorecards retain only verified baselines, label values and label
+recording times, rather than unused source/input snapshots. Discarded annotation
+prefixes are released before URL sanitization. These changes preserve the
+existing memory limit as well as the byte and timeout limits.
 
 The operator's October 12 rehearsal task adds infrastructure checks before each
 weekday, weekend or US holiday crypto run. Execution spec v4, research bindings,

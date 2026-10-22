@@ -210,6 +210,8 @@ def build_analysis(radar, trader=None, paper=None, journal=None, *, health=None,
                                  'Un événement est placé à sa réception, pas à la date où sa conséquence devient connue.',
                                  'Une intention Claude book ne prouve pas une exécution; son prix limite est étiqueté.',
                                  'Comparaisons descriptives, sans attribution causale ni avantage démontré.']}
+    # Release the prefix outside the retained tail before making clean copies.
+    del overlays
     snapshot = redact_urls(snapshot)
     if snapshot['omitted_overlays']:
         snapshot['limitations'].append('Historique des annotations partiel; seules les dernières annotations sont conservées.')

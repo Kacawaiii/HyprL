@@ -122,6 +122,21 @@ def test_analysis_fits_the_api_byte_budget_and_counts_omitted_annotations(monkey
     assert RadarViews(tmp_path).dispatch('/api/v1/radar/analysis', {}) == snapshot
 
 
+def test_latest_radar_preserves_cutoff_and_review_priority_with_invalid_candidates(tmp_path):
+    from scripts.radar.cockpit_refresh import latest_radar
+    expected = {**RADAR, 'live': True, 'cutoff': '2026-10-11T11:30:00Z', 'review': {'status': 'REVIEWED'}}
+    candidates = [
+        {**RADAR, 'live': True, 'review': {'status': 'OLDER'}},
+        {**expected, 'review': None}, expected,
+        {**expected, 'cutoff': '2026-10-12T11:30:00Z', 'live': False},
+        {**expected, 'cutoff': '2026-10-12T11:30:00Z', 'schema': 'other-schema'},
+    ]
+    for i, value in enumerate(candidates):
+        (tmp_path / f'radar-{i}.json').write_text(json.dumps(value))
+    (tmp_path / 'radar-invalid.json').write_text('{invalid')
+    assert latest_radar(tmp_path) == expected
+
+
 @pytest.mark.parametrize('clock,blocked', [('11:41:59', False), ('11:42:00', True), ('11:45:00', True),
                                          ('12:29:59', True), ('12:30:00', False)])
 def test_refresh_window_is_utc_and_protects_its_full_runtime(clock, blocked):
