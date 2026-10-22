@@ -6,7 +6,7 @@ not a realized result, and an asset label is not evidence a radar event caused i
 from collections import defaultdict
 from urllib.parse import urlsplit
 
-from .cockpit_export import assert_clean, clean_url, digest, norm_symbol, number, text, utc_now
+from .cockpit_export import clean_url, digest, norm_symbol, number, redact_urls, text, utc_now
 
 SCHEMA = 'cockpit-analysis-v1'
 PRIMARY_HOSTS = ('sec.gov', 'federalreserve.gov', 'bls.gov', 'fcc.gov')
@@ -206,5 +206,4 @@ def build_analysis(radar, trader=None, paper=None, journal=None, *, health=None,
                                  'Un événement est placé à sa réception, pas à la date où sa conséquence devient connue.',
                                  'Une intention Claude book ne prouve pas une exécution; son prix limite est étiqueté.',
                                  'Comparaisons descriptives, sans attribution causale ni avantage démontré.']}
-    assert_clean(snapshot)
-    return snapshot
+    return redact_urls(snapshot)

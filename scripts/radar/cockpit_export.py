@@ -100,6 +100,39 @@ def assert_clean(value, path="$"):
                 raise ExportError(f"secret-shaped text at {path}")
 
 
+def redact_urls(snapshot):
+    """Drop suspect URL values locally, then run the unchanged strict export guard.
+
+    Counts describe exported occurrences, without retaining the offending value.
+    Free text and forbidden fields still fail closed. Build a fresh tree so shared
+    decision chains and the caller's inputs cannot hide or inherit a redaction.
+    """
+    count = 0
+    def visit(value):
+        nonlocal count
+        if isinstance(value, list):
+            return [visit(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        out = {}
+        for key, item in value.items():
+            if (key in {'url', 'source_url', 'link'} and isinstance(item, str)
+                    and any(pattern.search(item) for pattern in SECRET_TEXT)):
+                out[key] = None
+                count += 1
+            else:
+                out[key] = visit(item)
+        if 'verification' in out and 'url' in out and out['url'] is None:
+            out['verification'] = 'NON VERIFIE'
+        if isinstance(out.get('sources'), list) and out['sources'] and 'verification' in out:
+            out['verification'] = out['sources'][0]['verification']
+        return out
+    result = visit(snapshot)
+    result['redactions'] = {'secret_shaped_urls': count}
+    assert_clean(result)
+    return result
+
+
 # ---------------------------------------------------------------- trader store
 
 def _scan(store, kind):
@@ -391,8 +424,7 @@ def build_home(radar, trader, paper=None, *, generated_at=None, top=TOP_EVENTS, 
         "regime": regime, "events": events,
         # Home blocks (cockpit_today); absent inputs give an empty list or no light, never a guess.
         "calendar": calendar or [], "ai_today": ai_today, "system": system}
-    assert_clean(snapshot)
-    return snapshot
+    return redact_urls(snapshot)
 
 
 # ----------------------------------------------------------------- paper build
@@ -519,8 +551,7 @@ def build_paper(report, book_status, journal, *, sleeve=None, history=None, rada
                 "accounts": accounts, "benchmarks": benchmarks, "curve": curve,
                 "limitations": [text(x, 200) for x in report.get("limitations", [])][:6],
                 "notes": ["paper accounts only; the Claude book is not part of any AI trader variant or baseline"]}
-    assert_clean(snapshot)
-    return snapshot
+    return redact_urls(snapshot)
 
 
 def history_point(paper_snapshot, at=None):

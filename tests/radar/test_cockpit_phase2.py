@@ -83,6 +83,28 @@ def test_missing_fields_and_secret_refusal():
         build_analysis(RADAR, journal=[poisoned])
 
 
+def test_secret_shaped_source_url_is_redacted_and_counted_without_losing_events(tmp_path):
+    from copy import deepcopy
+    from scripts.radar.cockpit_export import assert_clean, write_snapshot
+    radar = deepcopy(RADAR)
+    bad = 'https://example.invalid/home/category/retail?page=6'
+    radar['events'][0]['stories'][0]['url'] = bad
+    snapshot = build_analysis(radar, TRADER)
+    events = [o for o in snapshot['overlays'] if o['kind'] == 'event']
+    source = events[0]['decision']['sources'][0]
+    assert source['url'] is None and source['verification'] == 'NON VERIFIE'
+    # The event appears on both of its exposed assets; count exported occurrences.
+    assert snapshot['redactions']['secret_shaped_urls'] == 2
+    assert len(events) == len([o for o in build_analysis(RADAR)['overlays'] if o['kind'] == 'event'])
+    assert events[-1]['decision']['sources'][0]['url'] == 'https://example.invalid/a?utm=1'
+    path = write_snapshot(tmp_path, 'analysis.json', snapshot)
+    assert bad not in path.read_text()
+    assert_clean(snapshot)
+    with pytest.raises(ExportError):
+        assert_clean({'url': bad})
+    assert radar['events'][0]['stories'][0]['url'] == bad
+
+
 @pytest.mark.parametrize('clock,blocked', [('11:41:59', False), ('11:42:00', True), ('11:45:00', True),
                                          ('12:29:59', True), ('12:30:00', False)])
 def test_refresh_window_is_utc_and_protects_its_full_runtime(clock, blocked):
@@ -160,3 +182,14 @@ def test_offline_refresh_preserves_cached_account_dates_and_history(tmp_path):
     assert (out / 'analysis.json').is_file()
     assert refresh(config, at=datetime(2026, 10, 11, 2, 35, tzinfo=timezone.utc), read_units=False)['state'] == 'EXPORTED'
     assert all(a['observed_at'] == '2026-10-10T17:10:00Z' for a in json.loads((out / 'paper.json').read_text())['accounts'])
+    # A later journal update also passes through the URL redaction boundary.
+    from copy import deepcopy
+    updated = deepcopy(JOURNAL)
+    bad_url = 'https://example.invalid/home/category/update'
+    updated[0]['journal']['sources'] = [bad_url]
+    journal.write_text('\n'.join(json.dumps(r) for r in updated))
+    result = refresh(config, at=datetime(2026, 10, 11, 3, 35, tzinfo=timezone.utc), read_units=False)
+    assert result['state'] == 'EXPORTED' and result['redacted_urls'] > 0
+    assert bad_url not in (out / 'paper.json').read_text()
+    assert bad_url not in (out / 'analysis.json').read_text()
+    assert history.read_text() == 'synthetic existing equity point\n'

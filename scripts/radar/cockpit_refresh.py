@@ -163,7 +163,7 @@ def refresh(config, *, at=None, read_units=True):
                     paper['benchmarks']['SPY'] = export.spy_benchmark(report)
                     paper['report_at'] = report['at']
             paper['generated_at'] = stamp
-            export.assert_clean(paper)
+            paper = export.redact_urls(paper)
         health = trader_health(config['trader_root'])
         for run in trader['runs'][-30:]:
             if run.get('status') not in ('COMPLETE', 'RUNNING'):
@@ -191,7 +191,9 @@ def refresh(config, *, at=None, read_units=True):
         for name, snapshot in [('radar-home.json', home), ('analysis.json', analysis), ('paper.json', paper)]:
             if snapshot:
                 export.write_snapshot(out, name, snapshot)
-        return {'state': 'EXPORTED', 'events': len(home['events']), 'overlays': len(analysis['overlays'])}
+        return {'state': 'EXPORTED', 'events': len(home['events']), 'overlays': len(analysis['overlays']),
+                'redacted_urls': sum(s.get('redactions', {}).get('secret_shaped_urls', 0)
+                                     for s in (home, analysis, paper) if s)}
 
 
 def render_units(repo, interpreter, config):
