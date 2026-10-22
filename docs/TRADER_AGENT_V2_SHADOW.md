@@ -1,5 +1,9 @@
 # Agent v2 shadow runtime
 
+This page describes **revision one**, still inert. The separate grant-bound revision-two producer,
+independent judgments and paired evaluation are documented in [TRADER_AGENT_V2_QUALITY.md](TRADER_AGENT_V2_QUALITY.md).
+Revision-one artifacts and runtimes are preserved; there is no implicit migration.
+
 This is a separate **forward shadow** system, with no broker client, key loader, account selector or order endpoint.
 It does not import the v1 trader. Its source package is `scripts.trading_lab.agent_v2` and its optional cockpit is
 `/agent-v2`, backed by `GET /api/v1/agent-v2/summary`. Start the application API with a separate `--agent-v2-root` to read it.

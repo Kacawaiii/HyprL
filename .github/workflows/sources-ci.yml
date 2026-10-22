@@ -54,6 +54,8 @@ jobs:
         run: python -m pytest tests/trader_agent -q
       - name: Isolated agent v2 shadow causality, risk, ledger and veto contracts
         run: python -m pytest tests/agent_v2 -q
+      - name: Agent v2 quality producer, independent judgments and paired layer evaluation
+        run: python -m pytest tests/agent_v2_quality -q
       - name: Project-scoped B2B auth, isolation, budgets, audit, exports and OpenAPI
         run: |
           python -m scripts.trading_lab.b2b.openapi --check
