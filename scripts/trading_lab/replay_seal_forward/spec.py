@@ -1,4 +1,4 @@
-"""Revision 15 research execution; parent model stores are never implicitly migrated."""
+"""Revision 16 research execution; parent model stores are never implicitly migrated."""
 import json
 from pathlib import Path
 
@@ -7,10 +7,10 @@ from scripts.trading_lab.replay_bench.spec import ROOT, file_hash
 from scripts.trading_lab.replay_bench.grant import ReplayError
 
 HERE = Path(__file__).resolve().parent
-SPEC_FILE = ROOT / 'docs/artifacts/replay_duel_spec_v11.json'
-SPEC_HASH = '322ad05f8bf125035a8c41c5be3af22028e13941491183609d27ae9e369da8d7'
-PARENT_SPEC_HASH = '71f834f559ebce8a7cf42149e3a9be974269390bd1414d3a07110a727ed79195'
-STATE_DIR = 'duel-v11'
+SPEC_FILE = ROOT / 'docs/artifacts/replay_duel_spec_v12.json'
+SPEC_HASH = 'f84067aaf85dbdd5523c9b753fb1ef640fb2f2d1b79a850ed8ee5340e65935ac'
+PARENT_SPEC_HASH = '322ad05f8bf125035a8c41c5be3af22028e13941491183609d27ae9e369da8d7'
+STATE_DIR = 'duel-v12'
 PROVENANCE = 'APPROXIMATE_POINT_IN_TIME'
 
 
@@ -22,10 +22,12 @@ def spec():
     for name, digest in value['prompt_hashes'].items():
         if file_hash(HERE / 'prompts' / name) != digest:
             raise ReplayError('PROMPT_HASH_MISMATCH')
-    from .schemas import SCHEMAS
+    from .schemas import SCHEMAS, ANON_ANALYST_SCHEMA
     if sha256_canonical(SCHEMAS) != value['schema_sha256']:
         raise ReplayError('SCHEMA_HASH_MISMATCH')
-    parent = json.loads((ROOT / 'docs/artifacts/replay_duel_spec_v10.json').read_text())
+    if sha256_canonical(ANON_ANALYST_SCHEMA) != value['anonymous_schema_sha256']:
+        raise ReplayError('ANONYMOUS_SCHEMA_HASH_MISMATCH')
+    parent = json.loads((ROOT / 'docs/artifacts/replay_duel_spec_v11.json').read_text())
     if parent['canonical_sha256'] != value['supersedes']['canonical_sha256'] or parent['canonical_sha256'] != PARENT_SPEC_HASH:
         raise ReplayError('SPEC_LINEAGE_MISMATCH')
     return value

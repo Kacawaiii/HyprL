@@ -295,7 +295,7 @@ def test_declared_replay_end_to_end_keeps_all_abstention_forecasts(tmp_path, mon
     monkeypatch.setattr(inputs, 'paired_label_exclusions', lambda root: json.loads(coverage.read_text())['missing'])
     ex.build_inputs(tmp_path)
     class Client:
-        def call(self, family, text, schema, *, tag):
+        def call(self, family, text, schema, *, tag, previous_request=None):
             context = json.loads(text.split('\nCONTEXT_DATA:\n')[1].split('\nANALYST_DATA:\n')[0])
             if 'verdicts' in schema['properties']:
                 original = json.loads(text.split('\nANALYST_DATA:\n')[1])

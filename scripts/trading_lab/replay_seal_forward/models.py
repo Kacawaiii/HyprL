@@ -475,7 +475,7 @@ class Models:
         self.transcripts = Path(transcripts)
         self.billing, self.scope = billing, scope
 
-    def call(self, family, prompt, schema, *, tag, timeout=900):
+    def call(self, family, prompt, schema, *, tag, timeout=900, previous_request=None):
         require_systemd(self.runner)
         if family not in spec.spec()['models']['identities']:
             raise ReplayError('MODEL_NOT_ALLOWED')
@@ -485,16 +485,32 @@ class Models:
         saved = json.loads(path.read_text()) if path.exists() else None
         retry = 0
         source_attempt = None
+        compatible = False
         if self.scope == 'replay' and (saved is None or saved['state'] == 'REFERENCED'):
             from .continuation import lookup
             source = lookup(self.transcripts.parent.parent, family, prompt, schema, tag)
+            if source is None and previous_request is not None:
+                # Only the anonymous citation clock changed. The old request and
+                # original schema must still bind the admitted envelope identity.
+                if schema != schemas.ANON_ANALYST_SCHEMA or previous_request[1] != schemas.ANALYST_SCHEMA:
+                    raise ReplayError('CONTINUATION_CALL_BINDING_MISMATCH')
+                source = lookup(self.transcripts.parent.parent, family, *previous_request, tag)
+                compatible = source is not None
             if source:
                 original, source_attempt = source
                 if original['state'] == 'RECEIVED':
                     if saved and saved.get('source') != source_attempt:
                         raise ReplayError('CONTINUATION_SOURCE_CHANGED')
-                    output, metadata = self._decode(original, family, prompt, schema, source_attempt['identity'])
                     atomic_json(path, {'state': 'REFERENCED', 'family': family, 'source': source_attempt})
+                    try:
+                        output, metadata = self._decode(original, family, prompt, schema, source_attempt['identity'])
+                    except ReplayError as error:
+                        if isinstance(error.evidence, dict) and 'call' in error.evidence:
+                            error.evidence['call']['original_protocol'] = source_attempt
+                        raise
+                    if compatible:
+                        metadata.update(prompt_sha256=original['prompt_sha256'],
+                                        schema_compatibility='ANONYMOUS_CODED_CLOCK_V1')
                     return output, dict(metadata, original_protocol=source_attempt)
                 retry = 1
         if saved and saved['state'] in ('INTENT', 'INTERRUPTED'):
@@ -606,6 +622,8 @@ class Models:
             output, reported = decode(record['raw'], record['err'], record['returncode'], family, schema)
         except ReplayError as error:
             flags = error.evidence if isinstance(error.evidence, dict) else {}
+            error.evidence = dict(flags, call={'family': family, 'called_at': record['at'],
+                                              'transcript': identity, 'prompt_sha256': record['prompt_sha256']})
             if error.code == 'API_CREDIT_EXHAUSTED' or flags.get('credit_stop'):
                 record['state'] = 'CREDIT_STOP'
                 atomic_json(self.transcripts / (identity + '.json'), record)

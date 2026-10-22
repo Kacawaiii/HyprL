@@ -329,7 +329,7 @@ def check_record(root, day, family, record, sealed, frozen):
     if day < frozen['forward_first_session'] or day < spec.spec()['forward']['first_session']:
         raise ReplayError('FORWARD_BEFORE_FIRST_SESSION')
     commitment.require(root, 'forward', day, {'snapshot': sealed['snapshot_hash'], family: record['decision_hash']},
-                       publication_deadline(day))
+                       publication_deadline(day), protocol_hash=frozen['spec_hash'])
 
 
 def checked_freeze():

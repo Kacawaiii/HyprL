@@ -334,14 +334,25 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 record['shown_context_hash'] != other['shown_context_hash']):
             raise ReplayError('PAIRED_SNAPSHOT_MISMATCH')
         stage = 'news' if group == 'cd' else 'analyst'
-        if other is not None and record['calls'].get(stage, {}).get('prompt_sha256') != other['calls'].get(stage, {}).get('prompt_sha256'):
-            raise ReplayError('PAIRED_PROMPT_MISMATCH')
+        failed = record.get('status') == 'MODEL_FAILURE'
+        other_failed = other is not None and other.get('status') == 'MODEL_FAILURE'
+        if other is not None and not failed and not other_failed and record['calls'].get(stage, {}).get('prompt_sha256') != other['calls'].get(stage, {}).get('prompt_sha256'):
+            compatible = group == 'anon' and any(r['calls'].get(stage, {}).get('schema_compatibility') ==
+                                               'ANONYMOUS_CODED_CLOCK_V1' for r in (record, other))
+            if not compatible:
+                raise ReplayError('PAIRED_PROMPT_MISMATCH')
+            counts[family]['anon:original_schema_control'] += 1
         for name, errors in record.get('errors', {}).items():
             # Validation retries are counted, never dropped silently.
             counts[family]['failures:' + name] += len(errors)
         sealed = run.shared_snapshot(root, period, 'ab' if group == 'anon' else group, day, ex.offline(root, transport))
         if sealed['snapshot_hash'] != record['snapshot_hash']:
             raise ReplayError('SNAPSHOT_HASH_MISMATCH')
+        if failed:
+            counts[family][group + ':model_failure'] += 1
+            continue
+        if other_failed:
+            counts[family][group + ':unpaired_model_failure'] += 1
         for reason, number in sealed['manifest'].get('data_quality', {}).get('counts_by_reason', {}).items():
             counts[family]['input:' + group + ':' + reason] += number
         flags = sealed['manifest'].get('borrow_flags', {})
@@ -427,7 +438,13 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
     primary = stats.primary_endpoint(named['opus'], named['gpt'], rates.get(stats.PRIMARY['panel'], {}).get('p'))
     if period == 'dev':
         primary['base_rate_note'] = 'dev uses its own in-sample rate: diagnostic only, not the frozen test baseline'
-    failures = {f: dict(ex.failure_summary(root)[f],
+    failure_rates = ex.failure_summary(root, period=period)
+    for family, panels in summaries.items():
+        for panel, row in panels.items():
+            group = 'anon' if panel.startswith('audit_') else ('cd' if panel.startswith(('c_', 'd_')) else 'ab')
+            row['model_failure'] = failure_rates[family]['groups'].get(period + '/' + group,
+                {'planned_cells': 0, 'resolved_cells': 0, 'model_failure_cells': 0, 'model_failure_rate': None})
+    failures = {f: dict(failure_rates[f],
                        failed_or_retried_stages=sum(v for k, v in counts[f].items() if k.startswith('failures:')),
                        missing_planned_days=0) for f in ex.FAMILIES}
     result = dict(binding, status='SCORED', period=period, provenance=spec.PROVENANCE, evidence_class='EXPLORATORY',
@@ -454,14 +471,21 @@ def write_table(path, result):
             'Brier skill: ' + json.dumps(primary.get('brier_skill')) + '; 95% CI: ' + json.dumps(primary.get('ci95')), '',
             result.get('verdict_wording', ''), '',
             '## Failures (never dropped silently)', '', json.dumps(result.get('failures'), sort_keys=True), '',
-            '## Full table', '',
-            '| Variant / horizon | Model | Trades / decisions | Hits / scored | Abstain | Hit rate | Brier | Log loss | Brier base | Log loss base | R | Sharpe | Drawdown | ESS | Trade basis |',
-            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|']
+            '## Model failure rate', '',
+            '| Model | Failed cells / resolved cells | Rate |', '|---|---:|---:|']
+    for family, failure in result['failures'].items():
+        text.append(f"| {family} | {failure['model_failure_cells']} / {failure['resolved_cells']} | {failure['model_failure_rate']} |")
+    text.extend(['', '## Full table', '',
+            '| Variant / horizon | Model | Failed / resolved cells | Failure rate | Trades / decisions | Hits / scored | Abstain | Hit rate | Brier | Log loss | Brier base | Log loss base | R | Sharpe | Drawdown | ESS | Trade basis |',
+            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|'])
     def fmt(value):
         return '—' if value is None else f'{value:.5g}'
     for panel, models in result['head_to_head'].items():
         for family, row in models.items():
-            text.append('| ' + ' | '.join([panel, family, f"{row['n_trade_decisions']} / {row['n_decisions']}", f"{row.get('hits', 0)} / {row['n_scored_trades']}"] +
+            failure = row['model_failure']
+            text.append('| ' + ' | '.join([panel, family,
+                f"{failure['model_failure_cells']} / {failure['resolved_cells']}", fmt(failure['model_failure_rate']),
+                f"{row['n_trade_decisions']} / {row['n_decisions']}", f"{row.get('hits', 0)} / {row['n_scored_trades']}"] +
                 [fmt(row.get(k)) for k in ('abstention_rate', 'hit_rate', 'brier', 'log_loss', 'brier_base_rate',
                  'log_loss_base_rate', 'expectancy_R', 'daily_pnl_sharpe', 'max_drawdown', 'probability_ess_cluster_day_kish')] +
                 [row.get('trade_cost_basis', 'GROSS_DIAGNOSTIC')]) + ' |')

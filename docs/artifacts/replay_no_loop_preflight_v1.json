@@ -1,0 +1,117 @@
+{
+  "admitted_original_envelopes": 230,
+  "apps_web_changed": false,
+  "checks": [
+    {
+      "command": "python -m pytest tests/replay_bench tests/replay_duel tests/replay_seal_forward -q --tb=short",
+      "log_sha256": "8412a2f3bb7a9f951f914a3e729052525f355a6f981005488bf6a8171e09cf80",
+      "passed": 252,
+      "skipped": 0
+    },
+    {
+      "command": "python -m pytest tests/crypto/test_fomc_*.py tests/crypto/test_sources_primitives.py tests/crypto/test_edgar_slice.py tests/crypto/test_app_api*.py tests/crypto/test_ops_server.py tests/crypto/test_equity_api.py tests/api -q --tb=short",
+      "log_sha256": "66ec5e46376e57cbf8909eda637b05dce727f0fbf2ff52a33256e6097ba4485e",
+      "passed": 505,
+      "skip_reason": "Operator-approved missing hyprl_api package; private FOMC fixtures exercised.",
+      "skipped": 1
+    }
+  ],
+  "code_hash": "0bd0b2ff6939890e6588e5b1b5d0cfd5d4daf45e32a70162d12bd800e987094b",
+  "diagnosis": {
+    "gpt_july13": {
+      "classification": "MODEL_ERROR",
+      "first_pair": [
+        {
+          "attempt": 0,
+          "failing_field": "views.news_ids",
+          "identity": "790c4a146ac09599c92d110dcd7ee9a9e944e0db1131f8b85b022fa071c26ee2",
+          "sha256": "c36f80016b41d3579704c0f7a61fbac82dec55694688f13be2eaadcf3968bca9",
+          "source_and_response_id_type": "int",
+          "validation_code": "CITATION_NOT_IN_SNAPSHOT",
+          "wrong_candidate_citations": 2
+        },
+        {
+          "attempt": 1,
+          "failing_field": "views.news_ids",
+          "identity": "5db09d9591bbd363bf462e90d23aea9986a10478ee7a9847841f3fd1e62a41ab",
+          "sha256": "06f5880522f4679c360753dc9ccfd53ff683d11739c14d1b93a7a55b166941e1",
+          "source_and_response_id_type": "int",
+          "validation_code": "CITATION_NOT_IN_SNAPSHOT",
+          "wrong_candidate_citations": 2
+        }
+      ],
+      "group": "cd",
+      "period": "dev",
+      "physical_dispatches": 2,
+      "reasks_after_first_pair": 0,
+      "redundant_validation_attempts": 20,
+      "validation_pairs": 11
+    },
+    "invalid_input": {
+      "cause": "Coded DAY clock parsed as ISO, before citation iteration",
+      "classification": "HARNESS_DEFECT",
+      "day": "2026-07-01",
+      "exception": "ValueError",
+      "family": "opus",
+      "field": "headlines.items.published_at",
+      "group": "anon",
+      "operation": "datetime.fromisoformat",
+      "period": "dev"
+    },
+    "model_calls": 0,
+    "outcomes_scored": 0,
+    "publications": 0,
+    "requests": 0,
+    "schema": "replay-no-loop-diagnosis-v1"
+  },
+  "historical_forward_bindings": [
+    {
+      "day": "2026-10-20",
+      "models": {
+        "gpt": "ORIGINAL_BINDING_AND_PUBLICATION_VERIFIED",
+        "opus": "ORIGINAL_BINDING_AND_PUBLICATION_VERIFIED"
+      },
+      "original_code_hash": "c1e3df485273a28a0687967cdce8b96e09a4c9118325d2109ae50c2e217bcccc",
+      "original_spec_hash": "1c48d0ccafdc207f3fac4e4f832e18bd843ba6d6e8e14ecbaf42d4b1b0ee156e"
+    },
+    {
+      "day": "2026-10-21",
+      "models": {
+        "gpt": "NO_DECISION",
+        "opus": "NO_DECISION"
+      },
+      "original_code_hash": "97c13145ea7863e9713af57e2ec337e22e378186402100f15cb3c22d1bf17054",
+      "original_spec_hash": "71f834f559ebce8a7cf42149e3a9be974269390bd1414d3a07110a727ed79195"
+    },
+    {
+      "day": "2026-10-22",
+      "models": {
+        "gpt": "ORIGINAL_BINDING_AND_PUBLICATION_VERIFIED",
+        "opus": "ORIGINAL_BINDING_AND_PUBLICATION_VERIFIED"
+      },
+      "original_code_hash": "fc7752b4d99b6f048be695dfcd8ff815bb239d18c232755096f298438263d7fd",
+      "original_spec_hash": "322ad05f8bf125035a8c41c5be3af22028e13941491183609d27ae9e369da8d7"
+    }
+  ],
+  "input_equivalence": {
+    "cache_bindings_unchanged": true,
+    "code_hash": "0bd0b2ff6939890e6588e5b1b5d0cfd5d4daf45e32a70162d12bd800e987094b",
+    "contexts_sha256": "71db0976beef21132af211d1b9293eb76d64ccdde66ec62592fc185b74d5f2df",
+    "contexts_unchanged": true,
+    "freeze_sha256": "0c322d13e2bf808f9700ac5ebb49ae76029487df03dd38e3b6bf9e74a005eebd",
+    "input_proof_hash": "776301d90ce02e2bc307e8dd786b0a697ed8565085531d93ab1647fba4660957",
+    "outcome_cache_objects": 2089,
+    "paired_exclusions": 658,
+    "paired_exclusions_unchanged": true,
+    "prediction_cache_objects": 2089,
+    "snapshot_count": 128,
+    "spec_hash": "f84067aaf85dbdd5523c9b753fb1ef640fb2f2d1b79a850ed8ee5340e65935ac"
+  },
+  "model_calls": 0,
+  "orders": 0,
+  "outcomes_scored": 0,
+  "proof_publications": 0,
+  "schema": "replay-no-loop-preflight-v1",
+  "source_http_requests": 0,
+  "spec_hash": "f84067aaf85dbdd5523c9b753fb1ef640fb2f2d1b79a850ed8ee5340e65935ac"
+}

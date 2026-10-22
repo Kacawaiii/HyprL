@@ -12,8 +12,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v11.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v11.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v12.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v12.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -216,7 +216,7 @@ def frozen_payload(root):
     rate = json.loads((Path(root) / spec.STATE_DIR / 'dev-label-base-rate.json').read_text())
     if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', -1) < 0 or rate.get('panel') != PRIMARY['panel']:
         raise ReplayError('DEV_BASE_RATE_NOT_FROZEN')
-    return {'schema': 'replay-duel-test-freeze-v11', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+    return {'schema': 'replay-duel-test-freeze-v12', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
             'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
@@ -233,7 +233,7 @@ def frozen_payload(root):
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v11', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v12', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -257,7 +257,7 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8', 'duel-v9', 'duel-v10')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8', 'duel-v9', 'duel-v10', 'duel-v11')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):
@@ -315,12 +315,42 @@ def claim_test(root, family, ledger=None):
     commitment.require(root, 'replay-test-start', family, {'test_start_marker': sha256_canonical(value)}, now())
 
 
-def failure_summary(root):
+def validation_failure(root, family, period, group, day, stage, attempt, code, call):
+    """One durable, code-only event per attempt, including failed decoding and interrupted resumes."""
+    file = Path(root) / spec.STATE_DIR / 'failures.jsonl'
+    identity = sha256_canonical([family, period, group, day, stage, attempt, code,
+                                (call or {}).get('transcript'), (call or {}).get('called_at')])
+    from scripts.trading_lab.replay_bench.storage import load_lines
+    if any(r.get('attempt_id') == identity for r in load_lines(file)):
+        return
+    append_event(file, dict(attempt_id=identity, family=family, period=period, group=group, day=day,
+                            stage=stage, attempt=attempt, code=code, validation=code in run.VALIDATION_CODES,
+                            call=call, at=iso(now())))
+
+
+def failure_summary(root, period=None):
     file = Path(root) / spec.STATE_DIR / 'failures.jsonl'
     rows = [json.loads(l) for l in file.read_text().splitlines()] if file.is_file() else []
-    return {f: {'failed_attempts': sum(r['family'] == f for r in rows),
-                'failed_days': sorted({r['day'] for r in rows if r['family'] == f}),
-                'errors': [r for r in rows if r['family'] == f]} for f in FAMILIES}
+    rows = [r for r in rows if period is None or r['period'] == period]
+    result = {}
+    for family in FAMILIES:
+        groups = {}
+        for p in ([period] if period else ('dev', 'test')):
+            for group in (GROUPS if p == 'dev' else ('ab', 'cd')):
+                days = planned_for(p, group, family)
+                records = [parent.read_json(record_path(root, p, group, family, d)) for d in days
+                           if record_path(root, p, group, family, d).is_file()]
+                failures = sum(r.get('status') == 'MODEL_FAILURE' for r in records)
+                groups[p + '/' + group] = {'planned_cells': len(days), 'resolved_cells': len(records),
+                    'model_failure_cells': failures, 'model_failure_rate': failures / len(records) if records else None}
+        resolved = sum(g['resolved_cells'] for g in groups.values())
+        failed = sum(g['model_failure_cells'] for g in groups.values())
+        result[family] = {'failed_attempts': sum(r['family'] == family and r.get('validation', False) for r in rows),
+                         'failed_days': sorted({r['day'] for r in rows if r['family'] == family}),
+                         'errors': [r for r in rows if r['family'] == family], 'groups': groups,
+                         'resolved_cells': resolved, 'model_failure_cells': failed,
+                         'model_failure_rate': failed / resolved if resolved else None}
+    return result
 
 
 def call_order(day):
@@ -364,10 +394,13 @@ def run_one(root, period, group, day, family, transport, client, ledger=None):
     try:
         value = run.decide(root, period, group, day, family, transport, client, expected, path)
     except ReplayError as error:
-        append_event(Path(root) / spec.STATE_DIR / 'failures.jsonl',
-                     {'family': family, 'period': period, 'group': group, 'day': day, 'error': error.code, 'at': iso(now())})
-        raise
-    append_event(Path(root) / spec.STATE_DIR / 'trials.jsonl', dict(event='DAY_COMPLETED', period=period,
+        if error.code == 'MODEL_VALIDATION_FAILED':
+            value = run.model_failure(root, period, group, day, transport, expected, error, path)
+        else:
+            append_event(Path(root) / spec.STATE_DIR / 'failures.jsonl',
+                         {'family': family, 'period': period, 'group': group, 'day': day, 'error': error.code, 'at': iso(now())})
+            raise
+    append_event(Path(root) / spec.STATE_DIR / 'trials.jsonl', dict(event=value.get('status', 'DAY_COMPLETED'), period=period,
         group=group, day=day, family=family, config_hash=expected['config_hash'], decision_hash=value['decision_hash']))
     return value
 
@@ -388,6 +421,16 @@ def publish_pending(root, ledger, night):
                         value = parent.read_json(path)['decision_hash']
                         if public.get(key) != value:
                             pending[key] = value
+                        # Failed decodes also reference original envelopes; publish their hashes
+                        # even when no successful call created a REFERENCED wrapper.
+                        from .continuation import response_record
+                        for call in parent.read_json(path).get('calls', {}).values():
+                            if 'transcript' in call:
+                                response = response_record(root, call)
+                                digest = sha256_canonical({k: response[k] for k in ('raw', 'err', 'returncode')})
+                                response_key = 'response:' + call['transcript']
+                                if public.get(response_key) != digest:
+                                    pending[response_key] = digest
     # Include partial, invalid and usage-limited responses too, even when the
     # day never produced a complete decision record.
     for file in sorted((Path(root) / spec.STATE_DIR / 'transcripts').rglob('*.json')):

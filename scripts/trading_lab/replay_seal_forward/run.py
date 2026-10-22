@@ -11,9 +11,12 @@ from . import schemas, spec
 
 AB = ('a_v1_as_live', 'b_v1_no_reviewer')
 CD = ('c_news_small_mid', 'd_news_primary_only')
+VALIDATION_CODES = ('MODEL_SCHEMA_INVALID', 'MODEL_JSON_INVALID', 'FORECAST_COVERAGE_INVALID',
+                    'DIRECTION_INVALID', 'UNSUPPORTED_VIEW', 'CITATION_NOT_IN_SNAPSHOT',
+                    'REVIEW_CHANGED_KEEP', 'REVIEW_RAISED_PROBABILITY')
 
 
-def prompt(stage, context, analyst=None):
+def prompt(stage, context, analyst=None, *, schema=None):
     rules = spec.spec()
     context = {k: v for k, v in context.items() if k != 'provenance'}
     context['schema'] = context.get('schema', '').replace('replay-', 'research-')
@@ -23,7 +26,7 @@ def prompt(stage, context, analyst=None):
             'available before decision_time. Return only JSON matching JSON_SCHEMA.\n' +
             (spec.HERE / 'prompts' / (stage + '.txt')).read_text() +
             '\nPROTOCOL_DATA:\n' + json.dumps(rules['forecast_panel'], sort_keys=True) +
-            '\nJSON_SCHEMA:\n' + json.dumps(schemas.SCHEMAS[stage], sort_keys=True) +
+            '\nJSON_SCHEMA:\n' + json.dumps(schema or (schemas.analyst_schema(context) if stage == 'analyst' else schemas.SCHEMAS[stage]), sort_keys=True) +
             '\nCONTEXT_DATA:\n' + json.dumps(context, sort_keys=True) +
             ('\nANALYST_DATA:\n' + json.dumps(analyst, sort_keys=True) if analyst is not None else ''))
 
@@ -49,23 +52,34 @@ def checked(path, meta):
         raise ReplayError('RECORD_CONFIG_MISMATCH')
     if value['decision_hash'] != sha256_canonical({k: v for k, v in value.items() if k != 'decision_hash'}):
         raise ReplayError('DECISION_HASH_MISMATCH')
+    if value.get('status') == 'MODEL_FAILURE' and (value['forecasts'] or value['decisions'] or
+                                                 len(value.get('validation_codes', [])) != 2):
+        raise ReplayError('MODEL_FAILURE_RECORD_INVALID')
     return value
 
 
-def infer(client, family, text, schema, check, tag):
+def infer(client, family, text, schema, check, tag, *, on_failure=None, previous_request=None):
     errors = []
+    calls = {}
     for attempt in range(2):
+        meta = None
         try:
-            output, meta = client.call(family, text, schema, tag=f'{tag}-try{attempt}')
+            kwargs = {'previous_request': previous_request} if previous_request else {}
+            output, meta = client.call(family, text, schema, tag=f'{tag}-try{attempt}', **kwargs)
             check(output)
             return output, meta, errors
         except ReplayError as error:
-            if error.code not in ('MODEL_SCHEMA_INVALID', 'MODEL_JSON_INVALID', 'FORECAST_COVERAGE_INVALID',
-                                  'DIRECTION_INVALID', 'UNSUPPORTED_VIEW', 'CITATION_NOT_IN_SNAPSHOT',
-                                  'REVIEW_CHANGED_KEEP', 'REVIEW_RAISED_PROBABILITY'):
+            if meta is None and isinstance(error.evidence, dict):
+                meta = error.evidence.get('call')
+            if on_failure:
+                on_failure(attempt, error.code, meta)
+            if error.code not in VALIDATION_CODES:
                 raise
             errors.append(error.code)
-    raise ReplayError('MODEL_VALIDATION_FAILED', errors)
+            if meta:
+                calls[f'try{attempt}'] = meta
+    raise ReplayError('MODEL_VALIDATION_FAILED', {'validation_codes': errors, 'calls': calls,
+                                                 'validation_stage': tag.rpartition(':')[2]})
 
 
 def decide(root, period, group, day, family, transport, client, meta, path):
@@ -79,14 +93,21 @@ def decide(root, period, group, day, family, transport, client, meta, path):
                   snapshot_hash=sealed['snapshot_hash'], shown_context_hash=sha256_canonical(context),
                   residual_risks=spec.spec()['residual_risks'], decisions={}, forecasts={}, calls={}, errors={})
     tag = meta['config_hash'] + ':' + day
+    def failed(stage):
+        def save(attempt, code, call):
+            from .experiment import validation_failure
+            validation_failure(root, family, period, group, day, stage, attempt, code, call)
+        return save
     if group in ('ab', 'anon') and not context['universe']:
         for variant in (AB if group == 'ab' else (AB[1],)):
             record['decisions'][variant] = []
             record['forecasts'][variant] = []
         record['data_quality_excluded_day'] = True
     elif group in ('ab', 'anon'):
-        output, call, errors = infer(client, family, prompt('analyst', context), schemas.ANALYST_SCHEMA,
-                                    lambda o: schemas.analyst(o, context), tag + ':analyst')
+        previous = (prompt('analyst', context, schema=schemas.ANALYST_SCHEMA), schemas.ANALYST_SCHEMA) if group == 'anon' else None
+        output, call, errors = infer(client, family, prompt('analyst', context), schemas.analyst_schema(context),
+                                    lambda o: schemas.analyst(o, context), tag + ':analyst',
+                                    on_failure=failed('analyst'), previous_request=previous)
         record['calls']['analyst'], record['errors']['analyst'] = call, errors
         def unmap(row):
             return dict(row, asset=mapping[row['asset']]) if mapping else row
@@ -95,7 +116,7 @@ def decide(root, period, group, day, family, transport, client, meta, path):
         record['forecasts'][AB[1]] = [{k: v[k] for k in ('asset', 'horizon', 'p_outperform')} for v in raw]
         if group == 'ab':
             review, call, errors = infer(client, family, prompt('reviewer', context, output), schemas.REVIEWER_SCHEMA,
-                                         lambda o: schemas.reviewer(o, output), tag + ':reviewer')
+                                         lambda o: schemas.reviewer(o, output), tag + ':reviewer', on_failure=failed('reviewer'))
             record['calls']['reviewer'], record['errors']['reviewer'] = call, errors
             before = {(v['asset'], v['horizon']): v for v in raw}
             reviewed = []
@@ -110,7 +131,7 @@ def decide(root, period, group, day, family, transport, client, meta, path):
     else:
         if context['candidates']:
             output, call, errors = infer(client, family, prompt('news', context), schemas.NEWS_SCHEMA,
-                                         lambda o: schemas.news(o, context), tag + ':news')
+                                         lambda o: schemas.news(o, context), tag + ':news', on_failure=failed('news'))
             record['calls']['news'], record['errors']['news'] = call, errors
         else:
             output = {'views': [], 'forecasts': []}
@@ -127,3 +148,18 @@ def decide(root, period, group, day, family, transport, client, meta, path):
     record['decision_hash'] = sha256_canonical(record)
     parent.write_json(path, record)
     return record
+
+
+def model_failure(root, period, group, day, transport, meta, error, path):
+    sealed = shared_snapshot(root, period, 'ab' if group == 'anon' else group, day, transport)
+    context = sealed['context']
+    if group == 'anon':
+        from .anon import anonymize
+        context, _ = anonymize(sealed, seed=int(hashlib.sha256(day.encode()).hexdigest()[:8], 16))
+    value = dict(meta, provenance=spec.PROVENANCE, session=day, status='MODEL_FAILURE',
+                 snapshot_hash=sealed['snapshot_hash'], shown_context_hash=sha256_canonical(context),
+                 residual_risks=spec.spec()['residual_risks'],
+                 decisions={}, forecasts={}, errors={}, **error.evidence)
+    value['decision_hash'] = sha256_canonical(value)
+    parent.write_json(path, value)
+    return value
