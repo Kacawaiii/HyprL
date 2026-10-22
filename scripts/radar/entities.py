@@ -560,6 +560,18 @@ class Dictionary:
         def phrases(values):
             return re.compile(r'(?<!\w)(?:' + '|'.join(re.escape(fold(v)) for v in values) + r')(?!\w)')
         self.names = [(s, phrases([name, *ALIASES.get(s, [])])) for s, name in NAMES.items()]
+        # A matching literal phrase must contain its first complete word.
+        # Index that word, then run the original boundary-aware regex only for
+        # candidates. This preserves aliases and punctuation without scanning
+        # every company pattern over every captured headline and summary.
+        self.name_index, self.unindexed_names = {}, set()
+        for symbol, pattern in self.names:
+            for name in [NAMES[symbol], *ALIASES.get(symbol, [])]:
+                first = re.search(r'\w+', fold(name))
+                if first:
+                    self.name_index.setdefault(first[0], set()).add((symbol, pattern))
+                else:
+                    self.unindexed_names.add((symbol, pattern))
         ambiguous = {'ALL', 'ARE', 'COST', 'IT', 'ON', 'NOW', 'FIX', 'KEY', 'FAST', 'TECH', 'SO', 'DD', 'BEN', 'GEN', 'ICE', 'BALL', 'FLEX'}
         self.tickers = [(s, re.compile(r'(?<!\w)' + re.escape(s) + r'(?!\w)') if len(s) >= 3 and s not in ambiguous else None) for s in self.stocks]
         self.cryptos = [(s, phrases([name]), re.compile(r'(?<!\w)' + re.escape(s) + r'(?!\w)')) for s, name in CRYPTO_NAMES.items()]
@@ -571,18 +583,22 @@ class Dictionary:
     def map(self, story):
         value = story['headline'] + ' ' + story['summary']
         normalized = fold(value)
+        words = set(re.findall(r'\w+', normalized))
+        literal_words = set(re.findall(r'\w+', value))
         crypto_context = any(pattern.search(normalized) for theme, pattern in self.themes if theme == 'crypto')
         crypto_mentioned = False
         provider_symbols = {s.replace('.', '-') for s in story['symbols'] if re.fullmatch(r'[A-Z][A-Z0-9./-]{0,14}', s)}
         if story.get('source') != 'sec:8k':
             provider_symbols = {s + '/USD' if s in CRYPTO_NAMES else s[:-3] + '/USD' if s.endswith('USD') and s[:-3] in CRYPTO_NAMES else s for s in provider_symbols}
         symbols = set()
-        for symbol, pattern in self.names:
+        candidates = self.unindexed_names.union(*(self.name_index.get(word, ()) for word in words))
+        for symbol, pattern in candidates:
             if pattern.search(normalized):
                 symbols.add(symbol)
         # Uppercase tickers are exact tokens; ambiguous English words are excluded.
         for symbol, pattern in self.tickers:
-            if '$' + symbol in value or (pattern and pattern.search(value)):
+            if '$' + symbol in value or (pattern and (
+                    symbol in literal_words if symbol.isalnum() else pattern.search(value))):
                 symbols.add(symbol)
         for symbol, name, ticker in self.cryptos:
             if (name.search(normalized) and (symbol not in AMBIGUOUS_CRYPTO_NAMES or crypto_context)) or ticker.search(value):

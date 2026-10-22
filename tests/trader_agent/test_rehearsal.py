@@ -7,6 +7,41 @@ import pytest
 from scripts.trading_lab.trader_agent.config import TraderError, instant
 
 
+def test_step_start_is_durable_and_elapsed_time_uses_monotonic_clock(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
+    state = MonitorState(tmp_path / 'monitor')
+    ticks = iter([10.0, 11.25])
+    def check():
+        running = state.get(clock().date().isoformat(), 'primary')
+        assert running['active_step'] == 'configuration'
+        assert running['step_started_at'] == '2026-10-06T12:00:00Z'
+        return {'verified': True}
+    result = rehearse(state, [('configuration', check)], clock=clock,
+                     monotonic=lambda: next(ticks), reports=tmp_path / 'reports')
+    assert result['state'] == 'GREEN'
+    assert result['steps'][0]['elapsed_seconds'] == 1.25
+    assert result['steps'][0]['started_at'] == result['steps'][0]['finished_at']
+    assert 'active_step' not in result and 'step_started_at' not in result
+    assert state.get(clock().date().isoformat(), 'primary') == result
+
+
+def test_interrupted_step_keeps_its_identity_before_the_failure_hook(tmp_path, clock):
+    from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse, write_report
+    state = MonitorState(tmp_path / 'monitor')
+    class Interrupted(BaseException):
+        pass
+    def interrupted():
+        raise Interrupted()
+    with pytest.raises(Interrupted):
+        rehearse(state, [('cockpit_export', interrupted)], clock=clock, reports=tmp_path / 'reports')
+    saved = state.get(clock().date().isoformat(), 'primary')
+    assert saved['state'] == 'RUNNING' and saved['steps'] == []
+    assert saved['active_step'] == 'cockpit_export'
+    assert saved['step_started_at'] == '2026-10-06T12:00:00Z'
+    path = write_report(state, tmp_path / 'reports', clock().date().isoformat())
+    assert 'Unfinished step: cockpit_export at 2026-10-06T12:00:00Z' in path.read_text()
+
+
 def test_failure_continues_chain_alerts_and_reserves_second_rehearsal(tmp_path, clock):
     from scripts.trading_lab.trader_agent.rehearsal import MonitorState, rehearse
     state = MonitorState(tmp_path / 'monitor')

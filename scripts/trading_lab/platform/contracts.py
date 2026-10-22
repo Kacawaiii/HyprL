@@ -1,11 +1,12 @@
 """Immutable v1 interchange records. Hashes reuse the source canonical byte form."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from math import isfinite
 from types import MappingProxyType
-from typing import ClassVar, Mapping
+from typing import ClassVar
 import re
 
 from scripts.trading_lab.sources.canonical import canonical_bytes, sha256_canonical
@@ -39,20 +40,24 @@ def positive(value: int) -> None:
 
 
 def _freeze(value):
+    # Most leaves are scalars. Avoid runtime typing/ABC dispatch for each one
+    # when validating large, nested evidence snapshots on every verified read.
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and isfinite(value):
+        return value
     if isinstance(value, Mapping):
         if any(not isinstance(k, str) for k in value):
             raise ValueError("JSON keys must be strings")
         return MappingProxyType({k: _freeze(v) for k, v in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(v) for v in value)
-    if value is None or type(value) in (str, bool, int):
-        return value
-    if type(value) is float and isfinite(value):
-        return value
     raise ValueError("contract values must be finite JSON values")
 
 
 def _plain(value):
+    if value is None or type(value) in (str, bool, int, float):
+        return value
     if isinstance(value, Mapping):
         return {k: _plain(v) for k, v in value.items()}
     if isinstance(value, tuple):

@@ -169,10 +169,13 @@ def write_report(state, reports, day, run_slot="am"):
              '', 'Daily full-chain rehearsal ' + day, '',
              'GET-only AI paper accounts; no production decision, intent, label or order writes.', '']
     for attempt in attempts:
-        lines += [attempt['slot'] + ': ' + attempt['state'] + ' at ' + attempt['at'], '',
-                  '| Step | Result | Evidence |', '| --- | --- | --- |']
+        lines += [attempt['slot'] + ': ' + attempt['state'] + ' at ' + attempt['at'], '']
+        if attempt.get('active_step'):
+            lines += ['Unfinished step: ' + attempt['active_step'] + ' at ' + attempt['step_started_at'], '']
+        lines += ['| Step | Result | Seconds | Evidence |', '| --- | --- | --- | --- |']
         for step in attempt.get('steps', []):
             lines.append('| ' + step['step'] + ' | ' + step['state'] + ' | ' +
+                         str(step.get('elapsed_seconds', '')) + ' | ' +
                          (step.get('error', '') + ' ' + json.dumps(step.get('evidence', {}), sort_keys=True)) + ' |')
         if attempt.get('retry_at'):
             lines += ['', 'Second rehearsal due: ' + attempt['retry_at']]
@@ -186,7 +189,8 @@ def write_report(state, reports, day, run_slot="am"):
     return target
 
 
-def rehearse(state, steps, *, clock=now, retry=False, early=False, notify=None, reports, run_slot="am"):
+def rehearse(state, steps, *, clock=now, retry=False, early=False, notify=None, reports, run_slot="am",
+             monotonic=time.monotonic):
     if early and (retry or run_slot != 'am'):
         raise TraderError('REHEARSAL_EARLY_AM_ONLY')
     prefix = 'pm-' if run_slot == 'pm' else ''
@@ -205,6 +209,9 @@ def rehearse(state, steps, *, clock=now, retry=False, early=False, notify=None, 
         # Reserve the whole attempt before calling anything. OnFailure sees RUNNING after a crash.
         state.save(day, slot, result)
         for name, check in steps:
+            started, started_at = monotonic(), iso(clock())
+            result.update(active_step=name, step_started_at=started_at)
+            state.save(day, slot, result)
             try:
                 evidence = check()
                 step = {'step': name, 'state': 'GREEN', 'evidence': evidence}
@@ -223,6 +230,10 @@ def rehearse(state, steps, *, clock=now, retry=False, early=False, notify=None, 
                     day + ':' + slot + ':' + name,
                     'Trader rehearsal ' + day + ' (' + slot + ') ' +
                     ('DEGRADED / PARTIAL_CONTEXT: ' if degraded else 'failed: ') + name + ' / ' + step['error'], notify)})
+            step.update(started_at=started_at, finished_at=iso(clock()),
+                        elapsed_seconds=round(monotonic() - started, 3))
+            result.pop('active_step')
+            result.pop('step_started_at')
             result['steps'].append(step)
             state.save(day, slot, result)
         result['context_state'] = 'DEGRADED' if any(s['state'] == 'DEGRADED' for s in result['steps']) else 'COMPLETE'
@@ -765,13 +776,15 @@ class LiveChecks:
         responses = {path: api.dispatch('/api/v1/trader/' + path, {})
                      for path in ('today', 'context', 'runs', 'ledger', 'labels', 'scorecard', 'alerts', 'series', 'health')}
         encoded = json.dumps(responses, allow_nan=False)
-        from scripts.radar.cockpit_export import build_home, load_trader, load_scorecard, write_snapshot
+        from scripts.radar.cockpit_export import build_home, load_trader, write_snapshot
         from scripts.radar.cockpit_analysis import build_analysis
         reports = [p for p in (Path(self.args.reports) / 'radar').glob('*.json') if 'synthetic' not in p.name]
         if not reports:
             raise TraderError('REHEARSAL_COCKPIT_RADAR_REPORT_MISSING')
         radar = strict_json(max(reports, key=lambda p: p.stat().st_mtime_ns).read_text())
-        trader = load_trader(self.research, load_scorecard(self.research))
+        # The real scorecard API path just ran above; export exactly that result
+        # rather than scanning and validating the entire history a third time.
+        trader = load_trader(self.research, responses['scorecard'])
         snapshots = {'radar-home.json': build_home(radar, trader, generated_at=iso(self.clock())),
                      'analysis.json': build_analysis(radar, trader, generated_at=iso(self.clock()))}
         for name, snapshot in snapshots.items():

@@ -1,5 +1,36 @@
 # Daily trader rehearsal and post-run audit
 
+Each attempted step now persists `active_step` and `step_started_at` before it
+starts. Completed steps include UTC start/finish stamps and monotonic
+`elapsed_seconds`, also shown in the private Markdown report. An interruption
+therefore identifies the unfinished step even if the wall clock is synthetic.
+Historical attempts without these fields remain readable.
+
+The cockpit probe reuses the scorecard returned by its real API request for the
+snapshot exporter. Contract freezing and serialization handle scalar leaves
+before mapping dispatch; every existing contract, canonical identity, chain and
+counter check still runs. The rehearsal timeout and acquisition budgets are
+unchanged.
+
+News entity mapping indexes literal company-name candidates by their first word
+before applying the existing exact phrase regexes. Plain ticker tokens use the
+same word boundaries and case; punctuated tickers retain their regex. Anomaly
+linking maps each story's textual entities once, without the unused second map
+of its provider basket. Receipt cutoffs, clustering order and ranked context
+contents remain unchanged. Bar aggregation validates every captured history at
+its receipt, retaining only the last valid revision of each completed candle
+before the final validation pass. Repeated snapshots no longer multiply the
+memory needed for the same history; invalid revisions and partial captures
+retain their existing treatment.
+
+Cockpit snapshot builders replace secret-shaped URL fields with null and report
+the number of redactions in `redactions.secret_shaped_urls`. A removed
+source URL loses its verification badge. The final strict guard still rejects
+forbidden fields and secret-shaped free text, including on snapshot writes.
+Analysis snapshots also retain a bounded tail of annotations within the API's
+unchanged byte limit, with `omitted_overlays` and an explicit history limitation.
+Redaction counts include candidate annotations subsequently omitted for size.
+
 The operator's October 12 rehearsal task adds infrastructure checks before each
 weekday, weekend or US holiday crypto run. Execution spec v4, research bindings,
 model prompts for actual decisions and the acquisition grants remain unchanged.

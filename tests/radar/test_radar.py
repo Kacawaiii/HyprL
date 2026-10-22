@@ -419,12 +419,39 @@ def test_unavailable_youtube_is_unknown_hype_rather_than_zero(state):
     assert 'hype 0.' not in markdown
 
 
+def test_bar_map_keeps_last_valid_revision_and_never_promotes_a_captured_partial(state):
+    store, _, _, _ = state
+    bar = {'t': '2026-10-08T00:00:00Z', 'o': 100, 'h': 103, 'l': 99, 'c': 101, 'v': 1000}
+    for i, bars in enumerate([
+        [bar],
+        [{**bar, 'c': 102}, {**bar, 't': '2026-10-10T00:00:00Z'}],
+        [{**bar, 'c': 0}],
+    ]):
+        received = AT - timedelta(minutes=3 - i)
+        store.append('daily_bars', 'MU', {'symbol': 'MU', 'bars': bars, 'received_at': iso(received)}, at=received)
+    result = bar_map(store, 'daily_bars', AT + timedelta(days=2))['MU']
+    assert [(b['t'], b['c']) for b in result] == [('2026-10-08T00:00:00Z', 102)]
+
+
 def test_generic_financial_words_do_not_create_crypto_entities():
     mapped = Dictionary().map(story(headline='Chip maker sees optimism as the yield curve and compound costs ripple through margins'))
     assert not {'MKR/USD', 'OP/USD', 'CRV/USD', 'COMP/USD', 'XRP/USD'} & set(mapped['symbols'])
     assert 'crypto' not in mapped['themes']
     explicit = Dictionary().map(story(headline='Crypto lending at Compound and Curve'))
     assert {'COMP/USD', 'CRV/USD'} <= set(explicit['symbols'])
+
+
+@pytest.mark.parametrize('headline,expected', [
+    ('3M and AT&T discuss S&P Global', {'MMM', 'T', 'SPGI'}),
+    ('BRK-B reports alongside $AAPLsuffix', {'BRK-B', 'AAPL', 'A'}),
+    ('Ápple grows while Appleton stays private', {'AAPL'}),
+    ('Appleton and Costcoish stay private', set()),
+])
+def test_company_names_preserve_word_boundaries_punctuation_and_ticker_case(headline, expected):
+    row = story(headline=headline, symbols=[])
+    row['summary'] = ''
+    mapped = Dictionary().map(row)
+    assert set(mapped['named_symbols']) == expected
 
 
 def test_weekend_prioritizes_crypto_text_over_provider_basket_tags():

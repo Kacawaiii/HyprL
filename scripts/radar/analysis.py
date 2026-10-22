@@ -161,8 +161,13 @@ def bar_map(store, kind, at):
             # A partial candle captured yesterday never becomes a final candle
             # merely because wall time advanced. Completion must precede receipt.
             valid = valid_bars(payload['bars'], instant(payload['received_at']), daily=kind != 'minute_bars')
-            result.setdefault(payload['symbol'], []).extend(valid)
-    return {symbol: valid_bars(rows, at, daily=kind != 'minute_bars') for symbol, rows in result.items()}
+            history = result.setdefault(payload['symbol'], {})
+            for bar in valid:
+                # Keep the same last valid revision without retaining every
+                # repeated history snapshot. closed_at is already canonical.
+                history[bar['closed_at']] = bar
+    return {symbol: valid_bars(list(rows.values()), at, daily=kind != 'minute_bars')
+            for symbol, rows in result.items()}
 
 
 def atr(rows):
@@ -227,7 +232,7 @@ def link_anomalies(rows, events, at):
     """Nearby captured news, grouped by business theme. Association is not causation."""
     groups = {}
     dictionary = Dictionary()
-    mapped = {s['id']: (dictionary.map(s), dictionary.map({**s, 'symbols': []}))
+    mapped = {s['id']: dictionary.map({**s, 'symbols': []})
               for event in events for s in event['stories'] if instant(s['received_at']) <= at}
     for row in rows:
         symbol = row['symbol']
@@ -243,8 +248,7 @@ def link_anomalies(rows, events, at):
             # Match each in-window story's entities, not an out-of-window member
             # of its cluster. Provider baskets alone get a weaker association.
             for story in candidates:
-                entities, textual = mapped[story['id']]
-                symbols = set(entities['symbols'])
+                textual = mapped[story['id']]
                 related = set(textual['symbols']) | set(textual['businesses'])
                 reason = ('ticker' if symbol in textual['symbols'] else
                           'competitor' if peers(symbol) & related else
