@@ -592,6 +592,14 @@ class Models:
             record['source_attempt'] = source_attempt
         atomic_json(path, record)
         append_event(self.transcripts / 'calls.jsonl', dict(record, identity=identity))
+        # Durable empty streams also prove a no-dispatch window stop on recovery.
+        for suffix in ('.stdout', '.stderr'):
+            path.with_suffix(suffix).write_text('')
+        def dispatch(args, **kwargs):
+            # Reservation/lock waits and CLI setup can cross the boundary too.
+            if self.scope == 'replay' and replay_remaining(self.clock()) < max(timeout, 900):
+                raise ReplayError('INSUFFICIENT_CALL_WINDOW')
+            return self.runner(args, **kwargs)
         with tempfile.TemporaryDirectory(prefix='replay-duel-') as private:
             private = Path(private)
             cwd = private / 'empty'
@@ -616,12 +624,12 @@ class Models:
                     # Child writes directly to durable private files. A kill cannot
                     # erase response bytes buffered only in the parent's pipes.
                     with path.with_suffix('.stdout').open('w') as out, path.with_suffix('.stderr').open('w') as err:
-                        result = self.runner(args, input=prompt, text=True, stdout=out, stderr=err,
+                        result = dispatch(args, input=prompt, text=True, stdout=out, stderr=err,
                                              cwd=str(cwd), env=env, timeout=timeout)
                     result.stdout = path.with_suffix('.stdout').read_text()
                     result.stderr = path.with_suffix('.stderr').read_text()
                 else:
-                    result = self.runner(args, input=prompt, text=True, capture_output=True,
+                    result = dispatch(args, input=prompt, text=True, capture_output=True,
                                          cwd=str(cwd), env=env, timeout=timeout)
             except (subprocess.TimeoutExpired, OSError) as error:
                 def captured(value):

@@ -149,3 +149,17 @@ def test_admitted_dead_zero_byte_intent_retains_its_one_retry(tmp_path, monkeypa
     monkeypatch.setattr(continuation, 'admission', lambda: {'sources': [table]})
     saved, original = continuation.lookup(tmp_path, 'gpt', text, {}, 'new:2026-09-28:analyst-try0')
     assert saved == record and original['identity'] == identity
+
+
+def test_window_crossed_during_setup_still_cannot_dispatch(tmp_path):
+    calls = []
+    clocks = iter([instant('2026-10-23T06:45:00Z'), instant('2026-10-23T06:55:00Z')])
+    client = models.Models(SimpleNamespace(check=lambda: None, model_limit=lambda _: 400),
+        models.DuelBudget(tmp_path), tmp_path/spec.STATE_DIR/'transcripts', runner=lambda *a, **k: calls.append(1),
+        clock=lambda: next(clocks))
+    with pytest.raises(ReplayError, match='INSUFFICIENT_CALL_WINDOW'):
+        client.call('gpt', 'synthetic', {}, tag='synthetic')
+    assert not calls
+    path = next(client.transcripts.glob('*.json'))
+    assert json.loads(path.read_text())['state'] == 'INTENT'
+    assert all(path.with_suffix(s).stat().st_size == 0 for s in ('.stdout', '.stderr'))
