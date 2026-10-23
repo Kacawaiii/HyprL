@@ -59,7 +59,7 @@ def bundle(at):
     hunter = {'asof': instruments[0]['bars'][-1]['t'][:10], 'generated': iso(at),
               'candidates': [{'symbol': 'HUNT', 'setup': 'S4+F3', 'two_layer': True,
                               'rev_accel_pts': 15, 'signal_close': history[-1]['c']}]}
-    snapshot = {'schema': 'agent-v2-snapshot-v1', 'mode': 'SYNTHETIC', 'at': iso(at),
+    snapshot = {'schema': 'agent-v2-quality-snapshot-v3', 'mode': 'SYNTHETIC', 'at': iso(at),
                 'metadata_at': iso(at), 'calendar_at': iso(at), 'instruments': instruments,
                 'sources': [], 'quotes': [], 'hunter': hunter, 'events': []}
     return {'snapshot': snapshot, 'registry': reg, 'calendar': cal,

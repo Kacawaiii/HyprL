@@ -161,6 +161,10 @@ def test_producer_consumes_observed_envelopes_and_all_pages(tmp_path):
     clock = Clock(instant('2026-10-23T12:45:00Z'))
     data = bundle(clock())
     paths = {}
+    data['snapshot']['hunter']['candidates'].append({
+        'symbol': 'EXCLUDED', 'setup': 'S4+F3', 'two_layer': True,
+        'rev_accel_pts': 15, 'signal_close': 25})
+    next(r for r in data['registry']['instruments'] if r['symbol'] == 'SPY')['market_cap'] = None
     for key, value in [('registry', data['registry']), ('calendar', data['calendar']),
                        ('hunter', data['snapshot']['hunter']),
                        ('radar', {'schema': 'news-radar-v3', 'status': 'PARTIAL', 'live': True,
@@ -179,6 +183,8 @@ def test_producer_consumes_observed_envelopes_and_all_pages(tmp_path):
                     'next_page_token': 'next' if self.calls == 1 else None}, {'received_at': iso(clock())}
     wire = Wire()
     result = Producer(wire, clock=clock).snapshot(*(paths[k] for k in ('registry', 'calendar', 'hunter', 'radar')))
+    assert {r['symbol'] for r in result['snapshot']['hunter']['candidates']} == {'HUNT'}
+    assert next(r for r in result['snapshot']['instruments'] if r['symbol'] == 'SPY')['market_cap'] is None
     assert wire.calls == 2
     assert result['snapshot']['mode'] == 'SHADOW_FORWARD'
     assert len(result['snapshot']['instruments']) == 3

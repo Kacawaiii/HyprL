@@ -1,8 +1,16 @@
 """Evidence and judgments contain no prices, quantities or invented instruments."""
+from copy import deepcopy
+
+from scripts.trading_lab.agent_v2.contracts import SNAPSHOT as FROZEN_SNAPSHOT
 from scripts.trading_lab.agent_v2.contracts import (  # shared strict JSON primitives
     Blocked, HASH, SYMBOL, TEXT, array, canonical, digest, enum, instant, iso,
     obj, strict_json, utc, validate,
 )
+
+SNAPSHOT = deepcopy(FROZEN_SNAPSHOT)
+SNAPSHOT['properties']['schema'] = enum('agent-v2-quality-snapshot-v3')
+SNAPSHOT['properties']['instruments']['items']['properties']['market_cap'] = {
+    'anyOf': [{'type': 'number', 'exclusiveMinimum': 0}, {'type': 'null'}]}
 
 FACT = obj({'symbol': SYMBOL, 'source_id': HASH,
             'kind': enum('guidance_raised', 'guidance_cut', 'one_off', 'dilution',

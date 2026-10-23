@@ -156,3 +156,40 @@ delivery each require their own evidence; a synthetic drill proves none of those
 ```sh
 python -m pytest tests/agent_v2_quality tests/agent_v2 -q
 ```
+
+Revision three freezes the operator's 2026-10-23 input admission decision before
+forward outcomes. It uses `trader_shadow_v2_spec_v3.json` and
+`trader_shadow_v2_preregistration_v3.json`; both earlier revisions remain intact.
+A fresh runtime is mandatory. Revision-two stores remain rejected.
+
+The offline `agent_v2_quality.registry` builder selects the first 60 names from
+`agent_v2.core.ranking()` on the entire PIT momentum membership, ordered by score
+descending then symbol ascending. Append current hunter symbols in symbol order,
+deduplicate with momentum priority, retain the first 199 equities, and add SPY.
+Selection precedes exclusions; excluded names are never backfilled. Thus the
+registry always fits the unchanged 200-instrument producer limit. Exclude equities
+without a granted-source earnings date, an exact ten-digit submissions CIK, a
+mapped SIC, or a verified positive market cap. Record all reasons and disjoint
+primary-reason counts. Project the calendar and native hunter candidates onto the
+admitted registry; preserve original source receipts, dates and hashes.
+
+`registry.py` commits a disjoint inclusive SIC-range risk-sector table. This is a
+fixed aggregation of SIC industries for risk limits, not a claim of GICS sector
+membership. It includes specific software, pharmaceuticals, medical equipment,
+energy, utility and REIT ranges; missing, malformed and unmapped codes cannot
+supply a cluster. A submissions CIK mismatch cannot supply one either.
+
+The new `agent-v2-quality-snapshot-v3` contract represents SPY's corporate market
+cap as null (not applicable). Equities still require a positive market cap; a null
+cap on any other instrument is rejected. The frozen revision-one snapshot schema
+and validator are unchanged. The new snapshot schema is canonically hashed in the
+revision-three spec alongside the extraction and judgment schemas.
+
+A valid producer receipt is a point-in-time acquisition check. It cannot prove
+Monday readiness from Friday receipts: the calendar/radar freshness limit is
+18 hours, metadata/hunter is four days, and the horizon is five later NYSE sessions.
+For the Monday 2026-10-26 12:45 UTC cycle, coverage must reach November 2 at 21:00
+UTC. Refresh and rebuild prospectively, then run `produce` in the final fresh
+runtime and bind its actual receipt hash to the operator's proof. No future clock,
+relabelled source receipt, inferred earnings date or copied journal is admissible.
+The measured-edge requirement and operator-only activation remain in force.

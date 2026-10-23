@@ -1,0 +1,108 @@
+{
+  "schema": "trader-shadow-v2-spec-v3",
+  "revision": 3,
+  "mode": "SHADOW_ONLY_NO_BROKER",
+  "authorization_sha256": "9ca2d2fd0c4a9d306da3f65ab2b66b7382c62b11812b756a5ce7f1aef13148bc",
+  "risk": {
+    "initial_equity": 100000,
+    "max_heat": 0.04,
+    "max_cluster": 0.015,
+    "max_name_notional": 0.08,
+    "max_gross": 1.0,
+    "max_spread_fraction": 0.01,
+    "fee_per_side": 0.001,
+    "slippage_per_side": 0.0002,
+    "clusters": [
+      "energy",
+      "technology",
+      "financials",
+      "health",
+      "consumer",
+      "industrials",
+      "broad_index",
+      "rates",
+      "commodities",
+      "fx",
+      "real_estate",
+      "utilities"
+    ]
+  },
+  "gpt_model": "gpt-6.1-sol",
+  "claude_model": "opus",
+  "data_budgets": {
+    "alpaca": 1000,
+    "sec": 60
+  },
+  "sec_spacing_seconds": 1,
+  "data_scope": [
+    "GET data.alpaca.markets/v2/stocks/bars",
+    "GET data.alpaca.markets/v2/stocks/quotes/latest",
+    "GET data.sec.gov/submissions/CIK##########.json",
+    "GET www.sec.gov/Archives/edgar/data/<CIK>/<accession>/<document>"
+  ],
+  "candidate_rules": [
+    "equity_momentum",
+    "hunter_runner"
+  ],
+  "candidate_policy": "code only; positive after-cost measured edge with evidence digest required per rule; no model-originated candidates; ETF/news/PEAD/leader rules not enabled without implementation and measured evidence",
+  "cadence": {
+    "decision": "12:45 UTC each NYSE session, start tolerance 180s",
+    "watch": "regular NYSE hours once per minute",
+    "drill": "22:45 UTC tomorrow synthetic companion",
+    "weekly": "Friday 21:15 UTC brouillons"
+  },
+  "model_calls": {
+    "claude_opus_calls_per_day": 3,
+    "gpt_calls_per_day": 3,
+    "planned": "one extraction, one analyst, one independent GPT contradictor per day; no retries; quota halts day; no dispatch 15:30-17:00 UTC"
+  },
+  "primary": "full normalized filing text; raw and text digests; received_at after response; no truncation; exact-substring citations; no primary evidence fails AI closed",
+  "execution": "premarket previous-close provisional size; fresh regular-session quote strictly after approval; no entry after open+5min; resizes only downward in Python; later observed bid for stops and five-session time exit",
+  "evaluation": {
+    "arms": [
+      "baseline",
+      "extraction",
+      "veto",
+      "sizing",
+      "combined"
+    ],
+    "unit": "each code-selected candidate with later entry and completed five-session-or-stop outcome",
+    "factors": "extraction: zero on cited cut/dilution/accounting/legal; veto: zero on either VETO; sizing: half on either SIZE_DOWN; combined applies active factors",
+    "paired": "same candidates, baseline quote/fill/stop/horizon/costs; unused size held in cash; no capacity-reallocation claim",
+    "disable": "permanent prospective removal from combined when >=40 completed valid candidate decisions and cumulative paired net PnL delta <=0; no tuning; diagnostics retained",
+    "correctness": "semantic extraction accuracy UNMEASURED until independent operator fact adjudication; exact substring alone proves citation only",
+    "statistics": "report cluster-days; 40 is a governance threshold, not statistical significance"
+  },
+  "activation": "new private runtime only; exact code SHA, spec/prereg/implementation, grant digest, successful exact-SHA CI, local checks, recent producer proof, explicit single-owner review; no migration or automatic promotion",
+  "replay": "requirement waived by the pinned operator grant; prospective evidence only",
+  "limitations": [
+    "IEX partial feed, displayed size does not guarantee execution",
+    "minute quotes can miss stop touches; overnight gaps can exceed initial risk",
+    "primary retrieval and CLI transport require forward verification",
+    "local registry, measured-edge attestation, and complete macro/earnings calendar are operator-supplied; no fabricated empty calendars",
+    "Codex CLI served model identity is not attested; requested identity is recorded",
+    "paired arms measure same-candidate allocated capital, not independent portfolio capacity"
+  ],
+  "schema_hashes": {
+    "extraction": "933091181e3cdf3a5fcfe45851a822e2ade6dc9f8e977d3a2b4c8571b6f16a1b",
+    "judgment": "6671e6129dfe8a3fa9be82b1cd271b1e21e73df851a078647b5fef21b6710a91",
+    "snapshot": "178d0d82ab9ff9f09f9da4181219fa266f1fd1ad79ba9b13d3962d57353e4874"
+  },
+  "prompt_hashes": {
+    "analyst.txt": "504e1fc4c2116f8d6023a7cacee26ec6accb17c4e395d779021c3d90769abbe7",
+    "contradictor.txt": "b0c6d609753c155d25246aeaf33b83d47350d9da2b8337c3041b74ba156841b3",
+    "extraction.txt": "36fa5f4c18c0e14f8efa8e3c9ec632b0f081cb6942b39f0d87c792b618eb6e63"
+  },
+  "max_candidates_per_day": 3,
+  "registry_policy": {
+    "momentum": "rank entire frozen PIT membership on previous-session raw IEX closes using frozen ranking(); score descending, symbol ascending; select first 60 before exclusions, no backfill",
+    "hunter": "current hunter symbols in ascending order, deduplicated after momentum",
+    "capacity": "first 199 equities in the ordered union, then SPY; at most 200 instruments",
+    "exclusions": "no source-evidenced earnings date, no matching submissions CIK/SIC, unmapped SIC or no verified positive market cap excludes the equity; record every reason and disjoint primary counts",
+    "clusters": "fixed SEC SIC range-to-sector table in registry.py; risk aggregation, not GICS",
+    "regime_etf": "SPY broad_index only; market_cap null means corporate market cap is not applicable",
+    "snapshot_schema": "agent-v2-quality-snapshot-v3; positive market_cap still required on equities; frozen snapshot v1 is unchanged",
+    "hunter_snapshot": "preserve native envelope and candidate fields; restrict candidates to admitted registry symbols"
+  },
+  "canonical_sha256": "43a4e9b24fe953e083acd1c4647c89220b8e2196dcfa717924bd0423b786c086"
+}

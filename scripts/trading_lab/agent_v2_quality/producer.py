@@ -10,7 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from scripts.trading_lab.agent_v2.inputs import fresh, previous_session, sessions, validate_snapshot
+from scripts.trading_lab.agent_v2.inputs import fresh, previous_session, sessions
+from .inputs import validate_snapshot
 from .contracts import Blocked, canonical, digest, instant, iso, strict_json, utc
 from .spec import spec
 
@@ -261,6 +262,8 @@ class Producer:
         hunter = read_local(hunter_path)
         # Keep the observed hunter-live envelope and only the adapter's consumed fields.
         hunter = {k: hunter[k] for k in ('asof', 'generated', 'candidates')}
+        admitted = {r['symbol'] for r in reg['instruments']}
+        hunter['candidates'] = [r for r in hunter['candidates'] if r.get('symbol') in admitted]
         if not fresh(hunter['generated'], at, 4 * 86400):
             raise Blocked('HUNTER_STALE')
         radar = radar_headlines(read_local(radar_path), [r['symbol'] for r in reg['instruments']], at)
@@ -295,7 +298,7 @@ class Producer:
             instruments.append({k: row[k] for k in ('symbol', 'asset', 'cluster', 'market_cap',
                                                    'primary_domains', 'momentum_member')} |
                                {'bars': history, 'dollar_volume': sum(b['c'] * b['v'] for b in history[-20:]) / 20})
-        snapshot = {'schema': 'agent-v2-snapshot-v1', 'mode': 'SHADOW_FORWARD', 'at': iso(self.clock()),
+        snapshot = {'schema': 'agent-v2-quality-snapshot-v3', 'mode': 'SHADOW_FORWARD', 'at': iso(self.clock()),
                     'metadata_at': reg['received_at'], 'calendar_at': cal['received_at'],
                     'instruments': instruments, 'sources': [], 'events': cal['events'], 'quotes': [],
                     'hunter': hunter}

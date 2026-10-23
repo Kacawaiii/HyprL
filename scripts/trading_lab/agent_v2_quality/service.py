@@ -4,9 +4,9 @@ from hashlib import sha256
 import math
 
 from scripts.trading_lab.agent_v2.core import candidates, plan_id
-from scripts.trading_lab.agent_v2.inputs import (event_block, fresh, holding_days, session, validate_quotes,
-                                                validate_snapshot)
+from scripts.trading_lab.agent_v2.inputs import event_block, fresh, holding_days, session, validate_quotes
 from scripts.trading_lab.agent_v2.risk import equity, size
+from .inputs import validate_snapshot
 from .contracts import (ARMS, Blocked, check_facts, check_judgment, digest, factors, instant, iso, utc)
 from .producer import calendar, evaluation_end, group_for, registry
 from .scoring import disable_underperformers

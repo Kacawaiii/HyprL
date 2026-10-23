@@ -49,7 +49,7 @@ def run_decision(journal, data, clock, models=None):
 def test_new_revision_is_pinned_and_old_store_is_rejected(tmp_path, clock):
     from scripts.trading_lab.agent_v2.ledger import Ledger
     assert configuration()['spec_hash'] == SPEC_HASH
-    assert spec()['revision'] == 2
+    assert spec()['revision'] == 3
     root = tmp_path / 'old'
     old = Ledger.initialize(root, 'SYNTHETIC', 'b' * 40, clock())
     tip = old.verify()

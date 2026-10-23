@@ -1,0 +1,37 @@
+{
+  "schema": "trader-shadow-v2-preregistration-v3",
+  "revision": 3,
+  "spec_hash": "43a4e9b24fe953e083acd1c4647c89220b8e2196dcfa717924bd0423b786c086",
+  "initial_equity": 100000,
+  "authorization_sha256": "9ca2d2fd0c4a9d306da3f65ab2b66b7382c62b11812b756a5ce7f1aef13148bc",
+  "mode": "SHADOW_FORWARD",
+  "freeze": "before first forward decision; new runtime; no implicit migration",
+  "primary_unit": "each code-selected candidate with later entry and completed five-session-or-stop outcome",
+  "scoring": {
+    "arms": [
+      "baseline",
+      "extraction",
+      "veto",
+      "sizing",
+      "combined"
+    ],
+    "unit": "each code-selected candidate with later entry and completed five-session-or-stop outcome",
+    "factors": "extraction: zero on cited cut/dilution/accounting/legal; veto: zero on either VETO; sizing: half on either SIZE_DOWN; combined applies active factors",
+    "paired": "same candidates, baseline quote/fill/stop/horizon/costs; unused size held in cash; no capacity-reallocation claim",
+    "disable": "permanent prospective removal from combined when >=40 completed valid candidate decisions and cumulative paired net PnL delta <=0; no tuning; diagnostics retained",
+    "correctness": "semantic extraction accuracy UNMEASURED until independent operator fact adjudication; exact substring alone proves citation only",
+    "statistics": "report cluster-days; 40 is a governance threshold, not statistical significance"
+  },
+  "replay_requirement": "waived by pinned operator grant",
+  "forbidden": [
+    "broker orders",
+    "crypto",
+    "holdout research",
+    "v1 modifications",
+    "automatic promotion",
+    "forward-ledger tuning"
+  ],
+  "max_candidates_per_day": 3,
+  "input_admission": "Operator decision 2026-10-23, before outcomes: momentum top 60 plus current hunter, cap 200 including SPY, exclude unverified earnings dates and missing/unmapped SEC SIC; fixed SIC sectors. New runtime required; no rebind.",
+  "canonical_sha256": "42f64b26b67f38365a42d36862b5c1bb0c9fbc4f34211e0c702b55082de05f54"
+}

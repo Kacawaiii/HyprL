@@ -2,12 +2,12 @@
 from pathlib import Path
 import hashlib
 
-from .contracts import Blocked, EXTRACTION, JUDGMENT, digest, strict_json
+from .contracts import Blocked, EXTRACTION, JUDGMENT, SNAPSHOT, digest, strict_json
 
 HERE = Path(__file__).resolve().parent
 ARTIFACTS = HERE.parents[2] / 'docs/artifacts'
-SPEC_HASH = '424c5ef79147435354a4bd5ceeaea974fc07ab553bfdcb39f276bf833c686953'
-PREREG_HASH = 'd95ba504e7e23ec27502fe90bc7f137ccb9665d8a8e41c95766aad77105bb12b'
+SPEC_HASH = '43a4e9b24fe953e083acd1c4647c89220b8e2196dcfa717924bd0423b786c086'
+PREREG_HASH = '42f64b26b67f38365a42d36862b5c1bb0c9fbc4f34211e0c702b55082de05f54'
 
 
 def pinned(name, expected):
@@ -18,8 +18,9 @@ def pinned(name, expected):
 
 
 def spec():
-    value = pinned('trader_shadow_v2_spec_v2.json', SPEC_HASH)
-    if value['schema_hashes'] != {'extraction': digest(EXTRACTION), 'judgment': digest(JUDGMENT)}:
+    value = pinned('trader_shadow_v2_spec_v3.json', SPEC_HASH)
+    if value['schema_hashes'] != {'extraction': digest(EXTRACTION), 'judgment': digest(JUDGMENT),
+                                  'snapshot': digest(SNAPSHOT)}:
         raise Blocked('QUALITY_SCHEMA_HASH_MISMATCH')
     for name, expected in value['prompt_hashes'].items():
         if hashlib.sha256((HERE / 'prompts' / name).read_bytes()).hexdigest() != expected:
@@ -28,7 +29,7 @@ def spec():
 
 
 def configuration():
-    value = pinned('trader_shadow_v2_preregistration_v2.json', PREREG_HASH)
+    value = pinned('trader_shadow_v2_preregistration_v3.json', PREREG_HASH)
     if value['spec_hash'] != SPEC_HASH:
         raise Blocked('QUALITY_PREREGISTRATION_MISMATCH')
     spec()
