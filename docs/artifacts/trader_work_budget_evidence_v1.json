@@ -1,0 +1,235 @@
+{
+  "schema": "trader-work-budget-offline-evidence-v1",
+  "implementation_commit": "ea7df3e81a0d83ee8ef8cb31b1272e14ee2106c3",
+  "baseline_commit": "913a73d76f64d0945a6999497853b824b244d4bd",
+  "spec_hash": "b55b99d515efe0e9598b866683ffeb00a019a94a89d45124bd61dcabcf4307ff",
+  "native_cli_version": "2.1.289 (Claude Code)",
+  "method": "Real before totals from quota audit joined to copied dispatch kind; after is installed native CLI with loopback synthetic token usage exactly at each 95000 envelope. This is NOT measured real-model counterfactual consumption or a subscription-window forecast.",
+  "synthetic_clock": true,
+  "real_model_calls": 0,
+  "official_source_requests": 0,
+  "native_synthetic_api_requests": 14,
+  "prompt_function_sha256_unchanged": "1956ef77eb0c2497989696a5f43d50354ccb51d45e110057375ac0f29b9a21ab",
+  "native_permission_gate": {
+    "state": "MODEL_TOOL_BUDGET_EXHAUSTED",
+    "main_requests": 4,
+    "web_helper_requests": 3,
+    "fourth_search_received_allow": false
+  },
+  "native_structured_output": {
+    "state": "COMPLETE",
+    "requests": 1,
+    "new_tokens_synthetic": 40
+  },
+  "cases": [
+    {
+      "day": "2026-10-21",
+      "slot": "am",
+      "arm": "base",
+      "available": true,
+      "identity": "b97039ba189318b00d3e9040767a7aa1c6fe694c158e61cf09389a70933e93ca",
+      "context_hash": "6fb191fed11210d04e317d0aa018e1487ff26666d06bb28470bc3da2b671aabc",
+      "before_observed": {
+        "calls": 2,
+        "new_tokens": 414689,
+        "all_tokens": 1065563,
+        "quota_calls": 0
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 132803,
+        "reviewer": 157399
+      },
+      "prompt_hashes": {
+        "analyst_claude": "99e9b99e972dfb1ff170ec23720a7d193683241ab2a2f0b631b3c6ba7184690a",
+        "reviewer": "82d292269c45a3882a4f6b2b973d181db7a9e5ca4f5b2b048ba23c780956b6f0"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    },
+    {
+      "day": "2026-10-21",
+      "slot": "am",
+      "arm": "news",
+      "available": true,
+      "identity": "a92d3edcc9219278926ec9cc0ba75b1a4dace0452ae942e73c8adfd9b1b655dd",
+      "context_hash": "019289c009327e5b8f165f13499134dd256e411d4079bc6f4e22f04fcddb4c92",
+      "before_observed": {
+        "calls": 2,
+        "new_tokens": 406270,
+        "all_tokens": 1006340,
+        "quota_calls": 0
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 177736,
+        "reviewer": 202332
+      },
+      "prompt_hashes": {
+        "analyst_claude": "3e6b7bef8e1f17d88598ee56229f0712e9e11f2845a1426171ab6175c4ffce6c",
+        "reviewer": "99ed16498bc3ab69492fcfe670f7f8b2d52fed254675c172ba9d96c54cf6a7e3"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    },
+    {
+      "day": "2026-10-21",
+      "slot": "pm",
+      "arm": "base",
+      "available": true,
+      "identity": "8842e1bddaf5d9ea94dd7e693e72c4c524194ed273a0e7bdfd830cbe8155be58",
+      "context_hash": "a2fd63df5e392bdf726fe5c89b454831fcafd4040921f22153bdc6415f2a0f4f",
+      "before_observed": {
+        "calls": 3,
+        "new_tokens": 232390,
+        "all_tokens": 549905,
+        "quota_calls": 2
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 138945,
+        "reviewer": 160783
+      },
+      "prompt_hashes": {
+        "analyst_claude": "de5cfbc81cf621cfe00aefac1987467236a32dc5695849976c6cde01906a0ad2",
+        "reviewer": "e888bcd9b26ebf03d75308e2b3b42ed2e4196fd79d12647a1cd31e98847f675f"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    },
+    {
+      "day": "2026-10-21",
+      "slot": "pm",
+      "arm": "news",
+      "available": false,
+      "before_observed": null,
+      "after_admission": null,
+      "reason": "NO_FROZEN_CONTEXT_NOT_FABRICATED",
+      "after_synthetic_new_tokens": null
+    },
+    {
+      "day": "2026-10-22",
+      "slot": "am",
+      "arm": "base",
+      "available": true,
+      "identity": "38df3a34eb1295491d983c4bbe44da7ee0b8a70591a93c72930f5c7f75a4c1ad",
+      "context_hash": "b33d795258292b2c68d24b5cba8be5077edde335981c9d601cbc95a889362af5",
+      "before_observed": {
+        "calls": 2,
+        "new_tokens": 331927,
+        "all_tokens": 811063,
+        "quota_calls": 0
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 136712,
+        "reviewer": 161308
+      },
+      "prompt_hashes": {
+        "analyst_claude": "8f047feb5c0aeabf9c7c09246c3a08d0717456174b8514c80cd33d74b8589982",
+        "reviewer": "3144daee0e149017dda86a2a0fc3c9e6caddee9b03a7b752fe7b2a999956ed57"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    },
+    {
+      "day": "2026-10-22",
+      "slot": "am",
+      "arm": "news",
+      "available": true,
+      "identity": "ecbcdfb7f52d15e824482b9394ceded810f3a41cb8de35ac7a0092b162c18e21",
+      "context_hash": "168d661f029052eba26f70fc5b90d670759f9aa3c3c81eba0d89a23b013f4d0f",
+      "before_observed": {
+        "calls": 2,
+        "new_tokens": 554863,
+        "all_tokens": 1757707,
+        "quota_calls": 0
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 179920,
+        "reviewer": 204516
+      },
+      "prompt_hashes": {
+        "analyst_claude": "cd4057a1b4a96cb45130046602c6e9a55430fd8f533812fe07b76114d1fe62c1",
+        "reviewer": "2427d9435839b215fe32fc1f268827f56a58288b95838a76986c95041b6498b0"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    },
+    {
+      "day": "2026-10-22",
+      "slot": "pm",
+      "arm": "base",
+      "available": true,
+      "identity": "08f9b253960b9560ef584c1f302186c7f5dd34ff3babe8db8c21213cb028a856",
+      "context_hash": "ffc6da0226af09a87c0f4e71d1d4d3d41f441da135d7924ddab05d76310d5c13",
+      "before_observed": {
+        "calls": 2,
+        "new_tokens": 375522,
+        "all_tokens": 926471,
+        "quota_calls": 0
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 132439,
+        "reviewer": 155033
+      },
+      "prompt_hashes": {
+        "analyst_claude": "331c463c01d007b32172167fd8df2e998baad7276f866b6d61591801015050bf",
+        "reviewer": "a4f360eb059bf696500d3a1187a56fb2bab41319ea291e3fd4f98c337dca6d95"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    },
+    {
+      "day": "2026-10-22",
+      "slot": "pm",
+      "arm": "news",
+      "available": true,
+      "identity": "4b04b6e61fffb3b070caea7ecad75b9c9357828feaa8f638869ef3149f2ea0d2",
+      "context_hash": "1084a3948d66b8aa1f5a0ec87c285c8f2c6fcd1287d12622f8a787f0e1b0d87c",
+      "before_observed": {
+        "calls": 2,
+        "new_tokens": 278226,
+        "all_tokens": 767190,
+        "quota_calls": 1
+      },
+      "after_admission": 190000,
+      "prompt_bytes": {
+        "analyst_claude": 178277,
+        "reviewer": 200871
+      },
+      "prompt_hashes": {
+        "analyst_claude": "066d4f6e9eddcafd38fb65fdd8d04a3ef8ef2214a3bbc51ab735d7e9922e6854",
+        "reviewer": "aa573e73bfe44db4f4185d3ca8d11e8bcce4cf3c03ffa110da3f59743394f2b9"
+      },
+      "skill_hashes": {
+        "TRADER_SKILL.md": "300152f58892f3418b775b5374e94e2eae01fe9e5217d23fd2fec00014ff0855",
+        "REVIEWER_SKILL.md": "1a1a010e9fffdede4d65a074e57b2358fb978d02fb29a39d30ba87f7e9f93cca"
+      },
+      "after_synthetic_new_tokens": 190000
+    }
+  ],
+  "actual_real_model_after_new_tokens": null,
+  "pm_subscription_availability_proven": false,
+  "canonical_sha256": "7201dfd6ca812d63ab38541a53b0f135f9fdc468bbf83f7cf89a906ac7c2e39b"
+}
