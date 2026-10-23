@@ -1,0 +1,109 @@
+{
+  "base_rate_rule": "Laplace (wins+1)/(n+2) per variant/fixed horizon. Dev uses only labels whose exit is strictly before that decision. Test uses a rate fixed from censored Jul-Aug dev labels before any test call; no test fitting.",
+  "code_hash": "a383360c61c1e59883a5791accdf311de3e7ab48fb198dc50b57f9236e71b5bd",
+  "config_hashes": {
+    "gpt": {
+      "ab": "bba97129b702da79b4f7adbd3bad2556cc03076e3387ea94f6d0a1cea2a9c5a7",
+      "cd": "5caa52899887b5c3581c787c026a29a20a2319c061f23b86966beb74d6c5ca18"
+    },
+    "opus": {
+      "ab": "a6bab0073a29e0ca8917cf9b07ed9fc96f9e3fc1772e28171aac20e7b84c73f4",
+      "cd": "f3de9d04fef87d1e52daba5b6e5bad0faf51c37257a80be3aba823ac24fb5a65"
+    }
+  },
+  "config_payloads": {
+    "gpt": {
+      "ab": {
+        "code_hash": "a383360c61c1e59883a5791accdf311de3e7ab48fb198dc50b57f9236e71b5bd",
+        "family": "gpt",
+        "group": "ab",
+        "model": "gpt-6.1-sol",
+        "period": "test",
+        "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad"
+      },
+      "cd": {
+        "code_hash": "a383360c61c1e59883a5791accdf311de3e7ab48fb198dc50b57f9236e71b5bd",
+        "family": "gpt",
+        "group": "cd",
+        "model": "gpt-6.1-sol",
+        "period": "test",
+        "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad"
+      }
+    },
+    "opus": {
+      "ab": {
+        "code_hash": "a383360c61c1e59883a5791accdf311de3e7ab48fb198dc50b57f9236e71b5bd",
+        "family": "opus",
+        "group": "ab",
+        "model": "claude-opus-5-5",
+        "period": "test",
+        "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad"
+      },
+      "cd": {
+        "code_hash": "a383360c61c1e59883a5791accdf311de3e7ab48fb198dc50b57f9236e71b5bd",
+        "family": "opus",
+        "group": "cd",
+        "model": "claude-opus-5-5",
+        "period": "test",
+        "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad"
+      }
+    }
+  },
+  "evidence_class": {
+    "forward": "LIVE_FORWARD",
+    "replay": "EXPLORATORY"
+  },
+  "forward_config_hashes": {
+    "gpt": "469d8cdfca53b7e96e2022b816100f6e71ed1f00711632d757563dd42242d653",
+    "opus": "1e63f5442b611af9b4b741fdffc3d727a70e576f0dc11408bb8a4746b296b37b"
+  },
+  "forward_first_session": "2026-10-20",
+  "frozen_dev_base_rate": {
+    "n": 1214,
+    "outcomes_sha256": "eb5fd2f9545feb62ff07ffc4e76e0ccd4073789cf4317ee2a3167e6ee4989dc3",
+    "panel": "a_v1_as_live:1d",
+    "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad",
+    "successes": 590
+  },
+  "input_seal_required": true,
+  "paired_test_rule": "Exact two-sided block sign-flip on daily mean Opus-minus-GPT Brier and log loss, all same instruments/days/horizons paired, nonoverlapping blocks of 10 NYSE sessions anchored at period start; Holm correction over all named panel/loss comparisons. No trade-conditioned probability selection.",
+  "parent_freeze_hash": "c68abf4c92a1f0a39982ed86524b6a539ee42071a632868445e4c9ce9f2c4a21",
+  "primary_endpoint": {
+    "ci": "moving-block bootstrap over sessions, block 5, 10000 resamples, seed 20261018, percentile 95%",
+    "decision_rule": "winner wording only if the paired 95% CI excludes 0; otherwise NO_WINNER",
+    "metric": "brier_skill_vs_frozen_dev_base_rate",
+    "minimum_sessions_for_ci": 10,
+    "paired": "opus minus gpt on identical resampled sessions and forecasts",
+    "panel": "a_v1_as_live:1d"
+  },
+  "probe_evidence_hash": "52f582bc364f7ac41c2707f219b9bb45eb32f5aa75282e8ad1d036fd0e53699a",
+  "schema": "replay-duel-test-freeze-v13",
+  "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad",
+  "test_days": [
+    "2026-09-01",
+    "2026-09-02",
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-14",
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17",
+    "2026-09-18",
+    "2026-09-21",
+    "2026-09-22",
+    "2026-09-23",
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30"
+  ],
+  "test_end": {
+    "gpt": "2026-09-30",
+    "opus": "2026-09-30"
+  }
+}

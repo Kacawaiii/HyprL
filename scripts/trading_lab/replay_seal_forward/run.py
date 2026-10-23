@@ -52,8 +52,10 @@ def checked(path, meta):
         raise ReplayError('RECORD_CONFIG_MISMATCH')
     if value['decision_hash'] != sha256_canonical({k: v for k, v in value.items() if k != 'decision_hash'}):
         raise ReplayError('DECISION_HASH_MISMATCH')
-    if value.get('status') == 'MODEL_FAILURE' and (value['forecasts'] or value['decisions'] or
-                                                 len(value.get('validation_codes', [])) != 2):
+    valid_failure = (len(value.get('validation_codes', [])) == 2 or
+                     value.get('validation_codes') == ['CALL_OUTCOME_UNKNOWN'] and
+                     bool(value.get('uncertain_calls')))
+    if value.get('status') == 'MODEL_FAILURE' and (value['forecasts'] or value['decisions'] or not valid_failure):
         raise ReplayError('MODEL_FAILURE_RECORD_INVALID')
     return value
 
@@ -69,10 +71,16 @@ def infer(client, family, text, schema, check, tag, *, on_failure=None, previous
             check(output)
             return output, meta, errors
         except ReplayError as error:
+            evidence = error.evidence if isinstance(error.evidence, dict) else {}
             if meta is None and isinstance(error.evidence, dict):
-                meta = error.evidence.get('call')
+                meta = evidence.get('call') or evidence.get('uncertain_call')
             if on_failure:
                 on_failure(attempt, error.code, meta)
+            if error.code == 'CALL_OUTCOME_UNKNOWN' and evidence.get('terminal_model_failure'):
+                raise ReplayError('MODEL_CALL_UNRESOLVED', {
+                    'validation_codes': ['CALL_OUTCOME_UNKNOWN'], 'calls': calls,
+                    'uncertain_calls': {f'try{attempt}': evidence['uncertain_call']},
+                    'validation_stage': tag.rpartition(':')[2]}) from None
             if error.code not in VALIDATION_CODES:
                 raise
             errors.append(error.code)

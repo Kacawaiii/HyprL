@@ -32,8 +32,39 @@ CREDIT_STOP = 'api-credit-stop.json'
 
 
 def continuous_remaining(at):
-    """Replay has no clock window; each individual call still has its full timeout."""
+    """Unbounded caller window; the replay scope always applies its own UTC guard."""
     return float('inf')
+
+
+def replay_remaining(at):
+    """UTC replay window, with a 06:55 dispatch cutoff and full timeout before 07:00."""
+    at = at.astimezone(timezone.utc)
+    clock = at.hour * 60 + at.minute
+    if 415 <= clock < 1230:
+        return 0
+    end = at.replace(hour=7, minute=0, second=0, microsecond=0)
+    if clock >= 1230:
+        end += timedelta(days=1)
+    return (end - at).total_seconds()
+
+
+def unknown_outcome(record, path, identity, *, original_protocol=None, dispatch_ended=False):
+    """A dead owner's bytes or exhausted zero-byte retry resolve the cell, never re-ask."""
+    streams = {suffix: {'sha256': spec.file_hash(path.with_suffix(suffix)),
+                        'bytes': path.with_suffix(suffix).stat().st_size}
+               for suffix in ('.stdout', '.stderr') if path.with_suffix(suffix).is_file()}
+    owner_ended = (record.get('owner_pid') and record.get('owner_start') and
+                   process_identity(record['owner_pid']) != record['owner_start'])
+    terminal = (dispatch_ended or owner_ended) and (record.get('raw') or record.get('err') or
+        any(s['bytes'] for s in streams.values()) or record.get('retry', 0) or
+        path.with_suffix('.attempt-0.json').exists())
+    call = {'transcript': identity, 'called_at': record['at'],
+            'prompt_sha256': record['prompt_sha256'], 'family': record['family'],
+            'envelope_sha256': spec.file_hash(path), 'streams': streams}
+    if original_protocol:
+        call['original_protocol'] = original_protocol
+    return ReplayError('CALL_OUTCOME_UNKNOWN', {'terminal_model_failure': bool(terminal),
+                                              'uncertain_call': call})
 
 
 def day_stop(day, family, at):
@@ -515,12 +546,12 @@ class Models:
                 retry = 1
         if saved and saved['state'] in ('INTENT', 'INTERRUPTED'):
             if self.scope != 'replay' or self.billing is not None or not retryable(saved, path):
-                raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
+                raise unknown_outcome(saved, path, identity)
             # Preserve the first attempt byte for byte. The next attempt is binding,
             # including a timeout or invalid answer, and consumes another call.
             original = path.with_suffix('.attempt-0.json')
             if original.exists():
-                raise ReplayError('CALL_OUTCOME_UNKNOWN', identity)
+                raise unknown_outcome(saved, path, identity)
             retry = 1
         if saved and saved['state'] == 'RECEIVED':
             try:
@@ -533,6 +564,8 @@ class Models:
                 self.budget.stop_model(family, instant(saved['at']))
         at = self.clock()
         remaining = self.window(at)
+        if self.scope == 'replay':
+            remaining = min(remaining, replay_remaining(at))
         if remaining < max(timeout, 900):
             raise ReplayError('INSUFFICIENT_CALL_WINDOW')
         self.grant.check()
@@ -599,7 +632,7 @@ class Models:
                     if path.with_suffix(suffix).is_file():
                         record[key] = path.with_suffix(suffix).read_text(errors='replace')
                 atomic_json(path, record)
-                raise ReplayError('CALL_OUTCOME_UNKNOWN', identity) from None
+                raise unknown_outcome(record, path, identity, dispatch_ended=True) from None
         record.update(state='RECEIVED', raw=result.stdout or '', err=result.stderr or '', returncode=result.returncode,
                       received_at=iso(self.clock()),
                       billing='api' if api else 'subscription')

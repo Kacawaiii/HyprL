@@ -102,7 +102,8 @@ def test_decoder_validation_error_keeps_call_identity(tmp_path, monkeypatch):
     grant = SimpleNamespace(check=lambda: None, model_limit=lambda _: 400)
     raw = json.dumps({'modelUsage': {'claude-opus-5-5': {}}, 'structured_output': {}})
     client = models.Models(grant, models.DuelBudget(tmp_path), tmp_path / spec.STATE_DIR / 'transcripts',
-                           runner=lambda *a, **k: SimpleNamespace(stdout=raw, stderr='', returncode=0))
+                           runner=lambda *a, **k: SimpleNamespace(stdout=raw, stderr='', returncode=0),
+                           clock=lambda: models.instant('2026-10-23T01:00:00Z'))
     with pytest.raises(ReplayError) as caught:
         client.call('opus', 'text', schemas.NEWS_SCHEMA, tag='synthetic')
     assert caught.value.code == 'MODEL_SCHEMA_INVALID'

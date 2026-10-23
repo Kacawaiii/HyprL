@@ -11,7 +11,7 @@ from scripts.trading_lab.replay_bench.grant import ReplayError, instant
 from scripts.trading_lab.replay_seal_forward import experiment as ex, models, quality, spec
 from scripts.trading_lab.sources.canonical import sha256_canonical
 
-T = instant('2026-10-20T12:00:00Z')
+T = instant('2026-10-20T01:00:00Z')
 
 
 def client(tmp_path, *, window=models.continuous_remaining, runner=None):
@@ -38,9 +38,11 @@ def test_short_window_never_consumes_a_call_or_truncates_timeout(tmp_path):
     assert calls == [900]
 
 
-@pytest.mark.parametrize('hour', [0, 6, 12, 23])
-def test_continuous_replay_accepts_every_hour(hour):
-    assert models.continuous_remaining(T.replace(hour=hour)) >= 900
+@pytest.mark.parametrize('clock, allowed', [('20:29', False), ('20:30', True), ('00:00', True),
+    ('06:45', True), ('06:46', False), ('06:55', False), ('07:00', False), ('12:00', False)])
+def test_replay_dispatch_window(clock, allowed):
+    hour, minute = map(int, clock.split(':'))
+    assert (models.replay_remaining(T.replace(hour=hour, minute=minute)) >= 900) is allowed
 
 
 def test_usage_reset_resumes_only_at_provider_clock_and_keeps_the_daily_count(tmp_path):

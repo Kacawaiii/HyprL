@@ -12,8 +12,8 @@ from scripts.trading_lab.replay_bench.storage import atomic_json, append_event
 from scripts.trading_lab.replay_bench import run as parent
 from . import audit, run, spec
 
-FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v12.json'
-INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v12.json'
+FREEZE = spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v13.json'
+INPUT_SEAL = spec.ROOT / 'docs/artifacts/replay_duel_input_seal_v13.json'
 FAMILIES = ('opus', 'gpt')
 GROUPS = ('ab', 'cd', 'anon')
 
@@ -216,7 +216,7 @@ def frozen_payload(root):
     rate = json.loads((Path(root) / spec.STATE_DIR / 'dev-label-base-rate.json').read_text())
     if rate.get('spec_hash') != spec.SPEC_HASH or rate.get('n', -1) < 0 or rate.get('panel') != PRIMARY['panel']:
         raise ReplayError('DEV_BASE_RATE_NOT_FROZEN')
-    return {'schema': 'replay-duel-test-freeze-v12', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
+    return {'schema': 'replay-duel-test-freeze-v13', 'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'parent_freeze_hash': sha256_canonical(json.loads((spec.ROOT / 'docs/artifacts/replay_duel_test_freeze_v2.json').read_text())),
             'probe_evidence_hash': evidence['evidence_hash'],
             'test_end': evidence['test_end'], 'evidence_class': {'replay': 'EXPLORATORY', 'forward': 'LIVE_FORWARD'},
@@ -233,7 +233,7 @@ def frozen_payload(root):
 def seal_payload(root):
     if not FREEZE.is_file() or json.loads(FREEZE.read_text()) != frozen_payload(root):
         raise ReplayError('TEST_CONFIG_NOT_FROZEN')
-    return {'schema': 'replay-duel-input-seal-v12', 'spec_hash': spec.SPEC_HASH,
+    return {'schema': 'replay-duel-input-seal-v13', 'spec_hash': spec.SPEC_HASH,
             'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())),
             'input_proof_hash': sha256_canonical(input_proof(root)),
             'provenance': spec.PROVENANCE, 'snapshot_count': len(input_proof(root)['snapshots']),
@@ -257,7 +257,8 @@ def check_freeze(root, *, test=False):
         # No second protocol after a v3/v4 test has begun. Preserve every prior record.
         if any((Path(root) / version / 'test_started.json').exists() for version in ('v3', 'v4', 'duel-v1')):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
-        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8', 'duel-v9', 'duel-v10', 'duel-v11')):
+        if any(list((Path(root) / v).glob('test_started_*.json')) for v in ('duel-v1', 'duel-v2', 'duel-v3', 'duel-v4', 'duel-v5', 'duel-v6', 'duel-v7', 'duel-v8', 'duel-v9', 'duel-v10', 'duel-v11', 'duel-v12')
+               if v != spec.STATE_DIR and not admitted_test_source(root, v)):
             raise ReplayError('SUPERSEDED_TEST_ALREADY_STARTED')
         legacy = json.loads((spec.ROOT / 'docs/artifacts/replay_bench_trials_v1.json').read_text())
         if any(t['period'] == 'test' for t in legacy['trials']):
@@ -295,6 +296,12 @@ def ready_test(root):
 
 
 def claim_test(root, family, ledger=None):
+    from .continuation import test_start
+    original = test_start(root, family)
+    if original:
+        from . import commitment
+        commitment.require(root, 'replay-test-start', family,
+            {'test_start_marker': sha256_canonical(original)}, now(), protocol_hash=original['spec_hash'])
     dev_hash = ready_test(root)
     path = Path(root) / spec.STATE_DIR / ('test_started_' + family + '.json')
     binding = {'freeze_hash': sha256_canonical(json.loads(FREEZE.read_text())), 'spec_hash': spec.SPEC_HASH,
@@ -308,11 +315,24 @@ def claim_test(root, family, ledger=None):
         atomic_json(path, value)
     # The test-start marker is public (hash only) before any test call.
     from . import commitment
-    if commitment.published(root, 'replay-test-start', family) is None:
+    key = test_start_key(family)
+    if commitment.published(root, 'replay-test-start', key) is None:
         if ledger is None:
             raise ReplayError('TEST_START_NOT_PUBLISHED')
-        ledger.publish('replay-test-start', family, {'test_start_marker': sha256_canonical(value)})
-    commitment.require(root, 'replay-test-start', family, {'test_start_marker': sha256_canonical(value)}, now())
+        ledger.publish('replay-test-start', key, {'test_start_marker': sha256_canonical(value)})
+    commitment.require(root, 'replay-test-start', key, {'test_start_marker': sha256_canonical(value)}, now())
+
+
+def admitted_test_source(root, state):
+    from .continuation import admission, test_start
+    rule = admission().get('test_continuation')
+    if not rule or state != rule['source_state_dir']:
+        return False
+    return all(test_start(root, family) for family in FAMILIES)
+
+
+def test_start_key(family):
+    return family + '-' + spec.STATE_DIR if spec.spec().get('execution_recovery_17') else family
 
 
 def validation_failure(root, family, period, group, day, stage, attempt, code, call):
@@ -394,7 +414,7 @@ def run_one(root, period, group, day, family, transport, client, ledger=None):
     try:
         value = run.decide(root, period, group, day, family, transport, client, expected, path)
     except ReplayError as error:
-        if error.code == 'MODEL_VALIDATION_FAILED':
+        if error.code in ('MODEL_VALIDATION_FAILED', 'MODEL_CALL_UNRESOLVED'):
             value = run.model_failure(root, period, group, day, transport, expected, error, path)
         else:
             append_event(Path(root) / spec.STATE_DIR / 'failures.jsonl',
@@ -424,6 +444,12 @@ def publish_pending(root, ledger, night):
                         # Failed decodes also reference original envelopes; publish their hashes
                         # even when no successful call created a REFERENCED wrapper.
                         from .continuation import response_record
+                        from .continuation import transport_failure_hash
+                        for call in parent.read_json(path).get('uncertain_calls', {}).values():
+                            digest = transport_failure_hash(root, call)
+                            response_key = 'uncertain-response:' + call['transcript']
+                            if public.get(response_key) != digest:
+                                pending[response_key] = digest
                         for call in parent.read_json(path).get('calls', {}).values():
                             if 'transcript' in call:
                                 response = response_record(root, call)

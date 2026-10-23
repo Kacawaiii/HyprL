@@ -85,6 +85,8 @@ def test_push_failure_explicitly_names_remote_branch_and_alerts(ledger, monkeypa
 
 
 def test_replay_start_marker_is_published_before_dispatch_and_partial_responses_are_committed(ledger, tmp_path, monkeypatch):
+    from scripts.trading_lab.replay_seal_forward import continuation
+    monkeypatch.setattr(continuation, 'admission', lambda: {'sources': []})
     monkeypatch.setattr(ex, 'ready_test', lambda _: 'a'*64)
     monkeypatch.setattr(ex, 'seal_payload', lambda _: {'seal': 'b'*64})
     monkeypatch.setattr(ex, 'head', lambda: 'c'*40)
@@ -95,7 +97,7 @@ def test_replay_start_marker_is_published_before_dispatch_and_partial_responses_
         ex.claim_test(tmp_path, 'opus')
     ex.claim_test(tmp_path, 'opus', ledger)
     marker = json.loads((tmp_path/spec.STATE_DIR/'test_started_opus.json').read_text())
-    receipt = commitment.published(tmp_path, 'replay-test-start', 'opus')
+    receipt = commitment.published(tmp_path, 'replay-test-start', ex.test_start_key('opus'))
     assert receipt['line']['hashes'] == {'test_start_marker': sha256_canonical(marker)}
     transcripts = tmp_path/spec.STATE_DIR/'transcripts'
     transcripts.mkdir()

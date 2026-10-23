@@ -299,12 +299,29 @@ def score(root, period, transport, *, outcome_factory=Outcomes, clock=now):
                 digest = sha256_canonical({k: value[k] for k in ('raw', 'err', 'returncode')})
                 if public.get('response:' + call['transcript']) != digest:
                     raise ReplayError('RESPONSE_HASH_NOT_PUBLISHED')
+        from .continuation import transport_failure_hash
+        for call in record.get('uncertain_calls', {}).values():
+            if public.get('uncertain-response:' + call['transcript']) != transport_failure_hash(root, call):
+                raise ReplayError('RESPONSE_HASH_NOT_PUBLISHED')
     if period == 'test':
         for family in ex.FAMILIES:
             marker = json.loads((root / spec.STATE_DIR / ('test_started_' + family + '.json')).read_text())
-            calls = [instant(c['called_at']) for (f, _, _), r in records.items() if f == family for c in r['calls'].values()]
-            commitment.require(root, 'replay-test-start', family, {'test_start_marker': sha256_canonical(marker)},
-                               min(calls) if calls else at)
+            from .continuation import test_start
+            original = test_start(root, family)
+            for (f, _, _), record in records.items():
+                if f != family:
+                    continue
+                for call in [*record['calls'].values(), *record.get('uncertain_calls', {}).values()]:
+                    prior = call.get('original_protocol')
+                    if prior:
+                        if original is None or prior['spec_hash'] != original['spec_hash']:
+                            raise ReplayError('CONTINUATION_TEST_START_MISMATCH')
+                        commitment.require(root, 'replay-test-start', family,
+                            {'test_start_marker': sha256_canonical(original)}, instant(call['called_at']),
+                            protocol_hash=original['spec_hash'])
+                    else:
+                        commitment.require(root, 'replay-test-start', ex.test_start_key(family),
+                            {'test_start_marker': sha256_canonical(marker)}, instant(call['called_at']))
     binding = {'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'decision_hashes': hashes,
                'input_proof_hash': sha256_canonical(proof), 'dev_result_hash': dev_hash}
     path = ex.result_path(root, period)
@@ -469,6 +486,9 @@ def write_table(path, result):
             f"{primary.get('panel')} {primary.get('metric')}: state {primary.get('state')}, base rate {primary.get('base_rate')}, "
             f"pairs {primary.get('n_pairs')}, sessions {primary.get('n_sessions')}", '',
             'Brier skill: ' + json.dumps(primary.get('brier_skill')) + '; 95% CI: ' + json.dumps(primary.get('ci95')), '',
+            'Paired Brier skill (common forecasts): ' + json.dumps(primary.get('paired_brier_skill')) +
+            '; Opus minus GPT: ' + json.dumps(primary.get('difference_opus_minus_gpt')) +
+            '; paired 95% CI: ' + json.dumps(primary.get('ci95', {}).get('difference')), '',
             result.get('verdict_wording', ''), '',
             '## Failures (never dropped silently)', '', json.dumps(result.get('failures'), sort_keys=True), '',
             '## Model failure rate', '',
@@ -476,8 +496,8 @@ def write_table(path, result):
     for family, failure in result['failures'].items():
         text.append(f"| {family} | {failure['model_failure_cells']} / {failure['resolved_cells']} | {failure['model_failure_rate']} |")
     text.extend(['', '## Full table', '',
-            '| Variant / horizon | Model | Failed / resolved cells | Failure rate | Trades / decisions | Hits / scored | Abstain | Hit rate | Brier | Log loss | Brier base | Log loss base | R | Sharpe | Drawdown | ESS | Trade basis |',
-            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|'])
+            '| Variant / horizon | Model | Failed / resolved cells | Failure rate | Forecasts | Trades / decisions | Hits / scored | Abstain | Hit rate | Brier | Log loss | Brier base | Log loss base | R | Sharpe | Drawdown | ESS | Trade basis |',
+            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|'])
     def fmt(value):
         return '—' if value is None else f'{value:.5g}'
     for panel, models in result['head_to_head'].items():
@@ -485,6 +505,7 @@ def write_table(path, result):
             failure = row['model_failure']
             text.append('| ' + ' | '.join([panel, family,
                 f"{failure['model_failure_cells']} / {failure['resolved_cells']}", fmt(failure['model_failure_rate']),
+                str(row.get('n_forecasts', 0)),
                 f"{row['n_trade_decisions']} / {row['n_decisions']}", f"{row.get('hits', 0)} / {row['n_scored_trades']}"] +
                 [fmt(row.get(k)) for k in ('abstention_rate', 'hit_rate', 'brier', 'log_loss', 'brier_base_rate',
                  'log_loss_base_rate', 'expectancy_R', 'daily_pnl_sharpe', 'max_drawdown', 'probability_ess_cluster_day_kish')] +
