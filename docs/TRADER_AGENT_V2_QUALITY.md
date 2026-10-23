@@ -1,10 +1,10 @@
-# Agent v2: prospective quality experiment (revision 2)
+# Agent v2: prospective quality experiment (revision 3)
 
 **Not activated by this change. No forward cycle or profitability is claimed.** This package is
 `scripts.trading_lab.agent_v2_quality`. Revision one remains intact, including its store, schemas,
 prompts, API and implementation binding. The new specification and preregistration are
-`docs/artifacts/trader_shadow_v2_spec_v2.json` and `trader_shadow_v2_preregistration_v2.json`, with
-canonical hashes bound in `agent_v2_quality/spec.py`. Opening a revision-one store fails; no migration
+`docs/artifacts/trader_shadow_v2_spec_v3.json` and `trader_shadow_v2_preregistration_v3.json`, with
+canonical hashes bound in `agent_v2_quality/spec.py`. Opening a revision-one or revision-two store fails; no migration
 or rebinding is supplied. The pinned operator grant waives the old replay prerequisite.
 
 ## Decision and execution
@@ -169,7 +169,9 @@ deduplicate with momentum priority, retain the first 199 equities, and add SPY.
 Selection precedes exclusions; excluded names are never backfilled. Thus the
 registry always fits the unchanged 200-instrument producer limit. Exclude equities
 without a granted-source earnings date, an exact ten-digit submissions CIK, a
-mapped SIC, or a verified positive market cap. Record all reasons and disjoint
+mapped SIC, or a verified positive market cap. The existing strict bar-history
+boundary also excludes unavailable, stale or invalid histories; preserve those
+raw observations and count the exclusion instead of replacing zero volume. Record all reasons and disjoint
 primary-reason counts. Project the calendar and native hunter candidates onto the
 admitted registry; preserve original source receipts, dates and hashes.
 
