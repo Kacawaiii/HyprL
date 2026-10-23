@@ -1,0 +1,30 @@
+{
+  "schema": "trader-work-budget-spec-v1",
+  "revision": 1,
+  "requires_approval_from": "2026-10-24T00:00:00Z",
+  "base_preregistration_hash": "584d96095e6dac777d2bf67dde604017880aeaee843c2390b9352b9c8c1a8b21",
+  "max_turns": 8,
+  "max_output_tokens": 32768,
+  "max_prompt_bytes": 260000,
+  "tools": {
+    "analyst_claude": {
+      "WebSearch": 3,
+      "WebFetch": 3
+    },
+    "reviewer": {
+      "WebSearch": 1,
+      "WebFetch": 1
+    }
+  },
+  "admission": {
+    "per_call": 95000,
+    "per_arm": 190000,
+    "per_slot": 400000,
+    "probe_per_call": 5000,
+    "probe_per_slot": 20000
+  },
+  "accounting": "Nonrefundable admission envelopes, not a subscription debit formula. Sum input + cache creation + output across unique modelUsage entries including web helpers; exclude cache reads. Actual overrun blocks the slot. No retry borrows the reviewer reservation.",
+  "validation": "Existing schema, citation, causal source, URL, universe, reviewer and execution validations unchanged. Never accept partial or repaired model output.",
+  "scope": "AM and PM base/news plus probes. Separate daily slot and arm pools. No role/call budget expansion, retired GPT reactivation, grant edit, store rebinding or retrospective migration.",
+  "canonical_sha256": "b55b99d515efe0e9598b866683ffeb00a019a94a89d45124bd61dcabcf4307ff"
+}

@@ -72,6 +72,7 @@ class Authorization:
     source_path: Path | None = None
     source_payload: dict | None = None
     amendment_source_path: Path | None = None
+    work_budget_approval: dict | None = None
 
     @classmethod
     def load(cls, path, *, amendment_path=None):
@@ -115,6 +116,10 @@ class Authorization:
         from .pm_retirement_spec import DECISION_NAME as pm_retirement_name, check_decision
         if (folder / pm_retirement_name).exists():
             check_decision(folder / pm_retirement_name)
+        from .work_budget import APPROVAL_NAME
+        work_approval = folder / APPROVAL_NAME
+        if work_approval.exists():
+            self = replace(self, work_budget_approval=strict_json(work_approval.read_text()))
         from .retirement_spec import DECISION_NAME as retirement_name, DECISION_HASH as retirement_hash
         path = folder / retirement_name
         if path.exists():

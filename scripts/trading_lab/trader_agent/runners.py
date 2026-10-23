@@ -14,7 +14,7 @@ FORBIDDEN = {"command_execution", "file_change", "exec_command", "write_stdin", 
              "apply_patch", "bash", "read", "write", "edit", "task", "agent", "spawn_agent"}
 
 
-def command(role, grant):
+def command(role, grant, *, limits=None):
     schema = "reviewer" if role == "reviewer" else "analyst"
     if role == "analyst_gpt":
         # Installed 0.160.0 requires the global --search BEFORE exec.
@@ -26,13 +26,22 @@ def command(role, grant):
                 "--disable", "view_image", "--disable", "sleep_tool", "--disable", "tool_suggest",
                 "--enable", "skip_host_skill_discovery", "--output-schema", str(HERE / "schemas" / (schema + ".gpt.json")),
                 "--json", "-"]
-    return ["claude", "-p", "--model", grant.payload["external_models"][role]["model"],
+    args = ["claude", "-p", "--model", grant.payload["external_models"][role]["model"],
             "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
             "--disallowedTools", "WebFetch(domain:federalreserve.gov),WebFetch(domain:sec.gov),WebFetch(domain:data.sec.gov)",
             "--permission-mode", "dontAsk", "--permission-prompts", "none", "--safe-mode",
             "--setting-sources", "", "--settings", '{"disableAllHooks":true}',
             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--output-format", "json", "--json-schema", json.dumps(SCHEMAS[schema])]
+    if limits:
+        args[args.index('--permission-mode') + 1] = 'default'
+        args[args.index('--permission-prompts') + 1] = 'host'
+        args[args.index('--settings') + 1] = json.dumps({'disableAllHooks': True,
+            'permissions': {'ask': ['WebSearch', 'WebFetch']}})
+        args[args.index('--output-format') + 1] = 'stream-json'
+        args += ['--input-format', 'stream-json', '--verbose', '--max-turns', str(limits['max_turns']),
+                 '--permission-prompt-tool', 'stdio']
+    return args
 
 
 def tainted(value):
@@ -157,8 +166,9 @@ class ModelRunner:
                     validator(output)
                 return output
             except TraderError as error:
+                from .work_budget import STOP_ERRORS
                 self.ledger.alert(error.code, role=role)
-                if error.code in {"SKIPPED_QUOTA", "TAINTED_RUN", "BUDGET_EXHAUSTED", "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}:
+                if error.code in STOP_ERRORS | {"SKIPPED_QUOTA", "TAINTED_RUN", "BUDGET_EXHAUSTED", "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}:
                     raise
                 if attempt == attempts - 1:
                     raise
@@ -176,6 +186,11 @@ class ModelRunner:
             raise TraderError('MISSED_DECISION_DEADLINE')
         if self.ledger.paused:
             raise TraderError('PAUSED')
+        from .work_budget import policy
+        limits = policy(self.ledger.grant, self.clock())
+        if limits and role in {'analyst_claude', 'reviewer'}:
+            from .bounded_claude import once
+            return once(self, role, prompt, limits, probe=probe)
         args = command(role, self.ledger.grant)
         if preflight:
             args[-1:-1] = ['-c', 'model_reasoning_effort="low"']

@@ -81,7 +81,11 @@ class SyntheticRunner(ModelRunner):
     synthetic = True
 
     def once(self, role, text):
-        self.ledger.reserve(role)
+        seq = self.ledger.reserve(role)
+        if self.ledger.grant.work_budget_approval is not None:
+            # Explicitly synthetic: no model tokens were consumed. Still retain
+            # the same nonrefundable admission envelope and shared-bank rules.
+            self.ledger.record_work(seq, 0, 0, 'SYNTHETIC_COMPLETE')
         self.metadata[role] = {"model": "SYNTHETIC_FAKE", "cli_version": "synthetic-v1", "reported_version": "synthetic-v1"}
         context = json.loads(text.split("\nCONTEXT_DATA:\n")[1].split("\nINDEPENDENT_ANALYST_DATA:\n")[0])
         if role == "reviewer":

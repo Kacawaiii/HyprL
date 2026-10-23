@@ -16,6 +16,7 @@ from .runners import HERE, prompt
 from .schemas import validate, validate_analyst, validate_reviewer
 from .scoring import rows
 from . import slots, retirement_spec
+from .work_budget import STOP_ERRORS
 
 # Operator-approved same-day recovery (2026-10-06), extended 2026-10-07 ~12:45Z:
 # "on peut pas reprendre le run mtn on perd trop" authorizes recovery after FAILED even if models were called.
@@ -60,7 +61,7 @@ def skills(at=None):
 # (MODEL_FAILED, TAINTED_RUN, SCHEMA_INVALID, SKIPPED_QUOTA, MODEL_TIMEOUT, invalid output...) leaves that analyst MISSING.
 # The authorized catch-up handles exhausted analyst roles separately; aggregate and reviewer limits still fail closed.
 NEVER_DEGRADE = {"BUDGET_EXHAUSTED", "PAUSED", "MISSED_DECISION_DEADLINE", "MISSED_DECISION_DEADLINE_OR_PAUSED",
-                 "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"}
+                 "AUTHORIZATION_EXPIRED_OR_NOT_STARTED"} | STOP_ERRORS
 ROLES = ("analyst_claude", "analyst_gpt")
 
 
@@ -256,6 +257,7 @@ class TraderService:
                 self.store.append('replay-summary', {'schema':'trader-context-evidence-v1', 'run_id':run_id, 'slot':self.ledger.slot,
                     'context_hash':context_hash, 'context':context}, object_id=run_id + ':context',
                     recorded_at=iso(self.clock()) if pm else context['decision_time'])
+                self.record_work_budget(run_id, context_hash)
                 if context["exclusions"]:
                     self.ledger.alert("PARTIAL_CONTEXT")
                 context_at = instant(context["decision_time"])
@@ -324,6 +326,20 @@ class TraderService:
         self.ledger.grant.check(self.clock())
         if self.clock() >= self.runner.deadline or self.ledger.paused:
             raise TraderError("MISSED_DECISION_DEADLINE_OR_PAUSED")
+
+    def record_work_budget(self, run_id, context_hash):
+        from .work_budget import SPEC_HASH, policy
+        if self.runner.synthetic and self.ledger.grant.work_budget_approval is None:
+            return
+        limits = policy(self.ledger.grant, self.clock())
+        if limits is None:
+            return
+        self.store.append('replay-summary', {'schema': 'trader-work-budget-binding-v1',
+            'run_id': run_id, 'slot': self.ledger.slot, 'arm': self.ledger.arm,
+            'context_hash': context_hash, 'work_budget_spec_hash': SPEC_HASH,
+            'operator_amendment_hash': sha256_canonical(self.ledger.grant.work_budget_approval),
+            'parent_preregistration_hash': limits['base_preregistration_hash']},
+            object_id=run_id + ':work-budget', recorded_at=iso(self.clock()))
 
     def freeze_news(self, run_id, cutoff):
         """News failures cannot change the base decision or consume its budget."""
@@ -420,6 +436,7 @@ class TraderService:
                 self.store.append('replay-summary', {'schema': 'trader-context-evidence-v1', 'run_id': run_id,
                     'arm': 'news', 'context_hash': identity, 'context': context}, object_id=run_id + ':context',
                     recorded_at=iso(self.clock()))
+                self.record_work_budget(run_id, identity)
                 analysts, degraded = {}, {}
                 for role in retirement_spec.roles(self.clock()):
                     self.before_call(session)
