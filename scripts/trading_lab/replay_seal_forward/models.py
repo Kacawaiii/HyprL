@@ -637,7 +637,7 @@ class Models:
                 record.update(state='INTERRUPTED', raw=captured(getattr(error, 'stdout', None)),
                               err=captured(getattr(error, 'stderr', None)), returncode=None)
                 for key, suffix in (('raw', '.stdout'), ('err', '.stderr')):
-                    if path.with_suffix(suffix).is_file():
+                    if self.runner is subprocess.run and path.with_suffix(suffix).is_file():
                         record[key] = path.with_suffix(suffix).read_text(errors='replace')
                 atomic_json(path, record)
                 raise unknown_outcome(record, path, identity, dispatch_ended=True) from None

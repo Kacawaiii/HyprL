@@ -1,20 +1,20 @@
 {
   "base_rate_rule": "Laplace (wins+1)/(n+2) per variant/fixed horizon. Dev uses only labels whose exit is strictly before that decision. Test uses a rate fixed from censored Jul-Aug dev labels before any test call; no test fitting.",
-  "code_hash": "1a49b5015b2317bb3f34309adcd2235e4f959c9b713b31b8957024b0f67b99e4",
+  "code_hash": "13d2071459305bfc07e5a42e40a334c9826e33145ec76c3aa33ad5106a7920d1",
   "config_hashes": {
     "gpt": {
-      "ab": "670a050bf5159aa4c61c07c487eebdfed401e9fe23e42b83f18097ff40526ba6",
-      "cd": "0f2c9b85f44892070323452e3c47cba42b6733448810aba4dd5fa3c610275f65"
+      "ab": "3013ff0089f19e33e33db24acb695762de885fcba05dba9d488fd500383e4398",
+      "cd": "b1e3d71ec3641cddb52b33e4f049f4a0f5c49579fb8989c3bf516111808d0821"
     },
     "opus": {
-      "ab": "3904eeaef496ad979a34016fcde52ba10265d1b9f0aa0d7b13ac857771f7cd06",
-      "cd": "10ad419b3bc14000b615d4f8082b5098e1e1d6ed23f498808068fa33ddf64625"
+      "ab": "caad630e5eab2f3b985b8c1d614ba01b1a6dd19407b04663bc3ae813c81c4dce",
+      "cd": "faed4b8fbbecb111f2b930de8ba28b18c1b2022c2981edd2023b43ea26192348"
     }
   },
   "config_payloads": {
     "gpt": {
       "ab": {
-        "code_hash": "1a49b5015b2317bb3f34309adcd2235e4f959c9b713b31b8957024b0f67b99e4",
+        "code_hash": "13d2071459305bfc07e5a42e40a334c9826e33145ec76c3aa33ad5106a7920d1",
         "family": "gpt",
         "group": "ab",
         "model": "gpt-6.1-sol",
@@ -22,7 +22,7 @@
         "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad"
       },
       "cd": {
-        "code_hash": "1a49b5015b2317bb3f34309adcd2235e4f959c9b713b31b8957024b0f67b99e4",
+        "code_hash": "13d2071459305bfc07e5a42e40a334c9826e33145ec76c3aa33ad5106a7920d1",
         "family": "gpt",
         "group": "cd",
         "model": "gpt-6.1-sol",
@@ -32,7 +32,7 @@
     },
     "opus": {
       "ab": {
-        "code_hash": "1a49b5015b2317bb3f34309adcd2235e4f959c9b713b31b8957024b0f67b99e4",
+        "code_hash": "13d2071459305bfc07e5a42e40a334c9826e33145ec76c3aa33ad5106a7920d1",
         "family": "opus",
         "group": "ab",
         "model": "claude-opus-5-5",
@@ -40,7 +40,7 @@
         "spec_hash": "e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad"
       },
       "cd": {
-        "code_hash": "1a49b5015b2317bb3f34309adcd2235e4f959c9b713b31b8957024b0f67b99e4",
+        "code_hash": "13d2071459305bfc07e5a42e40a334c9826e33145ec76c3aa33ad5106a7920d1",
         "family": "opus",
         "group": "cd",
         "model": "claude-opus-5-5",
@@ -54,8 +54,8 @@
     "replay": "EXPLORATORY"
   },
   "forward_config_hashes": {
-    "gpt": "956fa55426e30492d7e749420b3397e003ea02fc4235f0f36e831c1438cff08e",
-    "opus": "f72d2b8ea20a288d4ca43be9e89ac6cd07eda13762ca8233ddd3f2ef789c3743"
+    "gpt": "d5c4570ce23e689a580e705e8d42eeddd76eb2e3b38d7f63972c8164ca35c561",
+    "opus": "7e5254fc50b99501d92dfdc52fd7f89d533d5eb7eb84c7abd0b6dd8b9735fe58"
   },
   "forward_first_session": "2026-10-20",
   "frozen_dev_base_rate": {
