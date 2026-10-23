@@ -31,6 +31,22 @@ class Ledger:
                   BEGIN SELECT RAISE(ABORT,'dispatch immutable'); END;
                 CREATE TABLE IF NOT EXISTS alert_state (
                   channel TEXT PRIMARY KEY, code TEXT NOT NULL, at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_reservations (
+                  dispatch_seq INTEGER PRIMARY KEY, day TEXT NOT NULL, slot TEXT NOT NULL,
+                  arm TEXT NOT NULL, role TEXT NOT NULL, tokens INTEGER NOT NULL,
+                  spec_hash TEXT NOT NULL, approval_hash TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_receipts (
+                  dispatch_seq INTEGER PRIMARY KEY, new_tokens INTEGER NOT NULL,
+                  cache_read_tokens INTEGER NOT NULL, code TEXT NOT NULL,
+                  usage_complete INTEGER NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS work_reservations_no_update BEFORE UPDATE ON work_reservations
+                  BEGIN SELECT RAISE(ABORT,'work reservation immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS work_reservations_no_delete BEFORE DELETE ON work_reservations
+                  BEGIN SELECT RAISE(ABORT,'work reservation immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS work_receipts_no_update BEFORE UPDATE ON work_receipts
+                  BEGIN SELECT RAISE(ABORT,'work receipt immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS work_receipts_no_delete BEFORE DELETE ON work_receipts
+                  BEGIN SELECT RAISE(ABORT,'work receipt immutable'); END;
             """)
 
     @contextmanager
@@ -96,6 +112,33 @@ class Ledger:
             self.grant.check_slot(self.slot, at, preflight=self.preflight or logical_kind.startswith(('rehearsal_', 'gpt_preflight')))
             if news:
                 self.grant.check_news(at)
+            from .work_budget import charge
+            work = charge(self, logical_kind.removeprefix('news_'), at)
+            if work:
+                if work['arm'] not in {'base', 'news', 'monitor'}:
+                    raise TraderError('WORK_BUDGET_APPROVAL_INVALID')
+                used, arm_used, role_used = db.execute('''SELECT coalesce(sum(tokens),0),
+                    coalesce(sum(CASE WHEN arm=? THEN tokens ELSE 0 END),0),
+                    coalesce(sum(CASE WHEN arm=? AND role=? THEN tokens ELSE 0 END),0)
+                    FROM work_reservations WHERE day=? AND slot=?''',
+                    (work['arm'], work['arm'], work['role'], day, self.slot)).fetchone()
+                if any(used + work['tokens'] > cap for used, cap in
+                       ((used, work['slot_cap']), (arm_used, work['arm_cap']), (role_used, work['role_cap']))):
+                    raise TraderError('WORK_BUDGET_EXHAUSTED')
+                overrun = db.execute('''SELECT 1 FROM work_reservations w LEFT JOIN work_receipts r
+                    ON w.dispatch_seq=r.dispatch_seq WHERE w.day=? AND w.slot=?
+                    AND (r.dispatch_seq IS NULL OR r.new_tokens>w.tokens OR r.usage_complete=0)
+                    LIMIT 1''', (day, self.slot)).fetchone()
+                if overrun:
+                    raise TraderError('WORK_BUDGET_OVERRUN')
+                prefix = 'pm_' if self.slot == 'pm' else ''
+                model_kinds = [prefix + arm + role for arm in ('', 'news_', 'rehearsal_')
+                               for role in ('analyst_claude', 'reviewer')]
+                unaccounted = db.execute('''SELECT 1 FROM dispatch d LEFT JOIN work_reservations w
+                    ON w.dispatch_seq=d.seq WHERE d.day=? AND d.kind IN (?,?,?,?,?,?)
+                    AND w.dispatch_seq IS NULL LIMIT 1''', (day, *model_kinds)).fetchone()
+                if unaccounted:
+                    raise TraderError('WORK_BUDGET_UNACCOUNTED')
             count = db.execute("SELECT count(*) FROM dispatch WHERE day=? AND kind=?", (day, kind)).fetchone()[0]
             if count >= maximum:
                 raise TraderError("BUDGET_EXHAUSTED")
@@ -119,7 +162,27 @@ class Ledger:
                         raise TraderError("SOURCE_SPACING")
             cursor = db.execute("INSERT INTO dispatch(day,kind,at,grant_hash) VALUES(?,?,?,?)",
                                 (day, kind, iso(at), self.grant.pm_identity if self.slot == 'pm' else self.grant.identity))
+            if work:
+                db.execute('INSERT INTO work_reservations VALUES(?,?,?,?,?,?,?,?)',
+                    (cursor.lastrowid, day, self.slot, work['arm'], work['role'], work['tokens'],
+                     work['spec_hash'], work['approval_hash']))
             return cursor.lastrowid
+
+    def record_work(self, seq, new_tokens, cached, code, *, usage_complete=True):
+        if any(type(value) is not int or value < 0 for value in (new_tokens, cached)):
+            raise TraderError('MODEL_USAGE_INVALID')
+        with self.connect() as db:
+            db.execute('INSERT INTO work_receipts VALUES(?,?,?,?,?)',
+                       (seq, new_tokens, cached, code, int(usage_complete)))
+
+    def work_counts(self, day=None):
+        with self.connect() as db:
+            return [dict(zip(('slot', 'arm', 'reserved', 'observed_new', 'observed_cache_read', 'incomplete_usage'), row)) for row in
+                db.execute('''SELECT w.slot,w.arm,sum(w.tokens),coalesce(sum(r.new_tokens),0),
+                    coalesce(sum(r.cache_read_tokens),0),sum(CASE WHEN r.dispatch_seq IS NULL OR r.usage_complete=0
+                    THEN 1 ELSE 0 END) FROM work_reservations w LEFT JOIN work_receipts r
+                    ON w.dispatch_seq=r.dispatch_seq WHERE w.day=? GROUP BY w.slot,w.arm''',
+                    (day or self.budget_day or self.clock().date().isoformat(),))]
 
     @property
     def paused(self):
