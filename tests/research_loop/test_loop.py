@@ -1,6 +1,6 @@
 """Synthetic boundary tests: leakage, selection, trial accounting and chance."""
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import sqlite3
 
@@ -8,6 +8,7 @@ import pytest
 
 from scripts.trading_lab.research_loop.core import (
     TrialLedger, audit, evaluate_trial, promotion_gate,
+    restate_trial_family,
 )
 from scripts.trading_lab.research_loop.ingest import book_inventory, v1_paper, v1_predictions, v2_closed
 from scripts.trading_lab.research_loop.stats import (
@@ -221,19 +222,132 @@ def test_prior_attempts_are_counted_without_migrating_the_old_ledger(tmp_path):
         new.db.close()
 
 
-def test_forward_promotion_needs_40_distinct_sessions_and_stress_survival():
+def forward_pairs():
     pairs = []
     for i in range(40):
-        pairs.append({'decision_id': str(i), 'session': str(date(2025, 1, 1) + timedelta(days=i)),
+        session = str(date(2026, 10, 1) + timedelta(days=i))
+        pairs.append({'decision_id': str(i), 'session': session, 'symbol': 'SYNTH',
                       'mode': 'SHADOW_AB', 'mature': True, 'risk_ok': True,
                       'current_net': 0., 'candidate_net': .01, 'candidate_stressed_net': .005,
-                      'rule_hash': 'frozen-rule', 'registered_at': '2024-12-31T00:00:00Z',
-                      'decision_at': '2025-01-01T12:00:00Z'})
-    receipt = {'completed': True, 'role': 'EXPLORATORY_TOUCHED_VALIDATION', 'rule_hash': 'frozen-rule'}
+                      'rule_hash': 'frozen-rule', 'registered_at': '2026-10-01T00:00:00Z',
+                      'decision_at': session + 'T12:00:00Z', 'entry_at': session + 'T14:30:00Z',
+                      'exit_at': session + 'T20:00:00Z', 'outcome_available_at': session + 'T21:00:00Z'})
+    receipt = {'completed': True, 'role': 'EXPLORATORY_TOUCHED_VALIDATION', 'rule_hash': 'frozen-rule',
+               'completed_at': '2026-09-30T23:59:59Z'}
+    return pairs, receipt
+
+
+@pytest.fixture
+def forward_clock(monkeypatch):
+    from scripts.trading_lab.research_loop import core
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 12, 1, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(core, 'datetime', FixedDatetime)
+
+
+def test_forward_promotion_needs_40_distinct_sessions_and_stress_survival(forward_clock):
+    pairs, receipt = forward_pairs()
     assert not promotion_gate(pairs[:39], preregistered=True, validation_receipt=receipt)
     assert promotion_gate(pairs, preregistered=True, validation_receipt=receipt)
     pairs[0]['candidate_stressed_net'] = -10
     assert not promotion_gate(pairs, preregistered=True, validation_receipt=receipt)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('decision_at', '2026-09-30T23:59:59Z'),
+    ('registered_at', '2026-09-30T23:59:58Z'),
+    ('outcome_available_at', '2026-12-02T00:00:00Z'),
+    ('session', '2026-11-30'),
+    ('decision_at', 'invalid'),
+])
+def test_forward_gate_rejects_replay_premature_and_misdated_evidence(forward_clock, field, value):
+    pairs, receipt = forward_pairs()
+    pairs[0][field] = value
+    assert not promotion_gate(pairs, preregistered=True, validation_receipt=receipt)
+
+
+def test_timezone_cannot_move_a_holdout_outcome_outside_protection(tmp_path):
+    row = decision()
+    row.update(symbol='BTCUSD', entry_at='2026-08-31T22:00:00-04:00',
+               exit_at='2026-08-31T23:00:00-04:00', outcome=object())
+    with pytest.raises(ValueError, match='PROTECTED_HOLDOUT'):
+        audit(row)
+    result = random_entry([{'entry_at': row['entry_at'], 'exit_at': row['exit_at'],
+                            'eligible_symbols': ['BTCUSD'], 'candidate_net_returns': object()}])
+    assert result['reason'] == 'PROTECTED_HOLDOUT' and result['draws'] == 0
+    ledger = TrialLedger(tmp_path / 'trial.sqlite')
+    try:
+        assert evaluate_trial([row], 'H01', ledger)['reason'] == 'PROTECTED_HOLDOUT'
+    finally:
+        ledger.db.close()
+
+
+def test_development_dates_and_session_clusters_use_utc(tmp_path):
+    row = decision()
+    row.update(entry_at='2026-06-30T22:00:00-04:00', exit_at='2026-06-30T23:00:00-04:00')
+    ledger = TrialLedger(tmp_path / 'trials.sqlite')
+    try:
+        result = evaluate_trial([row], 'H01', ledger)
+        assert result['exclusions'] == {'OUTSIDE_DEVELOPMENT': 1}
+        assert result['metric'] is None
+        row = decision()
+        row['entry_at'] = '2025-01-02T23:30:00-02:00'
+        assert audit(row)['session'] == '2025-01-03'
+    finally:
+        ledger.db.close()
+
+
+def test_validation_lock_and_trial_count_survive_implementation_rollover(tmp_path):
+    old = TrialLedger(tmp_path / 'old.sqlite')
+    old.reserve_validation('rule', 'data', acknowledge_touched=True)
+    assert old.trial_count() == 1
+    old.db.close()
+    before = (tmp_path / 'old.sqlite').read_bytes()
+    middle = TrialLedger(tmp_path / 'middle.sqlite')
+    middle.include_prior_count(tmp_path / 'old.sqlite')
+    middle.db.close()
+    current = TrialLedger(tmp_path / 'current.sqlite')
+    try:
+        current.include_prior_count(tmp_path / 'middle.sqlite')
+        assert current.trial_count() == 1
+        with pytest.raises(ValueError, match='SINGLE_USE_EXHAUSTED'):
+            current.reserve_validation('rule', 'other-data', acknowledge_touched=True)
+        assert (tmp_path / 'old.sqlite').read_bytes() == before
+    finally:
+        current.db.close()
+
+
+def test_legacy_count_reference_cannot_erase_unknown_validation_history(tmp_path):
+    old = TrialLedger(tmp_path / 'old.sqlite')
+    old.append({'event': 'PRIOR_COUNT_REFERENCE', 'ledger_tip': 'a' * 64, 'count': 3})
+    old.db.close()
+    current = TrialLedger(tmp_path / 'current.sqlite')
+    try:
+        current.include_prior_count(tmp_path / 'old.sqlite')
+        assert current.trial_count() == 3
+        with pytest.raises(ValueError, match='VALIDATION_HISTORY_INCOMPLETE'):
+            current.reserve_validation('rule', 'data', acknowledge_touched=True)
+    finally:
+        current.db.close()
+
+
+def test_final_family_restatement_includes_later_attempts(tmp_path):
+    ledger = TrialLedger(tmp_path / 'trial.sqlite')
+    try:
+        result = evaluate_trial([decision()], 'H01', ledger)
+        original_p = result['metric']['p_raw']
+        for _ in range(20):
+            ledger.reserve('H02', 'synthetic')
+        restate_trial_family(result, ledger.trial_count())
+        assert result['family_size'] == result['metric']['family_size'] == 21
+        assert result['metric']['p_raw'] == original_p
+        assert result['metric']['p_adjusted'] == min(1, 21 * original_p)
+    finally:
+        ledger.db.close()
 
 
 def test_v2_closed_shadow_joins_original_approval_and_verifies_chain(tmp_path):

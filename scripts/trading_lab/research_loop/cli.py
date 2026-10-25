@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from . import ingest, stats
-from .core import TrialLedger, audit, digest, evaluate_trial
+from .core import TrialLedger, audit, digest, evaluate_trial, restate_trial_family, utc_day
 from .spec import ROOT, SPEC, SPEC_HASH, REGISTRY_HASH
 
 
@@ -74,7 +74,8 @@ def run(args):
     development = []
     if args.development:
         development = json.loads(Path(args.development).read_text())
-        if any(not '2025-01-01' <= r['entry_at'][:10] <= r['exit_at'][:10] <= '2026-06-30' for r in development):
+        if any(not SPEC['development'][0] <= utc_day(r['entry_at']) <= utc_day(r['exit_at']) <= SPEC['development'][1]
+               for r in development):
             raise ValueError('DEVELOPMENT_INPUT_CONTAINS_OTHER_PERIOD')
     ledger = TrialLedger(out / 'trials.sqlite')
     try:
@@ -82,11 +83,15 @@ def run(args):
             ledger.include_prior_count(path)
         trials = [evaluate_trial(development, h, ledger) for h in ['H01', 'H02', 'H03']]
         attempts = ledger.trial_count()
+        for trial in trials:
+            restate_trial_family(trial, attempts)
+        ledger.append({'event': 'REPORT_FAMILY_RESTATEMENT', 'trials': trials,
+                       'family_size': max(SPEC['family_size_floor'], attempts)})
         history = ledger.prior_references()
     finally:
         ledger.db.close()
     dump(run_dir / 'trials.json', trials)
-    shadow_forecasts = [{'strategy': p['strategy'], 'cohort': p['target'], 'session': p['entry_at'][:10],
+    shadow_forecasts = [{'strategy': p['strategy'], 'cohort': p['target'], 'session': utc_day(p['entry_at']),
                          'p': p['p'], 'y': p['outcome']['y']} for p in predictions
                         if (p['strategy'], p['decision_id']) in valid_closed_ids]
     forecast_results = forecasts_report(replay + forward + shadow_forecasts)
@@ -96,7 +101,7 @@ def run(args):
     # Broker evidence uses all unique CLOSED lots; fees are not invented.
     hits = sum(r['outcome']['gross_return'] > 0 for r in paper)
     paper_p = stats.binomial_tail(hits, len(paper)) if paper else None
-    sessions = len({r['entry_at'][:10] for r in paper})
+    sessions = len({utc_day(r['entry_at']) for r in paper})
     target = stats.required_decisions(family=SPEC['family_size_floor'])
     paper_cohorts = defaultdict(list)
     for row in paper:

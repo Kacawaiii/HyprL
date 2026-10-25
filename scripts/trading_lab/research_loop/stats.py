@@ -1,6 +1,5 @@
 """Explicit null models; probabilities here are tail areas, never posteriors."""
 from collections import defaultdict
-from datetime import datetime
 import math
 import random
 from statistics import NormalDist
@@ -81,18 +80,20 @@ def random_entry(slots, *, draws=10000, seed=1016):
         return {'status': 'BLOCKED', 'reason': 'NO_CLOSED_TRADES', 'draws': 0}
     for slot in slots:
         members = slot.get('eligible_symbols', [])
-        from .spec import SPEC
-        if (slot.get('entry_at', '')[:10] <= SPEC['protected']['end']
-                and slot.get('exit_at', '')[:10] >= SPEC['protected']['start']
-                and any(symbol.upper().replace('/', '').replace('-', '') in {'BTCUSD', 'ETHUSD'}
-                        for symbol in members + [slot.get('real_symbol', '')])):
-            return {'status': 'BLOCKED', 'reason': 'PROTECTED_HOLDOUT', 'draws': 0}
-        candidates = slot.get('candidate_net_returns', {})
+        from .core import instant, protected
         try:
-            clocks = [datetime.fromisoformat(slot[key].replace('Z', '+00:00'))
-                      for key in ['eligibility_known_at', 'decision_at', 'entry_at', 'exit_at']]
-        except (KeyError, ValueError, TypeError):
+            touches_holdout = any(protected(symbol, slot['entry_at'], slot['exit_at'])
+                                  for symbol in members + [slot.get('real_symbol', '')])
+        except (KeyError, ValueError, TypeError, AttributeError):
             return {'status': 'BLOCKED', 'reason': 'INVALID_ENDPOINT_CLOCKS', 'draws': 0}
+        if touches_holdout:
+            return {'status': 'BLOCKED', 'reason': 'PROTECTED_HOLDOUT', 'draws': 0}
+        try:
+            clocks = [instant(slot[key])
+                      for key in ['eligibility_known_at', 'decision_at', 'entry_at', 'exit_at']]
+        except (KeyError, ValueError, TypeError, AttributeError):
+            return {'status': 'BLOCKED', 'reason': 'INVALID_ENDPOINT_CLOCKS', 'draws': 0}
+        candidates = slot.get('candidate_net_returns', {})
         if (not slot.get('universe_hash') or any(c.tzinfo is None for c in clocks)
                 or not clocks[0] <= clocks[1] <= clocks[2] < clocks[3]
                 or not members or len(members) != len(set(members)) or set(members) != set(candidates)

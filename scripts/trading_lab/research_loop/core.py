@@ -25,7 +25,12 @@ def instant(value):
 
 def protected(symbol, entry, exit_at):
     return (symbol.upper().replace('/', '').replace('-', '') in {'BTCUSD', 'ETHUSD'}
-            and entry[:10] <= SPEC['protected']['end'] and exit_at[:10] >= SPEC['protected']['start'])
+            and utc_day(entry) <= SPEC['protected']['end']
+            and utc_day(exit_at) >= SPEC['protected']['start'])
+
+
+def utc_day(value):
+    return instant(value).date().isoformat()
 
 
 def audit(row):
@@ -57,7 +62,7 @@ def audit(row):
         errors.append('positive_abstention_counterfactual')
     if not errors:
         errors.append('unidentified_requires_evidence')
-    return {'decision_id': row['decision_id'], 'strategy': row['strategy'], 'session': row['entry_at'][:10],
+    return {'decision_id': row['decision_id'], 'strategy': row['strategy'], 'session': utc_day(row['entry_at']),
             'decision_at': row['decision_at'], 'entry_at': row['entry_at'], 'exit_at': row['exit_at'],
             'source_hash': row['source_hash'], 'decision_hash': row['decision_hash'],
             'known_at_T': known, 'not_available_at_T': sorted(unavailable),
@@ -120,7 +125,19 @@ class TrialLedger:
                 if json.loads(body)['event'] == 'PRIOR_COUNT_REFERENCE']
 
     def trial_count(self):
-        return len(self.reservations()) + sum(r['count'] for r in self.prior_references())
+        validations = sum(json.loads(body)['event'] == 'VALIDATION_RESERVED'
+                          for (body,) in self.db.execute('SELECT body FROM events'))
+        return len(self.reservations()) + validations + sum(r['count'] for r in self.prior_references())
+
+    def validation_rules(self):
+        rules = set()
+        for (raw,) in self.db.execute('SELECT body FROM events'):
+            body = json.loads(raw)
+            if body['event'] == 'VALIDATION_RESERVED':
+                rules.add(body['rule_hash'])
+            elif body['event'] == 'PRIOR_COUNT_REFERENCE':
+                rules.update(body.get('validation_rule_hashes', []))
+        return rules
 
     def include_prior_count(self, path):
         """Explicit read-only count reference; never reuse/migrate an old analysis."""
@@ -130,7 +147,8 @@ class TrialLedger:
             rows = db.execute('SELECT * FROM events ORDER BY seq').fetchall()
         finally:
             db.close()
-        previous, count = '0' * 64, 0
+        previous, count, validation_rules = '0' * 64, 0, set()
+        validation_history_complete = True
         for expected, (seq, raw, prev, hashed) in enumerate(rows, 1):
             body = json.loads(raw)
             if seq != expected or previous != prev or digest({'seq': seq, 'body': body, 'previous': prev}) != hashed:
@@ -138,15 +156,21 @@ class TrialLedger:
             if seq == 1 and (body.get('event') != 'BINDING' or body.get('spec_hash') != SPEC_HASH
                              or body.get('registry_hash') != REGISTRY_HASH):
                 raise ValueError('PRIOR_COUNT_SPEC_OR_REGISTRY_MISMATCH')
-            count += int(body['event'] == 'RESERVED')
+            count += int(body['event'] in {'RESERVED', 'VALIDATION_RESERVED'})
+            if body['event'] == 'VALIDATION_RESERVED':
+                validation_rules.add(body['rule_hash'])
             if body['event'] == 'PRIOR_COUNT_REFERENCE':
                 count += body['count']
+                validation_rules.update(body.get('validation_rule_hashes', []))
+                validation_history_complete &= body.get('validation_history_complete', False)
             previous = hashed
         if not rows:
             raise ValueError('PRIOR_COUNT_EMPTY')
         if any(r['ledger_tip'] == previous for r in self.prior_references()):
             return
         self.append({'event': 'PRIOR_COUNT_REFERENCE', 'ledger_tip': previous, 'count': count,
+                     'validation_rule_hashes': sorted(validation_rules),
+                     'validation_history_complete': validation_history_complete,
                      'use': 'COUNTS_ONLY_NO_RESULT_REUSE_OR_MIGRATION'})
 
     def reserve(self, hypothesis, data_hash):
@@ -159,8 +183,9 @@ class TrialLedger:
     def reserve_validation(self, rule_hash, data_hash, *, acknowledge_touched=False):
         if not acknowledge_touched:
             raise ValueError('VALIDATION_ALREADY_TOUCHED')
-        previous = [json.loads(r[0]) for r in self.db.execute('SELECT body FROM events ORDER BY seq')]
-        if any(r.get('event') == 'VALIDATION_RESERVED' and r['rule_hash'] == rule_hash for r in previous):
+        if any(not r.get('validation_history_complete', False) for r in self.prior_references()):
+            raise ValueError('VALIDATION_HISTORY_INCOMPLETE')
+        if rule_hash in self.validation_rules():
             raise ValueError('VALIDATION_SINGLE_USE_EXHAUSTED')
         return self.append({'event': 'VALIDATION_RESERVED', 'rule_hash': rule_hash,
                             'data_hash': data_hash, 'role': 'EXPLORATORY_TOUCHED_VALIDATION'})
@@ -211,7 +236,7 @@ def evaluate_trial(rows, hypothesis, ledger):
     for row in rows:
         # No outcomes from validation, forward, or a crossing horizon enter the metric.
         lo, hi = SPEC['development']
-        if not (lo <= row['entry_at'][:10] <= hi and row['exit_at'][:10] <= hi):
+        if not (lo <= utc_day(row['entry_at']) <= utc_day(row['exit_at']) <= hi):
             reasons['OUTSIDE_DEVELOPMENT'] += 1
             continue
         checked = audit(row)
@@ -239,29 +264,54 @@ def evaluate_trial(rows, hypothesis, ledger):
               'reason': 'NO_CAUSAL_DEVELOPMENT_SAMPLE' if not eligible else 'INCOMPLETE_DEVELOPMENT_EVIDENCE' if blocking else None,
             'metric': stats.paired_test(samples, family=family) if not blocking else None,
               'stress': stats.paired_test(stress, family=family) if not blocking else None}
+    restate_trial_family(result, family)
+    result['promotion'] = 'NOT_PROMOTED_REQUIRES_NEW_FORWARD_SHADOW_AB'
+    ledger.append({'event': 'RESULT', 'result': result})
+    return result
+
+
+def restate_trial_family(result, family):
+    """Report every current-run rule against the final count, including later trials."""
+    family = max(SPEC['family_size_floor'], family, result['family_size'])
+    result['family_size'] = family
+    for key in ('metric', 'stress'):
+        if result[key]:
+            result[key]['family_size'] = family
+            result[key]['p_adjusted'] = min(1.0, family * result[key]['p_raw'])
     metric, stressed = result['metric'], result['stress']
     result['passes_development'] = bool(metric and metric['sessions'] >= SPEC['min_dev_sessions']
                                        and metric['mean_delta'] > 0 and metric['p_adjusted'] <= SPEC['alpha']
                                        and stressed['mean_delta'] > 0 and stressed['p_adjusted'] <= SPEC['alpha'])
-    result['promotion'] = 'NOT_PROMOTED_REQUIRES_NEW_FORWARD_SHADOW_AB'
-    ledger.append({'event': 'RESULT', 'result': result})
-    return result
 
 
 def promotion_gate(pairs, *, preregistered, validation_receipt, family=8):
     """Audit a proposed forward result; this function cannot change a strategy."""
     if (not preregistered or not pairs or not isinstance(validation_receipt, dict)
             or validation_receipt.get('role') != 'EXPLORATORY_TOUCHED_VALIDATION'
-            or not validation_receipt.get('completed') or not validation_receipt.get('rule_hash')):
+            or not validation_receipt.get('completed') or not validation_receipt.get('rule_hash')
+            or not validation_receipt.get('completed_at')):
         return False
     if len({p['decision_id'] for p in pairs}) != len(pairs):
         return False
     if any(not p.get('mature') or not p.get('risk_ok') or p.get('mode') != 'SHADOW_AB'
            or p.get('candidate_net') is None or p.get('current_net') is None
            or p.get('candidate_stressed_net') is None
-           or p.get('rule_hash') != validation_receipt['rule_hash']
-           or not p.get('registered_at') or instant(p['registered_at']) >= instant(p['decision_at']) for p in pairs):
+           or p.get('rule_hash') != validation_receipt['rule_hash'] for p in pairs):
         return False
+    try:
+        validation_at = instant(validation_receipt['completed_at'])
+        now = datetime.now(timezone.utc)
+        for pair in pairs:
+            decision_at, entry_at, exit_at, available_at = (
+                instant(pair[key]) for key in ['decision_at', 'entry_at', 'exit_at', 'outcome_available_at'])
+            if (not validation_at <= instant(pair['registered_at']) < decision_at <= entry_at < exit_at <= available_at <= now
+                    or utc_day(pair['decision_at']) <= SPEC['validation'][1]
+                    or pair['session'] != utc_day(pair['entry_at'])
+                    or protected(pair['symbol'], pair['entry_at'], pair['exit_at'])):
+                return False
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return False
+    family = max(SPEC['family_size_floor'], family)
     result = stats.paired_test([(p['session'], p['candidate_net'] - p['current_net']) for p in pairs], family=family)
     stressed = stats.paired_test([(p['session'], p['candidate_stressed_net'] - p['current_net']) for p in pairs], family=family)
     return (result['sessions'] >= SPEC['min_shadow_pairs'] and result['mean_delta'] > 0

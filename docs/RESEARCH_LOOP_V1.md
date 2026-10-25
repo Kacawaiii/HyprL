@@ -21,6 +21,10 @@ For a corrected implementation, `--prior-trial-ledger` explicitly carries only
 hash-verified reservation counts into a **new** ledger. It checks the original
 spec/registry bindings, keeps the old database read-only, and reuses no old result.
 All repeated attempts still count. This count-only reference is not a migration.
+Validation reservations also count. References carry spent validation rule hashes
+transitively so a new implementation cannot reopen a once-only validation. A legacy
+count reference without that history blocks new validation until the operator
+supplies a complete audited history; it does not imply an unused validation.
 
 The first three rules are fixed filters: the next-24-hour earnings blackout,
 fresh primary 8-K/10-Q, and a USD 300m–10bn universe with a planned 2–10 day hold.
@@ -68,7 +72,9 @@ executes or modifies the book CLI.
 ## Development, contaminated validation and forward testing
 
 Development is 2025-01-01 through 2026-06-30, with both entry AND exit in that
-window. July–September 2026 are explicitly touched: July–August informed existing
+window. Calendar boundaries and session clusters use UTC after parsing aware
+timestamps; a local date cannot bypass a development or protected-period boundary.
+July–September 2026 are explicitly touched: July–August informed existing
 replay work and lesson generation; September was already used by an existing
 replay. September test answers are not opened by this iteration. A file called
 `dev` in an older replay does not change these dates.
@@ -87,6 +93,9 @@ The family floor is eight (all proposed variants), increasing with every reserve
 attempt across runs. Earlier raw p-values must be re-adjusted against the current
 family count when reporting later iterations. Past unrelated historical searches
 have unknown trial counts; no statistic here corrects that unknown history.
+The current-run report restates all three rules against the final cumulative
+count, including attempts reserved later in the same run, and appends that
+restatement to the ledger without rewriting the original result events.
 
 Missing pre-T features or net contributions block the entire eligible development
 trial rather than silently dropping losers. Outside-window records are counted
@@ -118,6 +127,11 @@ adjusted p <= .05, and no risk regression. All original opportunities count,
 including abstentions, missingness and failed model responses. `promotion_gate`
 audits this supplied evidence; it cannot promote, deploy, schedule or trade.
 Forty is an admission floor, not evidence that a small edge has sufficient power.
+Gate inputs require a validation completion clock and, for each pair, the symbol,
+rule registration, decision, entry, exit and outcome-availability clocks. Registration
+must follow completed validation, decisions must follow September 2026, session
+ids must match UTC entry dates, and outcomes must already be available. A replay
+label, a future outcome or a protected instrument cannot satisfy this gate.
 
 ## Luck meter v1
 
