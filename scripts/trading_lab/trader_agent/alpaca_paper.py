@@ -760,10 +760,13 @@ class PaperExecutor:
             raise
 
     def eligible_predictions(self, name):
+        from .pm_retirement_spec import active
         day = self.clock().date().isoformat()
+        pm_retired = active(self.clock())
         summaries = [r['payload'] for r in rows(self.research, 'replay-summary')
                      if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
                      and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}
+                     and (not pm_retired or slots.slot_of(r['payload']) != 'pm')
                      and (self.slot is None or slots.slot_of(r['payload']) == self.slot)
                      and (r['payload']['at'][:10] == day or
                           r['payload'].get('decision', {}).get('session') == self.clock().astimezone(NY).date().isoformat())]
@@ -999,7 +1002,10 @@ class PaperExecutor:
         at = self.clock()
         pm = any(l.get('slot') == 'pm' for l in intent['lots'])
         if pm:
-            self.grant.parent.check_slot('pm', at)
+            # Retirement closes entry permission; existing lots still exit
+            # against their original, explicitly registered PM binding.
+            if intent['purpose'] == 'entry':
+                self.grant.parent.check_slot('pm', at)
             self.ledger.check_pm_registration()
         if intent['purpose'] in {'entry', 'exit'}:
             session_day = intent['lots'][0]['session'] if intent['purpose'] == 'entry' else instant(intent['at']).astimezone(NY).date().isoformat()

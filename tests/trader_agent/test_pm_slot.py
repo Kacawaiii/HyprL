@@ -211,6 +211,14 @@ def test_pm_closed_day_crypto_only_and_recovery(weekend_grant, tmp_path, clock, 
     clock.at = instant(day + 'T16:00:00Z')
     ledger = Ledger(tmp_path / 'runtime', pm_grant(weekend_grant), clock=clock, slot='pm')
     service = TraderService(ledger, SyntheticData(ledger, clock), SyntheticRunner(ledger, clock=clock), clock=clock)
+    if day == '2026-12-25':
+        # The operator retired all PM populations on Oct 26, including holidays.
+        with pytest.raises(TraderError, match='PM_SLOT_RETIRED'):
+            ledger.reserve('run')
+        assert recover(service)['state'] == 'RETIRED'
+        assert ledger.counts() == {}
+        assert not service.store.records('prediction')
+        return
     ledger.reserve('run')
     service.summary('trader:' + day + ':synthetic:pm', 'FAILED', clock(), error='SOURCE_UNAVAILABLE')
     clock.at = instant(day + 'T16:10:00Z')

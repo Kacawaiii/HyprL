@@ -27,7 +27,8 @@ def checkpoints(grant, research, events, at, last_label=None):
         entry = session.open_at + timedelta(seconds=30) if session else at.replace(hour=13, minute=30, second=0, microsecond=0)
         result['session-entry:' + day] = entry + timedelta(minutes=10)
         result['label-deadline:' + day] = at.replace(hour=21, minute=40, second=0, microsecond=0)
-    if grant.pm_amendment and at >= instant(grant.pm_amendment['effective_from']):
+    from .pm_retirement_spec import expected
+    if expected(grant, at):
         from .slots import deadline
         result['slot-entry:pm:' + day] = deadline(day, session is None) + timedelta(minutes=10)
     for row in rows(research, 'prediction'):
@@ -126,7 +127,8 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
                 and r['payload']['at'][:10] == day and r['payload'].get('status') in {'COMPLETE', 'DEGRADED'}]
         if not runs:
             problem('MISSING_DAILY_RUN', day)
-    if require_pm_run:
+    from .pm_retirement_spec import active
+    if require_pm_run and not active(at):
         runs = [r['payload'] for r in rows(executor.research, 'replay-summary')
                 if r['payload'].get('schema') == 'trader-run-v1' and not r['payload'].get('synthetic', True)
                 and r['payload'].get('slot') == 'pm' and r['payload']['at'][:10] == day
@@ -154,7 +156,9 @@ def inspect_audit(executor, *, label_at=None, require_daily_run=False, require_l
 
 def execution_window(at, research=None):
     """Leave the two-minute service budget clear of entry/exit and their retry minutes."""
-    anchors = [at.replace(hour=hour, minute=0, second=0, microsecond=0) for hour in (12, 16)]
+    from .pm_retirement_spec import active
+    anchors = [at.replace(hour=hour, minute=0, second=0, microsecond=0)
+               for hour in ((12,) if active(at) else (12, 16))]
     anchors.append(at.replace(minute=30, second=0, microsecond=0))  # hourly crypto exit check
     session = calendar_session(at.date().isoformat())
     if session:
@@ -335,13 +339,16 @@ def main(argv=None):
     try:
         with state.owner():
             at = now()
+            from .pm_retirement_spec import active
             for prefix, unit in (('', 'hyprl-trader-rehearsal-retry.service'),
                                  ('pm-', 'hyprl-trader-rehearsal-pm-retry.service')):
+                if prefix == 'pm-' and active(at):
+                    continue
                 first = state.get(at.date().isoformat(), prefix + 'primary')
                 if (first and first['state'] == 'BLOCKED' and first.get('retry_at')
                         and instant(first['retry_at']) <= at and not state.get(at.date().isoformat(), prefix + 'retry')):
                     request_retries.append(unit)
-            result = audit(args, state, force=args.force, notify=telegram(args.telegram_env))
+            result = audit(args, state, clock=now, force=args.force, notify=telegram(args.telegram_env))
     except TraderError as error:
         if error.code != 'REHEARSAL_OWNER_BUSY':
             raise

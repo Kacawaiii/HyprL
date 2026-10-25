@@ -76,6 +76,9 @@ def recover_pm(service):
     ledger, at = service.ledger, service.clock()
     day = at.date().isoformat()
     base = {'schema': 'trader-recovery-v1', 'at': iso(at), 'session': day, 'slot': 'pm'}
+    from .pm_retirement_spec import active
+    if active(at):
+        return {**base, 'state': 'RETIRED'}
     try:
         ledger.grant.check_slot('pm', at)
         if ledger.paused:

@@ -1,0 +1,13 @@
+{
+  "schema": "trader-operator-decision-v1",
+  "decided_at": "2026-10-25",
+  "decided_by": "operator task v1-retire-pm, 2026-10-25",
+  "decisions": {
+    "second_daily_slot_pm": "Retire the v1 pm slot from 2026-10-26T00:00:00Z on trading days, weekends and holidays, including its base/news arms, rehearsals, retries and recovery. Keep the 12:00 UTC am slot as the control arm with every existing gate, budget and alert unchanged.",
+    "rationale": "Operator assessment of the July-August replay: no predictive skill (Brier equal to the base rate; 35-41% winning trades). The two daily slots consume approximately 2.5 million Claude tokens. Free PM quota for agent v2 and the research loop; these figures are the operator's rationale, not a new measurement by this change.",
+    "budget": "No new PM model, source or entry dispatch after retirement. Do not transfer PM budgets into AM or change the protected paper authorization.",
+    "execution": "Keep managing all existing AM and PM positions and pending orders under their original rules. Preserve exits, reconciliation, audits, labels and historical scoring. Retirement authorizes no new trade and does not flatten or migrate positions.",
+    "reliability": "Health reports PM RETIRED and stops requiring a daily PM success. Post-audit stops scheduling a missing-PM checkpoint or PM rehearsal retry. Sentinel stops expecting PM-only units and ignores only MISSING_PM_RUN / FAILED_PM_RUN alerts dated from retirement. AM, overdue-lot, order, label and infrastructure failures remain actionable; historical PM evidence remains intact.",
+    "safety": "Paper/shadow only. Existing grants, registrations, stores and spec revisions remain unchanged. Publish a new hash-bound PM lifecycle revision. The single-owner operator reviews and deploys; coding agents do not change live units, runtime, authorizations or sentinel."
+  }
+}
