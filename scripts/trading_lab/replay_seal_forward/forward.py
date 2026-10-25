@@ -54,6 +54,57 @@ def configuration_for(sealed, active):
     return frozen
 
 
+def protocol_for(sealed, active):
+    """Resolve the registered source protocol, never today's entry offset or cost rules."""
+    frozen = configuration_for(sealed, active)
+    if sealed['spec_hash'] == spec.SPEC_HASH:
+        return spec.spec()
+    rule = spec.spec()['forward_legacy_freezes'][sealed['spec_hash']]
+    path = spec.ROOT / 'docs/artifacts' / rule['artifact'].replace('test_freeze', 'spec')
+    value = json.loads(path.read_text())
+    digest = value.pop('canonical_sha256')
+    if digest != sealed['spec_hash'] or sha256_canonical(value) != digest:
+        raise ReplayError('FORWARD_CONFIG_NOT_FROZEN')
+    if frozen['forward_first_session'] != value['forward']['first_session']:
+        raise ReplayError('FORWARD_CONFIG_NOT_FROZEN')
+    return value
+
+
+class OutcomePanels:
+    """Stable request bounds per matured horizon, shared by collector and offline scorer."""
+    def __init__(self, root, day, sealed, transport, protocol):
+        from .score import Outcomes
+        self.day, self.transport, self.protocol = day, transport, protocol
+        self.mode = 'INTRADAY' if sealed.get('mode') == 'INTRADAY' else 'REGULAR_0905'
+        self.factory, self.T = Outcomes, decision_time(day)
+        if self.mode == 'INTRADAY':
+            from .intraday import Outcomes as IntradayOutcomes, clock_record
+            self.factory = IntradayOutcomes
+            self.T = instant(clock_record(root, day)['decision_time'])
+        self.following = md.sessions(day, (self.T + timedelta(days=21)).date().isoformat())
+        self.panels = {}
+
+    def crypto_entry(self, T):
+        # v9/v10 declare T+15 in their frozen forecast panel, before the explicit offset key.
+        return T + timedelta(minutes=self.protocol['forward'].get('crypto_entry_offset_minutes', 15))
+
+    def maturity(self, asset, h):
+        if asset in sn.CRYPTO:
+            entry = self.T + timedelta(seconds=30) if self.mode == 'INTRADAY' else self.crypto_entry(self.T)
+            return entry + timedelta(days=1)
+        return self.following[h-1].close_at
+
+    def get(self, group, asset, h):
+        last = self.maturity(asset, h).date().isoformat()
+        if last not in self.panels:
+            self.panels[last] = self.factory(self.transport, self.day, last, self.protocol['costs'],
+                decision_time=lambda unused: self.T, crypto_entry=self.crypto_entry, live=True)
+        panel = self.panels[last]
+        value = panel.get(group, self.day, asset, h)
+        reason = panel.exclusion_reasons.get((group, self.day, asset, h), 'censored_or_missing_label') if value is None else None
+        return value, reason
+
+
 def forward_config_hash(family):
     return sha256_canonical({'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(), 'family': family,
                              'schema': SCHEMA, 'forward': spec.spec()['forward']})
@@ -308,6 +359,7 @@ def publish_pending(root, *, ledger, clock=now):
 def check_record(root, day, family, record, sealed, frozen):
     """Scorer gate: frozen forward configuration, first session, binding and publication before the open."""
     frozen = configuration_for(sealed, frozen)
+    protocol = protocol_for(sealed, frozen)
     check = dict(record)
     if (check.pop('decision_hash') != sha256_canonical(check) or record['snapshot_hash'] != sealed['snapshot_hash'] or
             record['provenance'] != PROVENANCE or sealed.get('spec_hash') != frozen['spec_hash'] or
@@ -315,19 +367,17 @@ def check_record(root, day, family, record, sealed, frozen):
         raise ReplayError('FORWARD_DECISION_BINDING_MISMATCH')
     if record['configuration_hash'] != frozen['forward_config_hashes'][family]:
         raise ReplayError('FORWARD_CONFIG_NOT_FROZEN')
-    if day < frozen['forward_first_session'] or day < spec.spec()['forward']['first_session']:
+    if day < frozen['forward_first_session']:
         raise ReplayError('FORWARD_BEFORE_FIRST_SESSION')
     if sealed.get('mode') == 'INTRADAY':
         from .intraday import check_record as check_intraday
         return check_intraday(root, day, family, record, sealed,
-                              expected_spec=frozen['spec_hash'], expected_code=frozen['code_hash'])
+                              expected_spec=frozen['spec_hash'], expected_code=frozen['code_hash'], protocol=protocol)
     T = decision_time(day)
-    if (record.get('family') != family or record.get('model') != spec.spec()['models']['identities'][family] or
+    if (record.get('family') != family or record.get('model') != protocol['models']['identities'][family] or
             record.get('decision_time') != iso(T) or sealed.get('decision_time') != iso(T) or
             not T <= instant(record['call']['called_at']) <= instant(record['stored_at']) < T + DISPATCH_WINDOW):
         raise ReplayError('FORWARD_DECISION_BINDING_MISMATCH')
-    if day < frozen['forward_first_session'] or day < spec.spec()['forward']['first_session']:
-        raise ReplayError('FORWARD_BEFORE_FIRST_SESSION')
     commitment.require(root, 'forward', day, {'snapshot': sealed['snapshot_hash'], family: record['decision_hash']},
                        publication_deadline(day), protocol_hash=frozen['spec_hash'])
 
@@ -342,15 +392,18 @@ def checked_freeze():
     return frozen
 
 
-def score(root, transport, *, clock=now, outcome_proof=None, write=True):
+def score(root, transport, *, clock=now, outcome_proof=None, write=True, as_of=None):
     """Use the replay's predeclared fill/mark rules; immature labels stay pending."""
-    from .score import Outcomes, signed_outcome
-    at = clock()
+    from .score import signed_outcome
+    scored_at = clock()
+    at = as_of or scored_at
+    if at > scored_at:
+        raise ReplayError('FORWARD_FUTURE_AS_OF')
     frozen = checked_freeze()
     last = max(s.session_date for s in md.sessions((at - timedelta(days=20)).date().isoformat(), at.date().isoformat())
                if s.close_at < at)
-    costs = spec.spec()['costs']
     results, trades, failures, exclusions = [], [], {f: [] for f in ex.FAMILIES}, Counter()
+    intraday_days = set()
     base = Path(root) / STATE_DIR
     today = at.astimezone(md.NEW_YORK).date().isoformat()
     for session in md.sessions(frozen['forward_first_session'], today):
@@ -359,12 +412,18 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                 failures[family].append({'session': session.session_date, 'error': 'SNAPSHOT_MISSING'})
     for snapshot_file in sorted(base.glob('????-??-??/snapshot.json.gz')):
         day = snapshot_file.parent.name
+        if day > today:
+            continue
         if day < frozen['forward_first_session']:
             raise ReplayError('FORWARD_BEFORE_FIRST_SESSION')
         sealed = parent.read_json(snapshot_file)
         check = dict(sealed)
         if check.pop('snapshot_hash') != sha256_canonical(check):
             raise ReplayError('FORWARD_SNAPSHOT_HASH_MISMATCH')
+        protocol = protocol_for(sealed, frozen)
+        costs = protocol['costs']
+        if sealed.get('mode') == 'INTRADAY':
+            intraday_days.add(day)
         present = [f for f in ex.FAMILIES if (snapshot_file.parent / (f + '.json')).is_file()]
         for family in set(ex.FAMILIES) - set(present):
             # Never a silent drop: a missing decision is a reported failed day.
@@ -381,18 +440,7 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
         flags.update(sealed['manifests']['cd'].get('borrow_flags', {}))
         # Crypto matures on calendar days, including exchange holidays. The
         # per-horizon maturity gate below still prevents reading future labels.
-        factory = Outcomes
-        clock_for = decision_time
-        if sealed.get('mode') == 'INTRADAY':
-            from .intraday import Outcomes as IntradayOutcomes, clock_record
-            factory = IntradayOutcomes
-            T = instant(clock_record(root, day)['decision_time'])
-            clock_for = lambda unused: T
-        else:
-            T = decision_time(day)
-        outcomes = factory(transport, day, at.date().isoformat(), costs, decision_time=clock_for,
-                           crypto_entry=crypto_entry, live=True)
-        following = md.sessions(day, (T + timedelta(days=21)).date().isoformat())
+        outcomes = OutcomePanels(root, day, sealed, transport, protocol)
         for family in present:
             record = json.loads((snapshot_file.parent / (family + '.json')).read_text())
             check_record(root, day, family, record, sealed, frozen)
@@ -403,14 +451,11 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                 if row['asset'] in sn.CRYPTO and h != 1:
                     exclusions[family + ':CRYPTO_5D'] += 1
                     continue
-                crypto = row['asset'] in sn.CRYPTO
-                mature = ((T + timedelta(seconds=30) if sealed.get('mode') == 'INTRADAY' else
-                           crypto_entry(T)) + timedelta(days=1) if crypto else following[h-1].close_at)
+                mature = outcomes.maturity(row['asset'], h)
                 if mature >= at:
                     continue
-                outcome = outcomes.get(group, day, row['asset'], h)
+                outcome, reason = outcomes.get(group, row['asset'], h)
                 if outcome is None:
-                    reason = outcomes.exclusion_reasons.get((group, day, row['asset'], h), 'censored_or_missing_label')
                     exclusions[family + ':' + reason] += 1
                     continue
                 if outcome.get('corporate_action') is True:
@@ -420,7 +465,9 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                 p = row['p_outperform']
                 clipped = min(1-1e-6, max(1e-6, p))
                 panel = ('a_v1_as_live' if group == 'ab' else 'c_news_small_mid') + ':' + row['horizon']
-                results.append({'provenance': PROVENANCE, 'session': day, 'family': family, 'group': group,
+                results.append({'provenance': PROVENANCE, 'mode': outcomes.mode,
+                    'decision_time': iso(outcomes.T), 'entry_at': outcome.get('entry_at'),
+                    'session': day, 'family': family, 'group': group,
                     'source_spec_hash': sealed['spec_hash'], 'source_code_hash': sealed['code_hash'],
                     'panel': panel, 'asset': row['asset'], 'horizon': row['horizon'],
                     'snapshot_hash': sealed['snapshot_hash'], 'decision_hash': record['decision_hash'],
@@ -431,25 +478,33 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
                                         costs, flags, sealed, exclusions, signed_outcome))
             for view in record['output']['news']['views']:
                 h = view['holding_sessions']
-                if following[h-1].close_at >= at:
+                if outcomes.maturity(view['symbol'], h) >= at:
                     continue
-                outcome = outcomes.get('cd', day, view['symbol'], h)
+                outcome, reason = outcomes.get('cd', view['symbol'], h)
                 if outcome is None:
-                    reason = outcomes.exclusion_reasons.get(('cd', day, view['symbol'], h), 'censored_or_missing_label')
                     exclusions[family + ':' + reason] += 1
                     continue
                 trades.append(trade(day, family, 'cd', view['symbol'], str(h) + 'd', view['view'], outcome, h,
                                     costs, flags, sealed, exclusions, signed_outcome))
     trades = [t for t in trades if t is not None]
     base_rate = forward_base_rate(root)
-    primary = stats.primary_endpoint([r for r in results if r['family'] == 'opus'],
-                                     [r for r in results if r['family'] == 'gpt'], base_rate['p'])
-    value = {'provenance': PROVENANCE, 'evidence_class': 'LIVE_FORWARD', 'scored_at': iso(at), 'through_session': last,
+    regular = [r for r in results if r['mode'] == 'REGULAR_0905']
+    primary = stats.primary_endpoint([r for r in regular if r['family'] == 'opus'],
+                                     [r for r in regular if r['family'] == 'gpt'], base_rate['p'])
+    value = {'provenance': PROVENANCE, 'evidence_class': 'LIVE_FORWARD', 'scored_at': iso(scored_at),
+             'outcomes_as_of': iso(at), 'through_session': last,
              'rows': results, 'trades': trades, 'outcome_archive': outcome_proof, 'primary_endpoint': primary,
              'base_rate_source': base_rate['source'], 'verdict_wording': stats.wording(primary),
              'failures': {f: {'failed_sessions': v, 'count': len(v)} for f, v in failures.items()},
              'trade_exclusions': dict(exclusions)}
-    value['full_table'] = full_table(results, trades)
+    value['tables_by_mode'] = {mode: full_table([r for r in results if r['mode'] == mode],
+        [t for t in trades if t['mode'] == mode]) for mode in ('REGULAR_0905', 'INTRADAY')}
+    for mode, table in value['tables_by_mode'].items():
+        for panel in table.values():
+            for family, row in panel.items():
+                row['failed_days'] = sum((f['session'] in intraday_days) == (mode == 'INTRADAY')
+                                         for f in failures[family])
+    value['full_table'] = value['tables_by_mode']['REGULAR_0905']
     if write:
         atomic_json(base / 'score-runs' / (sha256_canonical(value) + '.json'), value)
         atomic_json(base / 'scores.json', value)
@@ -457,7 +512,8 @@ def score(root, transport, *, clock=now, outcome_proof=None, write=True):
 
 
 def trade(day, family, group, asset, horizon, view, outcome, h, costs, flags, sealed, exclusions, signed_outcome):
-    row = {'session': day, 'family': family, 'group': group, 'asset': asset, 'horizon': horizon, 'view': view,
+    row = {'session': day, 'mode': 'INTRADAY' if sealed.get('mode') == 'INTRADAY' else 'REGULAR_0905',
+           'family': family, 'group': group, 'asset': asset, 'horizon': horizon, 'view': view,
            'snapshot_hash': sealed['snapshot_hash']}
     if view == 'ABSTAIN':
         return dict(row, net_relative_return=None, hit=None, cost_basis=None)
@@ -504,33 +560,56 @@ def full_table(rows, trades):
     return result
 
 
-def weekly(root, *, notify, clock=now, runner=subprocess.run):
+def weekly(root, *, notify, clock=now, runner=subprocess.run, correction_week=None, score_run=None):
     at = clock()
     ny = at.astimezone(md.NEW_YORK)
-    if ny.weekday() != 4 or ny.hour < 17:
+    if correction_week is None and (ny.weekday() != 4 or ny.hour < 17):
         raise ReplayError('OUTSIDE_WEEKLY_REPORT_WINDOW')
-    week = ny.strftime('%G-W%V')
+    week = correction_week or ny.strftime('%G-W%V')
     base = Path(root) / STATE_DIR
     marker = base / ('weekly-' + week + '.json')
+    original = None
+    if correction_week:
+        # A correction is a distinct, explicit delivery; the original receipt stays immutable.
+        try:
+            datetime.strptime(week + '-1', '%G-W%V-%u')
+        except ValueError:
+            raise ReplayError('WEEKLY_CORRECTION_INVALID') from None
+        if not marker.is_file():
+            raise ReplayError('WEEKLY_ORIGINAL_MISSING')
+        original = json.loads(marker.read_text())
+        if original.get('state') != 'DELIVERED':
+            raise ReplayError('WEEKLY_ORIGINAL_UNCONFIRMED')
+        marker = base / ('weekly-' + week + '-correction-' + original['text_hash'] + '.json')
     if marker.exists():
         raise ReplayError('WEEKLY_DELIVERY_ALREADY_ATTEMPTED')
-    value = json.loads((base / 'scores.json').read_text())
-    if instant(value['scored_at']) < at - timedelta(hours=2):
+    if score_run is not None and (len(score_run) != 64 or set(score_run) - commitment.HEX):
+        raise ReplayError('WEEKLY_SCORE_HASH_INVALID')
+    value = json.loads((base / 'score-runs' / (score_run + '.json') if score_run else base / 'scores.json').read_text())
+    if score_run and sha256_canonical(value) != score_run:
+        raise ReplayError('WEEKLY_SCORE_HASH_INVALID')
+    if not at - timedelta(hours=2) <= instant(value['scored_at']) <= at:
         raise ReplayError('WEEKLY_SCORES_STALE')
+    if correction_week and datetime.fromisoformat(value['through_session']).strftime('%G-W%V') != week:
+        raise ReplayError('WEEKLY_CORRECTION_PERIOD_MISMATCH')
     # Cumulative matured outcomes, identified as such. Paired rows only.
     rows = value['rows']
     key = lambda r: (r['session'], r['group'], r['asset'], r['horizon'], r['snapshot_hash'])
     panels = {f: {key(r): r for r in rows if r['family'] == f} for f in ex.FAMILIES}
     common = set(panels['opus']) & set(panels['gpt'])
     primary = value.get('primary_endpoint', {})
-    lines = ['LIVE_FORWARD — duel hebdomadaire ' + week + ' (seule preuve ; le replay reste EXPLORATORY)',
+    lines = [('CORRECTION — ' if original else '') + 'LIVE_FORWARD — duel hebdomadaire ' + week + ' (replay EXPLORATORY)',
+             'Échéances arrêtées au ' + value.get('outcomes_as_of', value['scored_at']) + '.',
              'Critère principal : a:1d Brier skill vs taux de base (' + value.get('base_rate_source', '?') + ').',
              f"Skill : {json.dumps(primary.get('brier_skill'))} ; IC 95 % : {json.dumps(primary.get('ci95'))} ; état {primary.get('state')}.",
              value.get('verdict_wording', stats.wording(primary)),
              'Tableau complet, scores cumulés aux horizons arrivés à échéance :']
-    for panel, models in value['full_table'].items():
-        for family, row in models.items():
-            lines.append(panel + ' ' + family + ' : ' + json.dumps(row, sort_keys=True))
+    tables = value.get('tables_by_mode', {'REGULAR_0905': value['full_table']})
+    for mode, table in tables.items():
+        lines.append(mode + (' — hors critère principal' if mode == 'INTRADAY' else ' — entrée régulière'))
+        for panel, models in table.items():
+            for family, row in models.items():
+                lines.append(panel + ' ' + family + ' : ' + json.dumps(row, sort_keys=True))
     for family in ex.FAMILIES:
         ts = [r for r in value.get('trades', []) if r['family'] == family]
         taken = [r for r in ts if r['hit'] is not None]
@@ -541,7 +620,10 @@ def weekly(root, *, notify, clock=now, runner=subprocess.run):
                      ', '.join(f"{f['session']} {f['error']}" for f in failed.get('failed_sessions', [])))
     lines.append('Recherche sans ordres. Effectifs dépendants ; « gagnant » seulement si l’IC apparié exclut 0.')
     text = '\n'.join(lines)
-    atomic_json(marker, {'state': 'INTENT', 'at': iso(at), 'text_hash': sha256_canonical(text)})
+    binding = {'score_sha256': sha256_canonical(value)}
+    if original:
+        binding['corrects_text_hash'] = original['text_hash']
+    atomic_json(marker, dict(binding, state='INTENT', at=iso(at), text_hash=sha256_canonical(text)))
     messages = [text[i:i+1800] for i in range(0, len(text), 1800)]
     for message in messages:
         result = runner([str(notify), 'brouillons'], input=message, capture_output=True, text=True, timeout=40)
@@ -550,5 +632,5 @@ def weekly(root, *, notify, clock=now, runner=subprocess.run):
         # A Telegram fallback is not confirmation of the requested Discord route.
         if (result.stdout or '').strip() != 'discord':
             raise ReplayError('WEEKLY_DISCORD_DELIVERY_UNCONFIRMED')
-    atomic_json(marker, {'state': 'DELIVERED', 'at': iso(at), 'text_hash': sha256_canonical(text), 'messages': len(messages)})
-    return {'status': 'DELIVERED', 'week': week, 'paired_rows': len(common)}
+    atomic_json(marker, dict(binding, state='DELIVERED', at=iso(at), text_hash=sha256_canonical(text), messages=len(messages)))
+    return {'status': 'DELIVERED', 'week': week, 'paired_rows': len(common), 'correction': bool(original)}

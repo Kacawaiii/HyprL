@@ -13,6 +13,25 @@ from scripts.trading_lab.sources.canonical import sha256_canonical
 AT = instant('2026-10-20T01:00:00Z')
 
 
+def test_input_polling_leaves_outcome_capacity_under_the_same_daily_ceiling(tmp_path):
+    from scripts.trading_lab.replay_bench.storage import atomic_json
+    budget = Budget(tmp_path / 'budget')
+    atomic_json(budget.path, {'2026-10-20': {'data.alpaca.markets': 2999}})
+    grants = SimpleNamespace(check=lambda: None, route=lambda *a: collect.COLLECTION_GRANT,
+                             daily_limit=lambda *a: None)
+    keys = tmp_path / 'keys.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
+    def collector(reserve):
+        return collect.Collector(grants, budget, tmp_path / ('cache-' + str(reserve)), alpaca_env=keys,
+            clock=lambda: AT, budget_reserve=reserve, getter=lambda *a: b'{"news":[]}', sleep=lambda unused: None)
+    with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
+        collector(1000).get(md.ALPACA, '/v1beta1/news', {'limit': 1})
+    collector(0).get(md.ALPACA, '/v1beta1/news', {'limit': 1})
+    assert budget.used('data.alpaca.markets', AT) == 3000
+    with pytest.raises(ReplayError, match='BUDGET_EXHAUSTED'):
+        collector(0).get(md.ALPACA, '/v1beta1/news', {'limit': 2})
+
+
 @pytest.fixture
 def grants(tmp_path, monkeypatch):
     collection = {'id': collect.COLLECTION_GRANT, 'expires': '2026-11-30'}

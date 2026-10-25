@@ -193,6 +193,98 @@ def test_failed_day_counted_not_dropped(tmp_path, runtime, ledger, monkeypatch):
     assert values['failures']['opus']['failed_sessions'][0]['session'] == '2026-10-20'
 
 
+def test_rescoring_mature_labels_keeps_the_original_query_end(tmp_path, runtime, ledger, monkeypatch):
+    scored_setup(tmp_path, runtime, ledger, monkeypatch)
+    ends = []
+    class StoredOutcomes(FakeOutcomes):
+        def __init__(self, transport, first, last, *args, **kwargs):
+            ends.append(last)
+        def get(self, group, day, asset, h):
+            assert ends[-1] == '2026-10-20'  # the stored 1d label, not Friday's moving URL
+            return super().get(group, day, asset, h)
+    monkeypatch.setattr(scoring, 'Outcomes', StoredOutcomes)
+    result = fw.score(tmp_path, None, clock=lambda: instant('2026-10-23T20:45:00Z'), write=False)
+    assert len(result['rows']) == 2
+
+
+def test_collected_labels_remain_scoreable_offline_on_friday(tmp_path, runtime, ledger, monkeypatch):
+    import sys
+    from urllib.parse import parse_qs, urlsplit
+    from scripts.trading_lab.replay_bench import marketdata as md
+    from scripts.trading_lab.replay_bench import snapshot as sn
+    from scripts.trading_lab.replay_bench.grant import Budget, Transport
+    from scripts.trading_lab.replay_seal_forward import collect, collect_plan
+    from scripts.trading_lab.replay_seal_forward.archive import Archive
+    value, answer = sealed(), output()
+    names = sn.STOCKS + sn.ETFS
+    value.pop('snapshot_hash')
+    value['contexts']['ab']['universe'] = list(names)
+    value['contexts']['ab']['headlines'] = {s: {'items': []} for s in names}
+    value['snapshot_hash'] = sha256_canonical(value)
+    answer['analyst']['views'] = [dict(row, asset=s) for s in names for row in answer['analyst']['views']]
+    monkeypatch.setattr(sys.modules[__name__], 'output', lambda: answer)
+    monkeypatch.setattr(fw, 'snapshot', lambda *a: value)
+    client, _ = runtime
+    fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
+    parent.write_json(fw.directory(tmp_path, '2026-10-20') / 'snapshot.json.gz', value)
+    keys = tmp_path / 'synthetic.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
+    requests = []
+    def getter(url, headers):
+        requests.append(url)
+        parsed = urlsplit(url)
+        p = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        names = p['symbols'].split(',')
+        if 'trades' in parsed.path:
+            body = {'trades': {s: [{'t': p['start'], 'p': 110 if s == 'AAPL' and '19:55:00' in p['start'] else 100}]
+                               for s in names}, 'next_page_token': None}
+        elif 'crypto' in parsed.path:
+            body = {'bars': {}, 'next_page_token': None}
+        else:
+            rows = [{'t': d.session_date + 'T04:00:00Z', 'o': 100, 'h': 100, 'l': 100, 'c': 100, 'v': 1e6}
+                    for d in md.sessions('2026-09-01', '2026-10-20')]
+            body = {'bars': {s: rows for s in names}, 'next_page_token': None}
+        return json.dumps(body).encode()
+    grants = SimpleNamespace(check=lambda: None, route=lambda *a: collect.COLLECTION_GRANT,
+                             daily_limit=lambda *a: 3000)
+    def factory(*args, **kwargs):
+        return collect.Collector(*args, **kwargs, getter=getter, sleep=lambda unused: None)
+    collected = collect_plan.live_outcomes(tmp_path, grants, keys, None,
+        clock=lambda: instant('2026-10-20T20:35:00Z'), collector_factory=factory)
+    assert collected['labels'] == 30
+    archive = Archive(tmp_path, tmp_path / 'live-archive/outcome-cache/archive_index.json')
+    transport = Transport(SimpleNamespace(payload={'scope': {}}), Budget(tmp_path), archive.cache, offline=True)
+    transport.allowed_cache = archive.objects
+    result = fw.score(tmp_path, transport, clock=lambda: instant('2026-10-23T20:45:00Z'), write=False)
+    assert len(result['rows']) == 60
+    assert [r['brier'] for r in result['rows'] if r['asset'] == 'AAPL'] == pytest.approx([.09, .09])
+    assert result['trade_exclusions'] == {}
+
+
+def test_weekly_correction_preserves_original_receipt_and_is_at_most_once(tmp_path, runtime, ledger, monkeypatch):
+    scored_setup(tmp_path, runtime, ledger, monkeypatch)
+    friday = instant('2026-10-23T21:15:00Z')
+    sunday = instant('2026-10-25T17:00:00Z')
+    delivered = []
+    def send(args, **kwargs):
+        delivered.append(kwargs['input'])
+        return subprocess.CompletedProcess(args, 0, 'discord', '')
+    fw.score(tmp_path, None, clock=lambda: friday)
+    fw.weekly(tmp_path, notify='synthetic', clock=lambda: friday, runner=send)
+    receipt = tmp_path / fw.STATE_DIR / 'weekly-2026-W43.json'
+    original = receipt.read_bytes()
+    fw.score(tmp_path, None, clock=lambda: sunday, as_of=friday)
+    delivered.clear()
+    result = fw.weekly(tmp_path, notify='synthetic', clock=lambda: sunday, runner=send,
+                       correction_week='2026-W43')
+    assert result['correction'] and result['paired_rows'] == 1
+    assert delivered[0].startswith('CORRECTION — LIVE_FORWARD')
+    assert 'REGULAR_0905' in ''.join(delivered) and 'INTRADAY' in ''.join(delivered)
+    assert receipt.read_bytes() == original
+    with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
+        fw.weekly(tmp_path, notify='synthetic', clock=lambda: sunday, runner=send, correction_week='2026-W43')
+
+
 def test_scorer_checks_frozen_forward_config_first_session_and_publication(tmp_path, runtime, ledger, monkeypatch):
     # Audit item 9: forward.score enforces the freeze itself, not only the CLI.
     scored_setup(tmp_path, runtime, ledger, monkeypatch)
@@ -297,6 +389,11 @@ def test_intraday_records_completion_clock_and_requires_publication_before_30_se
         saved = parent.read_json(fw.directory(tmp_path, '2026-10-20')/'snapshot.json.gz')
         record = json.loads((fw.directory(tmp_path, '2026-10-20')/'opus.json').read_text())
         fw.check_record(tmp_path, '2026-10-20', 'opus', record, saved, json.loads(ex.FREEZE.read_text()))
+        monkeypatch.setattr(intraday, 'Outcomes', FakeOutcomes)
+        scored = fw.score(tmp_path, None, clock=lambda: instant('2026-10-20T21:00:00Z'), write=False)
+        assert scored['full_table']['ab:1d']['opus']['n'] == 0
+        assert scored['tables_by_mode']['INTRADAY']['ab:1d']['opus']['n'] == 1
+        assert all(r['decision_time'] == result['decision_time'] for r in scored['rows'])
     with pytest.raises(ReplayError, match='ALREADY_ATTEMPTED'):
         intraday.run(tmp_path, client, expected_commit='sha', grants=None, alpaca_env=None,
                      clock=lambda: at[0], ledger=ledger, sleep=sleep)
@@ -375,6 +472,10 @@ def test_legacy_forward_registry_preserves_original_binding():
         fw.configuration_for(dict(sealed,code_hash='0'*64),{})
     with pytest.raises(ReplayError,match='FORWARD_CONFIG_NOT_FROZEN'):
         fw.configuration_for(dict(sealed,spec_hash='0'*64),{})
+    protocol = fw.protocol_for(sealed, {})
+    panel = fw.OutcomePanels(None, '2026-10-20', sealed, None, protocol)
+    assert panel.crypto_entry(T) == instant('2026-10-20T13:20:00Z')
+    assert fw.crypto_entry(T) == instant('2026-10-20T13:30:00Z')
 
 
 def test_partial_news_views_are_stored_as_abstain_and_counted(tmp_path, runtime, ledger, monkeypatch):

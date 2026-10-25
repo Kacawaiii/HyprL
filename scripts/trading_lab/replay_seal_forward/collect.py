@@ -84,7 +84,8 @@ class Collector:
     """Same cache layout and URL hash as replay_bench.grant.Transport, plus a request index."""
 
     def __init__(self, grants, budget, cache_root, *, alpaca_env=None, sec_user_agent=None,
-                 getter=http_get, sleep=time.sleep, clock=now, refresh=False, refresh_news=False, before=None):
+                 getter=http_get, sleep=time.sleep, clock=now, refresh=False, refresh_news=False, before=None,
+                 budget_reserve=0):
         self.grants, self.budget, self.getter, self.sleep, self.clock = grants, budget, getter, sleep, clock
         self.cache = Path(cache_root)
         self.cache.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -97,6 +98,9 @@ class Collector:
         self.retry_missing, self.retried_keys = False, set()
         self.offline = False
         self.scoring_symbols = set()
+        if type(budget_reserve) is not int or budget_reserve < 0:
+            raise ReplayError('INVALID_COLLECTION_RESERVE')
+        self.budget_reserve = budget_reserve
 
     def _headers(self, origin):
         if origin in (md.ALPACA, PAPER):
@@ -155,6 +159,10 @@ class Collector:
         host = origin.split('//')[1]
         # Keep the older daily host ceiling as an additional bound even for collection-v1.
         limit = self.grants.daily_limit(name, origin) or (1500 if 'sec.gov' in host else 3000)
+        if origin == md.ALPACA:
+            # Input polling shares the original counter/ceiling with outcome collection.
+            # Leave room for the evening labels; never raise or reset the daily ceiling.
+            limit -= self.budget_reserve
         delay = 5
         limiter = 'sec' if origin in (SEC_WWW, SEC_DATA) else 'alpaca'
         for attempt in range(6):

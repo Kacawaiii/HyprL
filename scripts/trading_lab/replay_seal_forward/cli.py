@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sys
 
-from scripts.trading_lab.replay_bench.grant import Grant, ReplayError, Transport, now
+from scripts.trading_lab.replay_bench.grant import Grant, ReplayError, Transport, instant, now
 from scripts.trading_lab.replay_bench.storage import atomic_json, owned
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from . import audit, experiment as ex, forward, spec
@@ -71,7 +71,13 @@ def main(argv=None):
     for name in ('status', 'audit', 'freeze', 'build-inputs', 'refresh-inputs', 'seal-inputs', 'reparse-stops'):
         sub.add_parser(name)
     for name in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
-        sub.add_parser(name).add_argument('--expected-commit', required=True)
+        command = sub.add_parser(name)
+        command.add_argument('--expected-commit', required=True)
+        if name == 'forward-score':
+            command.add_argument('--as-of', type=instant)
+        if name == 'weekly':
+            command.add_argument('--correction-week')
+            command.add_argument('--score-run')
     dry = sub.add_parser('forward-dry-run')
     dry.add_argument('--expected-commit', required=True)
     dry.add_argument('--session', required=True)
@@ -137,7 +143,8 @@ def main(argv=None):
                 notify = os.environ.get('REPLAY_NOTIFY')
                 if not notify:
                     raise ReplayError('NOTIFY_EXECUTABLE_MISSING')
-                result = forward.weekly(root, notify=Path(notify))
+                result = forward.weekly(root, notify=Path(notify), correction_week=args.correction_week,
+                                        score_run=args.score_run)
             else:
                 transport = Transport(grant, budget, root / 'cache', offline=True)
                 if args.command == 'night':
@@ -154,7 +161,7 @@ def main(argv=None):
                     archive = Archive(root, index, before=now())
                     transport.cache = archive.cache
                     transport.allowed_cache = archive.objects
-                    result = forward.score(root, transport, outcome_proof=archive.proof())
+                    result = forward.score(root, transport, outcome_proof=archive.proof(), as_of=args.as_of)
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)
         if args.command in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
             progress_report(root, result)

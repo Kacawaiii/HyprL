@@ -1,4 +1,4 @@
-"""Revision 17 research execution; parent model stores are never implicitly migrated."""
+"""Revision 18 research execution; parent model stores are never implicitly migrated."""
 import json
 from pathlib import Path
 
@@ -7,10 +7,10 @@ from scripts.trading_lab.replay_bench.spec import ROOT, file_hash
 from scripts.trading_lab.replay_bench.grant import ReplayError
 
 HERE = Path(__file__).resolve().parent
-SPEC_FILE = ROOT / 'docs/artifacts/replay_duel_spec_v13.json'
-SPEC_HASH = 'e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad'
-PARENT_SPEC_HASH = 'f84067aaf85dbdd5523c9b753fb1ef640fb2f2d1b79a850ed8ee5340e65935ac'
-STATE_DIR = 'duel-v13'
+SPEC_FILE = ROOT / 'docs/artifacts/replay_duel_spec_v14.json'
+SPEC_HASH = 'f7d83cca072685e40aa8d9ab2941207e06c6f05ef06b486796c2a2be87b1bd8c'
+PARENT_SPEC_HASH = 'e2b6ac1041310241aecec603233cbbb90d5be69dd422edd5f5fa6be17020b7ad'
+STATE_DIR = 'duel-v14'
 PROVENANCE = 'APPROXIMATE_POINT_IN_TIME'
 
 
@@ -27,7 +27,7 @@ def spec():
         raise ReplayError('SCHEMA_HASH_MISMATCH')
     if sha256_canonical(ANON_ANALYST_SCHEMA) != value['anonymous_schema_sha256']:
         raise ReplayError('ANONYMOUS_SCHEMA_HASH_MISMATCH')
-    parent = json.loads((ROOT / 'docs/artifacts/replay_duel_spec_v12.json').read_text())
+    parent = json.loads((ROOT / 'docs/artifacts/replay_duel_spec_v13.json').read_text())
     if parent['canonical_sha256'] != value['supersedes']['canonical_sha256'] or parent['canonical_sha256'] != PARENT_SPEC_HASH:
         raise ReplayError('SPEC_LINEAGE_MISMATCH')
     return value

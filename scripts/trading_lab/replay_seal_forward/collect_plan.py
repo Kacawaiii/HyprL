@@ -136,7 +136,7 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
         raise ReplayError('LIVE_SNAPSHOT_ALREADY_SEALED')
     collector = collector_factory(grants, Budget(Path(root) / 'collector'), directory / 'cache',
                                   alpaca_env=alpaca_env, sec_user_agent=agent, clock=clock,
-                                  refresh_news=True, before=T)
+                                  refresh_news=True, before=T, budget_reserve=1000)
     index = directory / 'archive_index.json'
     earliest = min(T - timedelta(hours=72), md.previous_close(T))
     try:
@@ -173,7 +173,7 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
     collector = collector_factory(grants, Budget(Path(root) / 'collector'), directory / 'outcome-cache' / 'cache',
                                   alpaca_env=alpaca_env, sec_user_agent=agent, clock=clock)
     index = directory / 'outcome-cache' / 'archive_index.json'
-    last = at.date().isoformat()
+    frozen = forward.checked_freeze()
     labels = 0
     from collections import Counter
     exclusions = Counter()
@@ -181,12 +181,18 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
         for file in sorted((Path(root) / forward.STATE_DIR).glob('????-??-??/snapshot.json.gz')):
             day = file.parent.name
             sealed = parent.read_json(file)
+            check = dict(sealed)
+            if check.pop('snapshot_hash') != sha256_canonical(check):
+                raise ReplayError('FORWARD_SNAPSHOT_HASH_MISMATCH')
+            protocol = forward.protocol_for(sealed, frozen)
             plans = set()
             for family in ex.FAMILIES:
                 decision = file.parent / (family + '.json')
                 if not decision.exists():
                     continue
-                value = json.loads(decision.read_text())['output']
+                record = json.loads(decision.read_text())
+                forward.check_record(root, day, family, record, sealed, frozen)
+                value = record['output']
                 plans.update(('ab', r['asset'], int(r['horizon'][:-1])) for r in value['analyst']['views'])
                 plans.update(('cd', r['asset'], int(r['horizon'][:-1])) for r in value['news']['forecasts'])
                 plans.update(('cd', r['symbol'], r['holding_sessions']) for r in value['news']['views'])
@@ -194,26 +200,16 @@ def live_outcomes(root, grants, alpaca_env, agent, *, clock=now, collector_facto
                 continue
             collector.scoring_symbols.update(md.crypto_pair(a) if a in sn.CRYPTO else a for _, a, _ in plans)
             collector.scoring_symbols.add('SPY')
-            factory, clock_for = Outcomes, forward.decision_time
-            if sealed.get('mode') == 'INTRADAY':
-                from .intraday import Outcomes as IntradayOutcomes, clock_record
-                factory = IntradayOutcomes
-                T = instant(clock_record(root, day)['decision_time'])
-                clock_for = lambda unused: T
-            outcomes = factory(collector, day, last, spec.spec()['costs'], decision_time=clock_for,
-                               crypto_entry=forward.crypto_entry, live=True)
-            following = md.sessions(day, (instant(day + 'T00:00:00Z') + timedelta(days=21)).date().isoformat())
+            outcomes = forward.OutcomePanels(root, day, sealed, collector, protocol)
             for group, asset, h in sorted(plans):
                 crypto = asset in sn.CRYPTO
-                mature = (forward.crypto_entry(clock_for(day)) + timedelta(days=1) if crypto
-                          else following[h - 1].close_at)
+                mature = outcomes.maturity(asset, h)
                 if crypto and h != 1 or mature >= at:
                     continue
                 try:
-                    result = outcomes.get(group, day, asset, h)
+                    result, reason = outcomes.get(group, asset, h)
                     labels += result is not None
                     if result is None:
-                        reason = outcomes.exclusion_reasons.get((group, day, asset, h), 'censored_or_missing_label')
                         exclusions[reason] += 1
                 except ReplayError as error:
                     if error.code not in ('INCOMPLETE_LABEL_COVERAGE', 'MISSING_CRYPTO_MARK',
