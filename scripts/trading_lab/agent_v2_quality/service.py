@@ -45,7 +45,20 @@ def code_plans(bundle, state, at):
     if snapshot['events'] != bundle['calendar']['events']:
         raise Blocked('CALENDAR_SNAPSHOT_MISMATCH')
     settings = spec()['risk']
-    raw, _ = candidates(snapshot, instruments, [], at, {**settings, 'etf_universe': []})
+    enabled = {}
+    for rule in spec()['candidate_rules']:
+        flag = reg.get('edges', {}).get(rule, {}).get('enabled', True)
+        if type(flag) is not bool:
+            raise Blocked('RULE_ENABLED_FLAG_INVALID')
+        enabled[rule] = flag
+    # Disable before the shared core deduplicates proposals by symbol. Otherwise
+    # disabled momentum can mask an enabled hunter proposal for the same name.
+    proposal_instruments = {symbol: {**row, 'momentum_member':
+                            row['momentum_member'] and enabled['equity_momentum']}
+                            for symbol, row in instruments.items()}
+    proposal_snapshot = {**snapshot, 'hunter': {**snapshot['hunter'], 'candidates':
+                         snapshot['hunter']['candidates'] if enabled['hunter_runner'] else []}}
+    raw, _ = candidates(proposal_snapshot, proposal_instruments, [], at, {**settings, 'etf_universe': []})
     # Premarket close-based sizing is explicitly provisional, never a quote or fill.
     planning = {s: {'bid': r['bars'][-1]['c'], 'ask': r['bars'][-1]['c'],
                     'ask_size': 10**9} for s, r in instruments.items()}

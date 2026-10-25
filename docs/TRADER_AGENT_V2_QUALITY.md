@@ -16,6 +16,9 @@ rules, in their deterministic proposal order. ETF and model-discovered primary-n
 implementation or measured-edge evidence in this revision and cannot silently become candidates.
 Each enabled rule needs an operator-supplied positive after-cost expectancy, decision count and
 measurement digest. This is an attestation, not an independently verified claim of statistical edge.
+An edge with explicit boolean `enabled: false` contributes no proposals and needs no measured-edge
+fields. Disable filtering precedes symbol deduplication, so disabled momentum cannot mask hunter.
+Omitting `enabled` retains the existing evidence requirement; non-boolean flags are rejected.
 
 Daily bars retain Alpaca's wire shape and original timestamps, and are stamped with receipt time
 after the full response. The previous completed session must be present; pagination must complete.
