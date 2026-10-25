@@ -200,3 +200,60 @@ UTC. Refresh and rebuild prospectively, then run `produce` in the final fresh
 runtime and bind its actual receipt hash to the operator's proof. No future clock,
 relabelled source receipt, inferred earnings date or copied journal is admissible.
 The measured-edge requirement and operator-only activation remain in force.
+
+## Explicit Monday activation exception
+
+The operator's 2026-10-25 exception permits installation and activation of **new quality-shadow
+units only**. It does not cover revision-one/v1 units, broker paths, research, replay or any account.
+The opt-in `scripts.trading_lab.agent_v2_quality.monday` entry point is limited to the first
+2026-10-26 cycle. Its private settings pin the reviewed SHA, grants, metadata seed, historical hunter
+evidence, local check receipts and staging result. Existing units are refused rather than replaced.
+No specification, preregistration, old runtime or historical evidence is migrated.
+
+The separate `hyprl-agent-v2-quality-monday-activate.timer` has one calendar date, 2026-10-26
+10:15 UTC, and `Persistent=false`. Its service has a 65-minute limit; the script checks a stricter
+11:25 UTC cutoff between stages. Failure halts the pass, preserves reservations and reports the
+stage and exact error through the authorized `hyprl-notify alertes` interface. Any partial timer
+installation is disabled and removed. All new services retain resource limits and an explicit PATH
+for the installed model CLIs; no CLI inference is dispatched during activation.
+
+The one-shot performs these operations in order:
+
+1. Require the pinned clean checkout, passing local checks on the exact SHA, and completed staging.
+   Fetch the exact SHA's public GitHub Actions API response with GET only, preserve bytes/digest and
+   receipt, and require the latest `sources-ci` push run for this repository to have completed with
+   `success`. Other SHAs and earlier successful attempts cannot qualify a failed/latest run.
+2. Read the already scheduled Sunday-evening radar output under the shadow grant. Check its true
+   cutoff both now and at Monday 12:45 UTC; retain PARTIAL/READY and original story timestamps.
+   This refreshes the input projection without invoking or changing the radar job.
+3. Refresh the granted Nasdaq/Fed/BLS calendar once, without redirects or retries. Reserve each
+   request durably before dispatch; space requests by at least 1.05 seconds. The fixed horizon
+   requires eight Nasdaq dates and five macro pages (13 GETs), including both monthly BLS pages,
+   through November 2 at 21:00 UTC. An unrecognized response or missing date fails closed.
+4. Rebuild the revision-three scope from the frozen membership in the pinned metadata seed,
+   previous-session raw IEX histories and current native hunter. Preserve the top-60/no-backfill
+   selection policy even though momentum proposals are disabled. Obtain submissions only for
+   source-dated names, preserve the shared SEC budget/spacing, and exclude unavailable metadata or
+   invalid histories. Retain hunter's historical 253-trade/+0.418 R evidence and its horizon caveat.
+5. Produce a fresh snapshot, run the pure hunter-only planner, render and verify all eight units,
+   write the real activation proof and hashes, activate a fresh shadow journal, then enable/check
+   the four quality timers. The actual 12:45 cycle must produce another fresh snapshot; activation
+   never retimestamps an earlier snapshot to claim future freshness.
+
+Calendar exclusions can legitimately produce zero plans, particularly because source-dated
+registry admission and five-session earnings exclusions overlap. A successful activation or empty
+cycle proves neither model interoperability nor a positive forward edge. Future calendar/radar
+refreshes after this first Monday are not installed by this one-shot; later stale inputs fail closed.
+
+The same orchestration can be exercised completely offline, including real systemd unit syntax
+verification, on a **fresh** staging directory:
+
+```sh
+python -m scripts.trading_lab.agent_v2_quality.monday --staging <fresh-staging-directory>
+```
+
+Only the time, provider/grant boundary, systemctl calls and notifier are substituted. Synthetic
+receipts, notification and installed-unit directory are labelled and isolated; no real model,
+provider, systemd timer or Discord call occurs. Production rejects staging check receipts. Tests
+also exercise deadline, stale radar, failed source response, pinned-file mutation, exact-SHA CI
+rejection and rollback after a partial enable failure.

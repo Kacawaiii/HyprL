@@ -1,5 +1,6 @@
 """Reviewable user units and grant-bound activation, never an automatic installer."""
 from pathlib import Path
+import os
 import sys
 
 from scripts.trading_lab.agent_v2.deploy import deploy_window, quote
@@ -44,7 +45,8 @@ def render(repo, python, runtime, config):
         argv = [python, '-m', 'scripts.trading_lab.agent_v2_quality.cli', action,
                 '--runtime', runtime, '--config', config]
         output[stem + '.service'] = ('[Unit]\nDescription=HyprL v2 quality shadow ' + action + '\n'
-            '[Service]\nType=oneshot\nWorkingDirectory=' + str(repo) + '\nExecStart=' +
+            '[Service]\nType=oneshot\nEnvironment=' + quote('PATH=' + os.environ['PATH']) +
+            '\nWorkingDirectory=' + str(repo) + '\nExecStart=' +
             ' '.join(quote(a) for a in argv) + '\nUMask=0077\nNice=15\nMemoryMax=350M\nCPUQuota=35%\n'
             'NoNewPrivileges=yes\nTimeoutStartSec=15min\nKillMode=control-group\n')
         output[stem + '.timer'] = ('[Unit]\nDescription=HyprL v2 quality shadow ' + action + '\n'
