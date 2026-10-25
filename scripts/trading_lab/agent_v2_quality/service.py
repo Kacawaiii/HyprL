@@ -1,5 +1,5 @@
 """Premarket plans, independent judgments, later regular-session simulated fills."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 from hashlib import sha256
 import math
 
@@ -58,6 +58,14 @@ def code_plans(bundle, state, at):
                             for symbol, row in instruments.items()}
     proposal_snapshot = {**snapshot, 'hunter': {**snapshot['hunter'], 'candidates':
                          snapshot['hunter']['candidates'] if enabled['hunter_runner'] else []}}
+    # Native hunter-live civil dates are YYYYMMDD. Adapt only the core's view;
+    # source inputs, snapshot fields and their evidence hashes remain native.
+    native_day = proposal_snapshot['hunter']['asof']
+    if len(native_day) == 8 and native_day.isascii() and native_day.isdigit():
+        try:
+            proposal_snapshot['hunter']['asof'] = datetime.strptime(native_day, '%Y%m%d').date().isoformat()
+        except ValueError:
+            raise Blocked('HUNTER_ASOF_INVALID') from None
     raw, _ = candidates(proposal_snapshot, proposal_instruments, [], at, {**settings, 'etf_universe': []})
     # Premarket close-based sizing is explicitly provisional, never a quote or fill.
     planning = {s: {'bid': r['bars'][-1]['c'], 'ask': r['bars'][-1]['c'],

@@ -56,7 +56,7 @@ def bundle(at):
            'covered_macro': ['CPI', 'FOMC', 'NFP'],
            'coverage_start': iso(at - timedelta(days=1)), 'coverage_end': iso(at + timedelta(days=110)),
            'covered_symbols': [r['symbol'] for r in instruments], 'events': []}
-    hunter = {'asof': instruments[0]['bars'][-1]['t'][:10], 'generated': iso(at),
+    hunter = {'asof': instruments[0]['bars'][-1]['t'][:10].replace('-', ''), 'generated': iso(at),
               'candidates': [{'symbol': 'HUNT', 'setup': 'S4+F3', 'two_layer': True,
                               'rev_accel_pts': 15, 'signal_close': history[-1]['c']}]}
     snapshot = {'schema': 'agent-v2-quality-snapshot-v3', 'mode': 'SYNTHETIC', 'at': iso(at),

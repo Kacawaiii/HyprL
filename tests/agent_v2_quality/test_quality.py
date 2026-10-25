@@ -83,11 +83,14 @@ def test_native_hunter_and_momentum_only(journal, data, clock):
 
 def test_disabled_unmeasured_momentum_cannot_mask_hunter(journal, data, clock):
     data['registry']['edges']['equity_momentum'] = {'enabled': False}
+    # Real hunter-live uses the compact civil date; preserve it in the bundle.
+    data['snapshot']['hunter']['asof'] = '20261022'
     # The same name qualifies for both rules; disabled momentum must not take
     # the shared core's first-proposal priority away from the enabled hunter.
     data['snapshot']['hunter']['candidates'][0]['symbol'] = 'ACME'
     plans = code_plans(data, book(journal), clock())
     assert [(p['symbol'], p['playbook']) for p in plans] == [('ACME', 'hunter_runner')]
+    assert data['snapshot']['hunter']['asof'] == '20261022'
     data['registry']['edges']['hunter_runner']['net_expectancy_after_costs'] = None
     with pytest.raises(Blocked, match='MEASURED_EDGE_EVIDENCE_REQUIRED'):
         code_plans(data, book(journal), clock())

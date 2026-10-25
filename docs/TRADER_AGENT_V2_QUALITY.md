@@ -105,6 +105,8 @@ The private configuration is supplied by the operator, never committed:
   The code does not fetch an unauthorized calendar endpoint or manufacture future earnings dates.
 - Hunter: existing `{asof, generated, candidates}` envelope, including `two_layer`, `setup`,
   `rev_accel_pts`, and `signal_close`. The adapter does not change its source shape.
+  The native `asof` civil date (`YYYYMMDD`) is converted only in the shared planner's view;
+  the source and snapshot retain the native value and hashes.
 - Radar: live `news-radar-v3` READY/PARTIAL with causal cutoff and story receipt/publication times.
   Only related stock headlines/URLs/timestamps are passed to models. Radar price panels, crypto
   events and upstream model judgments are excluded. Incomplete upstream status stays visible.
