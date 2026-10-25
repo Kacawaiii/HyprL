@@ -1,0 +1,45 @@
+{
+  "alpha": 0.05,
+  "cost_stress_roundtrip": 0.004,
+  "development": [
+    "2025-01-01",
+    "2026-06-30"
+  ],
+  "draws": 10000,
+  "family_size_floor": 8,
+  "historical_search": "unknown; adjusted inference applies to this registered family only, never to all historical variants",
+  "luck_interpretation": "null-tail probability is not P(chance caused the strategy); no posterior probability is claimed",
+  "min_dev_sessions": 40,
+  "min_shadow_pairs": 40,
+  "mode": "OFFLINE_RESEARCH_ONLY",
+  "planning_base_rate": 0.5,
+  "planning_edge": 0.05,
+  "power": 0.8,
+  "promotion": "NO_AUTOMATIC_PROMOTION; once-only validation is already contaminated; new paired SHADOW A/B required; >=40 mature independent session clusters, both arms, precommitted rule and multiplicity-adjusted p<=0.05, positive net effect under costs and stress, no risk-rule regression; operator reviews",
+  "protected": {
+    "end": "2026-11-30",
+    "products": [
+      "BTC-USD",
+      "ETH-USD",
+      "BTC/USD",
+      "ETH/USD",
+      "BTCUSD",
+      "ETHUSD"
+    ],
+    "start": "2026-09-01"
+  },
+  "public_evidence": "digests_counts_only",
+  "random_seed": 1016,
+  "revision": 1,
+  "schema": "research-loop-spec-v1",
+  "validation": [
+    "2026-07-01",
+    "2026-09-30"
+  ],
+  "validation_status": {
+    "2026-07": "TOUCHED_REPLAY_AND_LESSON_GENERATION",
+    "2026-08": "TOUCHED_REPLAY_AND_LESSON_GENERATION",
+    "2026-09": "TOUCHED_BY_EXISTING_REPLAY_NOT_CLEAN"
+  },
+  "weekly_utc": "Saturday 21:00; manual runner until operator installs a research-only schedule"
+}

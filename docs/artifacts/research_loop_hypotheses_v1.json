@@ -1,0 +1,145 @@
+{
+  "all_prior_variants": "UNKNOWN; no global optimality claim",
+  "family": "iteration-1",
+  "family_size": 8,
+  "first_trials": [
+    "H01",
+    "H02",
+    "H03"
+  ],
+  "hypotheses": [
+    {
+      "change": "Skip entries when an earnings release scheduled as of T falls in (entry, entry+24h].",
+      "id": "H01",
+      "lesson": "earnings_gap",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "First three: filter only, cash for skipped trades.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "earnings_at",
+        "earnings_known_at"
+      ],
+      "rule": "earnings_blackout",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Keep only a primary 8-K or 10-Q with publication and recorded availability <= T, age <=24h.",
+      "id": "H02",
+      "lesson": "late_news",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "First three: filter only, cash for skipped trades.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "document_form",
+        "document_published_at",
+        "document_available_at"
+      ],
+      "rule": "fresh_primary",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Keep market cap USD 300m..10bn as recorded at T and planned holding 2..10 calendar days.",
+      "id": "H03",
+      "lesson": "scope_mismatch",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "First three: filter only; do not relabel a different horizon.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "market_cap_usd",
+        "market_cap_known_at",
+        "planned_holding_days"
+      ],
+      "rule": "reader_universe",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Cap each positive proposed portfolio risk at 0.3% equity; scale both realized net outcome and recorded roundtrip costs proportionally.",
+      "id": "H04",
+      "lesson": "bad_sizing",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "Requires risk and execution evidence; no stop/fill invention.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "risk_fraction",
+        "risk_known_at",
+        "equity_at_T"
+      ],
+      "rule": "risk_cap",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Skip if the signed stock move from primary publication through T is >=2% and the event was available >=1 trading session before T.",
+      "id": "H05",
+      "lesson": "priced_in_unproven",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "Measured prior reaction is a proxy, never proof that news was priced in.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "pre_T_signed_move",
+        "event_age_sessions",
+        "reaction_known_at"
+      ],
+      "rule": "prior_reaction",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Shadow-only take an originally abstained long when frozen p_up>=0.60, primary age<=24h, cap 300m..10bn, and net all-cost opportunity label exists.",
+      "id": "H06",
+      "lesson": "model_abstained_wrongly",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "Counterfactual opportunity, never booked realized profit.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "p_up",
+        "document_available_at",
+        "market_cap_usd",
+        "opportunity_net_return"
+      ],
+      "rule": "abstention_audit",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Cap aggregate same-sector proposed risk at 0.9% equity, allocating in original decision timestamp then original id order.",
+      "id": "H07",
+      "lesson": "sector_move",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "Requires whole simultaneous portfolio; no outcome-based priority.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "sector",
+        "risk_fraction",
+        "portfolio_risk_at_T",
+        "sector_known_at"
+      ],
+      "rule": "sector_cap",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    },
+    {
+      "change": "Shadow-only long 2..10 calendar days after earnings if a primary release available at T records standardized surprise>=0.05 and pre-T day return >0.",
+      "id": "H08",
+      "lesson": "earnings_gap",
+      "metric": "mean paired change in net portfolio-return contribution per original eligible decision; skipped entry = cash zero; group by entry session for inference",
+      "note": "Requires unrevised point-in-time earnings and pre-T bars; no next-day megacap search.",
+      "pass_bar": "at least 40 mature development session clusters; positive paired mean after recorded costs AND extra 40bp roundtrip stress; one-sided session sign-flip p Bonferroni-adjusted over max(8, all reserved variants) <=0.05; full at-T features and labels required",
+      "required_fields": [
+        "surprise",
+        "surprise_known_at",
+        "earnings_at",
+        "pre_T_day_return"
+      ],
+      "rule": "pead",
+      "state": "PREREGISTERED_UNTESTED",
+      "variant_count": 1
+    }
+  ],
+  "registered_at": "2026-10-25T18:00:00Z",
+  "registration_clock_note": "actual Git commit time is authoritative; no numeric outcomes were inspected for selecting these thresholds",
+  "schema": "research-loop-hypotheses-v1"
+}
