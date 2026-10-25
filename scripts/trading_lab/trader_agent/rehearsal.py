@@ -830,6 +830,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.early and args.slot != 'am':
         parser.error('early rehearsal is for the morning slot')
+    from .pm_retirement_spec import active
+    if args.slot == 'pm' and active(now()):
+        print(json.dumps({'state': 'RETIRED', 'slot': 'pm'}))
+        return 0
     state = MonitorState(args.monitor_runtime)
     notify = telegram(args.telegram_env)
     if args.failure_hook:

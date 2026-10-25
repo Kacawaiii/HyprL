@@ -42,8 +42,9 @@ def health(ledger):
             state = "FAILED_DAILY_RUN"
         slot_states['am'] = state
         from .slots import deadline as pm_deadline
-        pm_state = 'NOT_SCHEDULED'
-        if ledger.grant.pm_amendment and at >= instant(ledger.grant.pm_amendment['effective_from']):
+        from .pm_retirement_spec import active, expected
+        pm_state = 'RETIRED' if active(at) else 'NOT_SCHEDULED'
+        if expected(ledger.grant, at):
             pm_today = [r for r in all_today if slot_of(r) == 'pm']
             if any(r['status'] in {'COMPLETE', 'DEGRADED'} for r in pm_today):
                 pm_state = 'HEALTHY'
@@ -112,6 +113,12 @@ def main(argv=None):
     if args.defer_synthetic_labels and (not args.dry_run or args.action != 'run'):
         parser.error('--defer-synthetic-labels requires run --dry-run')
     grant = Authorization.load(args.authorization)
+    if args.slot == 'pm' and args.action in {
+            'run', 'news', 'recover', 'catchup', 'catchup-after-hours', 'gpt-preflight', 'paper-execute'}:
+        from .pm_retirement_spec import active
+        if active(instant(args.synthetic_time) if args.dry_run else now()):
+            print(json.dumps({'state': 'RETIRED', 'slot': 'pm'}))
+            return 0
     if args.action.startswith('paper-'):
         if not args.paper_authorization:
             parser.error('--paper-authorization is required for paper actions')

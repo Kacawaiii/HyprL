@@ -1,0 +1,17 @@
+{
+  "schema": "trader-pm-slot-spec-v3",
+  "revision": 3,
+  "registered_on": "2026-10-25",
+  "effective_from": "2026-10-26T00:00:00Z",
+  "previous_spec_hash": "f2e315f6040215683b56346c71b02d315283a4d31eb767f10c2ed7f07c5fc4fb",
+  "operator_decision_hash": "569b16014a1f33dff820a84cbb1a2105ddde01501733a652611112a756125730",
+  "lifecycle": {
+    "am": "ACTIVE",
+    "pm": "RETIRED"
+  },
+  "dispatch": "Reject new PM reservations, base/news runs, rehearsals, recoveries and paper entries at or after effective_from, including preflight. Historical runs before retirement retain their original authorization and registration checks.",
+  "monitoring": "Remove only daily PM-run expectations and PM rehearsal retries. Keep AM gates and every order, lot, exit, reconciliation and label obligation, including historical PM predictions and intents.",
+  "sentinel": "Ignore only the five exact PM-only services and four exact PM-only timers after retirement. Ignore MISSING_PM_RUN and FAILED_PM_RUN only when their alert timestamp is at or after effective_from; malformed or historical alerts remain actionable. Keep every other failure visible.",
+  "preserved": "Original grants and identities, v1/v2 PM specs, preregistrations, journal bindings, registrations, collisions, budgets, historical scoring and lot exit horizons. No store rebind or implicit migration.",
+  "canonical_sha256": "911289a7423b82a3e48965d15e034bc915ca1c414dd33add48db50b362cf5fcc"
+}

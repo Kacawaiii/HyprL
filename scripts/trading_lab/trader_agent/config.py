@@ -105,6 +105,16 @@ class Authorization:
         return amended.load_weekend(Path(path).parent)
 
     def load_weekend(self, folder):
+<<<<<<< HEAD
+=======
+        from .pm_retirement_spec import DECISION_NAME as pm_retirement_name, check_decision
+        if (folder / pm_retirement_name).exists():
+            check_decision(folder / pm_retirement_name)
+        from .work_budget import APPROVAL_NAME
+        work_approval = folder / APPROVAL_NAME
+        if work_approval.exists():
+            self = replace(self, work_budget_approval=strict_json(work_approval.read_text()))
+>>>>>>> 5cd51a3 (feat(trader): retire PM dispatch and expectations from Oct 26)
         from .retirement_spec import DECISION_NAME as retirement_name, DECISION_HASH as retirement_hash
         path = folder / retirement_name
         if path.exists():
@@ -133,6 +143,9 @@ class Authorization:
         self.check(at)
         if slot == 'am':
             return
+        from .pm_retirement_spec import active
+        if slot == 'pm' and active(at):
+            raise TraderError('PM_SLOT_RETIRED')
         if slot != 'pm' or not self.pm_amendment or not self.pm_identity:
             raise TraderError('PM_SLOT_NOT_AUTHORIZED')
         start = self.pm_amendment['granted_at'] if preflight else self.pm_amendment['effective_from']
