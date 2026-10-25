@@ -1,0 +1,199 @@
+{
+  "analysis_commit": "4a4a7ba54940df31175a7e043c2b29173f0b7f4d",
+  "analysis_method_sha256": "0e9136481e3352408450a42eccdd268f82be616a7b87f51ff110842aa1415342",
+  "book_intent_digest": "c427555589845e6544c8005749a02823f0cd6009a40e5c3f0a03b97b16e762d9",
+  "closed_by_strategy": {
+    "v1-paper": 36,
+    "v1-shadow:trader:analyst_claude:1d": 946,
+    "v1-shadow:trader:analyst_claude:5d": 676,
+    "v1-shadow:trader:analyst_gpt:1d": 521,
+    "v1-shadow:trader:analyst_gpt:5d": 525,
+    "v1-shadow:trader:consensus:1d": 555,
+    "v1-shadow:trader:consensus:5d": 558,
+    "v1-shadow:trader:reviewer_claude:1d": 946,
+    "v1-shadow:trader:reviewer_claude:5d": 676,
+    "v1-shadow:trader:reviewer_gpt:1d": 521,
+    "v1-shadow:trader:reviewer_gpt:5d": 525
+  },
+  "cohort_counts": {
+    "duel:gpt:INTRADAY:ab:1d": {
+      "n": 30,
+      "sessions": 1
+    },
+    "duel:gpt:INTRADAY:cd:2d": {
+      "n": 23,
+      "sessions": 1
+    },
+    "duel:gpt:REGULAR_0905:ab:1d": {
+      "n": 62,
+      "sessions": 2
+    },
+    "duel:gpt:REGULAR_0905:cd:2d": {
+      "n": 13,
+      "sessions": 1
+    },
+    "duel:opus:INTRADAY:ab:1d": {
+      "n": 30,
+      "sessions": 1
+    },
+    "duel:opus:INTRADAY:cd:2d": {
+      "n": 23,
+      "sessions": 1
+    },
+    "duel:opus:REGULAR_0905:ab:1d": {
+      "n": 62,
+      "sessions": 2
+    },
+    "duel:opus:REGULAR_0905:cd:2d": {
+      "n": 13,
+      "sessions": 1
+    },
+    "replay:gpt:a_v1_as_live:1d:1d": {
+      "n": 1214,
+      "sessions": 43
+    },
+    "replay:gpt:audit_anonymized:1d:1d": {
+      "n": 312,
+      "sessions": 11
+    },
+    "replay:gpt:b_v1_no_reviewer:1d:1d": {
+      "n": 1214,
+      "sessions": 43
+    },
+    "replay:opus:a_v1_as_live:1d:1d": {
+      "n": 1214,
+      "sessions": 43
+    },
+    "replay:opus:audit_anonymized:1d:1d": {
+      "n": 312,
+      "sessions": 11
+    },
+    "replay:opus:b_v1_no_reviewer:1d:1d": {
+      "n": 1214,
+      "sessions": 43
+    },
+    "v1-shadow:trader:analyst_claude:1d:SPY_relative": {
+      "n": 770,
+      "sessions": 11
+    },
+    "v1-shadow:trader:analyst_claude:1d:raw": {
+      "n": 176,
+      "sessions": 14
+    },
+    "v1-shadow:trader:analyst_claude:5d:SPY_relative": {
+      "n": 534,
+      "sessions": 8
+    },
+    "v1-shadow:trader:analyst_claude:5d:raw": {
+      "n": 142,
+      "sessions": 11
+    },
+    "v1-shadow:trader:analyst_gpt:1d:SPY_relative": {
+      "n": 442,
+      "sessions": 6
+    },
+    "v1-shadow:trader:analyst_gpt:1d:raw": {
+      "n": 79,
+      "sessions": 7
+    },
+    "v1-shadow:trader:analyst_gpt:5d:SPY_relative": {
+      "n": 446,
+      "sessions": 6
+    },
+    "v1-shadow:trader:analyst_gpt:5d:raw": {
+      "n": 79,
+      "sessions": 7
+    },
+    "v1-shadow:trader:consensus:1d:SPY_relative": {
+      "n": 472,
+      "sessions": 7
+    },
+    "v1-shadow:trader:consensus:1d:raw": {
+      "n": 83,
+      "sessions": 8
+    },
+    "v1-shadow:trader:consensus:5d:SPY_relative": {
+      "n": 474,
+      "sessions": 7
+    },
+    "v1-shadow:trader:consensus:5d:raw": {
+      "n": 84,
+      "sessions": 8
+    },
+    "v1-shadow:trader:reviewer_claude:1d:SPY_relative": {
+      "n": 770,
+      "sessions": 11
+    },
+    "v1-shadow:trader:reviewer_claude:1d:raw": {
+      "n": 176,
+      "sessions": 14
+    },
+    "v1-shadow:trader:reviewer_claude:5d:SPY_relative": {
+      "n": 534,
+      "sessions": 8
+    },
+    "v1-shadow:trader:reviewer_claude:5d:raw": {
+      "n": 142,
+      "sessions": 11
+    },
+    "v1-shadow:trader:reviewer_gpt:1d:SPY_relative": {
+      "n": 442,
+      "sessions": 6
+    },
+    "v1-shadow:trader:reviewer_gpt:1d:raw": {
+      "n": 79,
+      "sessions": 7
+    },
+    "v1-shadow:trader:reviewer_gpt:5d:SPY_relative": {
+      "n": 446,
+      "sessions": 6
+    },
+    "v1-shadow:trader:reviewer_gpt:5d:raw": {
+      "n": 79,
+      "sessions": 7
+    }
+  },
+  "counts": {
+    "attempts_this_completed_run": 3,
+    "blocked_attempts_total": 6,
+    "book_proven_closed_fills": 0,
+    "brier_null_draws_per_cohort": 10000,
+    "closed_shadow_labels": 6449,
+    "completed_development_tests": 0,
+    "forecast_cohorts": 34,
+    "forward_export_decision_slots": 244,
+    "forward_forecast_rows": 256,
+    "hypotheses_registered": 8,
+    "implemented_hypotheses": 3,
+    "promotions": 0,
+    "quarantined": 0,
+    "real_random_entry_draws": 0,
+    "replay_forecast_rows": 5480,
+    "reserved_attempts_total": 6,
+    "unique_closed_broker_lots": 36,
+    "v2_closed": 0
+  },
+  "discord_text_sha256": "3e52d05dc76129ae77c79f7ed3a54656827ffe01b9661be6632734cfc839e147",
+  "final_implementation_digest": "689407b9f598ed60c757c0645944d11fe5c504cde70832d2df2a95556111404b",
+  "forecast_luck_digest": "f4893a82a04dc150d1d8568ee1336dbffa62a2c35f92abc79314a5904d6569fb",
+  "forward_export_digest": "148b829555f189d7c57bbbd211fda27023c9879c4c5c94ebe6b99cec492d463a",
+  "hardening_commit": "4bc3b21b2114bdf1169ab482568af5c5b1f46dbf",
+  "method_sha256": "9a66702ee183f1d9e59ce0c1553cbd1967cbb7f88a3f1824873924938c36ab30",
+  "postmortem_digest": "2a8c037950f4e41e8ff46037b2d29eb43e1b7eebf8bdc3144d96e5ae1ed4a772",
+  "preregistration_commit": "ad032628d7b2c002f5f1368a0f8a497b127ddfbb",
+  "prior_trial_references": [
+    {
+      "count": 3,
+      "event": "PRIOR_COUNT_REFERENCE",
+      "ledger_tip": "5e6575b919b27c56a0a5c82eaebd2d5df7be8c32ec2fc4e47ea8941b1bb4559f",
+      "use": "COUNTS_ONLY_NO_RESULT_REUSE_OR_MIGRATION"
+    }
+  ],
+  "registry_hash": "1b7cc3255f79114f6fa5fd27d52b6f3117cb9732a206fcccd95fdd495972c2a0",
+  "replay_export_digest": "1a07c15fb731e2a61ae85b8dc12cb5406a8b882c7b7e15c8cc048c6b332611e7",
+  "schema": "research-loop-iteration-1-evidence-v1",
+  "spec_hash": "5950f6eab4257386015d7810601864131d67898dd975c32df3b65555ef02dedd",
+  "status": "BLOCKED_PARTIAL_OFFLINE_RESEARCH",
+  "trials_digest": "64a897a50b093e42b019db1fa126b26f9ce044bfba0cd62ab1d118220fc01bf2",
+  "v2_ledger_digest": "2b62dc4863b1a0131fed9c6a4361ec6a943e91c18f49cf3bd173dc5ce02e2b87"
+}
