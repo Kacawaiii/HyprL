@@ -115,6 +115,40 @@ class TrialLedger:
         return [json.loads(body) for (body,) in self.db.execute('SELECT body FROM events ORDER BY seq')
                 if json.loads(body)['event'] == 'RESERVED']
 
+    def prior_references(self):
+        return [json.loads(body) for (body,) in self.db.execute('SELECT body FROM events ORDER BY seq')
+                if json.loads(body)['event'] == 'PRIOR_COUNT_REFERENCE']
+
+    def trial_count(self):
+        return len(self.reservations()) + sum(r['count'] for r in self.prior_references())
+
+    def include_prior_count(self, path):
+        """Explicit read-only count reference; never reuse/migrate an old analysis."""
+        db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+        try:
+            db.execute('PRAGMA query_only=ON')
+            rows = db.execute('SELECT * FROM events ORDER BY seq').fetchall()
+        finally:
+            db.close()
+        previous, count = '0' * 64, 0
+        for expected, (seq, raw, prev, hashed) in enumerate(rows, 1):
+            body = json.loads(raw)
+            if seq != expected or previous != prev or digest({'seq': seq, 'body': body, 'previous': prev}) != hashed:
+                raise ValueError('PRIOR_COUNT_CHAIN_CORRUPT')
+            if seq == 1 and (body.get('event') != 'BINDING' or body.get('spec_hash') != SPEC_HASH
+                             or body.get('registry_hash') != REGISTRY_HASH):
+                raise ValueError('PRIOR_COUNT_SPEC_OR_REGISTRY_MISMATCH')
+            count += int(body['event'] == 'RESERVED')
+            if body['event'] == 'PRIOR_COUNT_REFERENCE':
+                count += body['count']
+            previous = hashed
+        if not rows:
+            raise ValueError('PRIOR_COUNT_EMPTY')
+        if any(r['ledger_tip'] == previous for r in self.prior_references()):
+            return
+        self.append({'event': 'PRIOR_COUNT_REFERENCE', 'ledger_tip': previous, 'count': count,
+                     'use': 'COUNTS_ONLY_NO_RESULT_REUSE_OR_MIGRATION'})
+
     def reserve(self, hypothesis, data_hash):
         if hypothesis not in REGISTRY['first_trials']:
             raise ValueError('RULE_NOT_IMPLEMENTED')
@@ -166,12 +200,12 @@ def evaluate_trial(rows, hypothesis, ledger):
         reservation = ledger.reserve(hypothesis, digest({'rejected': reject}))
         result = {'hypothesis': hypothesis, 'reservation': reservation, 'status': 'BLOCKED',
                   'reason': reject, 'metric': None, 'stress': None, 'passes_development': False,
-                  'promotion': 'NONE', 'family_size': max(SPEC['family_size_floor'], len(ledger.reservations()))}
+                  'promotion': 'NONE', 'family_size': max(SPEC['family_size_floor'], ledger.trial_count())}
         ledger.append({'event': 'RESULT', 'result': result})
         return result
     data_hash = digest(rows)
     reservation = ledger.reserve(hypothesis, data_hash)
-    family = max(SPEC['family_size_floor'], len(ledger.reservations()))
+    family = max(SPEC['family_size_floor'], ledger.trial_count())
     samples, stress, reasons = [], [], Counter()
     eligible = 0
     for row in rows:

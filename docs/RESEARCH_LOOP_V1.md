@@ -17,6 +17,10 @@ were unchanged. A rule change requires a new specification revision and new
 bindings. Old trial databases are rejected, with no implicit migration. A ledger
 also binds the implementation hash, so an analysis-code change cannot silently
 reuse a previous ledger.
+For a corrected implementation, `--prior-trial-ledger` explicitly carries only
+hash-verified reservation counts into a **new** ledger. It checks the original
+spec/registry bindings, keeps the old database read-only, and reuses no old result.
+All repeated attempts still count. This count-only reference is not a migration.
 
 The first three rules are fixed filters: the next-24-hour earnings blackout,
 fresh primary 8-K/10-Q, and a USD 300m–10bn universe with a planned 2–10 day hold.

@@ -194,13 +194,31 @@ def test_cumulative_broker_exit_is_counted_once_per_lot(tmp_path):
             'prediction_hash': 'a' * 64, 'symbol': 'SYNTH'}
     events = [dict(base, purpose='entry', state='FILLED', entry_at='2025-01-02T14:30:00Z'),
               dict(base, purpose='exit', state='CLOSED', at='2025-01-03T21:01:00Z',
-                   exit_at='2025-01-03T21:00:00Z', raw_return=.01, lot_pnl_before_broker_fees=10)]
+                   exit_at='2025-01-03T21:00:00Z', raw_return='0.01', lot_pnl_before_broker_fees='10')]
     for r in events + events[-1:]:
         db.execute('INSERT INTO records(payload) VALUES(?)', (json.dumps(r),))
     db.commit(); db.close()
     rows, issues = v1_paper(path, [decision()])
     assert len(rows) == 1 and not issues
     assert rows[0]['outcome']['net_contribution'] is None
+    assert rows[0]['outcome']['gross_return'] == .01
+
+
+def test_prior_attempts_are_counted_without_migrating_the_old_ledger(tmp_path):
+    old = TrialLedger(tmp_path / 'old.sqlite')
+    evaluate_trial([], 'H01', old)
+    old.db.close()
+    before = (tmp_path / 'old.sqlite').read_bytes()
+    new = TrialLedger(tmp_path / 'new.sqlite')
+    try:
+        new.include_prior_count(tmp_path / 'old.sqlite')
+        new.include_prior_count(tmp_path / 'old.sqlite')
+        assert new.trial_count() == 1  # same reference is not counted twice
+        evaluate_trial([], 'H02', new)
+        assert new.trial_count() == 2
+        assert (tmp_path / 'old.sqlite').read_bytes() == before
+    finally:
+        new.db.close()
 
 
 def test_forward_promotion_needs_40_distinct_sessions_and_stress_survival():
@@ -264,3 +282,52 @@ def test_v1_crypto_uses_original_raw_target_with_null_spy_label(tmp_path):
     row, = v1_predictions(path)
     assert row['target'] == 'raw' and row['outcome']['y'] == 1
     assert row['outcome']['net_contribution'] == pytest.approx(-.0006)
+
+
+def test_manual_weekly_runner_finishes_blocked_without_fabricating_random_draws(tmp_path, capsys):
+    """Small real-shaped sources exercise adapters through the final French render."""
+    import hashlib
+    from types import SimpleNamespace
+    from scripts.trading_lab.research_loop.cli import run
+    p = {'synthetic': False, 'product': 'SYNTH', 'decision_at': '2025-01-02T12:00:00Z',
+         'model_id': 'synthetic-reader', 'proposed_position': {'weight': .05},
+         'snapshot_hash': 's', 'features_hash': 'f',
+         'signal': {'label_definition': {'entry_at': '2025-01-02T14:30:00Z', 'exit_at': '2025-01-03T21:00:00Z',
+                                         'horizon': '1d', 'targets': ['raw', 'SPY_relative']},
+                    'view': {'view': 'UP', 'p_outperform': .6}}}
+    label = {'prediction_hash': 'p', 'product': 'SYNTH', 'available_at': '2025-01-03T21:05:00Z',
+             'value': {'net_unit_pnl': .009, 'raw_return': .01, 'spy_relative_return': .005, 'cost_roundtrip': .001}}
+    v1 = tmp_path / 'v1.sqlite'
+    with sqlite3.connect(v1) as db:
+        db.execute('CREATE TABLE records(identity TEXT,kind TEXT,payload TEXT)')
+        for identity, kind, payload in [('p', 'prediction', p), ('l', 'label', label)]:
+            db.execute('INSERT INTO records VALUES(?,?,?)', (identity, kind, json.dumps(payload)))
+    paper = tmp_path / 'paper.sqlite'
+    common = {'account': 'ia_actions', 'event': 'trade_outcome', 'lot_id': 'lot', 'prediction_hash': 'p'}
+    with sqlite3.connect(paper) as db:
+        db.execute('CREATE TABLE records(sequence INTEGER PRIMARY KEY,payload TEXT)')
+        for r in [dict(common, purpose='entry', state='FILLED', entry_at='2025-01-02T14:30:00Z'),
+                  dict(common, purpose='exit', state='CLOSED', at='2025-01-03T21:05:00Z', exit_at='2025-01-03T21:00:00Z',
+                       raw_return='0.01', lot_pnl_before_broker_fees='10')]:
+            db.execute('INSERT INTO records(payload) VALUES(?)', (json.dumps(r),))
+    v2 = tmp_path / 'v2.sqlite'
+    body = {'mode': 'SHADOW_FORWARD', 'config': {'initial_equity': 100000}}
+    row = {'seq': 1, 'at': '2025-01-01T00:00:00Z', 'kind': 'binding', 'body': body, 'previous': '0' * 64}
+    hashed = hashlib.sha256(json.dumps(row, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    with sqlite3.connect(v2) as db:
+        db.execute('CREATE TABLE events(seq INTEGER,at TEXT,kind TEXT,body TEXT,previous TEXT,hash TEXT)')
+        db.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', (1, row['at'], 'binding', json.dumps(body), row['previous'], hashed))
+    book, replay, forward = [tmp_path / name for name in ['book.jsonl', 'replay.json', 'forward.json']]
+    book.write_text('')
+    replay.write_text(json.dumps({'forecasts': {}, 'status': 'SCORED', 'counts': {}, 'failures': {}}))
+    forward.write_text(json.dumps({'rows': [], 'trades': [], 'primary_endpoint': {'base_rate': .5},
+                                   'scored_at': '2025-01-04T00:00:00Z', 'outcomes_as_of': '2025-01-04T00:00:00Z'}))
+    out = tmp_path / 'output'
+    run(SimpleNamespace(v1=v1, paper=paper, v2=v2, book=book, replay=replay, forward=forward,
+                        output=out, development=None, prior_trial_ledger=[]))
+    result = json.loads(capsys.readouterr().out)
+    summary = json.loads((__import__('pathlib').Path(result['run']) / 'summary.json').read_text())
+    assert result['status'] == 'BLOCKED' and result['paper_lots'] == 1
+    assert summary['trial_attempts_all_runs'] == 3
+    assert summary['luck']['v1']['random_entry']['draws'] == 0
+    assert all(r['status'] == 'BLOCKED' for r in summary['trials'])

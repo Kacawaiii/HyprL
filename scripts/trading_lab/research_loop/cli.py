@@ -65,6 +65,8 @@ def run(args):
     dump(run_dir / 'postmortem-private.json', audits)
     dump(run_dir / 'normalized-private.json', predictions + paper + v2_rows)
     closed = [r for r in audits if r['closed']]
+    valid_closed_ids = {(r['strategy'], r['decision_id']) for r in closed}
+    paper = [r for r in paper if (r['strategy'], r['decision_id']) in valid_closed_ids]
     counts = Counter(r['strategy'] for r in closed)
     errors = Counter(e for r in closed for e in r['error_classes'])
     # Existing July/Aug replay and October records NEVER become development rows.
@@ -76,13 +78,17 @@ def run(args):
             raise ValueError('DEVELOPMENT_INPUT_CONTAINS_OTHER_PERIOD')
     ledger = TrialLedger(out / 'trials.sqlite')
     try:
+        for path in args.prior_trial_ledger:
+            ledger.include_prior_count(path)
         trials = [evaluate_trial(development, h, ledger) for h in ['H01', 'H02', 'H03']]
-        attempts = len(ledger.reservations())
+        attempts = ledger.trial_count()
+        history = ledger.prior_references()
     finally:
         ledger.db.close()
     dump(run_dir / 'trials.json', trials)
     shadow_forecasts = [{'strategy': p['strategy'], 'cohort': p['target'], 'session': p['entry_at'][:10],
-                         'p': p['p'], 'y': p['outcome']['y']} for p in predictions if p['outcome']]
+                         'p': p['p'], 'y': p['outcome']['y']} for p in predictions
+                        if (p['strategy'], p['decision_id']) in valid_closed_ids]
     forecast_results = forecasts_report(replay + forward + shadow_forecasts)
     dump(run_dir / 'forecast-luck-private.json', forecast_results)
     dump(run_dir / 'forecast-postmortem-private.json', [dict(r, error_classes=['unidentified_requires_at_T_evidence'])
@@ -125,6 +131,7 @@ def run(args):
                'paper_issues': paper_issues, 'replay': replay_meta, 'forward': forward_meta,
                'quarantined': quarantined,
                'book': book, 'v2': v2, 'trials': trials, 'trial_attempts_all_runs': attempts,
+               'prior_trial_references': history,
                'luck': luck, 'forecast_luck_digest': digest(forecast_results),
                'promotion': 'NONE', 'validation': SPEC['validation_status'],
                'blocked': blockers}
@@ -135,7 +142,7 @@ def run(args):
     blocked_trials = sum(t['status'] == 'BLOCKED' for t in trials)
     lines = [f'Boucle de recherche v1 — {week}, {timing} — BLOQUÉE pour conclure.',
              f"{len(closed)} décisions/labels clos audités ; {len(paper)} lots broker clos uniques (brut avant frais).",
-             f'8 hypothèses figées ; 3 essais réservés, {blocked_trials} bloqués.' + (' Aucun export causal janv. 2025–juin 2026.' if not development else ''),
+             f'8 hypothèses figées ; {attempts} tentatives cumulées ; 3 réservations ce passage, {blocked_trials} bloquées.' + (' Aucun export causal janv. 2025–juin 2026.' if not development else ''),
              'Juil.–sept. déjà touchés ; aucune promotion. Holdout BTC/ETH exclu.',
              'Hasard = p sous H0, pas probabilité que la stratégie soit due au hasard.',
              'Tirages de titres à dates/durées identiques : non calculables sans univers complet à T. N est un plan indicatif, pas une garantie.',
@@ -160,6 +167,8 @@ def main():
     for flag in ['v1', 'paper', 'v2', 'book', 'replay', 'forward', 'output']:
         parser.add_argument('--' + flag, required=True)
     parser.add_argument('--development', help='Private normalized JSON list; no fetching or inference of missing facts')
+    parser.add_argument('--prior-trial-ledger', action='append', default=[],
+                        help='Read-only, hash-verified prior counts; no prior result reuse or migration')
     run(parser.parse_args())
 
 

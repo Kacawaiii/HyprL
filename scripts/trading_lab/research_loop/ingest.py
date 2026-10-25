@@ -7,6 +7,7 @@ screened before outcomes are inspected or included in any digest.
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 
@@ -18,6 +19,16 @@ def read_db(path):
     db.execute('PRAGMA query_only=ON')
     db.execute('BEGIN')
     return db
+
+
+def number(value):
+    """Paper ledger serializes Decimals as strings; never change its wire shape."""
+    if isinstance(value, bool) or not isinstance(value, (str, float, int)):
+        raise ValueError('INVALID_SOURCE_NUMBER')
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError('NONFINITE_SOURCE_NUMBER')
+    return result
 
 
 def v1_predictions(path):
@@ -93,8 +104,8 @@ def v1_paper(path, predictions):
                      'cohort': ':'.join([exit_event.get('variant', 'unknown'), exit_event.get('slot', 'am'),
                                          exit_event.get('horizon', 'unknown')]),
                      'action': 'UP', 'outcome': {'available_at': exit_event['at'],
-                     'gross_return': exit_event['raw_return'],
-                     'gross_pnl_before_fees': exit_event['lot_pnl_before_broker_fees'],
+                     'gross_return': number(exit_event['raw_return']),
+                     'gross_pnl_before_fees': number(exit_event['lot_pnl_before_broker_fees']),
                      'cost_basis': 'GROSS_BEFORE_BROKER_FEES', 'net_contribution': None,
                      'kind': 'BROKER_CLOSED_LOT'}})
     return rows, dict(issues)
