@@ -9,7 +9,7 @@ import pytest
 from scripts.trading_lab.research_loop.core import (
     TrialLedger, audit, evaluate_trial, promotion_gate,
 )
-from scripts.trading_lab.research_loop.ingest import book_inventory, v1_paper, v2_closed
+from scripts.trading_lab.research_loop.ingest import book_inventory, v1_paper, v1_predictions, v2_closed
 from scripts.trading_lab.research_loop.stats import (
     binomial_tail, brier_null, paired_test, random_entry, required_decisions,
 )
@@ -244,3 +244,23 @@ def test_v2_closed_shadow_joins_original_approval_and_verifies_chain(tmp_path):
     db.commit(); db.close()
     with pytest.raises(ValueError, match='SOURCE_CHAIN_CORRUPT'):
         v2_closed(path)
+
+
+def test_v1_crypto_uses_original_raw_target_with_null_spy_label(tmp_path):
+    path = tmp_path / 'synthetic.sqlite'
+    db = sqlite3.connect(path)
+    db.execute('CREATE TABLE records(identity TEXT, kind TEXT, payload TEXT)')
+    p = {'synthetic': False, 'product': 'SOL-USD', 'decision_at': '2025-01-02T12:00:00Z',
+         'model_id': 'synthetic-reader', 'proposed_position': {'weight': -.05},
+         'snapshot_hash': 's', 'features_hash': 'f',
+         'signal': {'label_definition': {'entry_at': '2025-01-02T14:30:00Z', 'exit_at': '2025-01-03T21:00:00Z',
+                                         'horizon': '1d', 'targets': ['raw']},
+                    'view': {'view': 'DOWN', 'p_outperform': .4}}}
+    label = {'prediction_hash': 'p', 'product': 'SOL-USD', 'available_at': '2025-01-03T21:05:00Z',
+             'value': {'net_unit_pnl': -.012, 'raw_return': .01, 'spy_relative_return': None, 'cost_roundtrip': .002}}
+    for identity, kind, payload in [('p', 'prediction', p), ('l', 'label', label)]:
+        db.execute('INSERT INTO records VALUES(?,?,?)', (identity, kind, json.dumps(payload)))
+    db.commit(); db.close()
+    row, = v1_predictions(path)
+    assert row['target'] == 'raw' and row['outcome']['y'] == 1
+    assert row['outcome']['net_contribution'] == pytest.approx(-.0006)

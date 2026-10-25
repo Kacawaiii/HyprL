@@ -38,23 +38,26 @@ def v1_predictions(path):
         label = labels.get(identity)
         weight = p['proposed_position']['weight']
         action = view['view']
+        target = 'SPY_relative' if 'SPY_relative' in definition['targets'] else 'raw'
         outcome = None
         if label:
             value = label['value']
             outcome = {'available_at': label['available_at'], 'net_contribution': abs(weight) * value['net_unit_pnl'],
                        'net_unit_return': value['net_unit_pnl'], 'raw_return': value['raw_return'],
                        'opportunity_net_return': value['raw_return'] - value['cost_roundtrip'],
-                       'y': int(value['spy_relative_return'] > 0), 'cost_basis': 'NET_FULL_COSTS',
+                       'y': int(value['spy_relative_return' if target == 'SPY_relative' else 'raw_return'] > 0),
+                       'cost_basis': 'NET_FULL_COSTS',
                        'kind': 'RETROSPECTIVE_SHADOW_LABEL_NOT_BROKER_FILL'}
         facts = {key: {'value': value, 'available_at': p['decision_at'], 'observed_at': p['decision_at']}
                  for key, value in {'p_outperform': view['p_outperform'], 'planned_horizon': definition['horizon'],
                                     'intended_weight': weight, 'review_verdict': view.get('verdict'),
-                                    'snapshot_hash': p['snapshot_hash'], 'features_hash': p['features_hash']}.items()}
+                                    'snapshot_hash': p['snapshot_hash'], 'features_hash': p['features_hash'],
+                                    'forecast_target': target}.items()}
         rows.append({'decision_id': identity, 'decision_hash': identity, 'source_hash': digest(p),
                      'strategy': 'v1-shadow:' + p['model_id'] + ':' + definition['horizon'],
                      'symbol': p['product'], 'decision_at': p['decision_at'], 'entry_at': definition['entry_at'],
                      'exit_at': definition['exit_at'], 'weight': weight, 'action': action,
-                     'p': view['p_outperform'], 'facts': facts, 'outcome': outcome})
+                     'p': view['p_outperform'], 'target': target, 'facts': facts, 'outcome': outcome})
     return rows
 
 

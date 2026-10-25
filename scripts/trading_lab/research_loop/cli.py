@@ -81,7 +81,7 @@ def run(args):
     finally:
         ledger.db.close()
     dump(run_dir / 'trials.json', trials)
-    shadow_forecasts = [{'strategy': p['strategy'], 'cohort': 'SPY_relative', 'session': p['entry_at'][:10],
+    shadow_forecasts = [{'strategy': p['strategy'], 'cohort': p['target'], 'session': p['entry_at'][:10],
                          'p': p['p'], 'y': p['outcome']['y']} for p in predictions if p['outcome']]
     forecast_results = forecasts_report(replay + forward + shadow_forecasts)
     dump(run_dir / 'forecast-luck-private.json', forecast_results)
