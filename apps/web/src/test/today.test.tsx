@@ -69,7 +69,7 @@ describe('Aujourd’hui', () => {
     expect(within(crypto).getByText(pctFr(20 / 100480))).toBeInTheDocument();
     expect(within(crypto).getByText('+0,50 %')).toBeInTheDocument();
     expect(within(crypto).getByText('+0,03 %')).toBeInTheDocument();
-    const book = within(tiles).getByRole('article', { name: 'Claude book' });
+    const book = within(tiles).getByRole('article', { name: 'HypR-A1 book' });
     // Without a previous-close equity the book's day change is unknown, never 0.
     expect(within(book).getAllByText('—').length).toBeGreaterThan(0);
     expect(within(book).getByText('2')).toBeInTheDocument();

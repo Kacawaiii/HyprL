@@ -1,3 +1,4 @@
+import { PUBLIC_AGENT_NAMES } from '../../lib/publicAgentNames';
 import { useState } from 'react';
 import { Badge, EmptyState, Hash } from '../../components/States';
 import { CalibrationChart, PriceChart } from '../../components/TraderCharts';
@@ -90,7 +91,7 @@ function Scoring({ data, run }: { data: TraderData; run: RunSummary | null }) {
             <section className="card" aria-label="Scorecard versus baselines">
               <h2 className="card-title">Scorecard vs baselines</h2>
               {original.current_score_population && <label>Protocol <select className="control" value={protocol} onChange={(e) => setProtocol(e.target.value)}>
-                <option value="current">Claude only</option><option value="history">Historical consensus</option>
+                <option value="current">{PUBLIC_AGENT_NAMES.opus} only</option><option value="history">Historical consensus</option>
               </select></label>}
               <div className="row" style={{ flexWrap: 'wrap' }}>
                 <label>Population <select className="control" value={population} onChange={(e) => setPopulation(e.target.value as ScoreKey['population'])}>

@@ -1,5 +1,6 @@
+import { PUBLIC_AGENT_NAMES, publicBookLabel } from '../lib/publicAgentNames';
 import type { MarketObservation, MarketOverlay, OverlayKind } from '../api/analysisTypes';
-import { instant, signedPct } from '../lib/radar';
+import { analystLabel, instant, signedPct } from '../lib/radar';
 import { overlayLabels } from '../lib/marketOverlays';
 import { useEffect, useRef, useState } from 'react';
 
@@ -44,14 +45,14 @@ export function MarketOverlayChart({ asset, prices, overlays, selected, onSelect
       {prices.map((p, i) => <circle key={`${p.at}-${i}`} cx={x(p.at)} cy={y(p.price)} r={3} fill="var(--text)">
         <title>{instant(p.at)} · {p.price} · {p.basis}</title></circle>)}
       {overlays.filter((o) => o.stop !== null && o.stop !== undefined).map((o) => <line key={`stop-${o.id}`} x1={x(o.at!)} x2={W - RIGHT}
-        y1={y(o.stop!)} y2={y(o.stop!)} stroke="var(--negative)" strokeDasharray="6 4"><title>Stop prévu Claude : {o.stop}; exécution non attestée</title></line>)}
+        y1={y(o.stop!)} y2={y(o.stop!)} stroke="var(--negative)" strokeDasharray="6 4"><title>Stop prévu {PUBLIC_AGENT_NAMES.opus} : {o.stop}; exécution non attestée</title></line>)}
       {KINDS.map((kind, index) => <g key={kind}>
         <line x1={LEFT} x2={W - RIGHT} y1={226 + index * 24} y2={226 + index * 24} stroke="var(--border)" />
         <text x={LEFT - 8} y={230 + index * 24} textAnchor="end">{['Radar', 'IA', 'Entrée', 'Sortie', 'Net'][index]}</text>
       </g>)}
       {overlays.map((o, index) => {
         const xx = x(o.at!), yy = 226 + KINDS.indexOf(o.kind) * 24;
-        const label = `${instant(o.at)} · ${overlayLabels[o.kind]} · ${o.analyst ?? ''} ${o.label} ${o.verdict ?? ''}${o.kind === 'outcome' ? ` · net ${signedPct(o.net_return)}` : ''}`;
+        const label = `${instant(o.at)} · ${overlayLabels[o.kind]} · ${o.analyst ? analystLabel(o.analyst) : ''} ${publicBookLabel(o.label)} ${o.verdict ?? ''}${o.kind === 'outcome' ? ` · net ${signedPct(o.net_return)}` : ''}`;
         return <g key={o.id}>
           {selected === o.id && <line x1={xx} x2={xx} y1={TOP} y2={yy} stroke="var(--accent)" strokeDasharray="2 4" />}
           <path d={o.kind === 'decision' ? o.label === 'DOWN' ? `M ${xx} ${yy + 5} l 5 -10 h -10 Z`
@@ -69,7 +70,7 @@ export function MarketOverlayChart({ asset, prices, overlays, selected, onSelect
       <text x={W - RIGHT} y={H - 8} textAnchor="end">{new Date(last).toISOString().slice(0, 10)}</text>
     </svg>
     <figcaption className="metric-sub">Points : prix observés. Pointillés : liaison visuelle entre observations espacées.
-      Losange : radar reçu. Triangle : décision IA. Carrés : intentions/sorties Claude et résultats. Ligne rouge : stop prévu.
+      Losange : radar reçu. Triangle : décision IA. Carrés : intentions/sorties {PUBLIC_AGENT_NAMES.opus} et résultats. Ligne rouge : stop prévu.
       Les événements occupent leur propre ligne; leur hauteur n’est pas un prix d’exécution.</figcaption>
   </figure>;
 }

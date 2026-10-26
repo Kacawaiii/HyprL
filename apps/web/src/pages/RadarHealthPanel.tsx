@@ -1,3 +1,4 @@
+import { BOOK_LABEL, publicAgentLabel } from '../lib/publicAgentNames';
 import { apiClient } from '../api/client';
 import { AnalysisState } from '../components/AnalysisState';
 import { Badge } from '../components/States';
@@ -34,11 +35,11 @@ export function RadarHealthPanel({ part }: { part?: 'sources' | 'units' } = {}) 
         <p>{system.trader.health?.state ?? 'Santé inconnue'} · {instant(system.trader.health?.at)}</p>
         <p>Dernier label : {system.trader.last_label?.state ?? 'inconnu'} · {instant(system.trader.last_label?.at)}</p>
         <p>Pause : {system.trader.paused === undefined ? 'inconnue' : system.trader.paused ? 'oui' : 'non'}</p>
-        <p className="metric-sub">Appels réservés : {Object.entries(system.trader.health?.budget_counts ?? {}).map(([k, v]) => `${k} ${v}`).join(', ') || 'aucun dans le dernier contrôle'}.</p>
+        <p className="metric-sub">Appels réservés : {Object.entries(system.trader.health?.budget_counts ?? {}).map(([k, v]) => `${publicAgentLabel(k)} ${v}`).join(', ') || 'aucun dans le dernier contrôle'}.</p>
       </div>
     </div>}
     {part !== 'sources' && <>
-    <h2 className="card-title">Unités trader, radar, timers Claude book et export</h2>
+    <h2 className="card-title">Unités trader, radar, timers {BOOK_LABEL} et export</h2>
     <div className="table-scroll"><table className="data" aria-label="Unités observées">
       <thead><tr><th>Unité</th><th>État</th><th>Résultat / code sortie</th><th>Dernier run</th><th>Prochain run</th></tr></thead>
       <tbody>{system.units.map((u) => <tr key={u.unit}><td>{u.unit}</td><td>{u.state ?? 'UNKNOWN'}</td><td>{u.result || '—'} / {u.exit_status ?? '—'}</td>

@@ -47,6 +47,8 @@ jobs:
             tests/crypto/test_equity_api.py tests/api -q
       - name: Independent news radar synthetic sources, budgets, clustering and paper observations
         run: python -m pytest tests/radar -q
+      - name: Public agent presentation and immutable research evidence
+        run: python -m pytest tests/public_agent_names -q
       - name: Shared platform contracts and snapshots
         run: python -m pytest tests/platform -q
       - name: Synthetic Model Lab datasets, adapters, jobs, experiments and API

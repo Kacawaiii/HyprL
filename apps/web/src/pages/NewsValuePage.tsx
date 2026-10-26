@@ -1,3 +1,4 @@
+import { BOOK_LABEL } from '../lib/publicAgentNames';
 import { useState } from 'react';
 import { apiClient } from '../api/client';
 import { AnalysisState } from '../components/AnalysisState';
@@ -41,8 +42,8 @@ export function NewsValuePage() {
     </section>
     ),
     book: (
-    <section className="card stack" aria-label="Claude book par tag">
-      <h2 className="card-title">Claude book : actualité et technique</h2>
+    <section className="card stack" aria-label={`${BOOK_LABEL} par tag`}>
+      <h2 className="card-title">{BOOK_LABEL} : actualité et technique</h2>
       <NewsRows rows={data.news.groups} />
       <p className="metric-sub">Hit rate = part des P&amp;L nets strictement positifs. R = P&amp;L net / risque initial consigné.
         Les intentions et les clôtures sans coûts connus restent hors des métriques. Les catégories viennent des tags du journal; aucun tag news n’est inféré d’un titre.</p>
@@ -101,7 +102,7 @@ export function NewsValuePage() {
       {parts.intro}
       <Tabs label="Comparaisons" tabs={[
         { id: 'scores', label: 'IA contre repères', content: () => parts.scores },
-        { id: 'book', label: 'Claude book', content: () => parts.book },
+        { id: 'book', label: BOOK_LABEL, content: () => parts.book },
         { id: 'ab', label: 'Avec ou sans news', content: () => parts.ab },
         { id: 'journal', label: 'Journal', content: () => (
     <section className="card stack" aria-label="Décisions du journal"><h2 className="card-title">Décisions du journal</h2>

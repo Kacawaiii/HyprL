@@ -1,3 +1,4 @@
+import { publicAgentLabel } from './publicAgentNames';
 /**
  * Pure derivations for the Agent trader view.
  *
@@ -16,8 +17,10 @@ export const NOT_A_CLAIM =
 export const ANALYSTS = ['analyst_claude', 'analyst_gpt'] as const;
 
 export function analystLabel(name: string): string {
-  return ({ analyst_claude: 'Claude analyst', analyst_gpt: 'GPT analyst', reviewer_claude: 'Reviewed Claude',
-    reviewer_gpt: 'Reviewed GPT', consensus: 'Consensus' } as Record<string, string>)[name] ?? name;
+  const label = publicAgentLabel(name);
+  if (name.startsWith('analyst_')) return `${label} analyst`;
+  if (name.startsWith('reviewer_')) return `Reviewed ${label}`;
+  return name === 'consensus' ? 'Consensus' : label;
 }
 
 export function horizonText(horizon: Horizon): string {

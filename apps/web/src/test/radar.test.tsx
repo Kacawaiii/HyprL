@@ -104,7 +104,7 @@ describe('radar home', () => {
     const first = await openFirstNews();
     const table = within(first).getByRole('table', { name: /1d horizon/ });
     const rows = within(table).getAllByRole('row');
-    expect(within(rows[1] as HTMLElement).getByText('Claude')).toBeInTheDocument();
+    expect(within(rows[1] as HTMLElement).getByText('HypR-A1')).toBeInTheDocument();
     expect(within(rows[1] as HTMLElement).getByText('70 %')).toBeInTheDocument();
     expect(within(table).getByText('DOWNGRADE')).toBeInTheDocument();
     expect(within(first).getByText(/60 % → 70 % over 2 runs \(\+10 pts\)/)).toBeInTheDocument();
@@ -181,16 +181,16 @@ describe('paper accounts', () => {
     renderAt('/paper');
     expect(await screen.findByRole('article', { name: 'AI stocks' })).toBeInTheDocument();
     expect(screen.getByRole('article', { name: 'AI crypto' })).toBeInTheDocument();
-    const book = screen.getByRole('article', { name: 'Claude book' });
+    const book = screen.getByRole('article', { name: 'HypR-A1 book' });
     expect(within(book).getByText('account …CCCC')).toBeInTheDocument();
-    const table = within(book).getByRole('table', { name: /Claude book positions/ });
+    const table = within(book).getByRole('table', { name: /HypR-A1 book positions/ });
     expect(within(table).getByText('momo_v0')).toBeInTheDocument();
     expect(within(table).getByText('sleeve')).toBeInTheDocument();
   });
 
   it('shows stop and target only where a policy defines them', async () => {
     renderAt('/paper');
-    const book = await screen.findByRole('article', { name: 'Claude book' });
+    const book = await screen.findByRole('article', { name: 'HypR-A1 book' });
     const rows = within(book).getAllByRole('row');
     const bat = rows.find((row) => within(row).queryByText('BATUSD'));
     const btc = rows.find((row) => within(row).queryByText('BTCUSD'));
@@ -202,7 +202,7 @@ describe('paper accounts', () => {
     renderAt('/paper');
     await userEvent.click(await screen.findByRole('tab', { name: 'Courbe' }));
     expect(await screen.findByRole('img', { name: /re-based to 100 against SPY and BTC/ })).toBeInTheDocument();
-    expect(screen.queryByRole('article', { name: 'Claude book' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'HypR-A1 book' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'Journal' }));
     const journal = screen.getByRole('list', { name: 'Trade journal' });
     expect(within(journal).getByText('BAT breaks its 20-day high')).toBeInTheDocument();

@@ -1,3 +1,4 @@
+import { BOOK_LABEL } from '../lib/publicAgentNames';
 /**
  * "Aujourd'hui": the one-screen home. Three paper accounts, the market in five numbers, the system light, the next
  * scheduled events, the five news that matter and what the AIs decided. Everything comes from the radar and paper
@@ -14,7 +15,7 @@ import { ARROW, DIRECTION_WORD, LEVEL_WORD, dollars, parisDay, parisLongDay, par
 import { useCockpit } from '../state/useCockpit';
 import { useQuery } from '../state/useQuery';
 
-const ACCOUNT_NAME: Record<string, string> = { ia_actions: 'IA actions', ia_crypto: 'IA crypto', claude_book: 'Claude book' };
+const ACCOUNT_NAME: Record<string, string> = { ia_actions: 'IA actions', ia_crypto: 'IA crypto', claude_book: BOOK_LABEL };
 const ACCOUNT_SHORT: Record<string, string> = { ia_actions: 'actions', ia_crypto: 'crypto' };
 const MARKETS: Array<[string, string]> = [['SPY', 'S&P 500'], ['QQQ', 'Nasdaq'], ['BTC', 'Bitcoin'], ['Brent', 'Pétrole'], ['VIX', 'Peur (VIX)']];
 // The VIX measures fear: a rise is bad news for stocks, so its colour is inverted.

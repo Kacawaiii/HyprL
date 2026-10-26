@@ -1,3 +1,4 @@
+import { PUBLIC_AGENT_NAMES } from '../lib/publicAgentNames';
 /**
  * Trader charts in plain SVG, each with a table alternative. One series per chart; direction is carried by
  * marker shape (triangle up / down, diamond for no view), never by colour alone. No animation.
@@ -68,7 +69,7 @@ export function PriceChart({ chart }: { chart: AssetChart }) {
         {chart.decisions.map((d) => <Marker key={`${d.at}-${d.horizon}`} d={d} x={x(d.at)} y={y(d.price) + (d.horizon === '5d' ? 12 : 0)} />)}
       </svg>
       <figcaption className="metric-sub">
-        Grey: the last close known at each decision (reference price, not a full history). Triangles: reviewed view (historical consensus or Claude) at the decision
+        Grey: the last close known at each decision (reference price, not a full history). Triangles: reviewed view (historical consensus or {PUBLIC_AGENT_NAMES.opus}) at the decision
         (up / down; diamond = no view; hollow = label pending, filled = realized). Segments: realized entry → exit, green or red by
         result after costs, dashed for the 5-session horizon.
       </figcaption>

@@ -1,3 +1,4 @@
+import { publicAgentLabel, publicBookLabel } from './publicAgentNames';
 /**
  * Pure derivations for the Radar home. Values come from the snapshot verbatim; the only arithmetic here is
  * re-basing curves to a common start (display) and picking which stored view to show for a horizon.
@@ -6,12 +7,10 @@ import type { AnticipationView, PaperSnapshot, TimelinePoint } from '../api/rada
 
 export const ANALYST_ORDER = ['analyst_claude', 'analyst_gpt', 'reviewer_claude', 'reviewer_gpt', 'consensus'] as const;
 
-const LABEL: Record<string, string> = {
-  analyst_claude: 'Claude', analyst_gpt: 'GPT', reviewer_claude: 'Reviewer (Claude)', reviewer_gpt: 'Reviewer (GPT)',
-  consensus: 'Consensus',
-};
 export function analystLabel(analyst: string): string {
-  return LABEL[analyst] ?? analyst;
+  if (analyst === 'consensus') return 'Consensus';
+  const label = publicAgentLabel(analyst);
+  return analyst.startsWith('reviewer_') ? `Reviewer (${label})` : label;
 }
 
 /** What a stored view means in words; ABSTAIN is a statement of no edge, never a hidden 50 %. */
@@ -92,7 +91,7 @@ export interface RebasedSeries { key: string; label: string; points: Array<{ at:
 
 /** Account equity, SPY and BTC each re-based to 100 at their own first recorded point so one scale compares them. */
 export function rebasedCurves(paper: PaperSnapshot): RebasedSeries[] {
-  const names = new Map<string, string>(paper.accounts.map((account) => [account.account, account.label]));
+  const names = new Map<string, string>(paper.accounts.map((account) => [account.account, publicBookLabel(account.label)]));
   const series: RebasedSeries[] = [];
   const build = (key: string, label: string, read: (row: PaperSnapshot['curve'][number]) => number | null | undefined) => {
     const rows = paper.curve.map((row) => ({ at: row.at, raw: read(row) })).filter(

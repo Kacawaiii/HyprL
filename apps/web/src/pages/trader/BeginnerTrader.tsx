@@ -1,3 +1,4 @@
+import { PUBLIC_AGENT_NAMES } from '../../lib/publicAgentNames';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { EmptyState } from '../../components/States';
@@ -49,7 +50,7 @@ export function BeginnerTrader({ data, run, asset, detail, news }: {
         {rows.length > shown && <button className="more" onClick={() => setShown((n) => n + STEP)}>Voir plus ({rows.length - shown})</button>}
         <p className="metric-sub">{views.some((v) => v.analyst === 'consensus')
           ? 'Historical views required agreement between both reviewed analysts.'
-          : 'Views show the Claude analyst after Claude review. KEEP trades at the existing size; DOWNGRADE at half size for equities. Crypto KEEP uses half size.'}
+          : `Views show the ${PUBLIC_AGENT_NAMES.opus} analyst after review. KEEP trades at the existing size; DOWNGRADE at half size for equities. Crypto KEEP uses half size.`}
           {' '}Probabilities are model judgments, not calibrated.</p>
       </section>
     ) },

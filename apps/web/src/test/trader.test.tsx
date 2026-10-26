@@ -74,9 +74,9 @@ describe('retired GPT with historical evidence', () => {
     const table = await screen.findByRole('table', { name: 'Views per asset' });
     expect(within(table).getAllByRole('row').length).toBeGreaterThan(1);
     const roles = await screen.findByLabelText('Retired trader roles');
-    expect(roles).toHaveTextContent('GPT analyst: RETIRED');
+    expect(roles).toHaveTextContent('HypR-E1 analyst: RETIRED');
     expect(roles).toHaveTextContent('Consensus: RETIRED');
-    expect(screen.getByText(/Views show the Claude analyst after Claude review/)).toBeInTheDocument();
+    expect(screen.getByText(/Views show the HypR-A1 analyst after review/)).toBeInTheDocument();
   });
 
   it('keeps current and historical score populations selectable', async () => {
@@ -89,7 +89,7 @@ describe('retired GPT with historical evidence', () => {
     await screen.findByRole('region', { name: 'Run provenance' });
     const protocolChoice = await screen.findByRole('combobox', { name: 'Protocol' });
     const table = await screen.findByRole('table', { name: 'Baseline comparison' });
-    expect(within(table).getByText('Reviewed Claude')).toBeInTheDocument();
+    expect(within(table).getByText('Reviewed HypR-A1')).toBeInTheDocument();
     expect(within(table).getByText('123')).toBeInTheDocument();
     expect(within(table).queryByText('Consensus')).not.toBeInTheDocument();
     await userEvent.selectOptions(protocolChoice, 'history');
@@ -181,8 +181,8 @@ describe('Agent trader, Expert', () => {
   it('puts both analysts side by side with sources, counter-thesis, falsifier and reviewer verdicts', async () => {
     open('/trader?mode=expert&date=2026-10-07&product=XLK', 'realized');
     const section = await screen.findByRole('region', { name: 'XLK 1d analysts' });
-    expect(within(section).getByRole('article', { name: 'Claude analyst' })).toBeInTheDocument();
-    expect(within(section).getByRole('article', { name: 'GPT analyst' })).toBeInTheDocument();
+    expect(within(section).getByRole('article', { name: 'HypR-A1 analyst' })).toBeInTheDocument();
+    expect(within(section).getByRole('article', { name: 'HypR-E1 analyst' })).toBeInTheDocument();
     expect(within(section).getAllByText('Counter-thesis')).toHaveLength(2);
     expect(within(section).getAllByText('Falsifier')).toHaveLength(2);
     expect(section.textContent).toMatch(/REVIEWER DOWNGRADE/);

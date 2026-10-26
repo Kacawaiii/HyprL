@@ -1,3 +1,4 @@
+import { PUBLIC_AGENT_NAMES, PUBLIC_METHOD } from '../lib/publicAgentNames';
 /**
  * Agent trader: the prospective PAPER trader's views, outcomes and health.
  * Read-only. The page never starts a run, never sends an order and never invents a value the API did not serve.
@@ -43,7 +44,7 @@ export function TraderPage() {
       <PageTabs label="IA" links={AI_TABS} />
       {!expert && (
         <PageIntro id="trader" question="Qu’ont décidé les IA, et pourquoi ?">
-          L’analyste Claude donne un avis par actif, le relecteur Claude le contrôle, et les comptes papier suivent
+          L’analyste {PUBLIC_AGENT_NAMES.opus} donne un avis par actif, son relecteur le contrôle, et les comptes papier suivent
           les règles d’exécution enregistrées. Les anciens avis et résultats restent consultables.
         </PageIntro>
       )}
@@ -60,7 +61,7 @@ export function TraderPage() {
             </select></label>
           </div>
         </div>
-        <p role="note" style={{ margin: '8px 0 0' }}><strong>Read this first.</strong> {NOT_A_CLAIM}</p>
+        <p role="note" style={{ margin: '8px 0 0' }}><strong>Read this first.</strong> {NOT_A_CLAIM} {PUBLIC_METHOD}.</p>
       </section>
       {data.today.error && data.today.data === undefined ? <ErrorState error={data.today.error} onRetry={data.today.refetch} /> : <RunBanner state={state} date={date} />}
       {expert && run && <TraderDecisionCards run={run} rows={data.rows} asset={asset} />}

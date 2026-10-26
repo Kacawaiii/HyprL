@@ -1,3 +1,4 @@
+import { publicBookLabel } from '../lib/publicAgentNames';
 import { useState } from 'react';
 import { apiClient } from '../api/client';
 import type { OverlayKind } from '../api/analysisTypes';
@@ -44,15 +45,15 @@ export function MarketDecisionPanel() {
     </li>)}</ul>
     <MarketOverlayChart asset={asset} prices={selection.prices} overlays={selection.overlays} selected={selected?.id ?? null} onSelect={setSelectedId} />
     {selected && <div aria-live="polite">
-      <h3 className="card-title">{overlayLabels[selected.kind]} · {instant(selected.at)} · {selected.label}</h3>
+      <h3 className="card-title">{overlayLabels[selected.kind]} · {instant(selected.at)} · {publicBookLabel(selected.label)}</h3>
       {selected.analyst && <p>{analystLabel(selected.analyst)} · {selected.horizon} · reviewer {selected.verdict ?? 'sans objet'}</p>}
       {selected.price_basis === 'intent_limit' && <p className="metric-sub">Prix limite prévu : {selected.price}. Stop prévu : {selected.stop ?? 'non défini'}.</p>}
       {selected.kind === 'outcome' ? <p>Résultat réalisé net / unité : {signedPct(selected.net_return)}. Coûts modélisés.</p> : <DecisionCard decision={selected.decision} />}
     </div>}
     <details><summary>{selection.overlays.length} repères : liste accessible</summary>
       <div className="overlay-list">{selection.overlays.map((o) => <button className="control" key={o.id} aria-pressed={selected?.id === o.id}
-        onClick={() => setSelectedId(o.id)}>{instant(o.at)} · {overlayLabels[o.kind]} · {o.analyst ? analystLabel(o.analyst) : ''} {o.label} {o.verdict ?? ''}</button>)}</div>
+        onClick={() => setSelectedId(o.id)}>{instant(o.at)} · {overlayLabels[o.kind]} · {o.analyst ? analystLabel(o.analyst) : ''} {publicBookLabel(o.label)} {o.verdict ?? ''}</button>)}</div>
     </details>
-    <p className="metric-sub">{data.limitations[0]}</p>
+    <p className="metric-sub">{publicBookLabel(data.limitations[0] ?? '')}</p>
   </section>;
 }

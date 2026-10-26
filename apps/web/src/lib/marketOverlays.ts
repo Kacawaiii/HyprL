@@ -1,6 +1,7 @@
+import { PUBLIC_AGENT_NAMES } from './publicAgentNames';
 import type { AnalysisSnapshot, OverlayKind } from '../api/analysisTypes';
 export const overlayLabels: Record<OverlayKind, string> = {
-  event: 'Événements radar', decision: 'Décisions IA', book_entry: 'Intentions Claude', book_exit: 'Sorties Claude', outcome: 'Résultats réalisés',
+  event: 'Événements radar', decision: 'Décisions IA', book_entry: `Intentions ${PUBLIC_AGENT_NAMES.opus}`, book_exit: `Sorties ${PUBLIC_AGENT_NAMES.opus}`, outcome: 'Résultats réalisés',
 };
 export const symbolKey = (asset: string) => asset.toUpperCase().replace(/[-/]/g, '');
 export function marketAssets(data: AnalysisSnapshot) {

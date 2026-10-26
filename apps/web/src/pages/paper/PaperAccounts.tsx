@@ -1,3 +1,4 @@
+import { BOOK_LABEL, PUBLIC_AGENT_NAMES, publicBookLabel } from '../../lib/publicAgentNames';
 /**
  * The three Alpaca paper accounts side by side: AI stocks, AI crypto and the Claude book (with its carre sleeve and
  * momo_v0 positions tagged). Positions show their stop and target only where a policy defined them; a position
@@ -54,9 +55,9 @@ function Account({ account, expert }: { account: PaperAccount; expert: boolean }
   const isBook = account.account === 'claude_book';
   const [shown, setShown] = useState(expert ? Infinity : STEP);
   return (
-    <article className="card paper-account" aria-label={account.label} data-wide={account.positions.length > 0}>
+    <article className="card paper-account" aria-label={publicBookLabel(account.label)} data-wide={account.positions.length > 0}>
       <header className="row paper-account-head">
-        <h2 className="paper-account-title">{account.label}</h2>
+        <h2 className="paper-account-title">{publicBookLabel(account.label)}</h2>
         <span className="chip">account …{account.suffix}</span>
         <Badge tone="off">PAPER</Badge>
         {account.halted && <Badge tone="warn">HALTED</Badge>}
@@ -78,7 +79,7 @@ function Account({ account, expert }: { account: PaperAccount; expert: boolean }
         </p>
       ) : (
         <div className="table-scroll">
-          <table className="data" aria-label={`${account.label} positions`}>
+          <table className="data" aria-label={`${publicBookLabel(account.label)} positions`}>
             <thead>
               <tr><th>Symbol</th><th>Tag</th><th>Qty</th><th>Entry</th><th>Last</th><th>Unrealised</th><th>Stop</th><th>Target</th>
                 {expert && <th>Opened</th>}</tr>
@@ -124,7 +125,7 @@ function Account({ account, expert }: { account: PaperAccount; expert: boolean }
 
 function Journal({ accounts, expert }: { accounts: PaperAccount[]; expert: boolean }) {
   const [shown, setShown] = useState(expert ? 15 : STEP);
-  const all = accounts.flatMap((a) => a.journal.map((row) => ({ ...row, account: a.label })))
+  const all = accounts.flatMap((a) => a.journal.map((row) => ({ ...row, account: publicBookLabel(a.label) })))
     .filter((row) => row.action !== 'submitted')
     .sort((a, b) => b.at.localeCompare(a.at)).slice(0, 15);
   const rows = all.slice(0, shown);
@@ -171,7 +172,7 @@ export function PaperAccounts() {
     <div className="card">
       <h2 className="card-title">Alpaca paper accounts</h2>
       <p className="muted">
-        Three separate paper accounts, as of {instant(data.generated_at)}. The Claude book is discretionary and is
+        Three separate paper accounts, as of {instant(data.generated_at)}. The {BOOK_LABEL} is discretionary and is
         not part of any AI trader variant or baseline.
         {data.benchmarks.SPY.return_since_paper_start !== null && <> SPY since the paper start: {signedPct(data.benchmarks.SPY.return_since_paper_start)}.</>}
       </p>
@@ -198,7 +199,7 @@ export function PaperAccounts() {
     return (
       <section className="stack paper-accounts" aria-label="Alpaca paper accounts">
         <PageIntro id="paper" question="Combien on gagne ?">
-          Trois comptes papier (argent fictif) : l’IA actions, l’IA crypto et le carnet de Claude, chacun face au S&amp;P 500.
+          Trois comptes papier (argent fictif) : l’IA actions, l’IA crypto et le carnet de {PUBLIC_AGENT_NAMES.opus}, chacun face au S&amp;P 500.
           {data.benchmarks.SPY.return_since_paper_start !== null && <> Le S&amp;P 500 fait {signedPct(data.benchmarks.SPY.return_since_paper_start)} depuis le départ.</>}
         </PageIntro>
         <Tabs label="Comptes papier" tabs={[
@@ -216,7 +217,7 @@ export function PaperAccounts() {
       {chart}
       {journal}
       {expert && data.limitations.length > 0 && (
-        <ul className="muted limitations">{data.limitations.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul className="muted limitations">{data.limitations.map((x) => <li key={x}>{publicBookLabel(x)}</li>)}</ul>
       )}
     </section>
   );
