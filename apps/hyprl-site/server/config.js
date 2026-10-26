@@ -47,6 +47,7 @@ function loadConfig(env = process.env) {
     err.code = 'CONFIG';
     throw err;
   }
+  config.member = require('./member/config').memberConfig(env, config);
   config.secureCookies = /^https:\/\//.test(config.publicUrl);
   return config;
 }

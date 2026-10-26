@@ -37,6 +37,7 @@
           <li><a href="#methode">Méthode</a></li>
           <li><a href="#tarifs">Tarifs</a></li>
           <li><a href="#faq">FAQ</a></li>
+          <li><a href="/membre">Espace membre</a></li>
           <li><a class="nav-cta" href="#acces">Accès anticipé</a></li>
         </ul>
       </nav>
@@ -95,7 +96,7 @@
               <li><span class="t">9h05</span><p><strong>Même dossier pour les deux agents</strong>Les deux agents reçoivent le même ensemble d’informations, au même moment.</p></li>
               <li><span class="t">&lt; 9h30</span><p><strong>Publication des empreintes</strong>Chaque décision est réduite à une empreinte SHA-256 et publiée avec son horodatage. L’empreinte engage la décision sans la dévoiler.</p></li>
               <li><span class="t">9h30</span><p><strong>Ouverture</strong>À partir de là, plus rien ne peut être modifié : toute retouche changerait l’empreinte.</p></li>
-              <li><span class="t">Clôture</span><p><strong>Révélation et notation</strong>Le contenu des décisions est publié. Chacun peut recalculer l’empreinte et vérifier qu’elle correspond. La notation est automatique, frais compris.</p></li>
+              <li><span class="t">Clôture</span><p><strong>Révélation et notation</strong>Le contenu des décisions est publié. Chacun peut recalculer l’empreinte et vérifier qu’elle correspond. La notation porte sur la qualité des prévisions : score de Brier et taux de réussite.</p></li>
             </ol>
             <p class="small muted">Heures exprimées en heure de New York (ET).</p>
           </div>
@@ -163,25 +164,25 @@ horodatage  —</pre>
           <div class="lg-6">
             <p class="eyebrow">Compteur de chance</p>
             <h2 id="titre-compteur">Distinguer le talent de la chance.</h2>
-            <p class="quote">Nous affichons pour chaque stratégie la probabilité que son résultat soit dû au hasard, et le nombre de décisions qu’il reste avant de pouvoir trancher.</p>
-            <p class="muted">Quelques bonnes séances ne prouvent rien. Tant que la probabilité d’un résultat obtenu par hasard reste élevée, nous le disons. Le compteur évolue à chaque nouvelle décision publiée, dans un sens comme dans l’autre.</p>
+            <p class="quote">Pour chaque stratégie, le compteur indique à quelle fréquence un modèle de référence obtiendrait au moins autant de réussites, avec le nombre de prévisions observées.</p>
+            <p class="muted">Cette fréquence dépend des hypothèses de référence, dont l’indépendance des observations. Elle ne mesure pas la probabilité que l’agent soit compétent. Les limites du calcul et les valeurs observées accompagnent chaque courbe.</p>
           </div>
           <div class="lg-6">
             <div class="grid">
               <div class="meter md-6 lg-6" aria-label="Compteur de chance de HypR-A1, données à venir">
                 <p class="meter-title">HypR-A1</p>
                 <dl>
-                  <dt>Probabilité due au hasard</dt><dd>—</dd>
-                  <dt>Décisions publiées</dt><dd>—</dd>
-                  <dt>Décisions restantes avant de trancher</dt><dd>—</dd>
+                  <dt>Probabilité de référence</dt><dd>—</dd>
+                  <dt>Prévisions notées</dt><dd>—</dd>
+                  <dt>Hypothèses et limites</dt><dd>—</dd>
                 </dl>
               </div>
               <div class="meter md-6 lg-6" aria-label="Compteur de chance de HypR-E1, données à venir">
                 <p class="meter-title">HypR-E1</p>
                 <dl>
-                  <dt>Probabilité due au hasard</dt><dd>—</dd>
-                  <dt>Décisions publiées</dt><dd>—</dd>
-                  <dt>Décisions restantes avant de trancher</dt><dd>—</dd>
+                  <dt>Probabilité de référence</dt><dd>—</dd>
+                  <dt>Prévisions notées</dt><dd>—</dd>
+                  <dt>Hypothèses et limites</dt><dd>—</dd>
                 </dl>
               </div>
             </div>
@@ -242,8 +243,8 @@ horodatage  —</pre>
             <ol class="rules">
               <li><strong>Décisions publiées avant l’ouverture</strong><p>Chaque décision est engagée par une empreinte horodatée avant <time class="mono">9h30</time> (New York).</p></li>
               <li><strong>Aucune réécriture après coup</strong><p>Une décision publiée ne se modifie pas et ne se supprime pas. L’historique complet reste consultable.</p></li>
-              <li><strong>Frais comptés</strong><p>Les résultats intègrent les frais de transaction. Un résultat avant frais n’est jamais présenté comme un résultat.</p></li>
-              <li><strong>Résultats montrés en entier, même mauvais</strong><p>Les séances perdantes sont publiées au même endroit et dans le même format que les séances gagnantes.</p></li>
+              <li><strong>Qualité des prévisions</strong><p>Les courbes mesurent le score de Brier face au taux de base et le taux de réussite. Elles ne représentent aucun résultat financier de compte.</p></li>
+              <li><strong>Erreurs et échecs documentés</strong><p>Les prévisions incorrectes et les échecs de publication restent visibles, avec les mêmes sources et dates que les autres observations.</p></li>
             </ol>
           </div>
         </div>
@@ -376,7 +377,7 @@ horodatage  —</pre>
             <details>
               <summary>Les résultats sont-ils vérifiables ?</summary>
               <div class="answer">
-                <p>Oui. Chaque décision du duel est publiée sous forme d’empreinte SHA-256 horodatée avant l’ouverture. Après la séance, le contenu est révélé : n’importe qui peut recalculer l’empreinte et vérifier qu’elle n’a pas changé. Les résultats sont calculés frais compris et publiés en entier, y compris les séances perdantes.</p>
+                <p>Oui. Chaque décision du duel est publiée sous forme d’empreinte SHA-256 horodatée avant l’ouverture. Après la séance, le contenu est révélé : n’importe qui peut recalculer l’empreinte et vérifier qu’elle n’a pas changé. Les scores comparent les probabilités annoncées aux observations. Les erreurs et les échecs documentés restent visibles. Les courbes portent sur les prévisions, sans résultat financier de compte.</p>
               </div>
             </details>
             <details>
