@@ -207,7 +207,7 @@ PYTHONPATH=apps/hyprl-site/.qa-deps "$MEMBER_PYTHON" \
 ```
 
 The checked-in `screenshots/` are explicitly synthetic offline QA, not actual
-performance evidence. `duel-empty-light.png` shows the pending-data state.
+performance evidence. `duel-empty-dark.png` shows the pending-data state.
 No browser screenshot from a real member or private store is included.
 Live OAuth, real messaging, producer freshness, proxy behavior, final legal
 facts, provider cancellation and a complete human accessibility audit still

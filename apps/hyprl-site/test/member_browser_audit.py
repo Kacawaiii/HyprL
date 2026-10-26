@@ -81,7 +81,7 @@ with sync_playwright() as p:
     with page.expect_navigation(wait_until="networkidle"):
         page.get_by_role("button", name="Enregistrer la liste").click()
     assert page.get_by_text("Dépôt synthétique réservé aux tests.", exact=True).count() == 2
-    page.screenshot(path=str(OUT / "radar-synthetic-light.png"))
+    page.screenshot(path=str(OUT / "radar-synthetic-dark.png"))
     page.goto(BASE + "/membre/duel")
     page.wait_for_load_state("networkidle")
     page.get_by_role("link", name="Vérifier ").first.click()
@@ -153,7 +153,7 @@ with sync_playwright() as p:
     page.get_by_role("heading", name="En cours de constitution").wait_for()
     assert page.locator("canvas").count() == 0
     audit(page, "empty export")
-    page.screenshot(path=str(OUT / "duel-empty-light.png"))
+    page.screenshot(path=str(OUT / "duel-empty-dark.png"))
     assert not limited, limited
     assert not errors, errors
     assert not csp, csp
