@@ -18,6 +18,7 @@ from scripts.trading_lab.agent_v2_quality.producer import (
     read_local,
     registry,
     radar_headlines,
+    radar_projection,
 )
 from scripts.trading_lab.agent_v2_quality.registry import admissible_registry, select_scope
 from scripts.trading_lab.agent_v2_quality.spec import SPEC_HASH, PREREG_HASH, implementation_hash
@@ -280,41 +281,10 @@ def build(
         # Release ranking histories before parsing the larger native radar output.
         del bars, eligible, data, extra
         upstream = read_local(radar_source, maximum=64_000_000)
-        counts = Counter()
-        events = []
-        for event in upstream["events"]:
-            names = set(event.get("entities", {}).get("symbols", []))
-            if not names & admitted or any(
-                "/" in s or s in ("BTC", "ETH", "BTC-USD", "ETH-USD") for s in names
-            ):
-                continue
-            stories = []
-            for story in event.get("stories", []):
-                counts["related"] += 1
-                if not story.get("published_at") or not story.get("received_at"):
-                    counts["missing_time"] += 1
-                    continue
-                if (
-                    not instant(story["published_at"])
-                    <= instant(story["received_at"])
-                    <= instant(upstream["cutoff"])
-                ):
-                    counts["noncausal"] += 1
-                    continue
-                stories.append(
-                    {k: story[k] for k in ["id", "headline", "url", "published_at", "received_at"]}
-                )
-                counts["retained"] += 1
-            if stories:
-                events.append(
-                    {"id": event["id"], "entities": {"symbols": sorted(names)}, "stories": stories}
-                )
-        radar = {k: upstream[k] for k in ["schema", "live", "status", "cutoff"]}
+        radar = radar_projection(upstream, sorted(admitted), clock())
         radar.update(
             {
-                "events": events,
                 "upstream": {"sha256": sha(radar_source), "canonical_sha256": digest(upstream)},
-                "excluded_counts": dict(counts),
                 "projection": "causal related stock stories only; no timestamp changed",
             }
         )
@@ -339,6 +309,7 @@ def build(
                 "sec_requests": len({r["url"] for r in sec_receipts.values()}),
                 "calendar_events": len(cal["events"]),
                 "hunter_admitted": len(projected_hunter["candidates"]),
+                "radar_counts": radar["excluded_counts"],
                 "registry_file_sha256": sha(ROOT / "registry.json"),
                 "calendar_file_sha256": sha(ROOT / "calendar.json"),
                 "ranking_unavailable": missing,

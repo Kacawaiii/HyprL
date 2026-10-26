@@ -110,6 +110,13 @@ The private configuration is supplied by the operator, never committed:
 - Radar: live `news-radar-v3` READY/PARTIAL with causal cutoff and story receipt/publication times.
   Only related stock headlines/URLs/timestamps are passed to models. Radar price panels, crypto
   events and upstream model judgments are excluded. Incomplete upstream status stays visible.
+  Under the operator's uniform 2026-10-26 decision, missing publication/receipt times and
+  noncausal stories are excluded and counted; they never block the whole cycle. Admission requires
+  `published_at <= received_at < cutoff <= input_time`, including strict exclusion at equality
+  with the cutoff. Source timestamps and digests are preserved. The same filter serves activation,
+  registry projection and the cycle producer. Projection counts survive in the producer bundle,
+  input review, activation proof/result and Discord success line. A missing, stale or malformed
+  radar still blocks; a valid radar with no admissible headlines remains usable.
 
 Metadata age is four days; calendar/radar age is 18 hours. The producer enforces GET-only exact
 Alpaca bars/quotes paths, SEC submissions and SEC Archives document paths, refuses redirects, reserves
@@ -201,16 +208,18 @@ runtime and bind its actual receipt hash to the operator's proof. No future cloc
 relabelled source receipt, inferred earnings date or copied journal is admissible.
 The measured-edge requirement and operator-only activation remain in force.
 
-## Explicit Monday activation exception
+## Explicit one-shot activation exception
 
 The operator's 2026-10-25 exception permits installation and activation of **new quality-shadow
 units only**. It does not cover revision-one/v1 units, broker paths, research, replay or any account.
-The opt-in `scripts.trading_lab.agent_v2_quality.monday` entry point is limited to the first
-2026-10-26 cycle. Its private settings pin the reviewed SHA, grants, metadata seed, historical hunter
+After Monday's radar rejection, the operator re-armed the opt-in
+`scripts.trading_lab.agent_v2_quality.monday` entry point for the first 2026-10-27 cycle.
+The module and bootstrap unit names retain `monday` for continuity; their single allowed date is
+Tuesday. Its private settings pin the reviewed SHA, grants, metadata seed, historical hunter
 evidence, local check receipts and staging result. Existing units are refused rather than replaced.
 No specification, preregistration, old runtime or historical evidence is migrated.
 
-The separate `hyprl-agent-v2-quality-monday-activate.timer` has one calendar date, 2026-10-26
+The separate `hyprl-agent-v2-quality-monday-activate.timer` has one calendar date, 2026-10-27
 10:15 UTC, and `Persistent=false`. Its service has a 65-minute limit; the script checks a stricter
 11:25 UTC cutoff between stages. Failure halts the pass, preserves reservations and reports the
 stage and exact error through the authorized `hyprl-notify alertes` interface. Any partial timer
@@ -223,13 +232,13 @@ The one-shot performs these operations in order:
    Fetch the exact SHA's public GitHub Actions API response with GET only, preserve bytes/digest and
    receipt, and require the latest `sources-ci` push run for this repository to have completed with
    `success`. Other SHAs and earlier successful attempts cannot qualify a failed/latest run.
-2. Read the already scheduled Sunday-evening radar output under the shadow grant. Check its true
-   cutoff both now and at Monday 12:45 UTC; retain PARTIAL/READY and original story timestamps.
+2. Read the already scheduled Monday-evening radar output under the shadow grant. Check its true
+   cutoff both now and at Tuesday 12:45 UTC; retain PARTIAL/READY and original story timestamps.
    This refreshes the input projection without invoking or changing the radar job.
 3. Refresh the granted Nasdaq/Fed/BLS calendar once, without redirects or retries. Reserve each
    request durably before dispatch; space requests by at least 1.05 seconds. The fixed horizon
    requires eight Nasdaq dates and five macro pages (13 GETs), including both monthly BLS pages,
-   through November 2 at 21:00 UTC. An unrecognized response or missing date fails closed.
+   through November 3 at 21:00 UTC. An unrecognized response or missing date fails closed.
 4. Rebuild the revision-three scope from the frozen membership in the pinned metadata seed,
    previous-session raw IEX histories and current native hunter. Preserve the top-60/no-backfill
    selection policy even though momentum proposals are disabled. Obtain submissions only for
@@ -243,7 +252,7 @@ The one-shot performs these operations in order:
 Calendar exclusions can legitimately produce zero plans, particularly because source-dated
 registry admission and five-session earnings exclusions overlap. A successful activation or empty
 cycle proves neither model interoperability nor a positive forward edge. Future calendar/radar
-refreshes after this first Monday are not installed by this one-shot; later stale inputs fail closed.
+refreshes after this first Tuesday are not installed by this one-shot; later stale inputs fail closed.
 
 The same orchestration can be exercised completely offline, including real systemd unit syntax
 verification, on a **fresh** staging directory:

@@ -157,6 +157,68 @@ def test_radar_prices_and_crypto_do_not_enter_model_context():
     assert 'DO_NOT_USE' not in json.dumps(value)
 
 
+def test_radar_excludes_and_counts_unavailable_headlines_without_changing_times():
+    at = instant('2026-10-27T12:45:00Z')
+    story = {'id': 'admitted', 'headline': 'Synthetic issuer guidance',
+             'url': 'https://example.test/a', 'published_at': '2026-10-26T18:00:00Z',
+             'received_at': '2026-10-26T18:01:00Z'}
+    radar = {'schema': 'news-radar-v3', 'live': True, 'status': 'PARTIAL',
+             'cutoff': '2026-10-26T19:30:00Z', 'events': [
+                 {'entities': {'symbols': ['ACME']}, 'stories': [
+                     story,
+                     story | {'id': 'unknown', 'published_at': None},
+                     story | {'id': 'unreceived', 'received_at': None},
+                     story | {'id': 'received-at-cutoff', 'received_at': '2026-10-26T19:30:00Z'},
+                     story | {'id': 'published-at-cutoff', 'published_at': '2026-10-26T19:30:00Z',
+                              'received_at': '2026-10-26T19:31:00Z'},
+                     story | {'id': 'late', 'received_at': '2026-10-26T20:00:00Z'},
+                     story | {'id': 'reversed', 'received_at': '2026-10-26T17:59:00Z'},
+                 ]}]}
+    before = digest(radar)
+    value = radar_headlines(radar, ['ACME'], at)
+    assert value['headlines'] == [story]
+    assert value['excluded_counts'] == {'related': 7, 'retained': 1, 'missing_time': 2,
+                                        'noncausal': 4}
+    assert value['status'] == 'PARTIAL'
+    assert value['upstream_sha256'] == before == digest(radar)
+
+
+def test_radar_with_only_excluded_headlines_is_valid_and_empty():
+    at = instant('2026-10-27T12:45:00Z')
+    story = {'id': 'a', 'headline': 'Synthetic', 'url': 'https://example.test/a',
+             'published_at': iso(at), 'received_at': iso(at)}
+    radar = {'schema': 'news-radar-v3', 'live': True, 'status': 'READY', 'cutoff': iso(at),
+             'events': [{'entities': {'symbols': ['ACME']}, 'stories': [story]}]}
+    value = radar_headlines(radar, ['ACME'], at)
+    assert value['headlines'] == []
+    assert value['excluded_counts'] == {'related': 1, 'retained': 0, 'missing_time': 0,
+                                        'noncausal': 1}
+
+
+@pytest.mark.parametrize('malformation', ['events_missing', 'events_null', 'event_shape',
+                                           'story_shape', 'invalid_time', 'bad_counts'])
+def test_malformed_radar_remains_blocking(malformation):
+    at = instant('2026-10-27T12:45:00Z')
+    story = {'id': 'a', 'headline': 'Synthetic', 'url': 'https://example.test/a',
+             'published_at': '2026-10-27T11:00:00Z', 'received_at': '2026-10-27T11:01:00Z'}
+    radar = {'schema': 'news-radar-v3', 'live': True, 'status': 'READY', 'cutoff': iso(at),
+             'events': [{'entities': {'symbols': ['ACME']}, 'stories': [story]}]}
+    if malformation == 'events_missing':
+        del radar['events']
+    elif malformation == 'events_null':
+        radar['events'] = None
+    elif malformation == 'event_shape':
+        radar['events'] = [None]
+    elif malformation == 'story_shape':
+        del story['headline']
+    elif malformation == 'invalid_time':
+        story['published_at'] = 'invalid'
+    else:
+        radar['excluded_counts'] = {'untrusted': 'DO_NOT_USE'}
+    with pytest.raises(Blocked):
+        radar_headlines(radar, ['ACME'], at)
+
+
 def test_producer_consumes_observed_envelopes_and_all_pages(tmp_path):
     clock = Clock(instant('2026-10-23T12:45:00Z'))
     data = bundle(clock())

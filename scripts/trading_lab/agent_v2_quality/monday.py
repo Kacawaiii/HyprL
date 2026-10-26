@@ -1,4 +1,4 @@
-"""Explicitly authorized, one-shot Monday shadow activation. No order transport."""
+"""Explicitly authorized, one-shot Tuesday shadow activation. No order transport."""
 
 import argparse
 from hashlib import sha256
@@ -28,7 +28,7 @@ from .registry_refresh import build
 from .service import book, code_plans
 from .spec import PREREG_HASH, SPEC_HASH, implementation_hash
 
-ENTRY = "2026-10-26"
+ENTRY = "2026-10-27"
 TIMERS = tuple(
     "hyprl-agent-v2-quality-" + a + ".timer" for a in ("cycle", "watch", "weekly", "drill")
 )
@@ -81,7 +81,7 @@ class Boundary:
 def deadline(boundary):
     at = boundary.clock()
     if not instant(ENTRY + "T10:15:00Z") <= at < instant(ENTRY + "T11:25:00Z"):
-        raise Blocked("MONDAY_ACTIVATION_WINDOW_CLOSED")
+        raise Blocked("ACTIVATION_WINDOW_CLOSED")
 
 
 def ci_receipt(sha, output, *, boundary):
@@ -166,7 +166,7 @@ def validate_scope(settings, boundary):
         settings.get("entry_session") != ENTRY
         or settings.get("single_owner_exception") != "2026-10-25-v2-shadow-only"
     ):
-        raise Blocked("MONDAY_SCOPE_REQUIRED")
+        raise Blocked("ACTIVATION_SCOPE_REQUIRED")
     runtime = Path(settings["runtime"]).resolve()
     units = Path(settings["unit_dir"]).resolve()
     if boundary.staging:
@@ -216,7 +216,9 @@ def run(settings, *, boundary=None):
         target = instant(ENTRY + "T12:45:00Z")
         # Read the granted existing output, never invoke or alter the radar job.
         radar = read_local(settings["radar_source"], maximum=64_000_000)
-        radar_headlines(radar, ["SPY"], boundary.clock())
+        result['radar_preflight_counts'] = radar_headlines(
+            radar, ["SPY"], boundary.clock()
+        )['excluded_counts']
         radar_headlines(radar, ["SPY"], target)
         del radar
         stage = "calendar"
@@ -253,13 +255,14 @@ def run(settings, *, boundary=None):
             client,
             clock=boundary.clock,
         )
+        result['radar_counts'] = review['radar_counts']
         symbols = [r["symbol"] for r in read_local(config["registry"])["instruments"]]
         calendar(read_local(config["calendar"]), symbols, target)
         radar_headlines(read_local(config["radar"]), symbols, target)
         if (
             target - instant(read_local(config["hunter"])["generated"])
         ).total_seconds() > 4 * 86400:
-            raise Blocked("MONDAY_HUNTER_STALE")
+            raise Blocked("ACTIVATION_HUNTER_STALE")
         deadline(boundary)
         stage = "produce"
         bundle = Producer(client, clock=boundary.clock).snapshot(
@@ -312,6 +315,7 @@ def run(settings, *, boundary=None):
             "replay_waived_by_grant": True,
             "single_owner_exception": settings["single_owner_exception"],
             "staging": boundary.staging,
+            "radar_counts": review['radar_counts'],
             "identities": {
                 "implementation_hash": implementation_hash(),
                 "settings_hash": digest(settings),
@@ -375,12 +379,13 @@ def run(settings, *, boundary=None):
         if journal:
             journal.close()
     message = (
-        "Agent v2 Monday "
+        "Agent v2 Tuesday "
         + result["status"]
         + " "
         + (
             result.get("sha", "")
-            + "; first cycle 2026-10-26 12:45 UTC; hunter only; broker_orders=0"
+            + "; first cycle " + ENTRY + " 12:45 UTC; hunter only; broker_orders=0; radar "
+            + ", ".join(k + "=" + str(v) for k, v in result['radar_counts'].items())
             if result["status"] == "ACTIVATED_SHADOW_ONLY"
             else result.get("stage", "guard") + ": " + result.get("reason", "unknown")
         )
@@ -414,7 +419,7 @@ def bootstrap_units(settings_path, settings_hash):
     return {
         stem
         + ".service": (
-            "[Unit]\nDescription=HyprL v2 Monday one-shot shadow activation\n"
+            "[Unit]\nDescription=HyprL v2 Tuesday one-shot shadow activation\n"
             "[Service]\nType=oneshot\nEnvironment="
             + quote("PATH=" + os.environ["PATH"])
             + "\nWorkingDirectory="
@@ -426,8 +431,8 @@ def bootstrap_units(settings_path, settings_hash):
         ),
         stem
         + ".timer": (
-            "[Unit]\nDescription=HyprL v2 first Monday activation only\n[Timer]\n"
-            "OnCalendar=2026-10-26 10:15:00 UTC\nPersistent=false\nAccuracySec=1s\n"
+            "[Unit]\nDescription=HyprL v2 first Tuesday activation only\n[Timer]\n"
+            "OnCalendar=" + ENTRY + " 10:15:00 UTC\nPersistent=false\nAccuracySec=1s\n"
             "[Install]\nWantedBy=timers.target\n"
         ),
     }
@@ -462,7 +467,7 @@ def main(argv=None):
             }
             try:
                 result["notification"] = boundary.notify(
-                    "Agent v2 Monday BLOCKED settings: " + str(error)
+                    "Agent v2 Tuesday BLOCKED settings: " + str(error)
                 )
             except Exception as notification:
                 result["notification_failure"] = str(notification)

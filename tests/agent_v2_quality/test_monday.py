@@ -1,4 +1,4 @@
-"""The Monday one-shot at its external I/O seams; all provider bodies are synthetic."""
+"""The re-armed Tuesday one-shot at its I/O seams; all provider bodies are synthetic."""
 
 from contextlib import closing
 from pathlib import Path
@@ -18,7 +18,7 @@ from scripts.trading_lab.agent_v2_quality.monday_staging import prepare
 from scripts.trading_lab.agent_v2_quality.producer import atomic_json, read_local
 
 
-def test_complete_monday_staging_refresh_proof_activation_and_timer_enable(tmp_path):
+def test_complete_tuesday_staging_refresh_proof_activation_and_timer_enable(tmp_path):
     settings, boundary = prepare(tmp_path / "staging")
     result = run(settings, boundary=boundary)
     assert result["status"] == "ACTIVATED_SHADOW_ONLY", result
@@ -34,7 +34,7 @@ def test_complete_monday_staging_refresh_proof_activation_and_timer_enable(tmp_p
     }
     assert (
         read_local(root / "calendar-refresh/calendar.json")["coverage_end"]
-        == "2026-11-02T21:00:00Z"
+        == "2026-11-03T21:00:00Z"
     )
     assert read_local(root / "inputs/registry.json")["edges"]["equity_momentum"] == {
         "enabled": False
@@ -51,14 +51,49 @@ def test_complete_monday_staging_refresh_proof_activation_and_timer_enable(tmp_p
     assert len(boundary.requests) == requests  # no retry under the same reservation
 
 
-@pytest.mark.parametrize("failure", ["late", "stale_radar", "calendar_403", "enable", "pin"])
-def test_monday_failures_notify_and_leave_timers_disabled(tmp_path, failure):
+def test_activation_excludes_and_counts_headlines_at_every_radar_boundary(tmp_path):
+    settings, boundary = prepare(tmp_path / 'staging')
+    radar = read_local(settings['radar_source'])
+    story = {'id': 'causal', 'headline': 'Synthetic stock headline',
+             'url': 'https://example.test/stock',
+             'published_at': '2026-10-26T18:00:00Z',
+             'received_at': '2026-10-26T18:01:00Z'}
+    radar['events'] = [{'id': 'synthetic', 'entities': {'symbols': ['SPY']}, 'stories': [
+        story, story | {'id': 'unknown', 'published_at': None},
+        story | {'id': 'at-cutoff', 'received_at': radar['cutoff']},
+        story | {'id': 'late', 'received_at': '2026-10-27T10:00:00Z'}]}]
+    atomic_json(settings['radar_source'], radar)
+    source_hash = file_hash(settings['radar_source'])
+    result = run(settings, boundary=boundary)
+    assert result['status'] == 'ACTIVATED_SHADOW_ONLY', result
+    projected = read_local(Path(settings['output']) / 'inputs/radar-causal-stocks.json')
+    expected = {'related': 4, 'retained': 1, 'missing_time': 1, 'noncausal': 2}
+    assert projected['excluded_counts'] == expected
+    snapshot = read_local(Path(settings['runtime']) / 'inbox/quality-snapshot.json')
+    assert snapshot['radar']['headlines'] == [story]
+    assert snapshot['radar']['projection_excluded_counts'] == expected
+    assert result['radar_counts'] == expected
+    assert file_hash(settings['radar_source']) == source_hash
+    assert 'noncausal=2' in boundary.messages[0]
+
+
+@pytest.mark.parametrize("failure", ["late", "wrong_day", "stale_radar", "malformed_radar",
+                                      "missing_radar", "calendar_403", "enable", "pin"])
+def test_activation_failures_notify_and_leave_timers_disabled(tmp_path, failure):
     settings, boundary = prepare(tmp_path / "staging")
     if failure == "late":
-        boundary.clock.at = instant("2026-10-26T11:25:00Z")
+        boundary.clock.at = instant("2026-10-27T11:25:00Z")
+    elif failure == 'wrong_day':
+        boundary.clock.at = instant('2026-10-26T10:15:00Z')
+    elif failure == 'malformed_radar':
+        radar = read_local(settings['radar_source'])
+        del radar['events']
+        atomic_json(settings['radar_source'], radar)
+    elif failure == 'missing_radar':
+        Path(settings['radar_source']).unlink()
     elif failure == "stale_radar":
         radar = read_local(settings["radar_source"])
-        radar["cutoff"] = "2026-10-25T16:00:00Z"
+        radar["cutoff"] = "2026-10-26T16:00:00Z"
         atomic_json(settings["radar_source"], radar)
     elif failure == "calendar_403":
         boundary.fail_url = "api.nasdaq.com"
@@ -118,7 +153,7 @@ def test_bootstrap_is_one_calendar_date_without_catchup(monkeypatch):
     monkeypatch.setenv("PATH", "/synthetic/model-cli/bin:/usr/bin:/bin")
     units = bootstrap_units("/synthetic/settings.json", "a" * 64)
     timer = units["hyprl-agent-v2-quality-monday-activate.timer"]
-    assert "OnCalendar=2026-10-26 10:15:00 UTC" in timer
+    assert "OnCalendar=2026-10-27 10:15:00 UTC" in timer
     assert "Persistent=false" in timer
     assert "TimeoutStartSec=65min" in units["hyprl-agent-v2-quality-monday-activate.service"]
     from scripts.trading_lab.agent_v2_quality.deploy import render

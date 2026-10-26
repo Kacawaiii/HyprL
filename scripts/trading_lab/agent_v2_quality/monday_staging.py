@@ -1,4 +1,4 @@
-"""Offline boundary fixture for the complete Monday script; no real provider or notifier."""
+"""Offline boundary fixture for the complete activation script; no real provider or notifier."""
 
 from datetime import date, timedelta
 import json
@@ -78,7 +78,7 @@ class StagingBoundary(Boundary):
             }
         elif parsed.hostname == "www.bls.gov":
             cells = "".join(
-                '<td id="d' + (date(2026, 10, 26) + timedelta(days=i)).strftime("%m%d") + '"></td>'
+                '<td id="d' + (date.fromisoformat(ENTRY) + timedelta(days=i)).strftime("%m%d") + '"></td>'
                 for i in range(8)
             )
             return 200, ("<html><table>" + cells + "</table></html>").encode()
@@ -180,14 +180,21 @@ def prepare(root):
     seed = root / "seed.json"
     atomic_json(seed, reg)
     radar = root / "radar.json"
+    previous = (date.fromisoformat(ENTRY) - timedelta(days=1)).isoformat()
+    story = {'id': 'synthetic-causal', 'headline': 'Synthetic stock headline',
+             'url': 'https://example.test/stock', 'published_at': previous + 'T18:00:00Z',
+             'received_at': previous + 'T18:01:00Z'}
     atomic_json(
         radar,
         {
             "schema": "news-radar-v3",
             "live": True,
             "status": "PARTIAL",
-            "cutoff": "2026-10-25T19:30:00Z",
-            "events": [],
+            "cutoff": previous + "T19:30:00Z",
+            "events": [{'id': 'synthetic', 'entities': {'symbols': ['SPY']}, 'stories': [
+                story, story | {'id': 'unknown', 'published_at': None},
+                story | {'id': 'at-cutoff', 'received_at': previous + 'T19:30:00Z'},
+                story | {'id': 'late', 'received_at': ENTRY + 'T10:00:00Z'}]}],
         },
     )
     config = root / "base-config.json"

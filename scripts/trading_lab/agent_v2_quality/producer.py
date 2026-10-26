@@ -216,24 +216,62 @@ def read_local(path, maximum=16_000_000):
     return strict_json(path.read_text())
 
 
-def radar_headlines(value, symbols, at):
-    """Only candidate-related stock headlines; never radar prices, crypto, or model opinions."""
-    if (value.get('schema') != 'news-radar-v3' or value.get('live') is not True
+def radar_projection(value, symbols, at):
+    """Exclude unavailable stories uniformly; a malformed radar still fails closed."""
+    if (not isinstance(value, dict) or value.get('schema') != 'news-radar-v3' or value.get('live') is not True
             or value.get('status') not in ('READY', 'PARTIAL')
             or not fresh(value.get('cutoff'), at, 18 * 3600)):
         raise Blocked('RADAR_MISSING_OR_STALE')
-    headlines = []
-    for event in value.get('events', []):
-        names = set(event.get('entities', {}).get('symbols', []))
+    if not isinstance(value.get('events'), list):
+        raise Blocked('RADAR_MALFORMED')
+    cutoff = instant(value['cutoff'])
+    events = []
+    counts = dict.fromkeys(('related', 'retained', 'missing_time', 'noncausal'), 0)
+    for event in value['events']:
+        if (not isinstance(event, dict) or not isinstance(event.get('entities'), dict)
+                or not isinstance(event['entities'].get('symbols'), list)
+                or any(not isinstance(s, str) for s in event['entities']['symbols'])
+                or not isinstance(event.get('stories'), list)):
+            raise Blocked('RADAR_MALFORMED')
+        names = set(event['entities']['symbols'])
         if not names & set(symbols) or any('/' in name or name in ('BTC', 'ETH', 'BTC-USD', 'ETH-USD') for name in names):
             continue
-        for story in event.get('stories', []):
-            if not story.get('published_at') or not (
-                    instant(story['published_at']) <= instant(story['received_at']) <= instant(value['cutoff']) <= at):
-                raise Blocked('RADAR_HEADLINE_NONCAUSAL')
-            headlines.append({k: story[k] for k in ('id', 'headline', 'url', 'published_at', 'received_at')})
-    return {'cutoff': value['cutoff'], 'status': value['status'], 'headlines': headlines[:100],
-            'upstream_sha256': digest(value)}
+        stories = []
+        for story in event['stories']:
+            if (not isinstance(story, dict)
+                    or any(not isinstance(story.get(k), str) or not story[k]
+                           for k in ('id', 'headline', 'url'))):
+                raise Blocked('RADAR_MALFORMED')
+            counts['related'] += 1
+            if not story.get('published_at') or not story.get('received_at'):
+                counts['missing_time'] += 1
+                continue
+            published, received = instant(story['published_at']), instant(story['received_at'])
+            if not published <= received < cutoff:
+                counts['noncausal'] += 1
+                continue
+            stories.append({k: story[k] for k in ('id', 'headline', 'url', 'published_at', 'received_at')})
+            counts['retained'] += 1
+        if stories:
+            events.append({'entities': {'symbols': sorted(names)}, 'stories': stories})
+    return {k: value[k] for k in ('schema', 'live', 'status', 'cutoff')} | {
+        'events': events, 'excluded_counts': counts}
+
+
+def radar_headlines(value, symbols, at):
+    """Only candidate-related stock headlines; never radar prices, crypto, or model opinions."""
+    projected = radar_projection(value, symbols, at)
+    headlines = [s for e in projected['events'] for s in e['stories']]
+    result = {'cutoff': value['cutoff'], 'status': value['status'], 'headlines': headlines[:100],
+              'excluded_counts': projected['excluded_counts'], 'upstream_sha256': digest(value)}
+    if 'excluded_counts' in value:
+        counts = value['excluded_counts']
+        if (not isinstance(counts, dict) or set(counts) != set(projected['excluded_counts'])
+                or any(type(n) is not int or n < 0 for n in counts.values())
+                or counts['related'] != counts['retained'] + counts['missing_time'] + counts['noncausal']):
+            raise Blocked('RADAR_MALFORMED')
+        result['projection_excluded_counts'] = counts.copy()
+    return result
 
 
 def atomic_json(path, value):

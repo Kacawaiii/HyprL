@@ -145,8 +145,8 @@ def acquire(output, grantpath, entry, *, clock=utc, send=transport, pause=time.s
             if label in text:
                 events.append({"kind": kind, "at": d.isoformat() + "T00:00:00Z", "symbol": None})
     fed = plain(bodies["fed-fomc"].decode("utf-8"))
-    # This reviewed refresh is specifically for the first Monday shadow cycle.
-    if entry != date(2026, 10, 26) or "2026 FOMC Meetings" not in fed:
+    # The operator re-armed this single reviewed horizon for Tuesday, without backfill.
+    if entry != date(2026, 10, 27) or "2026 FOMC Meetings" not in fed:
         raise RuntimeError("UNREVIEWED_FOMC_HORIZON")
     section = fed.split("2026 FOMC Meetings", 1)[1].split("2025 FOMC Meetings", 1)[0]
     if not re.search(r"October\s+27-28", section):
