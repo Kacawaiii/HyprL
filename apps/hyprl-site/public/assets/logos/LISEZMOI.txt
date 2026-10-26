@@ -1,0 +1,5 @@
+Logos des canaux (Discord, Slack, Telegram, Microsoft Teams).
+Déposer ici les fichiers SVG officiels téléchargés depuis le kit presse de chaque marque,
+puis remplacer dans index.html (section #alertes) l'icône générique par :
+  <img src="/assets/logos/discord.svg" alt="" width="28" height="28">
+La grille les affiche automatiquement en niveaux de gris (filter: grayscale(1)).
