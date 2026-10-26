@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administration — HyprL</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/admin.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#contenu">Aller au contenu</a>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/" aria-label="HyprL, accueil">
+        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 8v16M22 8v16M10 16h12" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/></svg>
+        HyprL
+      </a>
+    </div>
+  </header>
+
+  <main id="contenu" class="page">
+    <div class="container">
+      <div id="admin-login" class="login" hidden>
+        <h1>Administration</h1>
+        <div id="login-msg" class="status-msg error" role="alert" hidden></div>
+        <form id="login-form" class="form" novalidate>
+          <div class="field">
+            <label for="password">Mot de passe</label>
+            <input type="password" id="password" name="password" required autocomplete="current-password">
+          </div>
+          <button class="btn btn-primary" type="submit">Se connecter</button>
+          <p class="hint">5 tentatives par tranche de 15 minutes. Déconnexion automatique après 30 minutes d’inactivité.</p>
+        </form>
+      </div>
+
+      <div id="admin-panel" hidden>
+        <div class="admin-bar">
+          <h1>Inscriptions <span id="count" class="mono muted"></span></h1>
+          <button id="logout" class="btn btn-quiet" type="button">Se déconnecter</button>
+        </div>
+        <div id="panel-msg" class="status-msg" role="status" hidden></div>
+        <div class="table-wrap" role="region" aria-label="Liste des inscriptions" tabindex="0">
+          <table class="admin-table">
+            <caption>Heures affichées en heure de Paris. « Supprimer » efface définitivement l’inscrit (droit à l’effacement).</caption>
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">E-mail</th>
+                <th scope="col">Canaux</th>
+                <th scope="col">Actions suivies</th>
+                <th scope="col">Consentement</th>
+                <th scope="col"><span class="visually-hidden">Supprimer</span></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <noscript><p class="placeholder">L’administration nécessite JavaScript.</p></noscript>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <ul>
+        <li><a href="/mentions-legales">Mentions légales</a></li>
+        <li><a href="/cgv">CGV</a></li>
+        <li><a href="/confidentialite">Politique de confidentialité</a></li>
+        <li><a href="https://discord.gg/BCgmuk6kXE" rel="noopener">Discord</a></li>
+      </ul>
+      <p class="disclaimer">Les performances passées ne préjugent pas des performances futures. HyprL fournit de l’information, pas de recommandation personnalisée.</p>
+      <p class="copyright">© HyprL</p>
+    </div>
+  </footer>
+</body>
+</html>
