@@ -183,8 +183,24 @@
   "external_requests": 0,
   "broker_calls": 0,
   "private_proof_sha256": {
-    "replay-proof.json": "5724f8a24927bf04642724be16a03238e2d9bfb899c9249f1835912934442ced",
-    "native/proof.json": "b375f176964e89e0ca27c8f1fb86d23a5a7f5119380aba642c64e0ddef7faee3"
+    "replay-proof.json": "21243b900807708b866408c52887005f9defbb7fddb747c6d3c437b5144f73f0",
+    "native/proof.json": "b375f176964e89e0ca27c8f1fb86d23a5a7f5119380aba642c64e0ddef7faee3",
+    "recovery-proof.json": "151d4d20b72354df738bf910c9546a354184793a5734fe0b922df300330cd364"
   },
-  "canonical_sha256": "6395cfb09b761d8adb06a96449e0a5c92a08b18201051804db92a3ef55b1382f"
+  "recovery": {
+    "primary_status": "FAILED",
+    "primary_error": "MODEL_PERMISSION_PROTOCOL_INVALID",
+    "recovery_status": "COMPLETE",
+    "recovery_context_hash": "872aaabaeda71eb69b447aaf96637e8e26eb9b2e49f3d8c39675169f86dc843b",
+    "counts": {
+      "analyst_claude": 2,
+      "catchup_run": 1,
+      "reviewer": 1,
+      "run": 1
+    },
+    "views": 120,
+    "chain_verified": true,
+    "transport_fixture_note": "Recorded Oct 23 analyst/reviewer structured entries filtered to the actual 30-equity recovery universe. Source facts/times/probabilities unchanged; not a new historical investment decision. A synthetic protocol failure uses the first original analyst reservation."
+  },
+  "canonical_sha256": "7aea10ac06fe196b196d9de38a918927e14f4b017d96b5b32d69f2ead24845e9"
 }

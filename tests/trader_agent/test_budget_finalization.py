@@ -148,3 +148,11 @@ def test_budget_completion_still_rejects_future_sources(bounded, monkeypatch, tm
         ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'Synthetic',
             validator=lambda value: validate_analyst(value, ['AAPL'], bounded.clock()))
     assert bounded.counts() == {'analyst_claude': 2}
+
+
+def test_missing_probe_usage_remains_incomplete(bounded, monkeypatch, tmp_path):
+    from scripts.trading_lab.trader_agent.config import TraderError
+    replay_cli(monkeypatch, tmp_path, [], [{**result(), 'modelUsage': {}}])
+    with pytest.raises(TraderError, match='MODEL_USAGE_INVALID'):
+        ModelRunner(bounded, clock=bounded.clock).once('analyst_claude', 'Synthetic probe', probe=True)
+    assert bounded.work_counts()[0]['incomplete_usage'] == 1

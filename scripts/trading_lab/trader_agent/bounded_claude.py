@@ -296,7 +296,11 @@ def once(runner, role, prompt, limits, *, probe=False):
                 complete = False
         # The local rehearsal transition dispatches no research process.
         if probe and len(gates) == 2 and gates[-1].result:
-            complete = True
+            try:
+                usage(gates[-1].result)
+                complete = True
+            except TraderError:
+                complete = False
         runner.work_metadata[role] = {'spec_hash': SPEC_HASH, 'finalization_reason': reason,
             'research_tools': gate.counts, 'final_tools': 0, 'usage_complete': complete}
         ledger.record_work(seq, new, cached, outcome, usage_complete=complete)
