@@ -99,6 +99,7 @@ def test_extension_is_rechecked_and_expires_at_exact_boundary(grant, tmp_path):
         loaded.check(AFTER)
 
 
+
 def test_future_label_drill_crosses_original_expiry(grant, tmp_path, capsys):
     from scripts.trading_lab.trader_agent.cli import main
     from scripts.trading_lab.trader_agent.drill_summary import summarize
@@ -145,6 +146,21 @@ def test_paper_extension_keeps_parent_and_paper_bindings(grant, tmp_path):
     record.write_text(json.dumps(value))
     with pytest.raises(TraderError):
         loaded.check(AFTER)
+
+    # The paper record alone never renews its independent data capability.
+    from scripts.trading_lab.trader_agent.alpaca_data import DataAuthorization, DATA_URL
+    value['extends'][1].pop('endpoint')
+    record.write_text(json.dumps(value))
+    data_path = tmp_path / 'data.json'
+    data_path.write_text(json.dumps({'authorization': 'trader-alpaca-data-v1',
+        'extends': 'trader-alpaca-paper-v1', 'granted_at': '2026-01-01T00:00:00Z', 'not_after': OLD,
+        'data_endpoint': {'origin': DATA_URL, 'methods': ['GET'], 'credentials': 'ia_actions keys'}}))
+    data_grant = DataAuthorization.load(data_path, loaded)
+    with pytest.raises(TraderError, match='DATA_AUTHORIZATION_EXPIRED_OR_NOT_STARTED'):
+        data_grant.check(AFTER)
+    value['extends'] += extension(data_path)['extends']
+    record.write_text(json.dumps(value))
+    assert data_grant.check(AFTER)['authorization_extension_sha256']
 
 
 def test_base_extension_never_implicitly_extends_crypto_amendment(grant, tmp_path):
