@@ -1,0 +1,233 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "HyprL alerts API — future, not implemented",
+    "version": "1.0.0",
+    "description": "Draft v1 contract. These endpoints are not enabled by the current site. Review and implement authentication, entitlements, pagination and durable webhook replay protection before launch."
+  },
+  "servers": [
+    {
+      "url": "https://hyprlcore.com"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/api/v1/alerts": {
+      "get": {
+        "operationId": "listAlerts",
+        "summary": "List market information alerts (future)",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of alerts, timestamps in UTC",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schema_version",
+                    "generated_at",
+                    "alerts",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": "1.0.0"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+                      "description": "ISO 8601, UTC only (Z)."
+                    },
+                    "alerts": {
+                      "type": "array",
+                      "maxItems": 100,
+                      "items": {
+                        "$ref": "./alert.schema.json"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing entitlement",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "Seconds until retry"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "marketAlert": {
+      "post": {
+        "operationId": "receiveMarketAlert",
+        "summary": "Signed alert delivered to a subscriber-controlled HTTPS endpoint (future)",
+        "security": [],
+        "description": "HMAC-SHA256 over ASCII timestamp + dot + exact raw request body bytes. Headers X-HyprL-Timestamp (Unix seconds) and X-HyprL-Signature (v1=lowercase hex). Secret at least 32 random bytes. Constant-time comparison; reject absolute clock skew >300 seconds. Schema validation then atomic shared event_id reservation before processing; keep replay entries until timestamp+301 seconds. Durable business idempotency by event_id across retries. No JSON reserialization before verification. See WEBHOOKS.md. Header timestamp is Unix seconds by protocol; payload dates use ISO 8601 UTC.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-HyprL-Timestamp",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{10}$"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-HyprL-Signature",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^v1=[a-f0-9]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./webhook.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Verified, validated and accepted or already processed idempotently"
+          },
+          "400": {
+            "description": "Invalid payload",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid signature or expired timestamp",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay of an already reserved delivery",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Server-issued token, environment or secret store only; HTTPS required."
+      }
+    }
+  }
+}
