@@ -9,6 +9,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from scripts.authorization_extensions import ExtensionError, sec_user_agent
 
 from scripts.trading_lab.agent_v2.inputs import fresh, previous_session, sessions
 from .inputs import validate_snapshot
@@ -72,16 +73,15 @@ class Client:
         self.journal, self.grant = journal, grant
         self.credentials, self.sec_authorization = credentials, sec_authorization
         self.clock, self.send, self.pause = clock, send, pause
+        self.sec_metadata = {}
 
     def headers(self, group):
         if group == 'sec':
             # Only the approved UA is reused; this grant does not borrow the radar's endpoint scope.
-            value = strict_json(Path(self.sec_authorization).read_text())
-            if not instant(value['granted_at']) <= self.clock() < instant(value['not_after']):
-                raise Blocked('SEC_USER_AGENT_AUTHORIZATION_EXPIRED')
-            ua = value['scope']['https://www.sec.gov']['user_agent']
-            if not isinstance(ua, str) or not ua.strip() or any(ord(c) < 32 for c in ua):
-                raise Blocked('SEC_USER_AGENT_REQUIRED')
+            try:
+                ua, self.sec_metadata = sec_user_agent(self.sec_authorization, self.clock())
+            except ExtensionError:
+                raise Blocked('SEC_USER_AGENT_AUTHORIZATION_EXPIRED') from None
             return {'User-Agent': ua, 'Accept': 'application/json,text/html'}
         values = {}
         for line in Path(self.credentials).read_text().splitlines():
@@ -108,6 +108,9 @@ class Client:
                 self.pause(min(1, remaining))
         now = self.clock()
         with self.journal.owned():
+            if group == 'sec':
+                headers = self.headers(group)  # Recheck after spacing, before reservation/dispatch.
+            metadata = {'sec_authorization': self.sec_metadata} if group == 'sec' else {}
             rows = [r for r in self.journal.records('http_reservation')
                     if r['at'][:10] == iso(now)[:10] and r['body']['group'] == group]
             if len(rows) >= spec()['data_budgets'][group]:
@@ -118,11 +121,11 @@ class Client:
                    for r in self.journal.records('http_halt')):
                 raise Blocked('HTTP_HALTED')
             self.journal.append([('http_reservation', {'group': group, 'url': url,
-                                  'authorization_hash': digest(grant)})], now)
+                                  'authorization_hash': digest(grant), **metadata})], now)
         status, raw = self.send(url, headers)
         received = self.clock()  # after the entire response, never the publication timestamp
         receipt = {'group': group, 'url': url, 'status': status,
-                   'received_at': iso(received), 'sha256': sha256(raw).hexdigest()}
+                   'received_at': iso(received), 'sha256': sha256(raw).hexdigest(), **metadata}
         with self.journal.owned():
             events = [('http_receipt', receipt)]
             if status in (403, 429):

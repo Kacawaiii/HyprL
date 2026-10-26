@@ -170,6 +170,9 @@ def prepare(root):
     atomic_json(
         sec,
         {
+            "authorization": "news-radar-sec-fed-telegram-v1",
+            "extends": "news-radar-v1",
+            "operator_signed": True,
             "granted_at": "2026-01-01T00:00:00Z",
             "not_after": "2027-01-01T00:00:00Z",
             "scope": {"https://www.sec.gov": {"user_agent": "Synthetic Test Agent"}},

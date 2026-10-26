@@ -33,7 +33,9 @@ def client(forward, tmp_path, send):
     credentials = tmp_path / 'synthetic-credentials'
     credentials.write_text('APCA_API_KEY_ID=synthetic-key\nAPCA_API_SECRET_KEY=synthetic-value\n')
     sec = tmp_path / 'synthetic-sec-ua.json'
-    sec.write_text(json.dumps({'granted_at': '2026-01-01T00:00:00Z', 'not_after': '2027-01-01T00:00:00Z',
+    sec.write_text(json.dumps({'authorization': 'news-radar-sec-fed-telegram-v1', 'extends': 'news-radar-v1',
+                              'operator_signed': True,
+                              'granted_at': '2026-01-01T00:00:00Z', 'not_after': '2027-01-01T00:00:00Z',
                               'scope': {'https://www.sec.gov': {'user_agent': 'Synthetic Test Agent'}}}))
     def advance(seconds):
         clock.at += timedelta(seconds=seconds)

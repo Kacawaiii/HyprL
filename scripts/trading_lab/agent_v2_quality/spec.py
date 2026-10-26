@@ -39,6 +39,9 @@ def configuration():
 def implementation_hash():
     # Pure risk/calendar/momentum helpers are reused, but their implementation is frozen too.
     folders = [HERE, HERE.parent / 'agent_v2']
-    return digest({str(p.relative_to(HERE.parent)): hashlib.sha256(p.read_bytes()).hexdigest()
+    hashes = {str(p.relative_to(HERE.parent)): hashlib.sha256(p.read_bytes()).hexdigest()
                    for folder in folders for p in sorted(folder.rglob('*'))
-                   if p.suffix in ('.py', '.txt')})
+                   if p.suffix in ('.py', '.txt')}
+    helper = HERE.parents[1] / 'authorization_extensions.py'
+    hashes['authorization_extensions.py'] = hashlib.sha256(helper.read_bytes()).hexdigest()
+    return digest(hashes)
