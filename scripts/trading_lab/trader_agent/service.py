@@ -117,8 +117,14 @@ class TraderService:
                             'close' if self.entry_at == 'after_hours' else self.entry_at)
 
     def summary(self, run_id, status, at, **extra):
+        try:
+            metadata = self.ledger.grant.extension_metadata(at, slot=self.ledger.slot)
+        except TraderError:
+            metadata = {}
         payload = {"schema": "trader-run-v1", "run_id": run_id, "status": status, "at": iso(at),
                    "synthetic": self.data.synthetic, "slot": self.ledger.slot, **extra}
+        if metadata:
+            payload.update(authorization_hash=self.ledger.grant.identity, **metadata)
         # RUNNING/COMPLETE happen once per run; failures and skips can repeat (e.g. a refused catch-up), each kept.
         suffix = status if status in {"RUNNING", "COMPLETE", "DEGRADED"} else f"{status}:{iso(at)}"
         self.store.append("replay-summary", payload, object_id=run_id + ":" + suffix, recorded_at=iso(at))
@@ -359,6 +365,10 @@ class TraderService:
                 at = iso(self.clock())
                 payload = {'schema': 'trader-news-run-v1', 'run_id': run_id, 'base_run_id': base['run_id'],
                     'arm': 'news', 'slot': self.ledger.slot, 'status': status, 'at': at, 'synthetic': self.data.synthetic, **extra}
+                metadata = base.get('authorization_extension_sha256')
+                if metadata:
+                    payload.update({k: base[k] for k in ('authorization_hash', 'authorization_file_sha256',
+                                   'authorization_extension_sha256', 'authorization_not_after')})
                 self.store.append('replay-summary', payload,
                     object_id=run_id + ':' + status + (':' + at if status == 'FAILED' else ''), recorded_at=at)
                 return payload

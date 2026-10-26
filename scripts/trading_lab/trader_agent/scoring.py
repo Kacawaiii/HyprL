@@ -78,7 +78,7 @@ def realize(store, ledger, data, *, at=None, unlabelable=None):
 def _realize(store, ledger, data, *, at=None, unlabelable):
     at = at or now()
     with ledger.owner():
-        ledger.grant.check(at)
+        metadata = ledger.grant.check(at, slot=ledger.slot)
         if ledger.paused:
             return {"state": "PAUSED", "labels_added": 0}
         repaired = repair_missing_executions(store)
@@ -219,6 +219,8 @@ def _realize(store, ledger, data, *, at=None, unlabelable):
                   "pending": pending, "executions_repaired": repaired, "unresolved": unresolved,
                   "unlabelable_count": unlabelable_count,
                   "skipped_invalid_price": sum(r.get('disposition') == 'RETRYABLE_INVALID_PRICE' for r in unresolved)}
+        if metadata:
+            result.update(authorization_hash=ledger.grant.identity, **metadata)
         if blocked:
             result['reason'] = 'BUDGET_EXHAUSTED'
         return result

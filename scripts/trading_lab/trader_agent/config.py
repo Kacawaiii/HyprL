@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from scripts.trading_lab.sources.canonical import sha256_canonical
+from scripts.authorization_extensions import ExtensionError, expiry_receipt
 
 AMENDMENT_NAME = 'trader-agent-crypto-amendment-v1.json'
 AMENDMENT_HASH = '2bf0d9d5a3f62eb9ea94ffafe8a5ec630d0986dc184428c0340e49f714c3b6d7'
@@ -68,11 +69,15 @@ class Authorization:
     pm_amendment: dict | None = None
     pm_identity: str | None = None
     retirement_decision: dict | None = None
+    source_path: Path | None = None
+    source_payload: dict | None = None
+    amendment_source_path: Path | None = None
 
     @classmethod
     def load(cls, path, *, amendment_path=None):
         payload = strict_json(Path(path).read_text())
-        grant = cls(payload, sha256_canonical(payload))
+        grant = cls(payload, sha256_canonical(payload), source_path=Path(path).resolve(),
+                    source_payload=deepcopy(payload))
         grant.validate()
         explicit_amendment = amendment_path is not None
         amendment_path = Path(amendment_path) if amendment_path else Path(path).parent / AMENDMENT_NAME
@@ -100,21 +105,16 @@ class Authorization:
         effective['data_sources']['coinbase_exchange_public']['max_requests_per_day'] = 40
         identity = sha256_canonical({'base_grant_hash': grant.identity, 'amendment_hash': AMENDMENT_HASH,
                                      'effective_payload': effective})
-        amended = cls(effective, identity, grant.identity, AMENDMENT_HASH, amendment)
+        amended = replace(grant, payload=effective, identity=identity, base_identity=grant.identity,
+                          amendment_identity=AMENDMENT_HASH, amendment=amendment,
+                          amendment_source_path=amendment_path.resolve())
         amended.validate()
         return amended.load_weekend(Path(path).parent)
 
     def load_weekend(self, folder):
-<<<<<<< HEAD
-=======
         from .pm_retirement_spec import DECISION_NAME as pm_retirement_name, check_decision
         if (folder / pm_retirement_name).exists():
             check_decision(folder / pm_retirement_name)
-        from .work_budget import APPROVAL_NAME
-        work_approval = folder / APPROVAL_NAME
-        if work_approval.exists():
-            self = replace(self, work_budget_approval=strict_json(work_approval.read_text()))
->>>>>>> 5cd51a3 (feat(trader): retire PM dispatch and expectations from Oct 26)
         from .retirement_spec import DECISION_NAME as retirement_name, DECISION_HASH as retirement_hash
         path = folder / retirement_name
         if path.exists():
@@ -140,7 +140,7 @@ class Authorization:
         return replace(self, weekend_decision=decision)
 
     def check_slot(self, slot, at, *, preflight=False):
-        self.check(at)
+        self.check(at, slot=slot)
         if slot == 'am':
             return
         from .pm_retirement_spec import active
@@ -212,12 +212,24 @@ class Authorization:
             raise TraderError("INVALID_PAPER_CAPITAL")
         self.gpt_model
 
-    def check(self, at):
-        if not instant(self.payload["granted_at"]) <= at < instant(self.payload["not_after"]):
+    def extension_metadata(self, at, *, slot='am'):
+        try:
+            return expiry_receipt(self.source_path, self.source_payload or self.payload, at, slot=slot)
+        except ExtensionError:
             raise TraderError("AUTHORIZATION_EXPIRED_OR_NOT_STARTED")
 
+    def check(self, at, *, slot='am'):
+        # Preserve original and amendment identities; never rewrite their payloads.
+        metadata = self.extension_metadata(at, slot=slot)
+        if not metadata and not instant(self.payload['granted_at']) <= at < instant(self.payload['not_after']):
+            raise TraderError('AUTHORIZATION_EXPIRED_OR_NOT_STARTED')
         if self.amendment and not instant(self.amendment['granted_at']) <= at < instant(self.amendment['not_after']):
-            raise TraderError('CRYPTO_AMENDMENT_EXPIRED_OR_NOT_STARTED')
+            try:
+                receipt = expiry_receipt(self.amendment_source_path, self.amendment, at, slot=slot)
+                metadata = {**metadata, 'crypto_amendment_extension_sha256': receipt['authorization_extension_sha256']}
+            except (ExtensionError, KeyError):
+                raise TraderError('CRYPTO_AMENDMENT_EXPIRED_OR_NOT_STARTED') from None
+        return metadata
 
     @property
     def gpt_model(self):
