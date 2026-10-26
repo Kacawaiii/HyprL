@@ -1,0 +1,566 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hyprl:alerts:payload:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "kind",
+    "occurred_at",
+    "available_at",
+    "source",
+    "symbols",
+    "agents",
+    "facts",
+    "disclaimer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "kind": {
+      "enum": [
+        "sec_filing",
+        "fed_release",
+        "cpi_release",
+        "nfp_release",
+        "earnings_date",
+        "earnings_result",
+        "unusual_move",
+        "radar_headline",
+        "duel_hashes",
+        "duel_results",
+        "weekly_luck",
+        "system_test"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 35
+    },
+    "available_at": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 35
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "url",
+        "sha256"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "SEC",
+            "Federal Reserve",
+            "BLS",
+            "issuer",
+            "market-data",
+            "radar",
+            "HyprL",
+            "synthetic"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "maxLength": 400
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "symbols": {
+      "type": "array",
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+      }
+    },
+    "agents": {
+      "const": [
+        "HypR-A1",
+        "HypR-E1"
+      ]
+    },
+    "facts": {
+      "type": "object"
+    },
+    "disclaimer": {
+      "const": "information, pas un conseil en investissement"
+    }
+  },
+  "$comment": "UTC, URL safety, symbol-required kinds, percentile bounds and causal/pre-open checks are additionally enforced by model.py.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "sec_filing"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "form",
+              "cik",
+              "accession"
+            ],
+            "properties": {
+              "form": {
+                "enum": [
+                  "8-K",
+                  "10-Q",
+                  "10-K",
+                  "S-1",
+                  "4"
+                ]
+              },
+              "cik": {
+                "type": "string",
+                "pattern": "^[0-9]{10}$"
+              },
+              "accession": {
+                "type": "string",
+                "pattern": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "fed_release"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "release"
+            ],
+            "properties": {
+              "release": {
+                "enum": [
+                  "statement",
+                  "minutes",
+                  "decision",
+                  "speech"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "cpi_release"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "period",
+              "yoy_pct",
+              "mom_pct"
+            ],
+            "properties": {
+              "period": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"
+              },
+              "yoy_pct": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "mom_pct": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "nfp_release"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "period",
+              "jobs_change",
+              "unemployment_pct"
+            ],
+            "properties": {
+              "period": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"
+              },
+              "jobs_change": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,9}$"
+              },
+              "unemployment_pct": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "earnings_date"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scheduled_at",
+              "period"
+            ],
+            "properties": {
+              "scheduled_at": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 35
+              },
+              "period": {
+                "type": "string",
+                "pattern": "^FY[0-9]{4}(Q[1-4])?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "earnings_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "period",
+              "eps",
+              "revenue",
+              "currency"
+            ],
+            "properties": {
+              "period": {
+                "type": "string",
+                "pattern": "^FY[0-9]{4}(Q[1-4])?$"
+              },
+              "eps": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "revenue": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "currency": {
+                "enum": [
+                  "USD",
+                  "EUR",
+                  "GBP",
+                  "JPY",
+                  "CAD"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "unusual_move"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "price_change_pct",
+              "volume_multiple",
+              "window_minutes"
+            ],
+            "properties": {
+              "price_change_pct": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "volume_multiple": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "window_minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10080
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "radar_headline"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "category",
+              "impact"
+            ],
+            "properties": {
+              "category": {
+                "enum": [
+                  "macro",
+                  "earnings",
+                  "regulation",
+                  "merger",
+                  "other"
+                ]
+              },
+              "impact": {
+                "const": "high"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "duel_hashes"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "session",
+              "open_at",
+              "a1_sha256",
+              "e1_sha256"
+            ],
+            "properties": {
+              "session": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              "open_at": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 35
+              },
+              "a1_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "e1_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "duel_results"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "session",
+              "close_at",
+              "a1_sha256",
+              "e1_sha256",
+              "a1_return_pct",
+              "e1_return_pct"
+            ],
+            "properties": {
+              "session": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              "close_at": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 35
+              },
+              "a1_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "e1_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "a1_return_pct": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "e1_return_pct": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "weekly_luck"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "week_ending",
+              "a1_percentile",
+              "e1_percentile",
+              "observations"
+            ],
+            "properties": {
+              "week_ending": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              "a1_percentile": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "e1_percentile": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,8})?$"
+              },
+              "observations": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "system_test"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "synthetic"
+            ],
+            "properties": {
+              "synthetic": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
