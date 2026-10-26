@@ -8,6 +8,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import json
 
 from scripts.trading_lab.sources.canonical import sha256_canonical
+from scripts.authorization_extensions import ExtensionError, expiry_receipt
 
 from .alpaca_paper import PaperClient, PrivateQuotes, decimal, symbol
 from .config import TraderError, instant, iso, now, strict_json
@@ -26,11 +27,12 @@ class DataAuthorization:
     payload: dict
     identity: str
     parent: object
+    source_path: Path | None = None
 
     @classmethod
     def load(cls, path, parent):
         payload = strict_json(Path(path).read_text())
-        grant = cls(payload, sha256_canonical(payload), parent)
+        grant = cls(payload, sha256_canonical(payload), parent, Path(path).resolve())
         endpoint = payload.get('data_endpoint', {})
         if (payload.get('authorization') != 'trader-alpaca-data-v1'
                 or payload.get('extends') != 'trader-alpaca-paper-v1'
@@ -40,10 +42,12 @@ class DataAuthorization:
             raise TraderError('DATA_INVALID_GRANT')
         return grant
 
-    def check(self, at):
-        self.parent.check(at)
-        if not instant(self.payload['granted_at']) <= at < instant(self.payload['not_after']):
-            raise TraderError('DATA_AUTHORIZATION_EXPIRED_OR_NOT_STARTED')
+    def check(self, at, *, slot='am'):
+        self.parent.check(at, slot=slot)
+        try:
+            return expiry_receipt(self.source_path, self.payload, at, slot=slot)
+        except ExtensionError:
+            raise TraderError('DATA_AUTHORIZATION_EXPIRED_OR_NOT_STARTED') from None
 
 
 class NoRedirect(HTTPRedirectHandler):
