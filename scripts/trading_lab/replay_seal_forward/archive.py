@@ -46,19 +46,26 @@ class DiskBars(Mapping):
         self.connection.execute('PRAGMA synchronous=OFF')
         self.connection.execute('CREATE TABLE bars (symbol TEXT, at TEXT, received TEXT, body TEXT, PRIMARY KEY(symbol,at)) WITHOUT ROWID')
         self.symbols, self.cache = set(), OrderedDict()
+        # Receipt clocks only, never a second in-memory copy of raw histories.
+        # Overlapping paginated requests repeat millions of already indexed rows.
+        self.receipts = {}
 
     def put(self, symbol, row, received):
+        receipts = self.receipts.setdefault(symbol, {})
+        prior = receipts.get(row['t'])
+        if prior is not None:
+            if received < prior:
+                return
+            if received == prior:
+                old = self.connection.execute('SELECT body FROM bars WHERE symbol=? AND at=?',
+                                              (symbol, row['t'])).fetchone()[0]
+                if json.loads(old) == row:
+                    return
+                raise ReplayError('ARCHIVE_REVISION_CONFLICT', {'kind': 'bars:' + symbol, 'identity': row['t']})
         stamp = received.isoformat(timespec='microseconds')
         body = json.dumps(row, sort_keys=True, separators=(',', ':'))
-        cursor = self.connection.execute('INSERT OR IGNORE INTO bars VALUES (?,?,?,?)', (symbol, row['t'], stamp, body))
-        if not cursor.rowcount:
-            prior, old = self.connection.execute('SELECT received,body FROM bars WHERE symbol=? AND at=?',
-                                                 (symbol, row['t'])).fetchone()
-            if stamp > prior:
-                self.connection.execute('UPDATE bars SET received=?,body=? WHERE symbol=? AND at=?',
-                                        (stamp, body, symbol, row['t']))
-            elif stamp == prior and json.loads(old) != row:
-                raise ReplayError('ARCHIVE_REVISION_CONFLICT', {'kind': 'bars:' + symbol, 'identity': row['t']})
+        self.connection.execute('INSERT OR REPLACE INTO bars VALUES (?,?,?,?)', (symbol, row['t'], stamp, body))
+        receipts[row['t']] = received
         self.symbols.add(symbol)
         self.cache.pop(symbol, None)
 
@@ -226,12 +233,13 @@ class Archive:
     def require_bar_history(self, symbol, T):
         from datetime import timedelta
         groups = {}
+        earliest, last_close = T - timedelta(days=HISTORY_DAYS), md.previous_close(T)
         for origin, path, params, body in self.requests:
             if (origin != md.ALPACA or path != '/v2/stocks/bars' or params.get('timeframe') != '1Day' or
                     symbol not in params['symbols'].split(',') or
                     params.get('adjustment') != 'raw' or
-                    instant(params['start']) > T - timedelta(days=HISTORY_DAYS) or
-                    instant(params['end']) < md.previous_close(T)):
+                    instant(params['start']) > earliest or
+                    instant(params['end']) < last_close):
                 continue
             group = tuple(sorted((k, str(v)) for k, v in params.items() if k != 'page_token'))
             groups.setdefault(group, {})[params.get('page_token')] = body.get('next_page_token')

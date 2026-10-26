@@ -38,14 +38,17 @@ def test_verify_before_replace_all_four_research_timers_with_named_timezone(tmp_
     calls = []
     monkeypatch.setattr(subprocess, 'run', lambda args, **kwargs: calls.append(args))
     module.main(args)
-    assert calls[0][:3] == ['systemd-analyze', '--user', 'verify'] and len(calls[0][3:]) == 16
+    assert calls[0][:3] == ['systemd-analyze', '--user', 'verify'] and len(calls[0][3:]) == 18
     assert (tmp_path/'backup'/service.name).is_file()
     assert 'replay_seal_forward.cli night --expected-commit sha' in service.read_text()
     assert '09:05:00 America/New_York' in (target/'hyprl-research-forward.timer').read_text()
     assert '17:15:00 America/New_York' in (target/'hyprl-research-forward-weekly.timer').read_text()
     assert all('Persistent=false' in p.read_text() for p in target.glob('*.timer'))
-    assert len([c for c in calls if c[:4] == ['systemctl', '--user', 'enable', '--now']]) == 8
+    assert len([c for c in calls if c[:4] == ['systemctl', '--user', 'enable', '--now']]) == 9
     assert '22:45:00 UTC' in (target/'hyprl-research-forward-drill.timer').read_text()
+    assert 'replay_seal_forward.cli forward-drill --expected-commit sha' in (target/'hyprl-research-forward-drill.service').read_text()
+    assert '08:45:00 America/New_York' in (target/'hyprl-research-forward-prebuild.timer').read_text()
+    assert 'replay_seal_forward.cli forward-prebuild --expected-commit sha' in (target/'hyprl-research-forward-prebuild.service').read_text()
     assert 'RuntimeMaxSec=infinity' in service.read_text()
     assert '*:00/15:00 UTC' in (target/'hyprl-replay-bench.timer').read_text()
 

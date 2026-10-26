@@ -17,22 +17,24 @@ def refresh_timer_text(text):
 
 def units(root, environment, cli_directory, commit):
     commands = {'hyprl-replay-bench': 'night', 'hyprl-research-forward': 'forward',
+                'hyprl-research-forward-prebuild': 'forward-prebuild',
                 'hyprl-research-forward-score': 'forward-score', 'hyprl-research-forward-weekly': 'weekly',
                 'hyprl-research-forward-publish': 'forward-publish',
-                'hyprl-research-forward-drill': 'forward-dry-run',
+                'hyprl-research-forward-drill': 'forward-drill',
                 'hyprl-research-collect-live': 'live', 'hyprl-research-collect-outcomes': 'live-outcomes'}
     calendars = {'night': '*-*-* *:00/15:00 UTC', 'forward': 'Mon..Fri *-*-* 09:05:00 America/New_York',
+                 'forward-prebuild': 'Mon..Fri *-*-* 08:45:00 America/New_York',
                  'forward-score': 'Mon..Fri *-*-* 16:45:00 America/New_York',
                  'weekly': 'Fri *-*-* 17:15:00 America/New_York',
                  'forward-publish': 'Mon..Fri *-*-* 09:20:00 America/New_York',
-                 'forward-dry-run': 'Mon..Fri *-*-* 22:45:00 UTC',
+                 'forward-drill': 'Mon..Fri *-*-* 22:45:00 UTC',
                  'live': 'Mon..Fri *-*-* 04..08:00/5:00 America/New_York\nOnCalendar=Mon..Fri *-*-* 09:00,03:00 America/New_York',
                  'live-outcomes': 'Mon..Fri *-*-* 16:35:00 America/New_York'}
     values = {}
     for name, command in commands.items():
-        module = 'collect' if command in ('live', 'live-outcomes', 'forward-dry-run') else 'cli'
+        module = 'collect' if command in ('live', 'live-outcomes') else 'cli'
         service = '\n'.join(['[Unit]', 'Description=HyprL research seal/forward ' + command,
-            *(['After=hyprl-drill-nightly.service'] if command == 'forward-dry-run' else []), '', '[Service]',
+            *(['After=hyprl-drill-nightly.service'] if command == 'forward-drill' else []), '', '[Service]',
             'Type=exec', 'WorkingDirectory=' + str(root), 'EnvironmentFile=' + str(environment),
             'Environment=PATH=' + str(cli_directory) + ':/usr/bin:/bin',
             *(['Environment=REPLAY_NIGHT_REPORT=' + str(Path.home() / 'reports' / 'codex-replay-night-fixes.md')]
@@ -94,10 +96,11 @@ def main(argv=None):
                                for protocol in ('replay_bench', 'replay_duel', 'replay_seal_forward'))
             elif name.endswith('.service'):
                 command = name.removesuffix('.service').removeprefix('hyprl-research-')
-                command = {'forward-weekly': 'weekly', 'collect-live': 'live', 'collect-outcomes': 'live-outcomes',
-                           'forward-drill': 'forward-dry-run'}.get(command, command)
-                module = 'collect' if command in ('live', 'live-outcomes', 'forward-dry-run') else 'cli'
+                command = {'forward-weekly': 'weekly', 'collect-live': 'live', 'collect-outcomes': 'live-outcomes'}.get(command, command)
+                module = 'collect' if command in ('live', 'live-outcomes') else 'cli'
                 expected = '-m scripts.trading_lab.replay_seal_forward.' + module + ' ' + command + ' --expected-commit ' in text
+                if command == 'forward-drill':
+                    expected |= '-m scripts.trading_lab.replay_seal_forward.collect forward-dry-run --expected-commit ' in text
             elif name == refresh.name:
                 expected = '[Timer]' in text and 'OnCalendar=*-*-* 00:20:00 UTC' in text
             else:

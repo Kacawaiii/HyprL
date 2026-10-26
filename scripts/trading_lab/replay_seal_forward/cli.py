@@ -70,7 +70,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('status', 'audit', 'freeze', 'build-inputs', 'refresh-inputs', 'seal-inputs', 'reparse-stops'):
         sub.add_parser(name)
-    for name in ('night', 'forward', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
+    for name in ('night', 'forward', 'forward-prebuild', 'forward-intraday', 'forward-publish', 'forward-score', 'weekly'):
         command = sub.add_parser(name)
         command.add_argument('--expected-commit', required=True)
         if name == 'forward-score':
@@ -81,6 +81,9 @@ def main(argv=None):
     dry = sub.add_parser('forward-dry-run')
     dry.add_argument('--expected-commit', required=True)
     dry.add_argument('--session', required=True)
+    drill = sub.add_parser('forward-drill')
+    drill.add_argument('--expected-commit', required=True)
+    drill.add_argument('--session')
     sub.add_parser('score').add_argument('period', choices=('dev', 'test'))
     args = parser.parse_args(argv)
     root = None
@@ -107,11 +110,19 @@ def main(argv=None):
             elif args.command == 'reparse-stops':
                 paths = list(root.glob('*/transcripts/**/*.json')) + list((root / 'transcripts').rglob('*.json'))
                 result = dict(budget.reparse_stops(paths), status='REPARSED')
-            elif args.command == 'forward-dry-run':
+            elif args.command in ('forward-dry-run', 'forward-drill'):
                 from .collect import Grants
+                day = args.session
+                if day is None:
+                    from datetime import timedelta
+                    first = (now() + timedelta(days=1)).date().isoformat()
+                    day = forward.md.sessions(first, (now() + timedelta(days=14)).date().isoformat())[0].session_date
                 Grants(os.environ['REPLAY_COLLECTION_GRANT'], args.authorization,
-                       clock=lambda: forward.decision_time(args.session))
-                result = forward.dry_run(root, args.session, grant, expected_commit=args.expected_commit)
+                       clock=lambda: forward.decision_time(day))
+                action = forward.drill if args.command == 'forward-drill' else forward.dry_run
+                result = action(root, day, grant, expected_commit=args.expected_commit)
+            elif args.command == 'forward-prebuild':
+                result = forward.prebuild(root, expected_commit=args.expected_commit)
             elif args.command in ('freeze', 'seal-inputs'):
                 target = ex.FREEZE if args.command == 'freeze' else ex.INPUT_SEAL
                 if target.exists():
@@ -169,9 +180,10 @@ def main(argv=None):
         return 2 if result.get('status') == 'BLOCKED' else 0
     except (ReplayError, FileNotFoundError, ValueError, KeyError, TypeError) as error:
         result = {'status': 'BLOCKED', 'error': error.code if isinstance(error, ReplayError) else 'INVALID_OR_MISSING_INPUT'}
-        if isinstance(error, ReplayError) and error.code == 'PIPELINE_DEFECT':
+        if (isinstance(error, ReplayError) and error.code == 'PIPELINE_DEFECT' or
+                args.command in ('forward-prebuild', 'forward-drill')):
             from .quality import alert
-            result['alert_confirmed'] = alert(error.code)
+            result['alert_confirmed'] = alert(result['error'])
         if root is not None:
             result['failures'] = ex.failure_summary(root)
             atomic_json(root / spec.STATE_DIR / (args.command + '-status.json'), result)

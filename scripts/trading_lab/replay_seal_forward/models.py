@@ -599,6 +599,8 @@ class Models:
             # Reservation/lock waits and CLI setup can cross the boundary too.
             if self.scope == 'replay' and replay_remaining(self.clock()) < max(timeout, 900):
                 raise ReplayError('INSUFFICIENT_CALL_WINDOW')
+            if self.scope == 'forward' and self.window(self.clock()) < max(timeout, 900):
+                raise ReplayError('INSUFFICIENT_CALL_WINDOW')
             return self.runner(args, **kwargs)
         with tempfile.TemporaryDirectory(prefix='replay-duel-') as private:
             private = Path(private)
