@@ -97,3 +97,9 @@ The script runs axe WCAG 2.1 A/AA checks in light/dark modes, keyboard/mobile/re
 checks, sign-up/admin/export/delete and disabled/opt-in consent flows. No real SMTP
 or live data is loaded. The operator alone deploys after reviewing the private
 handoff report; this checkout does not alter the live service.
+
+## Espace membre v1
+
+Member routes are disabled by default. See [member architecture, API and data
+contract](docs/member/README.md) and the [operator deployment handoff](docs/member/DEPLOY.md).
+No snapshot or real member credential is bundled; no Stripe/payment flow is active.
