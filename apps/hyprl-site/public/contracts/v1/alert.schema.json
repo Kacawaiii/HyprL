@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hyprlcore.com/contracts/v1/alert.schema.json",
+  "title": "HyprL alert v1 (future contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "created_at",
+    "symbol",
+    "asset_class",
+    "title",
+    "body",
+    "source_url",
+    "language"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+      "description": "ISO 8601, UTC only (Z)."
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[A-Z0-9.:-]+$"
+    },
+    "asset_class": {
+      "enum": [
+        "equity",
+        "crypto"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "source_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "language": {
+      "enum": [
+        "fr",
+        "en"
+      ],
+      "description": "ISO 639-1 codes supported in v1."
+    },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)(\\.\\d{1,8})?$",
+          "description": "Decimal string avoids binary floating point rounding."
+        },
+        "currency": {
+          "enum": [
+            "EUR",
+            "USD",
+            "GBP",
+            "JPY",
+            "CHF",
+            "CAD",
+            "AUD",
+            "NZD"
+          ],
+          "description": "Supported ISO 4217 codes; crypto tickers are not currencies in this field."
+        }
+      }
+    }
+  }
+}
