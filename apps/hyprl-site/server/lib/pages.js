@@ -8,12 +8,12 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 function createPages(publicDir) {
   const shell = fs.readFileSync(path.join(publicDir, '404.html'), 'utf8');
-  const open = '<main id="contenu" class="page">\n    <div class="container">\n';
+  const open = '<main tabindex="-1" id="contenu" class="page">\n    <div class="container">\n';
   const close = '    </div>\n  </main>';
   const start = shell.indexOf(open);
   const end = shell.indexOf(close, start);
   if (start < 0 || end < 0) throw new Error('Gabarit 404.html inattendu');
-  const before = shell.slice(0, start + open.length);
+  const before = shell.slice(0, start + open.length).replace(/\s*<link rel="alternate"[^>]+>/g, '');
   const after = shell.slice(end);
 
   function render(title, bodyHtml) {

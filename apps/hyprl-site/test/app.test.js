@@ -31,7 +31,7 @@ async function setup() {
   return {
     base, mails, logs, app, config, dir,
     advance: (ms) => { clock += ms; },
-    close: () => new Promise((r) => { app.close(); server.close(r); }),
+    close: () => new Promise((r) => { app.close(); server.close(() => { fs.rmSync(dir, { recursive: true, force: true }); r(); }); }),
   };
 }
 

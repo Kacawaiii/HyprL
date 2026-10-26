@@ -1,0 +1,24 @@
+{
+  "name": "hyprl-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Site vitrine HyprL : pages statiques + serveur d'inscription à l'accès anticipé",
+  "license": "UNLICENSED",
+  "main": "server/server.js",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "nodemailer": "^10.2.1"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "^13.1.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "axe-core": "^4.14.0"
+  }
+}
