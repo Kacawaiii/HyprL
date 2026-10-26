@@ -10,3 +10,5 @@ playwright-report/
 !package-lock.json
 !public/contracts/v1/*.json
 .qa-deps/
+!docs/member/*.json
+.qa-ruff/
