@@ -171,7 +171,7 @@ class Store:
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             at = self.clock()
-            grant.check(at)
+            metadata = grant.check(at, group=group) or {}
             if group == 'gdelt' and '11:45' <= at.strftime('%H:%M') < '12:30':
                 raise RadarError('GDELT_TRADER_WINDOW')
             maximum = min(maximum, grant.payload['budgets'].get(group, 0))
@@ -192,6 +192,11 @@ class Store:
                     raise RadarError('POLL_SPACING')
             db.execute('INSERT INTO dispatch(day,group_name,source,at,grant_hash) VALUES(?,?,?,?,?)',
                        (at.date().isoformat(), group, source, iso(at), grant.identity))
+            if metadata:
+                db.execute('INSERT INTO evidence(kind,key,at,body) VALUES(?,?,?,?)',
+                           ('authorization', source, database_time(at),
+                            json.dumps({'authorization_hash': grant.identity, **metadata}, allow_nan=False)))
+        return metadata
 
     def counts(self):
         with self.connect() as db:
@@ -220,7 +225,7 @@ class Authorization:
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             raise RadarError('AUTHORIZATION_MISSING_OR_INVALID') from None
 
-    def check(self, at):
+    def check(self, at, *, group=None):
         if not instant(self.payload['granted_at']) <= at < instant(self.payload['not_after']):
             raise RadarError('AUTHORIZATION_EXPIRED_OR_NOT_STARTED')
 
@@ -266,7 +271,7 @@ class Client:
         self.store, self.grant, self.send, self.credentials = store, grant, send, credentials
 
     def get(self, url, group, source, *, headers=None):
-        self.grant.check(self.store.clock())
+        self.grant.check(self.store.clock(), group=group)
         self.grant.permit(url)
         if hasattr(self.grant, 'group_for') and self.grant.group_for(url) != group:
             raise RadarError('SOURCE_OUTSIDE_GRANT')
@@ -280,7 +285,7 @@ class Client:
         maximum = {'alpaca': 400, 'gdelt': 60, 'rss': 300, 'youtube': 400, 'market': 24, 'sec': 300, 'fed': 48}[group]
         spacing = {'rss': 900, 'youtube': 900, 'gdelt': 15}.get(group, 0)
         source_spacing = (86400 if urlsplit(url).path == '/files/company_tickers.json' else 300) if group == 'sec' else 3600 if group == 'fed' else 0
-        self.store.reserve(self.grant, group, source, maximum, spacing, source_spacing=source_spacing)
+        metadata = self.store.reserve(self.grant, group, source, maximum, spacing, source_spacing=source_spacing)
         request_headers = {'User-Agent': 'HyprL-NewsRadar/1.0', 'Accept': 'application/json, application/rss+xml, application/atom+xml, text/xml'}
         request_headers.update(headers or {})
         if group == 'sec':
@@ -289,7 +294,9 @@ class Client:
             request_headers.update(self.alpaca_headers())
         status, response_headers, body = self.send(url, request_headers)
         received = self.store.clock()  # after receipt; separate from publisher time
-        self.store.append('http', source, {'url': url, 'status': status, 'received_at': iso(received), 'body_hash': sha256(body).hexdigest()})
+        self.store.append('http', source, {'url': url, 'status': status, 'received_at': iso(received),
+                          'body_hash': sha256(body).hexdigest(),
+                          **({'authorization_hash': self.grant.identity, **metadata} if metadata else {})})
         if status == 429:
             from email.utils import parsedate_to_datetime
             retry = next((v for k, v in response_headers.items() if k.lower() == 'retry-after'), None)
