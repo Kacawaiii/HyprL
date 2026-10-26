@@ -1,0 +1,34 @@
+{
+  "schema": "trader-work-budget-spec-v2",
+  "revision": 2,
+  "requires_approval_from": "2026-10-27T00:00:00Z",
+  "base_preregistration_hash": "584d96095e6dac777d2bf67dde604017880aeaee843c2390b9352b9c8c1a8b21",
+  "max_turns": 48,
+  "max_output_tokens": 32768,
+  "max_prompt_bytes": 520000,
+  "tools": {
+    "analyst_claude": {
+      "WebSearch": 32,
+      "WebFetch": 32
+    },
+    "reviewer": {
+      "WebSearch": 8,
+      "WebFetch": 8
+    }
+  },
+  "admission": {
+    "per_call": 1000000,
+    "per_arm": 4000000,
+    "per_slot": 8100000,
+    "probe_per_call": 25000,
+    "probe_per_slot": 100000
+  },
+  "accounting": "Nonrefundable admission envelopes for runaway work, not subscription billing. Preserve both grant-authorized attempts for each role and arm. Missing or excessive observed usage never poisons the reserved reviewer or recovery capacity. Interrupted research usage is explicitly incomplete, never reported as zero complete usage.",
+  "validation": "Existing schema, citation, causal source, URL, universe, reviewer and execution validations unchanged. Never accept partial or repaired model output.",
+  "scope": "AM base/news and isolated rehearsal probes; PM dispatch remains retired. Original grants, call ceilings, source gates, schemas and preregistration remain unchanged. Prior revision reservations are never migrated or mixed on a budget day.",
+  "research_new_tokens": 750000,
+  "finalization": "Stop research at tool/turn/token ceiling. Generate the full structured answer from original prompt and observed messages in a separate tool-free transport within the same dispatch and deadline. Budget pressure itself is never a model failure. All output validation remains mandatory.",
+  "max_observation_bytes": 520000,
+  "finalization_reserve_seconds": 120,
+  "canonical_sha256": "b823b3a56d1c2e2d03dc8358364a6ee6b61d6c681d8f4a99ec5973776964ed15"
+}

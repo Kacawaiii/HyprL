@@ -4,18 +4,18 @@ from pathlib import Path
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from .config import TraderError, instant, strict_json
 
-APPROVAL_NAME = 'trader-agent-work-budget-amendment-v1.json'
-SPEC_HASH = 'b55b99d515efe0e9598b866683ffeb00a019a94a89d45124bd61dcabcf4307ff'
-REQUIRES_APPROVAL_FROM = '2026-10-24T00:00:00Z'
+APPROVAL_NAME = 'trader-agent-work-budget-amendment-v2.json'
+SPEC_HASH = 'b823b3a56d1c2e2d03dc8358364a6ee6b61d6c681d8f4a99ec5973776964ed15'
+REQUIRES_APPROVAL_FROM = '2026-10-27T00:00:00Z'
 ROOT = Path(__file__).resolve().parents[3] / 'docs/artifacts'
 STOP_ERRORS = frozenset({'WORK_BUDGET_EXHAUSTED', 'WORK_BUDGET_OVERRUN',
     'WORK_BUDGET_APPROVAL_REQUIRED', 'WORK_BUDGET_APPROVAL_INVALID', 'WORK_BUDGET_PROMPT_TOO_LARGE',
-    'MODEL_TOOL_BUDGET_EXHAUSTED', 'MODEL_TURN_BUDGET_EXHAUSTED', 'MODEL_USAGE_INVALID',
+    'MODEL_USAGE_INVALID',
     'MODEL_PERMISSION_PROTOCOL_INVALID', 'WORK_BUDGET_SPEC_HASH_MISMATCH', 'WORK_BUDGET_UNACCOUNTED'})
 
 
 def spec():
-    value = strict_json((ROOT / 'trader_work_budget_spec_v1.json').read_text())
+    value = strict_json((ROOT / 'trader_work_budget_spec_v2.json').read_text())
     if value.pop('canonical_sha256') != SPEC_HASH or sha256_canonical(value) != SPEC_HASH:
         raise TraderError('WORK_BUDGET_SPEC_HASH_MISMATCH')
     return value
@@ -32,7 +32,7 @@ def policy(grant, at):
             for key in ('approved_at', 'effective_from', 'not_after')):
         raise TraderError('WORK_BUDGET_APPROVAL_INVALID')
     try:
-        valid = (approval['schema'] == 'trader-agent-work-budget-amendment-v1'
+        valid = (approval['schema'] == 'trader-agent-work-budget-amendment-v2'
             and approval['status'] == 'APPROVED'
             and approval['spec_hash'] == SPEC_HASH
             and approval['parent_preregistration_hash'] == value['base_preregistration_hash']
@@ -64,7 +64,7 @@ def charge(ledger, kind, at):
     return {'arm': 'monitor' if probe else ledger.arm, 'role': role,
             'tokens': budget['probe_per_call' if probe else 'per_call'],
             'arm_cap': budget['probe_per_slot' if probe else 'per_arm'],
-            'role_cap': budget['probe_per_call'] * 2 if probe else budget['per_call'],
+            'role_cap': budget['probe_per_call'] * 2 if probe else budget['per_call'] * 2,
             'slot_cap': budget['per_slot'], 'spec_hash': SPEC_HASH,
             'approval_hash': sha256_canonical(ledger.grant.work_budget_approval)}
 

@@ -285,6 +285,7 @@ class TraderService:
                 self.before_call(session)
                 reviewer = self.runner.infer("reviewer", prompt(context, texts["REVIEWER_SKILL.md"], analysts=analysts),
                     validator=lambda output: validate_reviewer(output, analysts))
+                self.record_work_completion(run_id)
                 decision_at = self.clock()
                 if decision_at >= self.runner.deadline:
                     raise TraderError("MISSED_DECISION_DEADLINE")
@@ -326,6 +327,13 @@ class TraderService:
         self.ledger.grant.check(self.clock())
         if self.clock() >= self.runner.deadline or self.ledger.paused:
             raise TraderError("MISSED_DECISION_DEADLINE_OR_PAUSED")
+
+    def record_work_completion(self, run_id):
+        evidence = getattr(self.runner, 'work_metadata', {})
+        if evidence:
+            self.store.append('replay-summary', {'schema': 'trader-work-completion-v2',
+                'run_id': run_id, 'slot': self.ledger.slot, 'arm': self.ledger.arm, 'roles': evidence},
+                object_id=run_id + ':work-completion', recorded_at=iso(self.clock()))
 
     def record_work_budget(self, run_id, context_hash):
         from .work_budget import SPEC_HASH, policy
@@ -392,7 +400,8 @@ class TraderService:
                    for r in rows(self.store, 'replay-summary')):
                 return {'state': 'ALREADY_RECORDED', 'run_id': run_id}
             prior_arm, prior_metadata = self.ledger.arm, self.runner.metadata
-            self.ledger.arm, self.runner.metadata = 'news', {}
+            prior_work = self.runner.work_metadata
+            self.ledger.arm, self.runner.metadata, self.runner.work_metadata = 'news', {}, {}
             try:
                 self.ledger.grant.check_news(self.clock())
                 self.ledger.reserve('run')
@@ -456,6 +465,7 @@ class TraderService:
                 models = {role: {'model': self.ledger.grant.gpt_model if role == 'analyst_gpt' else
                     self.ledger.grant.payload['external_models'][role]['model'], 'cli_version': 'NOT_RUN',
                     'reported_version': 'NOT_RUN'} for role in degraded}
+                self.record_work_completion(run_id)
                 decision = {**base['decision'], 'run_id': run_id, 'arm': 'news', 'base_run_id': base['run_id'],
                     'decision_at': iso(self.clock()), 'context_hash': identity, 'preregistration_hash': prereg_hash,
                     'models': {**models, **self.runner.metadata}, 'skill_hashes': hashes,
@@ -473,6 +483,7 @@ class TraderService:
                 return summary('FAILED', error=code, budget_counts=self.ledger.counts())
             finally:
                 self.ledger.arm, self.runner.metadata = prior_arm, prior_metadata
+                self.runner.work_metadata = prior_work
 
     def record(self, decision, context):
         recorded = iso(self.clock())

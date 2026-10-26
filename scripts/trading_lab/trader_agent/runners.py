@@ -14,7 +14,7 @@ FORBIDDEN = {"command_execution", "file_change", "exec_command", "write_stdin", 
              "apply_patch", "bash", "read", "write", "edit", "task", "agent", "spawn_agent"}
 
 
-def command(role, grant, *, limits=None):
+def command(role, grant, *, limits=None, final_only=False):
     schema = "reviewer" if role == "reviewer" else "analyst"
     if role == "analyst_gpt":
         # Installed 0.160.0 requires the global --search BEFORE exec.
@@ -33,14 +33,16 @@ def command(role, grant, *, limits=None):
             "--setting-sources", "", "--settings", '{"disableAllHooks":true}',
             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--output-format", "json", "--json-schema", json.dumps(SCHEMAS[schema])]
+    if final_only:
+        args[args.index("--tools") + 1] = ""
+        args[args.index("--allowedTools") + 1] = ""
     if limits:
         args[args.index('--permission-mode') + 1] = 'default'
         args[args.index('--permission-prompts') + 1] = 'host'
         args[args.index('--settings') + 1] = json.dumps({'disableAllHooks': True,
             'permissions': {'ask': ['WebSearch', 'WebFetch']}})
         args[args.index('--output-format') + 1] = 'stream-json'
-        args += ['--input-format', 'stream-json', '--verbose', '--max-turns', str(limits['max_turns']),
-                 '--permission-prompt-tool', 'stdio']
+        args += ['--input-format', 'stream-json', '--verbose', '--permission-prompt-tool', 'stdio']
     return args
 
 
@@ -152,6 +154,7 @@ class ModelRunner:
         self.ledger, self.clock = ledger, clock
         self.metadata = {}
         self.web_searches = {}
+        self.work_metadata = {}
 
     def infer(self, role, prompt, *, validator=None):
         from .retirement_spec import check_dispatch

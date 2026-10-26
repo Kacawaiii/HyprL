@@ -584,7 +584,10 @@ class LiveChecks:
         from .schemas import validate
         runner = ModelRunner(self.ledger, clock=self.clock)
         cache = self.state.root / (role + '-probe.json')
-        binding = sha256_canonical(command(role, self.grant))
+        from .work_budget import policy, SPEC_HASH
+        limits = policy(self.grant, self.clock())
+        binding = sha256_canonical({'command': command(role, self.grant, limits=limits, final_only=bool(limits)),
+                                   'budget_spec_hash': SPEC_HASH if limits else None})
         prior = strict_json(cache.read_text()) if cache.exists() else {}
         if (prior.get('day') == self.clock().date().isoformat() and prior.get('command_hash') == binding):
             return {**prior['evidence'], 'cached': True}
@@ -597,6 +600,11 @@ class LiveChecks:
             if output != expected:
                 raise TraderError('PREFLIGHT_OUTPUT_INVALID')
         evidence = {'model': runner.metadata[role], 'output_hash': sha256_canonical(output)}
+        if limits:
+            budget = runner.work_metadata.get(role, {})
+            if budget.get('finalization_reason') != 'TOOL_LIMIT' or budget.get('final_tools') != 0:
+                raise TraderError('REHEARSAL_BUDGET_PATH_UNPROVEN')
+            evidence['work_budget'] = budget
         cache.write_text(json.dumps({'day': self.clock().date().isoformat(), 'command_hash': binding, 'evidence': evidence}))
         return evidence
 

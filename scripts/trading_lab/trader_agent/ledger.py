@@ -125,12 +125,12 @@ class Ledger:
                 if any(used + work['tokens'] > cap for used, cap in
                        ((used, work['slot_cap']), (arm_used, work['arm_cap']), (role_used, work['role_cap']))):
                     raise TraderError('WORK_BUDGET_EXHAUSTED')
-                overrun = db.execute('''SELECT 1 FROM work_reservations w LEFT JOIN work_receipts r
-                    ON w.dispatch_seq=r.dispatch_seq WHERE w.day=? AND w.slot=?
-                    AND (r.dispatch_seq IS NULL OR r.new_tokens>w.tokens OR r.usage_complete=0)
-                    LIMIT 1''', (day, self.slot)).fetchone()
-                if overrun:
-                    raise TraderError('WORK_BUDGET_OVERRUN')
+                # Revision identities are immutable. A new policy cannot reinterpret
+                # old envelopes, including a same-day deployment after rollback.
+                mismatch = db.execute('SELECT 1 FROM work_reservations WHERE day=? AND slot=? '
+                    'AND spec_hash!=? LIMIT 1', (day, self.slot, work['spec_hash'])).fetchone()
+                if mismatch:
+                    raise TraderError('WORK_BUDGET_SPEC_HASH_MISMATCH')
                 prefix = 'pm_' if self.slot == 'pm' else ''
                 model_kinds = [prefix + arm + role for arm in ('', 'news_', 'rehearsal_')
                                for role in ('analyst_claude', 'reviewer')]

@@ -1,4 +1,7 @@
-# Prospective trader work budgets
+# Historical trader work budget revision 1
+
+This is the retired revision-1 method. See [revision 2](TRADER_WORK_BUDGET_V2.md)
+for the replacement and its separate spec/approval binding.
 
 The work-budget overlay protects independent AM and PM admission pools. It does
 not edit the research/execution grants, the v10 preregistration, historical

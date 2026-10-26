@@ -1,0 +1,190 @@
+{
+  "schema": "trader-work-budget-evidence-v2",
+  "spec_hash": "b823b3a56d1c2e2d03dc8358364a6ee6b61d6c681d8f4a99ec5973776964ed15",
+  "baseline_code": "913a73d76f64d0945a6999497853b824b244d4bd",
+  "historical_am_attempts": [
+    {
+      "day": "2026-10-21",
+      "dispatch_seq": 2382,
+      "role": "analyst_claude",
+      "num_turns": 18,
+      "web_search_requests": 11,
+      "new_tokens": 318017,
+      "sha256": "affd25c495f6688bbb9e40fa0bc14590fec3d598766a8562825873dd28640b05"
+    },
+    {
+      "day": "2026-10-21",
+      "dispatch_seq": 2383,
+      "role": "reviewer",
+      "num_turns": 3,
+      "web_search_requests": 0,
+      "new_tokens": 96672,
+      "sha256": "cab6a6c2b650cbd9874e001819d04bfe08aa7751ce1a0eb5ed6babb7767006d4"
+    },
+    {
+      "day": "2026-10-21",
+      "dispatch_seq": 2385,
+      "role": "news_analyst_claude",
+      "num_turns": 17,
+      "web_search_requests": 10,
+      "new_tokens": 297706,
+      "sha256": "cfa3dc33b81e24db5507844186d97e786dc2e2fe04ad68350b429de184fc993e"
+    },
+    {
+      "day": "2026-10-21",
+      "dispatch_seq": 2386,
+      "role": "news_reviewer",
+      "num_turns": 2,
+      "web_search_requests": 0,
+      "new_tokens": 108564,
+      "sha256": "aabdae5a589f764fefb1be7662c30ccd0f1479c4b9fc3c31a1ef797c84803c9f"
+    },
+    {
+      "day": "2026-10-22",
+      "dispatch_seq": 2688,
+      "role": "analyst_claude",
+      "num_turns": 13,
+      "web_search_requests": 9,
+      "new_tokens": 222067,
+      "sha256": "d146e0f37ba4384b8d2a27c16d1476e1f4dd954e50918f0a66cfa2689a0d68db"
+    },
+    {
+      "day": "2026-10-22",
+      "dispatch_seq": 2689,
+      "role": "reviewer",
+      "num_turns": 3,
+      "web_search_requests": 0,
+      "new_tokens": 109860,
+      "sha256": "a061f802902c409824eeb42ddbfd1b62b121e17c3b672969118450d32fcc2bdf"
+    },
+    {
+      "day": "2026-10-22",
+      "dispatch_seq": 2691,
+      "role": "news_analyst_claude",
+      "num_turns": 21,
+      "web_search_requests": 13,
+      "new_tokens": 348505,
+      "sha256": "1841c82fb63f79bb65f7f23e359f1d55296226ee96c3f4616eaa7108b3dfade7"
+    },
+    {
+      "day": "2026-10-22",
+      "dispatch_seq": 2692,
+      "role": "news_analyst_claude",
+      "num_turns": 16,
+      "web_search_requests": 10,
+      "new_tokens": 206358,
+      "sha256": "f62b474b180fa4daef66a4cf5d236ea505dc4a461c578a64fcf1cce4ab5bc92b"
+    },
+    {
+      "day": "2026-10-23",
+      "dispatch_seq": 2957,
+      "role": "analyst_claude",
+      "num_turns": 13,
+      "web_search_requests": 7,
+      "new_tokens": 218928,
+      "sha256": "23487637e33415972074b61122c51f7a4bab6a0da0d47157bb25ae815925b8bb"
+    },
+    {
+      "day": "2026-10-23",
+      "dispatch_seq": 2958,
+      "role": "reviewer",
+      "num_turns": 2,
+      "web_search_requests": 0,
+      "new_tokens": 96529,
+      "sha256": "716d98bcd0fce86344dbe78333c44701dfb5137e8c3c1d8632393e654b0dd581"
+    },
+    {
+      "day": "2026-10-23",
+      "dispatch_seq": 2960,
+      "role": "news_analyst_claude",
+      "num_turns": 13,
+      "web_search_requests": 5,
+      "new_tokens": 235396,
+      "sha256": "9edb5c97fcac2b062ce6b1490b11279fb858d9229746296c0e57ec3201ced247"
+    },
+    {
+      "day": "2026-10-23",
+      "dispatch_seq": 2961,
+      "role": "news_reviewer",
+      "num_turns": 3,
+      "web_search_requests": 0,
+      "new_tokens": 128903,
+      "sha256": "5c137650c7643e988d2beaf68d51370cc830927c98efa8b530892e9facc6d836"
+    }
+  ],
+  "historical_fetch_count": "Unavailable in result-only CLI transcripts; never inferred from token totals.",
+  "replay_context_hash": "0eb6989efe2edb42270d271c0d94341fc79e51e65509ef15070c984893bc5cc1",
+  "replay_source_transcript_sha256": {
+    "analyst_claude": "23487637e33415972074b61122c51f7a4bab6a0da0d47157bb25ae815925b8bb",
+    "reviewer": "716d98bcd0fce86344dbe78333c44701dfb5137e8c3c1d8632393e654b0dd581"
+  },
+  "method": "Original Oct 26 AM context + interrupted transport + Oct 23 complete analyst/reviewer transcripts + immutable dispatch snapshot; counterfactual day-start banks, not a production repair or historical migration. Unmodified Oct 23 structured outputs, validated against Oct 26 universe/time; proves transport and orchestration only, not the investment quality of a new model answer.",
+  "replay_cases": [
+    {
+      "case": "nominal",
+      "status": "COMPLETE",
+      "context_hash": "0eb6989efe2edb42270d271c0d94341fc79e51e65509ef15070c984893bc5cc1",
+      "decision_hash": "3bb474a83baa0f9b016bba7dfe869097b148df5dda8b8c9c3e7bf6406c78d7d2",
+      "views": 140,
+      "counts": {
+        "analyst_claude": 1,
+        "reviewer": 1,
+        "run": 1
+      },
+      "chain_verified": true
+    },
+    {
+      "case": "tool-limit",
+      "status": "COMPLETE",
+      "context_hash": "0eb6989efe2edb42270d271c0d94341fc79e51e65509ef15070c984893bc5cc1",
+      "decision_hash": "3bb474a83baa0f9b016bba7dfe869097b148df5dda8b8c9c3e7bf6406c78d7d2",
+      "views": 140,
+      "counts": {
+        "analyst_claude": 1,
+        "reviewer": 1,
+        "run": 1
+      },
+      "chain_verified": true
+    },
+    {
+      "case": "turn-limit",
+      "status": "COMPLETE",
+      "context_hash": "0eb6989efe2edb42270d271c0d94341fc79e51e65509ef15070c984893bc5cc1",
+      "decision_hash": "3bb474a83baa0f9b016bba7dfe869097b148df5dda8b8c9c3e7bf6406c78d7d2",
+      "views": 140,
+      "counts": {
+        "analyst_claude": 1,
+        "reviewer": 1,
+        "run": 1
+      },
+      "chain_verified": true
+    },
+    {
+      "case": "token-limit",
+      "status": "COMPLETE",
+      "context_hash": "0eb6989efe2edb42270d271c0d94341fc79e51e65509ef15070c984893bc5cc1",
+      "decision_hash": "3bb474a83baa0f9b016bba7dfe869097b148df5dda8b8c9c3e7bf6406c78d7d2",
+      "views": 140,
+      "counts": {
+        "analyst_claude": 1,
+        "reviewer": 1,
+        "run": 1
+      },
+      "chain_verified": true
+    }
+  ],
+  "rehearsal_state": "GREEN",
+  "native_cli_version": "2.1.289 (Claude Code)",
+  "native_transition": "TOKEN_LIMIT",
+  "native_final_tool_names": [
+    "StructuredOutput"
+  ],
+  "real_model_calls": 0,
+  "external_requests": 0,
+  "broker_calls": 0,
+  "private_proof_sha256": {
+    "replay-proof.json": "5724f8a24927bf04642724be16a03238e2d9bfb899c9249f1835912934442ced",
+    "native/proof.json": "b375f176964e89e0ca27c8f1fb86d23a5a7f5119380aba642c64e0ddef7faee3"
+  },
+  "canonical_sha256": "6395cfb09b761d8adb06a96449e0a5c92a08b18201051804db92a3ef55b1382f"
+}

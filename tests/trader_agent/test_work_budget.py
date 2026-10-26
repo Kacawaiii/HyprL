@@ -21,7 +21,7 @@ from test_news_ab import news_service, radar
 
 def approved(grant):
     return replace(grant, work_budget_approval={
-        'schema': 'trader-agent-work-budget-amendment-v1', 'status': 'APPROVED',
+        'schema': 'trader-agent-work-budget-amendment-v2', 'status': 'APPROVED',
         'spec_hash': work.SPEC_HASH, 'parent_preregistration_hash': work.spec()['base_preregistration_hash'],
         'base_grant_hash': grant.base_identity or grant.identity,
         'approved_at': '2026-10-20T00:00:00Z', 'effective_from': '2026-10-21T00:00:00Z',
@@ -82,32 +82,26 @@ def request(index, name='WebSearch', **inputs):
         'input': inputs or {'query': 'Synthetic publication'}}}
 
 
-def test_admission_preserves_reviewer_and_pm_across_runtime_restart(bounded, tmp_path, monkeypatch):
+def test_admission_preserves_both_attempts_and_reviewer_across_runtime_restart(bounded, tmp_path, monkeypatch):
     monkeypatch.setattr(Authorization, 'check_news', lambda self, at: self.check(at))
     first = bounded.reserve('analyst_claude')
     bounded.record_work(first, 5000, 900000, 'SCHEMA_INVALID')
     other = Ledger(tmp_path / 'other-runtime', bounded.grant, clock=bounded.clock, budget_root=bounded.budget_root)
+    other.reserve('analyst_claude')
     with pytest.raises(TraderError, match='WORK_BUDGET_EXHAUSTED'):
         other.reserve('analyst_claude')
-    other.record_work(other.reserve('reviewer'), 0, 0, 'COMPLETE')
+    for role in ('reviewer', 'reviewer'):
+        other.reserve(role)
     other.arm = 'news'
-    other.record_work(other.reserve('analyst_claude'), 0, 0, 'COMPLETE')
-    other.record_work(other.reserve('reviewer'), 0, 0, 'COMPLETE')
-    other.slot = 'pm'
-    other.arm = 'base'
-    other.record_work(other.reserve('analyst_claude'), 0, 0, 'COMPLETE')
-    other.record_work(other.reserve('reviewer'), 0, 0, 'COMPLETE')
-    other.arm = 'news'
-    other.record_work(other.reserve('analyst_claude'), 0, 0, 'COMPLETE')
-    other.record_work(other.reserve('reviewer'), 0, 0, 'COMPLETE')
-    rows = other.work_counts()
-    assert [(r['slot'], r['arm'], r['reserved']) for r in rows] == [
-        ('am', 'base', 190000), ('am', 'news', 190000), ('pm', 'base', 190000), ('pm', 'news', 190000)]
-    assert rows[0]['observed_new'] == 5000 and rows[0]['observed_cache_read'] == 900000
+    for role in ('analyst_claude', 'analyst_claude', 'reviewer', 'reviewer'):
+        other.reserve(role)
+    assert [(r['arm'], r['reserved']) for r in other.work_counts()] == [('base', 4000000), ('news', 4000000)]
+    assert other.work_counts()[0]['observed_new'] == 5000
     with other.connect() as db:
         for table in ('work_reservations', 'work_receipts'):
             with pytest.raises(sqlite3.IntegrityError, match='immutable'):
                 db.execute('DELETE FROM ' + table)
+
 
 
 def test_concurrent_admission_is_atomic(bounded):
@@ -116,11 +110,12 @@ def test_concurrent_admission_is_atomic(bounded):
             return bounded.reserve('analyst_claude')
         except TraderError as error:
             return error.code
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = list(pool.map(reserve, range(2)))
-    assert sum(type(v) is int for v in outcomes) == 1
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        outcomes = list(pool.map(reserve, range(3)))
+    assert sum(type(v) is int for v in outcomes) == 2
     assert outcomes.count('WORK_BUDGET_EXHAUSTED') == 1
-    assert bounded.counts() == {'analyst_claude': 1}
+    assert bounded.counts() == {'analyst_claude': 2}
+
 
 
 @pytest.mark.parametrize('change', [{'status': 'DRAFT'}, {'base_grant_hash': '0' * 64},
@@ -145,7 +140,7 @@ def test_cutover_requires_operator_record_and_does_not_edit_grant(ledger, clock,
 
 def test_command_retains_isolation_and_forces_host_permissions(bounded):
     args = command('analyst_claude', bounded.grant, limits=work.spec())
-    assert args[args.index('--max-turns') + 1] == '8'
+    assert '--max-turns' not in args
     assert args[args.index('--permission-prompt-tool') + 1] == 'stdio'
     settings = json.loads(args[args.index('--settings') + 1])
     assert settings == {'disableAllHooks': True, 'permissions': {'ask': ['WebSearch', 'WebFetch']}}
@@ -160,21 +155,12 @@ def test_duplex_success_counts_helpers_once_and_preserves_full_output(bounded, m
     assert runner.infer('analyst_claude', 'Synthetic') == {'regime': [], 'views': []}
     assert len(executed.read_text().splitlines()) == 2
     assert runner.web_searches == {'analyst_claude': 1}
-    assert bounded.work_counts() == [{'slot': 'am', 'arm': 'base', 'reserved': 95000,
+    assert bounded.work_counts() == [{'slot': 'am', 'arm': 'base', 'reserved': 1000000,
                                      'observed_new': 60000, 'observed_cache_read': 200000, 'incomplete_usage': 0}]
 
 
-@pytest.mark.parametrize('role,tool,count', [('analyst_claude', 'WebSearch', 3),
-    ('analyst_claude', 'WebFetch', 3), ('reviewer', 'WebSearch', 1), ('reviewer', 'WebFetch', 1)])
-def test_excess_tool_is_never_dispatched_or_retried(bounded, monkeypatch, tmp_path, role, tool, count):
-    events = [request(i, tool, **({'url': 'https://example.invalid/news'} if tool == 'WebFetch' else {}))
-              for i in range(count + 1)] + [result()]
-    executed = fake_cli(monkeypatch, tmp_path, events)
-    with pytest.raises(TraderError, match='MODEL_TOOL_BUDGET_EXHAUSTED'):
-        ModelRunner(bounded, clock=bounded.clock).infer(role, 'Synthetic')
-    assert len(executed.read_text().splitlines()) == count
-    assert bounded.counts() == {role: 1}
-    assert bounded.work_counts()[0]['reserved'] == 95000
+
+
 
 
 @pytest.mark.parametrize('url', ['https://www.sec.gov/news', 'https://data.sec.gov/submissions/',
@@ -188,34 +174,27 @@ def test_forbidden_fetch_cannot_receive_allow(bounded, monkeypatch, tmp_path, ur
     assert bounded.counts() == {'analyst_claude': 1}
 
 
-@pytest.mark.parametrize('terminal', [result(turns=9),
-    {**result(turns=8), 'is_error': True, 'subtype': 'error_max_turns'}])
-def test_turn_limit_cannot_accept_partial_output(bounded, monkeypatch, tmp_path, terminal):
-    fake_cli(monkeypatch, tmp_path, [terminal])
-    with pytest.raises(TraderError, match='MODEL_TURN_BUDGET_EXHAUSTED'):
-        ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'Synthetic')
-    assert bounded.counts() == {'analyst_claude': 1}
 
 
-def test_actual_usage_overrun_blocks_remaining_am_but_not_pm(bounded, monkeypatch, tmp_path):
-    fake_cli(monkeypatch, tmp_path, [result(new=94000, helper=2000)])
-    with pytest.raises(TraderError, match='WORK_BUDGET_OVERRUN'):
-        ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'Synthetic')
-    with pytest.raises(TraderError, match='WORK_BUDGET_OVERRUN'):
-        bounded.reserve('reviewer')
-    assert bounded.work_counts()[0]['observed_new'] == 96000
-    bounded.slot = 'pm'
+
+
+def test_reported_overrun_is_evidence_and_cannot_poison_reviewer(bounded, monkeypatch, tmp_path):
+    fake_cli(monkeypatch, tmp_path, [result(new=1000001, helper=2000)])
+    assert ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'Synthetic')['views'] == []
+    bounded.reserve('reviewer')
+    assert bounded.work_counts()[0]['observed_new'] == 1002001
+
+
+
+def test_interrupted_call_retains_envelope_and_allows_recovery_and_review(bounded, tmp_path):
     bounded.reserve('analyst_claude')
-
-
-def test_interrupted_call_cannot_refund_or_continue_the_slot(bounded, tmp_path):
-    bounded.reserve('analyst_claude')  # simulate a crash after reservation, before a receipt
     restarted = Ledger(tmp_path / 'restarted', bounded.grant, clock=bounded.clock,
                        budget_root=bounded.budget_root)
-    with pytest.raises(TraderError, match='WORK_BUDGET_OVERRUN'):
-        restarted.reserve('reviewer')
-    restarted.slot = 'pm'
     restarted.reserve('analyst_claude')
+    restarted.reserve('reviewer')
+    assert restarted.work_counts()[0]['reserved'] == 3000000
+    assert restarted.work_counts()[0]['incomplete_usage'] == 3
+
 
 
 def test_activation_cannot_reset_legacy_work_on_the_same_day(bounded):
@@ -236,14 +215,13 @@ def test_quota_failure_never_retries_or_counts_unknown_usage_as_zero(bounded, mo
         ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'Synthetic')
     assert bounded.counts() == {'analyst_claude': 1}
     assert bounded.work_counts()[0]['incomplete_usage'] == 1
-    with pytest.raises(TraderError, match='WORK_BUDGET_OVERRUN'):
-        bounded.reserve('reviewer')
+    bounded.reserve('reviewer')
 
 
 def test_oversized_prompt_is_refused_before_any_cli_or_reservation(bounded, monkeypatch):
     monkeypatch.setattr('subprocess.run', lambda *a, **kw: pytest.fail('Oversized prompt launched CLI'))
     with pytest.raises(TraderError, match='WORK_BUDGET_PROMPT_TOO_LARGE'):
-        ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'é' * 130001)
+        ModelRunner(bounded, clock=bounded.clock).infer('analyst_claude', 'é' * 260001)
     assert bounded.counts() == {}
 
 
@@ -285,12 +263,12 @@ def test_expiring_work_approval_cannot_authorize_a_later_web_call(bounded, monke
 
 def test_reviewer_coverage_is_still_required_under_the_work_cap(bounded, monkeypatch, tmp_path):
     fake_cli(monkeypatch, tmp_path, [result({'verdicts': []})])
-    with pytest.raises(TraderError, match='WORK_BUDGET_EXHAUSTED'):
+    with pytest.raises(TraderError, match='REVIEW_COVERAGE_INVALID'):
         ModelRunner(bounded, clock=bounded.clock).infer('reviewer', 'Synthetic',
             validator=lambda output: validate_reviewer(output, {'analyst_claude': {
                 'views': [{'asset': 'AAPL', 'horizon': '1d'}]}}))
     alerts = [json.loads(line)['code'] for line in (bounded.root / 'alerts.jsonl').read_text().splitlines()]
-    assert alerts == ['REVIEW_COVERAGE_INVALID', 'WORK_BUDGET_EXHAUSTED']
+    assert alerts == ['REVIEW_COVERAGE_INVALID', 'REVIEW_COVERAGE_INVALID']
 
 
 @pytest.mark.parametrize('slot', ['am', 'pm'])
@@ -310,7 +288,7 @@ def test_synthetic_service_keeps_method_binding_and_all_decision_contracts(news_
         assert binding[0]['payload']['context_hash'] == result['decision']['context_hash']
         assert result['decision']['preregistration_hash'] == work.spec()['base_preregistration_hash']
     assert service.ledger.work_counts() == [
-        {'slot': slot, 'arm': arm, 'reserved': 190000, 'observed_new': 0,
+        {'slot': slot, 'arm': arm, 'reserved': 2000000, 'observed_new': 0,
          'observed_cache_read': 0, 'incomplete_usage': 0} for arm in ('base', 'news')]
     assert service.store.verify()['verified']
 
@@ -322,7 +300,7 @@ def test_probe_uses_its_own_nonrefundable_pool_and_no_web(bounded, monkeypatch, 
         for role in ('analyst_claude', 'reviewer'):
             runner.once(role, 'Synthetic probe', probe=True)
     assert bounded.work_counts()[0]['arm'] == 'monitor'
-    assert bounded.work_counts()[0]['reserved'] == 20000
+    assert bounded.work_counts()[0]['reserved'] == 100000
     bounded.record_work(bounded.reserve('analyst_claude'), 0, 0, 'COMPLETE')
     bounded.reserve('reviewer')
 
@@ -346,12 +324,12 @@ def test_bounded_inference_keeps_existing_analyst_validations(bounded, clock, mo
     runner = ModelRunner(bounded, clock=clock)
     validator = lambda value: validate_analyst(value, ['AAPL'], clock())
     if code:
-        # The invalid result is rejected; the unchanged retry path then meets the durable admission cap.
-        with pytest.raises(TraderError, match='WORK_BUDGET_EXHAUSTED'):
+        # Both original grant-authorized attempts reject the same invalid result.
+        with pytest.raises(TraderError, match=code):
             runner.infer('analyst_claude', 'Synthetic', validator=validator)
         alerts = [json.loads(line)['code'] for line in (bounded.root / 'alerts.jsonl').read_text().splitlines()]
-        assert alerts == [code, 'WORK_BUDGET_EXHAUSTED']
+        assert alerts == [code, code]
     else:
         accepted = runner.infer('analyst_claude', 'Synthetic', validator=validator)
         assert accepted['views'][0]['view'] == 'ABSTAIN'  # existing URL-drop behavior, never repaired here
-    assert bounded.counts() == {'analyst_claude': 1}
+    assert bounded.counts() == {'analyst_claude': 2 if code else 1}
