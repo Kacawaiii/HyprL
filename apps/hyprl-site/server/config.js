@@ -25,6 +25,7 @@ function loadConfig(env = process.env) {
     notifyEmail: env.NOTIFY_EMAIL || '',
     mailFrom: env.MAIL_FROM || '',
     smtp: {
+      euApproved: bool(env.SMTP_EU_APPROVED),
       host: env.SMTP_HOST || '',
       port: Number(env.SMTP_PORT || 587),
       secure: bool(env.SMTP_SECURE),

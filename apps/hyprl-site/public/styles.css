@@ -14,7 +14,7 @@
   --text: #16181B;
   --muted: #5B6068;
   --line: #DEDFDA;
-  --line-strong: #B9BBB5;
+  --line-strong: #73776F;
   --accent: #2F5D8A;          /* bleu acier, seule couleur d'accent */
   --on-accent: #FFFFFF;
   --accent-soft: #EEF2F6;
@@ -38,7 +38,7 @@
     --text: #E8E9EA;
     --muted: #9AA1AA;
     --line: #2A2E34;
-    --line-strong: #444A52;
+    --line-strong: #7C8490;
     --accent: #8DB1D6;        /* même bleu acier, éclairci pour un contraste AA sur fond graphite */
     --on-accent: #121417;
     --accent-soft: #1B2530;
@@ -329,3 +329,8 @@ fieldset { border: 0; padding: 0; margin: 0 0 1.5rem; min-width: 0; }
 .agent-cell { font-weight: 500; }
 .mt { margin-top: 2rem; }
 .mt-sm { margin-top: 1rem; }
+
+/* Long text reflows; data tables retain their keyboard-scrollable region. */
+.content, .field, .site-footer, .admin-table td { overflow-wrap: anywhere; }
+.consent-panel { border: 2px solid var(--accent); padding: 1.25rem; margin: 1rem; background: var(--surface); }
+.consent-panel .actions { margin-top: 1rem; }

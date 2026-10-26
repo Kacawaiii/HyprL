@@ -59,15 +59,16 @@ function confirmationMessage(sub, { from, unsubscribeUrl }) {
 }
 
 function createMailer(config, logger = console) {
-  if (!config.smtp.host) {
-    logger.warn('[mail] SMTP non configuré : aucun e-mail ne sera envoyé.');
-    return { send: async (msg) => { logger.warn('[mail] e-mail non envoyé (SMTP absent) : ' + msg.subject); return false; } };
+  if (!config.smtp.host || !config.smtp.euApproved) {
+    logger.warn('[mail] Envoi désactivé : SMTP absent ou validation UE/DPA manquante.');
+    return { send: async (msg) => { logger.warn('[mail] e-mail non envoyé (envoi désactivé) : ' + msg.subject); return false; } };
   }
   const nodemailer = require('nodemailer');
   const transport = nodemailer.createTransport({
     host: config.smtp.host,
     port: config.smtp.port,
     secure: config.smtp.secure,
+    requireTLS: !config.smtp.secure,
     auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.pass } : undefined,
   });
   return {

@@ -22,7 +22,7 @@
     </div>
   </header>
 
-  <main id="contenu" class="page">
+  <main tabindex="-1" id="contenu" class="page">
     <div class="container">
       <div id="admin-login" class="login" hidden>
         <h1>Administration</h1>
@@ -30,7 +30,7 @@
         <form id="login-form" class="form" novalidate>
           <div class="field">
             <label for="password">Mot de passe</label>
-            <input type="password" id="password" name="password" required autocomplete="current-password">
+            <input type="password" id="password" name="password" required autocomplete="current-password" aria-describedby="login-msg">
           </div>
           <button class="btn btn-primary" type="submit">Se connecter</button>
           <p class="hint">5 tentatives par tranche de 15 minutes. Déconnexion automatique après 30 minutes d’inactivité.</p>
@@ -45,7 +45,7 @@
         <div id="panel-msg" class="status-msg" role="status" hidden></div>
         <div class="table-wrap" role="region" aria-label="Liste des inscriptions" tabindex="0">
           <table class="admin-table">
-            <caption>Heures affichées en heure de Paris. « Supprimer » efface définitivement l’inscrit (droit à l’effacement).</caption>
+            <caption>Heures affichées en heure de Paris ; export JSON en UTC. Exportez uniquement la personne ayant exercé ses droits, après vérification de sa demande. « Supprimer » efface définitivement l’inscrit.</caption>
             <thead>
               <tr>
                 <th scope="col">Date</th>
@@ -53,7 +53,7 @@
                 <th scope="col">Canaux</th>
                 <th scope="col">Actions suivies</th>
                 <th scope="col">Consentement</th>
-                <th scope="col"><span class="visually-hidden">Supprimer</span></th>
+                <th scope="col">Exporter ou supprimer</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -70,6 +70,9 @@
         <li><a href="/mentions-legales">Mentions légales</a></li>
         <li><a href="/cgv">CGV</a></li>
         <li><a href="/confidentialite">Politique de confidentialité</a></li>
+        <li><a href="/accessibilite">Accessibilité : partiellement conforme</a></li>
+        <li><a href="/resiliation">Résilier votre contrat</a></li>
+        <li><a href="/contact">Contact</a></li>
         <li><a href="https://discord.gg/BCgmuk6kXE" rel="noopener">Discord</a></li>
       </ul>
       <p class="disclaimer">Les performances passées ne préjugent pas des performances futures. HyprL fournit de l’information, pas de recommandation personnalisée.</p>

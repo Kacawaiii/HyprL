@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
+  <link rel="alternate" hreflang="fr" href="https://hyprlcore.com/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HyprL — L’information de marché, vérifiable</title>
   <meta name="description" content="Brief quotidien, radar des événements qui comptent, et un duel public entre deux agents IA dont chaque décision est horodatée avant l’ouverture.">
@@ -16,6 +17,7 @@
   <link rel="preload" href="/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script src="/menu.js" defer></script>
+  <script src="/consent.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#contenu">Aller au contenu</a>
@@ -41,7 +43,7 @@
     </div>
   </header>
 
-  <main id="contenu">
+  <main tabindex="-1" id="contenu">
 
     <!-- 1. ACCUEIL -->
     <section class="hero" aria-labelledby="titre-accueil">
@@ -112,7 +114,7 @@
             </div>
 
             <!-- Tableau d'exemple : les cases restent à "—" jusqu'aux vraies données. Ne jamais y mettre de chiffres fictifs. -->
-            <div class="table-wrap" role="region" aria-label="Tableau d’exemple du duel" tabindex="0">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Tableau d’exemple du duel">
               <table>
                 <caption>Exemple de format. Les cases restent vides tant que le duel n’a pas commencé : aucun chiffre n’est affiché avant d’être réel.</caption>
                 <thead>
@@ -257,24 +259,25 @@ horodatage  —</pre>
         </div>
         <p class="banner">Accès anticipé gratuit pendant les semaines de lancement.</p>
 
+        <p>Tarifs indicatifs en EUR, TTC. TVA non applicable, art. 293 B du CGI (régime à confirmer avant vente). Les abonnements ne sont pas ouverts.</p>
         <!-- Contenu des formules : à valider. Remplacer les href="#" par les liens de paiement. -->
         <div class="grid">
           <article class="plan lg-4 md-6">
             <h3>Essentiel</h3>
             <p class="tagline">Le brief et le radar, chaque jour de bourse.</p>
-            <p class="price">19 €<small> / mois</small></p>
+            <p class="price">19 EUR TTC<small> / mois</small></p>
             <ul>
               <li>Brief quotidien</li>
               <li>Radar des événements</li>
               <li>Publication quotidienne du duel</li>
               <li>Alertes par e-mail</li>
             </ul>
-            <a class="btn btn-secondary btn-block" href="#" data-payment="essentiel">Choisir Essentiel</a>
+            <a class="btn btn-secondary btn-block" href="#acces">Être informé — Essentiel</a>
           </article>
           <article class="plan is-featured lg-4 md-6">
             <h3>Premium</h3>
             <p class="tagline">Toutes les alertes, sur tous vos canaux.</p>
-            <p class="price">49 €<small> / mois</small></p>
+            <p class="price">49 EUR TTC<small> / mois</small></p>
             <ul>
               <li>Tout Essentiel</li>
               <li>Discord, Slack, Telegram, Microsoft Teams</li>
@@ -282,18 +285,18 @@ horodatage  —</pre>
               <li>Alertes filtrées sur vos actions suivies</li>
               <li>API (bientôt)</li>
             </ul>
-            <a class="btn btn-primary btn-block" href="#" data-payment="premium">Choisir Premium</a>
+            <a class="btn btn-primary btn-block" href="#acces">Être informé — Premium</a>
           </article>
           <article class="plan lg-4 md-6">
             <h3>Fondateur</h3>
             <p class="tagline">Le contenu Premium, facturé à l’année.</p>
-            <p class="price">299 €<small> / an</small></p>
+            <p class="price">299 EUR TTC<small> / an</small></p>
             <ul>
               <li>Contenu Premium</li>
               <li>Facturation annuelle</li>
               <li><span class="limit">Places limitées</span></li>
             </ul>
-            <a class="btn btn-secondary btn-block" href="#" data-payment="fondateur">Choisir Fondateur</a>
+            <a class="btn btn-secondary btn-block" href="#acces">Être informé — Fondateur</a>
           </article>
         </div>
       </div>
@@ -306,14 +309,15 @@ horodatage  —</pre>
           <div class="lg-5">
             <p class="eyebrow">Accès anticipé</p>
             <h2 id="titre-acces">Rejoindre l’accès anticipé.</h2>
-            <p class="muted">Gratuit pendant les semaines de lancement. Vous recevez un e-mail de confirmation, avec un lien pour vous désinscrire et effacer vos données à tout moment.</p>
+            <p class="muted">Gratuit pendant les semaines de lancement. Vous pouvez demander l’effacement de vos données à tout moment via notre <a href="/contact">contact</a>. Lorsqu’un e-mail de confirmation est envoyé, il contient aussi un lien de désinscription.</p>
             <p class="muted small">Nous n’utilisons aucun outil de suivi : ni mesure d’audience, ni pixel publicitaire.</p>
           </div>
           <div class="lg-7">
-            <form class="form" action="/api/subscribe" method="post" accept-charset="utf-8">
+            <form class="form" action="/inscription" method="post" accept-charset="utf-8">
               <div class="field">
+                <p class="hint" id="email-hint">Adresse nécessaire pour recevoir les informations sur l’accès anticipé.</p>
                 <label for="email">Adresse e-mail <span class="req" aria-hidden="true">*</span></label>
-                <input type="email" id="email" name="email" required autocomplete="email" maxlength="254" inputmode="email" aria-required="true">
+                <input type="email" id="email" name="email" required autocomplete="email" maxlength="254" inputmode="email" aria-required="true" aria-describedby="email-hint">
               </div>
 
               <fieldset>
@@ -343,8 +347,8 @@ horodatage  —</pre>
 
               <div class="consent">
                 <!-- Le texte de cette case est enregistré mot pour mot avec chaque inscription (server/lib/consent.js). Le serveur refuse de démarrer si les deux textes diffèrent. -->
-                <label class="check" for="consent"><input type="checkbox" id="consent" name="consent" value="oui" required aria-required="true"><span id="consent-text">J’accepte que HyprL enregistre mon adresse e-mail, les canaux choisis et les actions suivies afin de me contacter au sujet de l’accès anticipé. Je peux me désinscrire et faire effacer ces données à tout moment.</span></label>
-                <p class="hint">Case obligatoire. Détails dans la <a href="/confidentialite">politique de confidentialité</a>.</p>
+                <label class="check" for="consent"><input type="checkbox" id="consent" aria-describedby="consent-hint" name="consent" value="oui" required aria-required="true"><span id="consent-text">J’accepte que HyprL enregistre mon adresse e-mail, les canaux choisis et les actions suivies afin de me contacter au sujet de l’accès anticipé. Je peux me désinscrire et faire effacer ces données à tout moment.</span></label>
+                <p id="consent-hint" class="hint">Case obligatoire. Détails dans la <a href="/confidentialite">politique de confidentialité</a>.</p>
               </div>
 
               <button class="btn btn-primary" type="submit">Rejoindre l’accès anticipé</button>
@@ -407,6 +411,9 @@ horodatage  —</pre>
         <li><a href="/mentions-legales">Mentions légales</a></li>
         <li><a href="/cgv">CGV</a></li>
         <li><a href="/confidentialite">Politique de confidentialité</a></li>
+        <li><a href="/accessibilite">Accessibilité : partiellement conforme</a></li>
+        <li><a href="/resiliation">Résilier votre contrat</a></li>
+        <li><a href="/contact">Contact</a></li>
         <li><a href="https://discord.gg/BCgmuk6kXE" rel="noopener">Discord</a></li>
       </ul>
       <p class="disclaimer">Les performances passées ne préjugent pas des performances futures. HyprL fournit de l’information, pas de recommandation personnalisée.</p>

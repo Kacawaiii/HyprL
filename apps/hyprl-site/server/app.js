@@ -8,9 +8,10 @@ const crypto = require('node:crypto');
 
 const { CONSENT_TEXTS, CURRENT_VERSION, assertPageMatches } = require('./lib/consent');
 const { SubscriberStore } = require('./lib/store');
+const { expiresAt, startRetentionJob } = require('./lib/retention');
 const { passwordMatches, AttemptLimiter, SessionStore, sha256 } = require('./lib/auth');
 const { createMailer, notificationMessage, confirmationMessage } = require('./lib/mail');
-const { createPages, maskEmail } = require('./lib/pages');
+const { createPages, maskEmail, esc } = require('./lib/pages');
 
 const ALLOWED_CHANNELS = ['discord', 'slack', 'telegram', 'teams', 'email', 'webhook', 'api'];
 const EMAIL_RE = /^[^\s@<>()",;:\\[\]]+@[^\s@<>()",;:\\[\]]+\.[^\s@<>()",;:\\[\]]{2,}$/;
@@ -20,8 +21,10 @@ const COOKIE = 'hyprl_admin';
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.webmanifest': 'application/manifest+json',
+  '.json': 'application/json; charset=utf-8', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.webmanifest': 'application/manifest+json',
 };
+
+const httpTitle = (status) => require('node:http').STATUS_CODES[status] || 'Error';
 
 const CSP = [
   "default-src 'self'", "script-src 'self'", "style-src 'self'", "font-src 'self'", "img-src 'self' data:",
@@ -36,6 +39,7 @@ function createApp(config, deps = {}) {
   assertPageMatches(indexHtml);
 
   const store = deps.store || new SubscriberStore(config.dataFile).load();
+  const retention = startRetentionJob(store, { now, logger, ...(deps.retention || {}) });
   const mailer = deps.mailer || createMailer(config, logger);
   const pages = createPages(config.publicDir);
   const loginLimiter = new AttemptLimiter({ max: config.login.maxAttempts, windowMs: config.login.windowMs, now });
@@ -63,7 +67,17 @@ function createApp(config, deps = {}) {
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', ...extra });
     res.end(body);
   }
-  const json = (res, status, obj, extra) => send(res, status, obj === undefined ? '' : JSON.stringify(obj), 'application/json; charset=utf-8', extra);
+  const json = (res, status, obj, extra) => {
+    if (status >= 400) {
+      const { error, message, ...extensions } = obj || {};
+      return send(res, status, JSON.stringify({
+        type: 'about:blank', title: httpTitle(status), status,
+        detail: message || httpTitle(status), ...extensions,
+        ...(error ? { error } : {}),
+      }), 'application/problem+json; charset=utf-8', extra);
+    }
+    return send(res, status, obj === undefined ? '' : JSON.stringify(obj), 'application/json; charset=utf-8', extra);
+  };
   const noContent = (res, extra = {}) => { res.writeHead(204, { 'Cache-Control': 'no-store', ...extra }); res.end(); };
   const redirect = (res, location) => { res.writeHead(303, { Location: location, 'Cache-Control': 'no-store' }); res.end(); };
 
@@ -83,7 +97,7 @@ function createApp(config, deps = {}) {
       const chunks = [];
       req.on('data', (c) => {
         size += c.length;
-        if (size > MAX_BODY) { reject(Object.assign(new Error('too_large'), { status: 413 })); req.destroy(); return; }
+        if (size > MAX_BODY) { reject(Object.assign(new Error('too_large'), { status: 413 })); return; }
         chunks.push(c);
       });
       req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
@@ -93,10 +107,13 @@ function createApp(config, deps = {}) {
 
   async function readForm(req) {
     const type = String(req.headers['content-type'] || '');
+    if (!type.startsWith('application/json') && !type.startsWith('application/x-www-form-urlencoded')) {
+      throw Object.assign(new Error('unsupported_media_type'), { status: 415 });
+    }
     const raw = await readBody(req);
     if (type.startsWith('application/json')) {
       let obj;
-      try { obj = JSON.parse(raw || '{}'); } catch { throw Object.assign(new Error('bad_json'), { status: 400 }); }
+      try { obj = JSON.parse(raw || '{}'); if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error(); } catch { throw Object.assign(new Error('bad_json'), { status: 400 }); }
       return { get: (k) => (obj[k] == null ? null : String(obj[k])), getAll: (k) => [].concat(obj[k] ?? []).map(String), json: true };
     }
     const p = new URLSearchParams(raw);
@@ -107,7 +124,9 @@ function createApp(config, deps = {}) {
     const header = req.headers.cookie || '';
     for (const part of header.split(';')) {
       const i = part.indexOf('=');
-      if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+      if (i > 0 && part.slice(0, i).trim() === name) {
+        try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return null; }
+      }
     }
     return null;
   }
@@ -124,7 +143,7 @@ function createApp(config, deps = {}) {
     const origin = req.headers.origin;
     if (!origin) return true;
     const hostOrigin = (config.secureCookies ? 'https://' : 'http://') + req.headers.host;
-    return origin === publicOrigin || origin === hostOrigin;
+    return origin === publicOrigin || (!config.production && origin === hostOrigin);
   }
 
   function newToken() {
@@ -137,15 +156,15 @@ function createApp(config, deps = {}) {
   function deliver(msg, label) {
     Promise.resolve()
       .then(() => mailer.send(msg))
-      .catch((err) => logger.error('[mail] échec de l’envoi (' + label + ') : ' + (err && err.message)));
+      .catch(() => logger.error('[mail] échec de l’envoi (' + label + ')'));
   }
 
   // ---------- inscription ----------
-  async function subscribe(req, res) {
-    if (!sameOrigin(req)) return send(res, 403, pages.error('Requête refusée', 'Le formulaire doit être envoyé depuis le site HyprL. Aucune donnée n’a été enregistrée.'));
+  async function subscribe(req, res, apiErrors = false) {
+    if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
     const form = await readForm(req);
     const wantsJson = form.json || String(req.headers.accept || '').includes('application/json');
-    const fail = (status, title, message) => wantsJson
+    const fail = (status, title, message) => apiErrors || wantsJson
       ? json(res, status, { error: title, message })
       : send(res, status, pages.error(title, message));
 
@@ -197,9 +216,10 @@ function createApp(config, deps = {}) {
       consent: { given: true, version, text: CONSENT_TEXTS[version], checked_at: at },
       unsubscribe_token_hash: hash,
     };
-    await store.add(record);
+    const added = await store.add(record);
+    if (!added) return wantsJson ? json(res, 200, { ok: true }) : redirect(res, '/merci');
 
-    deliver(notificationMessage(record, { to: config.notifyEmail, from: config.mailFrom }), 'notification');
+    if (config.notifyEmail) deliver(notificationMessage(record, { to: config.notifyEmail, from: config.mailFrom }), 'notification');
     deliver(confirmationMessage(record, { from: config.mailFrom, unsubscribeUrl: unsubscribeUrl(token) }), 'confirmation');
 
     return wantsJson ? json(res, 201, { ok: true }) : redirect(res, '/merci');
@@ -264,6 +284,18 @@ function createApp(config, deps = {}) {
     return json(res, 200, { subscribers });
   }
 
+  function exportSubscriber(req, res, id) {
+    if (!requireAdmin(req, res)) return;
+    const record = store.findById(id);
+    if (!record) return json(res, 404, { error: 'not_found' });
+    const { id: personId, email, channels, actions, created_at, consent } = record;
+    return json(res, 200, {
+      schema_version: '1.0.0', exported_at: new Date(now()).toISOString(),
+      retention_expires_at: expiresAt(created_at),
+      subscriber: { id: personId, email, channels, actions, created_at, consent },
+    }, { 'Content-Disposition': 'attachment; filename="hyprl-personal-data.json"' });
+  }
+
   async function deleteSubscriber(req, res, id) {
     if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
     if (!requireAdmin(req, res)) return;
@@ -319,12 +351,15 @@ function createApp(config, deps = {}) {
   // ---------- routeur ----------
   async function handle(req, res) {
     baseHeaders(res);
-    const url = new URL(req.url, 'http://local');
-    const p = url.pathname;
-    const m = req.method;
-
     try {
-      if (p === '/api/subscribe') return m === 'POST' ? await subscribe(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
+      let url;
+      try { url = new URL(req.url, 'http://local'); }
+      catch { return json(res, 400, { error: 'invalid_url' }); }
+      const p = url.pathname;
+      const m = req.method;
+      if (p.startsWith('/api/') || p === '/desinscription' || p === '/inscription') await retention.run();
+      if (p === '/api/subscribe') return m === 'POST' ? await subscribe(req, res, true) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
+      if (p === '/inscription') return m === 'POST' ? await subscribe(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/desinscription') {
         if (m === 'GET' || m === 'HEAD') return await unsubscribeGet(req, res, url);
         if (m === 'POST') return await unsubscribePost(req, res, url);
@@ -333,23 +368,46 @@ function createApp(config, deps = {}) {
       if (p === '/api/admin/login') return m === 'POST' ? await login(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/api/admin/logout') return m === 'POST' ? logout(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/api/admin/subscribers') return m === 'GET' ? listSubscribers(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
+      const exp = p.match(/^\/api\/admin\/subscribers\/([0-9a-f-]{36})\/export$/i);
+      if (exp) return m === 'GET' ? exportSubscriber(req, res, exp[1].toLowerCase()) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
       const del = p.match(/^\/api\/admin\/subscribers\/([0-9a-f-]{36})$/i);
       if (del) return m === 'DELETE' ? await deleteSubscriber(req, res, del[1].toLowerCase()) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'DELETE' });
       if (p.startsWith('/api/')) return json(res, 404, { error: 'not_found' });
 
       if (m !== 'GET' && m !== 'HEAD') return send(res, 405, 'Méthode non autorisée', 'text/plain; charset=utf-8', { Allow: 'GET, HEAD' });
+      if (p === '/contact') {
+        const contact = config.notifyEmail
+          ? '<p><a href="mailto:' + esc(config.notifyEmail) + '">' + esc(config.notifyEmail) + '</a></p>'
+          : '<p>Contact à compléter par l’éditeur dans sa configuration privée. Consultez les mentions légales.</p>';
+        return send(res, 200, pages.error('Contact et exercice de vos droits',
+          'Précisez votre demande (accès, export JSON, rectification, effacement, retrait du consentement ou sécurité) et l’adresse concernée. Réponse sous un mois. N’envoyez pas de justificatif d’identité spontanément.').replace('</h1>', '</h1>' + contact));
+      }
+      if (p === '/.well-known/security.txt') {
+        const body = 'Contact: ' + config.publicUrl + '/contact\nExpires: ' +
+          new Date(now() + 180 * 86400000).toISOString() + '\nPreferred-Languages: fr, en\nCanonical: ' +
+          config.publicUrl + '/.well-known/security.txt\nPolicy: ' + config.publicUrl + '/securite\n';
+        return send(res, 200, m === 'HEAD' ? '' : body, 'text/plain; charset=utf-8');
+      }
+      if (p === '/sitemap.xml') {
+        const locations = ['/', '/mentions-legales', '/confidentialite', '/cgv', '/accessibilite', '/contact', '/securite', '/resiliation'];
+        const body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
+          locations.map((loc) => '<url><loc>' + esc(config.publicUrl + loc) + '</loc></url>').join('') + '</urlset>';
+        return send(res, 200, m === 'HEAD' ? '' : body, 'application/xml; charset=utf-8');
+      }
+      if (p === '/robots.txt') return send(res, 200, m === 'HEAD' ? '' :
+        'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nDisallow: /desinscription\nDisallow: /merci\nSitemap: ' + config.publicUrl + '/sitemap.xml\n', 'text/plain; charset=utf-8');
       return serveStatic(req, res, p);
     } catch (err) {
       if (err && err.status) return json(res, err.status, { error: err.message });
-      logger.error('[http] erreur interne : ' + (err && err.stack));
-      if (!res.headersSent) send(res, 500, 'Erreur interne', 'text/plain; charset=utf-8');
+      logger.error('[http] erreur interne');
+      if (!res.headersSent) json(res, 500, { error: 'internal_error' });
       else res.end();
     }
   }
 
   handle.store = store;
   handle.sessions = sessions;
-  handle.close = () => clearInterval(sweeper);
+  handle.close = () => { clearInterval(sweeper); retention.close(); };
   return handle;
 }
 

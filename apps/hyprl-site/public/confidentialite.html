@@ -2,12 +2,14 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
+  <link rel="alternate" hreflang="fr" href="https://hyprlcore.com/confidentialite">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Politique de confidentialité — HyprL</title>
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <script src="/menu.js" defer></script>
+  <script src="/consent.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#contenu">Aller au contenu</a>
@@ -33,21 +35,33 @@
     </div>
   </header>
 
-  <main id="contenu" class="page">
+  <main tabindex="-1" id="contenu" class="page">
     <div class="container">
       <div class="content">
         <h1>Politique de confidentialité</h1>
-        <!-- À compléter. Éléments habituellement attendus :
-         - Responsable du traitement et contact pour exercer vos droits
-         - Données collectées : e-mail, canaux choisis, actions suivies, date/heure et texte du consentement
-         - Finalité : contact au sujet de l'accès anticipé ; base légale : consentement (art. 6.1.a RGPD)
-         - Destinataires : hébergeur, prestataire d'envoi d'e-mails ; aucune revente
-         - Durée de conservation : jusqu'à la désinscription
-         - Droits : accès, rectification, effacement (lien de désinscription), opposition, portabilité, retrait du consentement
-         - Réclamation auprès de la CNIL (cnil.fr)
-         - Absence de cookies de suivi ; seul un cookie de session technique est utilisé sur l'espace d'administration
-        -->
-        <p class="placeholder">Page en cours de rédaction.</p>
+<p class="muted">Version du 26 octobre 2026.</p>
+
+<h2>Responsable et contact</h2>
+<p>Le responsable du traitement est l’éditeur de HyprL : [IDENTITÉ / RAISON SOCIALE ET ADRESSE À COMPLÉTER PAR L’OPÉRATEUR]. Pour toute demande concernant vos données, utilisez notre <a href="/contact">contact direct</a>.</p>
+<h2>Données, finalité et base légale</h2>
+<p>Avec votre consentement libre, spécifique, éclairé et révocable (article 6, paragraphe 1, point a du RGPD), nous enregistrons votre adresse e-mail et, si vous les renseignez, vos canaux préférés et actions suivies afin de vous contacter au sujet de l’accès anticipé. Nous conservons aussi un identifiant, la date UTC d’inscription, le texte et la version du consentement, sa date et l’empreinte du jeton de désinscription.</p>
+<p>Seule l’adresse e-mail et la case de consentement sont nécessaires à l’inscription. Les autres champs sont facultatifs. Sans consentement, aucune inscription n’est enregistrée. Il n’y a ni profilage, ni décision automatisée, ni revente, ni publicité ciblée.</p>
+<h2>Durée de conservation et effacement</h2>
+<p>Les inscriptions sont effacées automatiquement au plus tard 24 mois calendaires après leur création, ou avant sur votre demande ou retrait du consentement. La purge s’exécute au démarrage, chaque heure et avant tout accès aux inscriptions ; une inscription arrivée à échéance ne peut plus être consultée ni exportée. Les doublons ne prolongent pas cette durée.</p>
+<p>Le lien reçu à l’inscription permet de demander l’effacement immédiat : ouvrez-le puis confirmez. Vous pouvez aussi passer par le <a href="/contact">contact direct</a>. Les copies éventuelles chez le prestataire de messagerie et dans la boîte de l’éditeur doivent suivre la même échéance. Les sauvegardes contenant des inscriptions ne doivent pas être conservées au-delà de cette échéance ; toute restauration impose une purge avant remise en service.</p>
+<h2>Destinataires et sous-traitants</h2>
+<p>Seul l’éditeur autorisé accède aux inscriptions. L’hébergement est assuré par Hetzner Online GmbH, en Allemagne (Union européenne). Le prestataire d’envoi d’e-mails reste à choisir : il devra traiter et héberger les données dans l’UE, avec un contrat de sous-traitance conforme à l’article 28 du RGPD. L’envoi reste désactivé tant que ce choix et ces protections ne sont pas validés. La politique sera mise à jour avec son identité avant activation.</p>
+<p>Aucun transfert hors de l’Union européenne n’est prévu ni autorisé pour ce traitement. Aucun contenu tiers n’est chargé automatiquement. Les liens externes, dont Discord, ne transmettent des données au service externe que si vous décidez de les ouvrir ; ses propres conditions s’appliquent alors.</p>
+<h2>Vos droits et leur exercice</h2>
+<p>Vous disposez des droits d’accès, de rectification, d’effacement, de limitation et de portabilité des données fournies (export individuel JSON, remis par l’éditeur après vérification proportionnée de votre demande). Vous pouvez retirer votre consentement à tout moment, sans remettre en cause les traitements antérieurs. Le droit d’opposition s’exerce dans les conditions prévues par le RGPD ; pour cette liste fondée sur le consentement, son retrait met fin au traitement.</p>
+<p>Écrivez via le <a href="/contact">contact direct</a>, en précisant l’adresse concernée et le droit demandé. Aucun justificatif d’identité n’est demandé par défaut ; seulement en cas de doute raisonnable. Réponse sous un mois, prorogeable de deux mois en cas de complexité, avec information motivée dans le premier mois. L’export ne contient jamais le jeton de désinscription ni son empreinte.</p>
+<p>Vous pouvez introduire une réclamation auprès de la <a href="https://www.cnil.fr/fr/plaintes" rel="noopener">Commission nationale de l’informatique et des libertés (CNIL)</a>, notamment si vous estimez que vos droits ne sont pas respectés.</p>
+<h2 id="cookies">Cookies</h2>
+<p>Les visiteurs ne reçoivent aucun cookie et aucune donnée n’est inscrite dans leur stockage local. Seul l’espace d’administration utilise un cookie de session strictement nécessaire (<code>hyprl_admin</code>, HttpOnly, SameSite=Strict, Secure en HTTPS), limité à la session, avec expiration serveur après 30 minutes d’inactivité et au plus 12 heures. Il ne sert pas au suivi des visiteurs.</p>
+<p>En l’absence de traceur non essentiel, aucun bandeau de consentement n’est nécessaire. Si un service tiers facultatif est introduit, il sera bloqué avant accord ; refuser sera aussi simple qu’accepter, sans case précochée, et le choix sera modifiable à tout moment. Le choix sera conservé six mois ; à son expiration, un nouvel accord sera nécessaire, donc avant le délai maximal de treize mois.</p>
+<h2>Sécurité et données techniques</h2>
+<p>HTTPS, contrôle d’accès administrateur, sessions limitées et fichiers à accès restreint protègent les données. Pour lutter contre les abus, les adresses IP servent uniquement à des compteurs temporaires en mémoire (une heure au plus pour l’inscription, quinze minutes pour la connexion). Elles ne sont pas enregistrées dans la liste. Ce traitement de sécurité repose sur l’intérêt légitime de protéger le service (article 6.1.f). Les journaux d’accès contenant adresses, requêtes ou jetons doivent rester désactivés à l’hébergement.</p>
+
       </div>
     </div>
   </main>
@@ -58,6 +72,9 @@
         <li><a href="/mentions-legales">Mentions légales</a></li>
         <li><a href="/cgv">CGV</a></li>
         <li><a href="/confidentialite">Politique de confidentialité</a></li>
+        <li><a href="/accessibilite">Accessibilité : partiellement conforme</a></li>
+        <li><a href="/resiliation">Résilier votre contrat</a></li>
+        <li><a href="/contact">Contact</a></li>
         <li><a href="https://discord.gg/BCgmuk6kXE" rel="noopener">Discord</a></li>
       </ul>
       <p class="disclaimer">Les performances passées ne préjugent pas des performances futures. HyprL fournit de l’information, pas de recommandation personnalisée.</p>

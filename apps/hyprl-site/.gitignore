@@ -1,6 +1,12 @@
 node_modules/
-data/*.json
-data/*.tmp
+data/
+coverage/
+test-results/
+playwright-report/
 .env
 .env.*
 !.env.example
+!package.json
+!package-lock.json
+!public/contracts/v1/*.json
+.qa-deps/

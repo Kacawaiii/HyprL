@@ -72,6 +72,12 @@
       consent.append(when, text);
       tr.appendChild(consent);
       var actions = td('', 'nowrap');
+      var exp = document.createElement('a');
+      exp.className = 'btn btn-quiet';
+      exp.textContent = 'Exporter JSON';
+      exp.href = '/api/admin/subscribers/' + encodeURIComponent(s.id) + '/export';
+      exp.setAttribute('aria-label', 'Exporter JSON — ' + s.email);
+      actions.appendChild(exp);
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn-danger';
@@ -112,16 +118,26 @@
     $('login-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var pwd = $('password').value;
-      if (!pwd) return;
+      if (!pwd) {
+        $('password').setAttribute('aria-invalid', 'true');
+        show($('login-msg'), 'Saisissez le mot de passe.', 'error');
+        $('password').focus();
+        return;
+      }
       api('POST', '/api/admin/login', { password: pwd }).then(function (r) {
         $('password').value = '';
-        if (r.status === 200) { show($('login-msg'), ''); return load(); }
+        if (r.status === 200) {
+          $('password').removeAttribute('aria-invalid');
+          show($('login-msg'), '');
+          return load().then(function () { $('logout').focus(); });
+        }
         if (r.status === 429) {
           var min = Math.ceil((Number(r.headers.get('Retry-After')) || 900) / 60);
           return show($('login-msg'), 'Trop de tentatives. Réessayez dans ' + min + ' min.', 'error');
         }
         var left = r.data && typeof r.data.remaining === 'number' ? ' Tentatives restantes : ' + r.data.remaining + '.' : '';
         show($('login-msg'), 'Mot de passe incorrect.' + left, 'error');
+        $('password').setAttribute('aria-invalid', 'true');
         $('password').focus();
       });
     });
