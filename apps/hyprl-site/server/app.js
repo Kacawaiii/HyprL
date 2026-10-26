@@ -45,6 +45,7 @@ function createApp(config, deps = {}) {
   const loginLimiter = new AttemptLimiter({ max: config.login.maxAttempts, windowMs: config.login.windowMs, now });
   const subscribeLimiter = new AttemptLimiter({ max: config.subscribeLimit.max, windowMs: config.subscribeLimit.windowMs, now });
   const sessions = new SessionStore({ idleMs: config.session.idleMs, maxMs: config.session.maxMs, now });
+  const member = require('./member/app').createMemberApp(config, { now, ...(deps.member || {}) });
   const publicOrigin = new URL(config.publicUrl).origin;
 
   const sweeper = setInterval(() => { loginLimiter.sweep(); subscribeLimiter.sweep(); sessions.sweep(); }, 60 * 1000);
@@ -357,6 +358,7 @@ function createApp(config, deps = {}) {
       catch { return json(res, 400, { error: 'invalid_url' }); }
       const p = url.pathname;
       const m = req.method;
+      if (await member.handle(req, res, url)) return;
       if (p.startsWith('/api/') || p === '/desinscription' || p === '/inscription') await retention.run();
       if (p === '/api/subscribe') return m === 'POST' ? await subscribe(req, res, true) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/inscription') return m === 'POST' ? await subscribe(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
@@ -395,7 +397,7 @@ function createApp(config, deps = {}) {
         return send(res, 200, m === 'HEAD' ? '' : body, 'application/xml; charset=utf-8');
       }
       if (p === '/robots.txt') return send(res, 200, m === 'HEAD' ? '' :
-        'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nDisallow: /desinscription\nDisallow: /merci\nSitemap: ' + config.publicUrl + '/sitemap.xml\n', 'text/plain; charset=utf-8');
+        'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nDisallow: /membre\nDisallow: /auth/\nDisallow: /desinscription\nDisallow: /merci\nSitemap: ' + config.publicUrl + '/sitemap.xml\n', 'text/plain; charset=utf-8');
       return serveStatic(req, res, p);
     } catch (err) {
       if (err && err.status) return json(res, err.status, { error: err.message });
@@ -407,7 +409,8 @@ function createApp(config, deps = {}) {
 
   handle.store = store;
   handle.sessions = sessions;
-  handle.close = () => { clearInterval(sweeper); retention.close(); };
+  handle.member = member;
+  handle.close = () => { clearInterval(sweeper); retention.close(); member.close(); };
   return handle;
 }
 
