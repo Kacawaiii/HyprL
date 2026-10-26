@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 from scripts.trading_lab.research.store import ResearchStore
 from scripts.trading_lab.sources.canonical import sha256_canonical
+from scripts.authorization_extensions import ExtensionError, expiry_receipt
 
 from .config import Authorization, TraderError, instant, iso, now, private_root, strict_json
 from .data import calendar_session, label_window, protected
@@ -91,11 +92,12 @@ class PaperAuthorization:
     payload: dict
     identity: str
     parent: Authorization
+    source_path: Path | None = None
 
     @classmethod
     def load(cls, path, parent):
         payload = strict_json(Path(path).read_text())
-        grant = cls(payload, sha256_canonical(payload), parent)
+        grant = cls(payload, sha256_canonical(payload), parent, Path(path).resolve())
         grant.validate()
         return grant
 
@@ -123,10 +125,15 @@ class PaperAuthorization:
         if instant(p['not_after']) <= instant(p['granted_at']):
             raise TraderError('PAPER_INVALID_GRANT_WINDOW')
 
-    def check(self, at):
-        self.parent.check(at)
-        if not instant(self.payload['granted_at']) <= at < instant(self.payload['not_after']):
+    def check(self, at, *, slot='am'):
+        parent_metadata = self.parent.check(at, slot=slot)
+        try:
+            metadata = expiry_receipt(self.source_path, self.payload, at, slot=slot)
+        except ExtensionError:
             raise TraderError('PAPER_AUTHORIZATION_EXPIRED_OR_NOT_STARTED')
+        return {**({'parent_authorization_hash': self.parent.identity,
+                    'parent_authorization_extension_sha256': parent_metadata['authorization_extension_sha256']}
+                   if parent_metadata else {}), **metadata}
 
     def assets(self, name):
         u = self.parent.payload['universe']
@@ -401,8 +408,13 @@ class PaperLedger:
 
     def append(self, event, account, **data):
         identifier = 'paper:' + uuid4().hex
+        try:
+            metadata = self.grant.check(self.clock())
+        except TraderError:
+            metadata = {}  # Refusal/alert evidence must remain writable after expiry.
         payload = {'schema': 'alpaca-paper-event-v1', 'event_id': identifier, 'event': event, 'at': iso(self.clock()),
                    'account': account, 'account_suffix': self.grant.payload['accounts'][account]['account_suffix'] if account else None,
+                   **({'authorization_hash': self.grant.identity, **metadata} if metadata else {}),
                    **data}
         self.store.append('replay-summary', payload, object_id=identifier, recorded_at=payload['at'])
         return payload
@@ -536,7 +548,7 @@ class PaperExecutor:
                 or instant(decision['decided_at']) > self.clock()):
             raise TraderError('PAPER_RESUME_OPERATOR_DECISION_REFUSED')
         with self.ledger.owner():
-            self.grant.check(self.dispatch_clock())
+            self.grant.check(self.dispatch_clock(), slot=self.slot or 'am')
             self.ledger.store.verify()
             self.research.verify()
             halts = self.ledger.events(name, 'halt')
@@ -849,8 +861,10 @@ class PaperExecutor:
                 raise TraderError('PAPER_LABEL_BINDING_MISMATCH')
             if instant(p['decision_at']) > self.clock() or instant(row['recorded_at']) > self.clock():
                 continue
-            if instant(definition['exit_at']) >= min(instant(self.grant.payload['not_after']),
-                                                     instant(self.grant.parent.payload['not_after'])):
+            metadata = self.grant.check(self.clock(), slot=self.slot or 'am')
+            parent_metadata = self.grant.parent.check(self.clock(), slot=self.slot or 'am')
+            if instant(definition['exit_at']) >= min(instant(metadata.get('authorization_not_after', self.grant.payload['not_after'])),
+                    instant(parent_metadata.get('authorization_not_after', self.grant.parent.payload['not_after']))):
                 continue   # Never open a lot whose scheduled exit is outside the authorization.
             evidence = self.research.records('inputs', parent_id=row['identity'])
             if len(evidence) != 1 or evidence[0]['payload']['input_quality'].get('state') != 'AVAILABLE':
@@ -1283,10 +1297,12 @@ class PaperExecutor:
         if action not in {'status', 'execute', 'exit', 'audit'}:
             raise TraderError('PAPER_UNKNOWN_ACTION')
         with self.ledger.owner():
-            self.grant.check(self.dispatch_clock())
+            metadata = self.grant.check(self.dispatch_clock(), slot=self.slot or 'am')
             self.research.verify()
             self.ledger.store.verify()
             result = {'schema': 'alpaca-paper-' + action + '-v1', 'at': iso(self.clock()), 'dry_run': dry_run, 'accounts': [], 'state': 'COMPLETE'}
+            if metadata:
+                result.update(authorization_hash=self.grant.identity, **metadata)
             if action != 'status' and not dry_run and self.clock() < FIRST_EXECUTION:
                 return {**result, 'state': 'NOT_STARTED', 'first_execution': iso(FIRST_EXECUTION)}
             if action != 'status' and any(p.exists() for p in self.pause_paths):
