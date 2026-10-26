@@ -136,7 +136,7 @@ class TelegramDelivery:
             raise RadarError('TELEGRAM_CREDENTIALS_MISSING_OR_INVALID') from None
 
     def send(self, key, message, *, reserve_digests=False, digest_slot=None):
-        self.grant.check(self.store.clock())
+        self.grant.check(self.store.clock(), group='telegram')
         self.grant.permit_delivery()
         if not isinstance(message, str) or not message.strip() or len(message.encode('utf-16-le')) // 2 > 3500:
             raise RadarError('TELEGRAM_DIGEST_TOO_LONG')

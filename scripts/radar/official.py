@@ -6,6 +6,7 @@ import json
 import math
 import re
 import xml.etree.ElementTree as ET
+from scripts.authorization_extensions import ExtensionError, expiry_receipt, strict_json
 
 from .core import Authorization, RadarError, canonical_url, digest, instant, iso
 from .sources import Collector, item, parse_feed, publication, text
@@ -20,7 +21,8 @@ FEED_SCOPE = '/cgi-bin/browse-edgar (action=getcurrent, type=8-K, output=atom)'
 class OfficialAuthorization(Authorization):
     def __init__(self, path):
         try:
-            p = json.loads(Path(path).expanduser().read_text())
+            self.source_path = Path(path).expanduser().resolve()
+            p = strict_json(self.source_path.read_bytes())
             if (p['authorization'] != 'news-radar-sec-fed-telegram-v1'
                     or p['extends'] != 'news-radar-v1' or p['operator_signed'] is not True
                     or instant(p['not_after']) <= instant(p['granted_at'])):
@@ -41,9 +43,18 @@ class OfficialAuthorization(Authorization):
                     or not isinstance(ua, str) or not ua.strip() or any(ord(c) < 32 for c in ua)):
                 raise ValueError()
             self.identity = digest(p)  # digest original signed document, not derived settings
+            self.source_payload = p
             self.payload = {**p, 'budgets': budgets, 'spacing_seconds': {'sec': 1 / rate, 'fed': 0}}
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             raise RadarError('AUTHORIZATION_MISSING_OR_INVALID') from None
+
+    def check(self, at, *, group='sec'):
+        scope = {'sec': 'https://www.sec.gov', 'fed': 'https://www.federalreserve.gov',
+                 'telegram': 'https://api.telegram.org'}.get(group)
+        try:
+            return expiry_receipt(self.source_path, self.source_payload, at, scope=scope)
+        except ExtensionError:
+            raise RadarError('AUTHORIZATION_EXPIRED_OR_NOT_STARTED') from None
 
     def group_for(self, url):
         return {'www.sec.gov': 'sec', 'www.federalreserve.gov': 'fed'}.get(urlsplit(url).hostname)
