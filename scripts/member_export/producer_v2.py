@@ -331,6 +331,22 @@ def main(argv=None):
             path = Path(config[key]).resolve()
             if path == ROOT or ROOT in path.parents:
                 raise ValueError("OUTPUT_MUST_BE_OUTSIDE_GIT")
+        # Refuse an unsafe status destination before replacing either artifact.
+        destinations = (
+            Path(config["handoff"]),
+            Path(config["output_dir"]) / "member-v2.json",
+            Path(config["status_file"]),
+        )
+        for path in destinations:
+            parent = path.parent
+            if (
+                path.is_symlink()
+                or parent.is_symlink()
+                or not parent.is_dir()
+                or parent.stat().st_uid != os.getuid()
+                or parent.stat().st_mode & 0o022
+            ):
+                raise ValueError("UNSAFE_MEMBER_OUTPUT")
         handoff = Path(config["handoff"])
         with (handoff.parent / "producer-v2.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

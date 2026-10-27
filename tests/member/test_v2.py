@@ -350,3 +350,30 @@ def test_rolling_window_and_horizons_remain_separate(tmp_path):
     )
     assert one["n"] == 21 and one["hits"] == 1 and one["rolling_hit_rate"] == 0
     assert five["n"] == 1 and five["hits"] == 1 and five["rolling_hit_rate"] == 1
+
+
+def test_unsafe_status_directory_refuses_cli_before_any_artifact_replacement(tmp_path, monkeypatch):
+    from scripts.member_export import producer_v2
+
+    config = observed(tmp_path)
+    output = tmp_path / "snapshots"
+    output.mkdir(mode=0o700)
+    unsafe = tmp_path / "unsafe-status"
+    unsafe.mkdir(mode=0o700)
+    unsafe.chmod(0o770)
+    handoff = tmp_path / "handoff.json"
+    config.update(
+        handoff=str(handoff), output_dir=str(output), status_file=str(unsafe / "status.json")
+    )
+    configuration = tmp_path / "config.json"
+    configuration.write_text(json.dumps(config))
+    original_git = producer_v2.git
+
+    def pinned_git(root, *args):
+        if root == producer_v2.ROOT:
+            return b"a" * 40 if args == ("rev-parse", "HEAD") else b""
+        return original_git(root, *args)
+
+    monkeypatch.setattr(producer_v2, "git", pinned_git)
+    assert producer_v2.main(["--config", str(configuration), "--expected-commit", "a" * 40]) == 1
+    assert not handoff.exists() and not (output / "member-v2.json").exists()
