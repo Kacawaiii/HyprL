@@ -1,0 +1,1051 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HyprL member snapshot v2",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "provenance": {
+      "enum": [
+        "observed",
+        "synthetic"
+      ]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "briefs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/brief"
+      },
+      "maxItems": 90
+    },
+    "radar": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fact"
+      },
+      "maxItems": 500
+    },
+    "calendar": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/calendar"
+      },
+      "maxItems": 500
+    },
+    "forecasts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/forecast"
+      },
+      "maxItems": 10000
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/failure"
+      },
+      "maxItems": 500
+    },
+    "revenue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+          },
+          "cik": {
+            "type": "string",
+            "pattern": "^\\d{10}$"
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "end": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "revenue": {
+                  "type": "string",
+                  "pattern": "^\\d{1,18}(?:\\.\\d{1,4})?$"
+                },
+                "currency": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                },
+                "source": {
+                  "$ref": "#/$defs/source"
+                },
+                "start": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "accession": {
+                  "type": "string",
+                  "pattern": "^\\d{10}-\\d{2}-\\d{6}$"
+                }
+              },
+              "required": [
+                "end",
+                "revenue",
+                "currency",
+                "source",
+                "start",
+                "accession"
+              ]
+            },
+            "maxItems": 3,
+            "minItems": 3
+          },
+          "concept": {
+            "enum": [
+              "Revenues",
+              "RevenueFromContractWithCustomerExcludingAssessedTax",
+              "SalesRevenueNet"
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "cik",
+          "periods",
+          "concept"
+        ]
+      },
+      "maxItems": 500
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/claim"
+      },
+      "maxItems": 500
+    },
+    "baseline": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/baseline"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reveals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reveal"
+      },
+      "maxItems": 1000
+    },
+    "series": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/series"
+      },
+      "maxItems": 32
+    },
+    "screener": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+          },
+          "cik": {
+            "type": "string",
+            "pattern": "^\\d{10}$"
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "end": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "revenue": {
+                  "type": "string",
+                  "pattern": "^\\d{1,18}(?:\\.\\d{1,4})?$"
+                },
+                "currency": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                },
+                "source": {
+                  "$ref": "#/$defs/source"
+                },
+                "start": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "accession": {
+                  "type": "string",
+                  "pattern": "^\\d{10}-\\d{2}-\\d{6}$"
+                }
+              },
+              "required": [
+                "end",
+                "revenue",
+                "currency",
+                "source",
+                "start",
+                "accession"
+              ]
+            },
+            "maxItems": 3
+          },
+          "growth_previous": {
+            "type": "number"
+          },
+          "growth_latest": {
+            "type": "number"
+          },
+          "acceleration_pp": {
+            "type": "number"
+          },
+          "concept": {
+            "enum": [
+              "Revenues",
+              "RevenueFromContractWithCustomerExcludingAssessedTax",
+              "SalesRevenueNet"
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "cik",
+          "periods",
+          "growth_previous",
+          "growth_latest",
+          "acceleration_pp",
+          "concept"
+        ]
+      },
+      "maxItems": 500
+    }
+  },
+  "required": [
+    "schema_version",
+    "provenance",
+    "generated_at",
+    "briefs",
+    "radar",
+    "calendar",
+    "forecasts",
+    "failures",
+    "revenue",
+    "claims",
+    "baseline",
+    "reveals",
+    "series",
+    "screener"
+  ],
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 400,
+          "pattern": "^https://[^\\s<>@\\\\?#]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "available_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "url",
+        "sha256",
+        "published_at",
+        "available_at"
+      ]
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "sec_8k",
+            "sec_10q",
+            "sec_form4",
+            "fed",
+            "cpi",
+            "nfp",
+            "earnings"
+          ]
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^<>\\x00-\\x1f]+$"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "kind",
+        "symbol",
+        "summary",
+        "source"
+      ]
+    },
+    "forecast": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "variant": {
+          "enum": [
+            "a_v1_as_live",
+            "c_news_small_mid"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "REGULAR_0905",
+            "INTRADAY"
+          ]
+        },
+        "horizon": {
+          "enum": [
+            "1d",
+            "5d",
+            "2d",
+            "10d"
+          ]
+        },
+        "session": {
+          "type": "string",
+          "format": "date"
+        },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+        },
+        "event": {
+          "const": "outperform_spy"
+        },
+        "probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "outcome": {
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "decision_time": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "entry_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scored_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "decision_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "snapshot_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "score_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_spec_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_code_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "reveal_id": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:-intraday)?-HypR-[AE]1$"
+        },
+        "trade_hit": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "agent",
+        "variant",
+        "mode",
+        "horizon",
+        "session",
+        "symbol",
+        "event",
+        "probability",
+        "outcome",
+        "decision_time",
+        "entry_at",
+        "scored_at",
+        "decision_sha256",
+        "snapshot_sha256",
+        "score_sha256",
+        "source_spec_sha256",
+        "source_code_sha256",
+        "reveal_id",
+        "trade_hit"
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "REGULAR_0905",
+            "INTRADAY"
+          ]
+        },
+        "session": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "const": "MODEL_FAILURE"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,79}$"
+        },
+        "reveal_id": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:-intraday)?-HypR-[AE]1$"
+        }
+      },
+      "required": [
+        "agent",
+        "mode",
+        "session",
+        "status",
+        "code",
+        "reveal_id"
+      ]
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "session": {
+          "type": "string",
+          "format": "date"
+        },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "brier": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "brier_base_rate": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "brier_skill": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rolling_hit_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "at",
+        "session",
+        "symbol",
+        "n",
+        "hits",
+        "brier",
+        "brier_base_rate",
+        "brier_skill",
+        "rolling_hit_rate"
+      ]
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "variant": {
+          "enum": [
+            "a_v1_as_live",
+            "c_news_small_mid"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "REGULAR_0905",
+            "INTRADAY"
+          ]
+        },
+        "horizon": {
+          "enum": [
+            "1d",
+            "5d",
+            "2d",
+            "10d"
+          ]
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "brier": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "brier_base_rate": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "brier_skill": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rolling_hit_rate": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trade_n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trade_hits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/point"
+          },
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "agent",
+        "variant",
+        "mode",
+        "horizon",
+        "n",
+        "hits",
+        "brier",
+        "brier_base_rate",
+        "brier_skill",
+        "rolling_hit_rate",
+        "failures",
+        "model_failures",
+        "trade_n",
+        "trade_hits",
+        "points"
+      ]
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          },
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "date",
+        "published_at",
+        "facts"
+      ]
+    },
+    "calendar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "sec_8k",
+            "sec_10q",
+            "sec_form4",
+            "fed",
+            "cpi",
+            "nfp",
+            "earnings"
+          ]
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "precision": {
+          "enum": [
+            "date",
+            "time"
+          ]
+        },
+        "scheduled_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/source"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "observed_day_marker"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "dataset_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "received_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            }
+          },
+          "required": [
+            "kind",
+            "sha256",
+            "dataset_sha256",
+            "received_at"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "symbol",
+        "date",
+        "precision",
+        "scheduled_at",
+        "source",
+        "evidence"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "precision": {
+                "const": "date"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "scheduled_at": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "scheduled_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$"
+              },
+              "source": {
+                "$ref": "#/$defs/source"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^<>\\x00-\\x1f]+$"
+        },
+        "verdict": {
+          "enum": [
+            "verified",
+            "not_supported",
+            "inconclusive"
+          ]
+        },
+        "verified_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "claim",
+        "verdict",
+        "verified_at",
+        "source"
+      ]
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "successes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "panel": {
+          "const": "a_v1_as_live:1d"
+        },
+        "smoothing": {
+          "const": "laplace_1_1"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 400,
+          "pattern": "^https://[^\\s<>@\\\\?#]+$"
+        }
+      },
+      "required": [
+        "probability",
+        "n",
+        "successes",
+        "panel",
+        "smoothing",
+        "sha256",
+        "url"
+      ]
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ledger_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 400,
+          "pattern": "^https://[^\\s<>@\\\\?#]+$"
+        },
+        "committed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "ledger_commit",
+        "url",
+        "committed_at",
+        "published_at",
+        "sha256"
+      ]
+    },
+    "reveal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:-intraday)?-HypR-[AE]1$"
+        },
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "session": {
+          "type": "string",
+          "format": "date"
+        },
+        "mode": {
+          "enum": [
+            "REGULAR_0905",
+            "INTRADAY"
+          ]
+        },
+        "status": {
+          "enum": [
+            "REVEALED",
+            "NO_DECISION"
+          ]
+        },
+        "ledger_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^reveals/\\d{4}-\\d{2}-\\d{2}(?:-intraday)?/(?:HypR-[AE]1\\.json|README\\.md)$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 400,
+          "pattern": "^https://[^\\s<>@\\\\?#]+$"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "available_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "commitment": {
+          "$ref": "#/$defs/publication"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "session",
+        "mode",
+        "status",
+        "ledger_commit",
+        "file",
+        "sha256",
+        "url",
+        "published_at",
+        "available_at",
+        "commitment"
+      ]
+    }
+  }
+}
