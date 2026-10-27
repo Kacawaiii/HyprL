@@ -344,7 +344,8 @@ def test_shared_data_quality_day_exclusion_publishes_hashes_without_model_calls(
     value['snapshot_hash'] = sha256_canonical(value)
     monkeypatch.setattr(fw, 'snapshot', lambda root, at: value)
     result = fw.run(tmp_path, client, expected_commit='sha', clock=lambda: T, ledger=ledger)
-    assert result['status'] == 'DONE'
+    assert result['status'] == 'BLOCKED'
+    assert 'alert_confirmed' in result
     assert result['models'] == {'opus': 'DATA_QUALITY_EXCLUDED', 'gpt': 'DATA_QUALITY_EXCLUDED'}
     assert calls == []
     receipt = commitment.published(tmp_path, 'forward', '2026-10-20')

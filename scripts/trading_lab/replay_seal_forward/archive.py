@@ -23,6 +23,52 @@ from . import spec, quality
 HISTORY_DAYS = 365
 
 
+def complete_news_intervals(windows):
+    """Only terminal, all-symbol pagination chains establish requested coverage."""
+    groups = {}
+    for params, body in windows:
+        if params.get('symbols'):
+            continue
+        key = tuple(sorted((k, str(v)) for k, v in params.items() if k != 'page_token'))
+        interval, pages = groups.setdefault(key, ((instant(params['start']), instant(params['end'])), {}))
+        received = instant(body['received_at']) if 'received_at' in body else interval[1]
+        pages[params.get('page_token')] = body.get('next_page_token'), min(interval[1], received)
+    intervals = []
+    for interval, pages in groups.values():
+        token, seen = None, set()
+        right = interval[1]
+        while token in pages and token not in seen:
+            seen.add(token)
+            token, cap = pages[token]
+            right = min(right, cap)
+            if token is None:
+                if interval[0] < right:
+                    intervals.append((interval[0], right))
+                break
+    merged = []
+    for left, right in sorted(intervals):
+        if left >= right:
+            raise ReplayError('ARCHIVE_INDEX_INVALID')
+        if merged and left <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(right, merged[-1][1]))
+        else:
+            merged.append((left, right))
+    return merged
+
+
+def interval_gaps(intervals, start, end):
+    cursor, gaps = start, []
+    for left, right in intervals:
+        if right <= cursor or left >= end:
+            continue
+        if left > cursor:
+            gaps.append((cursor, left))
+        cursor = max(cursor, min(right, end))
+    if cursor < end:
+        gaps.append((cursor, end))
+    return gaps
+
+
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -210,21 +256,15 @@ class Archive:
         self.bars.connection.commit()
 
     def require_news(self, start, end):
-        """Verify a complete paginated all-symbol query covers this interval."""
-        groups = {}
-        for params, body in self.news_windows:
-            if params.get('symbols') or instant(params['start']) > start or instant(params['end']) < end:
-                continue
-            group = tuple(sorted((k, str(v)) for k, v in params.items() if k != 'page_token'))
-            groups.setdefault(group, {})[params.get('page_token')] = body.get('next_page_token')
-        for pages in groups.values():
-            token, seen = None, set()
-            while token in pages and token not in seen:
-                seen.add(token)
-                token = pages[token]
-                if token is None:
-                    return
-        raise ReplayError('NEWS_ARCHIVE_COVERAGE_MISSING')
+        # Preserve the historical contract: one complete all-symbol query must
+        # span the full interval. Only forward news_gaps admits adjacent polls.
+        spanning = [(params, body) for params, body in self.news_windows
+                    if instant(params['start']) <= start and instant(params['end']) >= end]
+        if interval_gaps(complete_news_intervals(spanning), start, end):
+            raise ReplayError('NEWS_ARCHIVE_COVERAGE_MISSING')
+
+    def news_gaps(self, start, end):
+        return interval_gaps(complete_news_intervals(self.news_windows), start, end)
 
     def require_assets(self):
         if not {'active', 'inactive'} <= self.asset_statuses:

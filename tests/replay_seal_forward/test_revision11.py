@@ -95,8 +95,8 @@ def test_tomorrow_forward_dry_run_checks_both_families_without_reserving(tmp_pat
     with pytest.raises(ReplayError, match='INSTALLED_SHA_MISMATCH'):
         forward.dry_run(tmp_path, '2026-10-22', grant, expected_commit='wrong')
     budget.stop_model('gpt', instant('2026-10-21T02:26:00Z'), reset_at=instant('2026-10-23T00:00:00Z'))
-    with pytest.raises(ReplayError, match='MODEL_USAGE_LIMIT'):
-        forward.dry_run(tmp_path, '2026-10-22', grant, expected_commit='pinned')
+    result = forward.dry_run(tmp_path, '2026-10-22', grant, expected_commit='pinned')
+    assert result['status'] == 'BLOCKED' and result['models']['gpt'] == 'MODEL_USAGE_LIMIT'
 
 
 def test_referenced_responses_are_published_under_the_current_protocol(tmp_path, monkeypatch, ledger):

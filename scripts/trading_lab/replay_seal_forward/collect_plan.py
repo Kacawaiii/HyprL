@@ -9,7 +9,7 @@ from scripts.trading_lab.replay_bench.storage import atomic_json
 from scripts.trading_lab.sources.canonical import sha256_canonical
 from . import experiment as ex, fills, inputs, spec
 from .archive import Archive
-from .collect import BARS_FROM, Collector, equities, news_symbols, news_rows, sec_or_unavailable
+from .collect import BARS_FROM, Collector, equities, news_symbols, news_rows, live_news, sec_or_unavailable
 from .score import Outcomes
 
 
@@ -136,22 +136,32 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
         raise ReplayError('LIVE_SNAPSHOT_ALREADY_SEALED')
     collector = collector_factory(grants, Budget(Path(root) / 'collector'), directory / 'cache',
                                   alpaca_env=alpaca_env, sec_user_agent=agent, clock=clock,
-                                  refresh_news=True, before=T, budget_reserve=1000)
+                                  before=T, budget_reserve=1000)
     index = directory / 'archive_index.json'
-    earliest = min(T - timedelta(hours=72), md.previous_close(T))
+    earliest = min(T - timedelta(hours=72, seconds=spec.spec()['forward']['prebuild']['lead_seconds']),
+                   md.previous_close(T))
     try:
-        rows = news_rows(collector, iso(earliest), iso(T))
+        rows, query_start = live_news(collector, index, earliest, at, T)
         names = equities(collector, news_symbols(rows, md.previous_close(T), T))
         # Daily inputs only need completed sessions. Including the current SIP
         # interval requests real-time entitlement and can return 403 for a
         # historical-data subscription, before a single history is archived.
         midnight = T.replace(hour=0, minute=0, second=0, microsecond=0)
         end = iso(max(midnight, md.previous_close(T) + timedelta(seconds=1)))
-        md.stock_bars(collector, sorted(set(sn.STOCKS + sn.ETFS + sn.BENCHMARKS) | names), BARS_FROM, end)
+        history = directory / 'daily-history-v1.json'
+        prior = json.loads(history.read_text()) if history.exists() else {}
+        if prior and (prior.get('spec_hash') != spec.SPEC_HASH or prior.get('end') != end):
+            raise ReplayError('LIVE_HISTORY_BINDING_MISMATCH')
+        covered = set(prior.get('symbols', []))
+        pending = (set(sn.STOCKS + sn.ETFS + sn.BENCHMARKS) | names) - covered
+        if pending:
+            md.stock_bars(collector, sorted(pending), BARS_FROM, end)
+            collector.save(index)
+            atomic_json(history, {'spec_hash': spec.SPEC_HASH, 'end': end, 'symbols': sorted(covered | pending)})
         md.crypto_bars(collector, list(sn.CRYPTO), BARS_FROM, iso(midnight))
         collector.save(index)
         archive = Archive(root, index, before=T)
-        bundles = inputs.build(archive, T, sha256_canonical(inputs.declaration(root)))
+        bundles = inputs.build(archive, at, sha256_canonical(inputs.declaration(root)), live=True)
         from .quality import require_pipeline_health
         require_pipeline_health(bundles['ab']['manifest'])
         shown = [c['symbol'] for c in bundles['cd']['context']['candidates']]
@@ -161,6 +171,7 @@ def live(root, grants, alpaca_env, agent, *, clock=now, collector_factory=Collec
     finally:
         collector.save(index)
     return {'session': day, 'received_before': iso(T), 'requests': collector.requests,
+            'news_query_start': iso(query_start), 'news_query_end': iso(at),
             'objects': len(json.loads(index.read_text())['objects']), 'shown_candidates': len(shown),
             'fixed_present': len(bundles['ab']['context']['universe']),
             'dry_run': dry_run, 'model_calls': 0, 'publications': 0}

@@ -489,13 +489,13 @@ class ApiBilling:
             raise ReplayError('API_SPEND_UNKNOWN')
 
 
-def api_billing(root):
+def api_billing(root, *, clock=now):
     if os.environ.get('REPLAY_OPUS_BILLING', 'subscription') != 'api':
         return None
     grant = os.environ.get('REPLAY_API_GRANT')
     if not grant:
         raise ReplayError('API_GRANT_NOT_CONFIGURED')
-    return ApiBilling(grant, Path(root) / 'api-ledger.json')
+    return ApiBilling(grant, Path(root) / 'api-ledger.json', clock=clock)
 
 
 class Models:

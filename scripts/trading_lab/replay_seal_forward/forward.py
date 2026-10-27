@@ -153,6 +153,61 @@ class ForwardBudget(models.DuelBudget):
             raise ReplayError('BUDGET_EXHAUSTED')
 
 
+def model_gates(root, day, grant, *, sealed=None):
+    """Read the same durable skip gates as dispatch, without reserving a call."""
+    T = decision_time(day)
+    grant.check()
+    if not instant(grant.payload['granted_at']) <= T < instant(grant.payload['not_after']):
+        raise ReplayError('GRANT_EXPIRED_OR_NOT_STARTED')
+    budget, statuses = ForwardBudget(root), {}
+    for family in order(day):
+        try:
+            if sealed is not None:
+                require_model_inputs(sealed)
+            base = directory(root, day)
+            if (base / (family + '.json')).is_file():
+                raise ReplayError('FORWARD_DECISION_ALREADY_SAVED')
+            failure = base / (family + '-failure.json')
+            if failure.is_file():
+                raise ReplayError('FORWARD_FAILURE_ALREADY_RECORDED:' + json.loads(failure.read_text())['error'])
+            limit = min(models.NIGHT_CAP, grant.model_limit('opus')) if family == 'opus' else models.NIGHT_CAP
+            budget.check_model(family, limit, T)
+            models.argv(family, SCHEMA, Path('dry-run-schema.json'))
+            billing = models.api_billing(root, clock=lambda: T) if family == 'opus' else None
+            if billing is not None:
+                billing.check('forward')
+                billing.key()
+            if window(T) < spec.spec()['forward']['timeout_seconds']:
+                raise ReplayError('INSUFFICIENT_CALL_WINDOW')
+            statuses[family] = 'READY'
+        except ReplayError as error:
+            statuses[family] = error.code
+    return statuses
+
+
+def require_model_inputs(sealed):
+    if any(m.get('data_quality', {}).get('excluded_day') for m in sealed['manifests'].values()):
+        raise ReplayError('DATA_QUALITY_EXCLUDED')
+    if not sealed['contexts']['ab'].get('universe'):
+        raise ReplayError('EMPTY_MODEL_UNIVERSE')
+
+
+def data_quality_summary(sealed):
+    value = sealed['manifests']['ab'].get('data_quality', {})
+    return {key: value[key] for key in ('excluded_day', 'counts_by_reason', 'records_sha256') if key in value}
+
+
+def gate_result(result, statuses, *, phase):
+    result['models'] = statuses
+    if any(v != 'READY' for v in statuses.values()):
+        from .quality import alert
+        error = next(v for v in statuses.values() if v != 'READY')
+        result.update(status='BLOCKED', error=error,
+                      alert_confirmed=alert(phase + ' session ' + result['session'] + ': ' +
+                          ', '.join(f + '=' + v for f, v in sorted(statuses.items()))))
+    return result
+
+
 def dry_run(root, day, grant, *, expected_commit):
     """Check the scheduled dispatch gates without a source request, model call or publication.
 
@@ -165,19 +220,12 @@ def dry_run(root, day, grant, *, expected_commit):
     ex.check_freeze(root)
     T = decision_time(day)
     remaining = window(T)
-    grant.check()
-    if not instant(grant.payload['granted_at']) <= T < instant(grant.payload['not_after']):
-        raise ReplayError('GRANT_EXPIRED_OR_NOT_STARTED')
-    budget = ForwardBudget(root)
-    for family in order(day):
-        limit = min(models.NIGHT_CAP, grant.model_limit('opus')) if family == 'opus' else models.NIGHT_CAP
-        budget.check_model(family, limit, T)
-        models.argv(family, SCHEMA, Path('dry-run-schema.json'))
-    return {'status': 'READY', 'session': day, 'decision_time': iso(T), 'expected_commit': expected_commit,
+    result = {'status': 'READY', 'session': day, 'decision_time': iso(T), 'expected_commit': expected_commit,
             'spec_hash': spec.SPEC_HASH, 'code_hash': spec.code_hash(),
             'models': {f: 'READY' for f in ex.FAMILIES}, 'call_timeout_seconds': spec.spec()['forward']['timeout_seconds'],
             'dispatch_remaining_seconds': remaining, 'model_calls': 0, 'publications': 0, 'requests': 0,
             'live_inputs': 'REQUIRED_AT_SESSION', 'provider_availability': 'UNPROVEN_UNTIL_DISPATCH'}
+    return gate_result(result, model_gates(root, day, grant), phase='forward dry run')
 
 
 def drill(root, day, grant, *, expected_commit, clock=now, monotonic=timer.monotonic):
@@ -187,6 +235,8 @@ def drill(root, day, grant, *, expected_commit, clock=now, monotonic=timer.monot
         first = (at.astimezone(md.NEW_YORK) + timedelta(days=1)).date().isoformat()
         day = md.sessions(first, (at + timedelta(days=14)).date().isoformat())[0].session_date
     result = dry_run(root, day, grant, expected_commit=expected_commit)
+    if result['status'] == 'BLOCKED':
+        return result
     indices = sorted((Path(root) / 'live-archive').glob('????-??-??/archive_index.json'))
     indices = [p for p in indices if decision_time(p.parent.name) <= at]
     if not indices:
@@ -208,6 +258,9 @@ def drill(root, day, grant, *, expected_commit, clock=now, monotonic=timer.monot
         'input_cutoff': sealed['input_cutoff'], 'build_seconds': built - started, 'cache_read_seconds': loaded - built,
         'fallback_remaining_seconds': fallback_remaining, 'fallback_ready': ready,
         'prebuild_lead_seconds': spec.spec()['forward']['prebuild']['lead_seconds']})
+    result['excluded_day'] = any(m.get('data_quality', {}).get('excluded_day') for m in sealed['manifests'].values())
+    result['source_data_quality'] = data_quality_summary(sealed)
+    result = gate_result(result, model_gates(root, day, grant, sealed=sealed), phase='forward drill')
     if not ready:
         from .quality import alert
         result.update(status='BLOCKED', error='INSUFFICIENT_CALL_WINDOW',
@@ -245,7 +298,7 @@ def build_snapshot(root, day, at, T, *, intraday=False, clock=now):
         except ReplayError as error:
             from .quality import require_data_error
             archive = UnavailableArchive(require_data_error(error))
-    bundles = inputs.build(archive, T, sha256_canonical(inputs.declaration(root)))
+    bundles = inputs.build(archive, T, sha256_canonical(inputs.declaration(root)), live=True)
     from .quality import require_pipeline_health
     require_pipeline_health(bundles['ab']['manifest'])
     for group in bundles:
@@ -262,7 +315,7 @@ def build_snapshot(root, day, at, T, *, intraday=False, clock=now):
     return value
 
 
-def prebuild(root, *, expected_commit, clock=now):
+def prebuild(root, grant, *, expected_commit, clock=now):
     """Seal inputs before dispatch without freezing the collection archive or calling a model."""
     ex.committed()
     if ex.head() != expected_commit:
@@ -275,6 +328,12 @@ def prebuild(root, *, expected_commit, clock=now):
     rule = spec.spec()['forward']['prebuild']
     if not T - timedelta(seconds=rule['lead_seconds']) <= at < T:
         raise ReplayError('OUTSIDE_FORWARD_PREBUILD_WINDOW')
+    pointer = Path(root) / PREBUILD_DIR / day / 'ready.json'
+    pointer.unlink(missing_ok=True)
+    result = {'status': 'READY', 'session': day, 'requests': 0, 'model_calls': 0, 'publications': 0}
+    result = gate_result(result, model_gates(root, day, grant), phase='forward prebuild')
+    if result['status'] == 'BLOCKED':
+        return result
     # Collection rewrites refreshed objects. Hold its own nonblocking lock while
     # verifying the index and every object; release it before subsequent polls.
     while True:
@@ -295,12 +354,16 @@ def prebuild(root, *, expected_commit, clock=now):
         raise ReplayError('FORWARD_PREBUILD_COMPLETED_TOO_LATE')
     base = Path(root) / PREBUILD_DIR / day
     parent.write_json(base / (sealed['snapshot_hash'] + '.json.gz'), sealed)
+    result.update(input_cutoff=iso(at), snapshot_hash=sealed['snapshot_hash'], completed_at=sealed['completed_at'],
+                  excluded_day=any(m.get('data_quality', {}).get('excluded_day') for m in sealed['manifests'].values()),
+                  data_quality=data_quality_summary(sealed))
+    result = gate_result(result, model_gates(root, day, grant, sealed=sealed), phase='forward prebuild')
+    if result['status'] == 'BLOCKED':
+        return result
     if clock() >= T:
         raise ReplayError('FORWARD_PREBUILD_COMPLETED_TOO_LATE')
     atomic_json(base / 'ready.json', {'snapshot_hash': sealed['snapshot_hash']})
-    return {'status': 'READY', 'session': day, 'input_cutoff': iso(at),
-            'snapshot_hash': sealed['snapshot_hash'], 'completed_at': sealed['completed_at'],
-            'requests': 0, 'model_calls': 0, 'publications': 0}
+    return result
 
 
 def cached_prebuild(root, day, at):
@@ -445,10 +508,12 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
         if (directory(root, day) / (family + '-failure.json')).is_file():
             statuses[family] = json.loads((directory(root, day) / (family + '-failure.json')).read_text())['error']
             return
-        if sealed['manifests']['ab'].get('data_quality', {}).get('excluded_day'):
-            statuses[family] = 'DATA_QUALITY_EXCLUDED'
+        try:
+            require_model_inputs(sealed)
+        except ReplayError as error:
+            statuses[family] = error.code
             atomic_json(directory(root, day) / (family + '-failure.json'),
-                        {'error': 'DATA_QUALITY_EXCLUDED', 'at': iso(at), 'snapshot_hash': sealed['snapshot_hash']})
+                        {'error': error.code, 'at': iso(at), 'snapshot_hash': sealed['snapshot_hash']})
             return
         try:
             if dispatch_remaining < timeout:
@@ -480,13 +545,22 @@ def run(root, client, *, expected_commit, clock=now, ledger=None):
         published = {'ledger_commit': receipt['ledger_commit'], 'published_at': receipt['published_at']}
     except ReplayError as error:
         published = {'error': error.code}
-    ok = all(v in ('SAVED', 'RECEIVED', 'DATA_QUALITY_EXCLUDED') for v in statuses.values()) and 'error' not in published
+    skipped = {f: v for f, v in statuses.items() if v not in ('SAVED', 'RECEIVED')}
+    skip_alert = None
+    if skipped:
+        from .quality import alert
+        skip_alert = (window_alert if window_alert is not None and
+                      all(v in ('INSUFFICIENT_CALL_WINDOW', 'OUTSIDE_FORWARD_WINDOW') for v in skipped.values()) else
+                      alert('forward session ' + day + ': ' + ', '.join(f + '=' + v for f, v in sorted(skipped.items()))))
+    ok = not skipped and 'error' not in published
     result = {'status': 'DONE' if ok else 'BLOCKED', 'provenance': PROVENANCE, 'session': day, 'models': statuses,
               'call_order': list(order(day)), 'snapshot_hash': sealed['snapshot_hash'], 'publication': published,
               'dispatch_remaining_seconds': dispatch_remaining, 'call_timeout_seconds': timeout,
               'input_cutoff': sealed.get('input_cutoff', sealed['decision_time'])}
     if window_alert is not None:
         result['window_alert_confirmed'] = window_alert
+    if skip_alert is not None:
+        result['alert_confirmed'] = skip_alert
     atomic_json(directory(root, day) / 'status.json', result)
     return result
 

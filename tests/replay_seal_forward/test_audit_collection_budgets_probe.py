@@ -341,9 +341,12 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
                              'created_at': iso(at-timedelta(hours=1)), 'updated_at': iso(at-timedelta(hours=1))},
                              {'id': 2, 'headline': 'bad clock', 'source': 'synthetic', 'symbols': ['BAD'],
                               'created_at': None, 'updated_at': None}]}
+            if at >= T - timedelta(minutes=2):
+                body['news'].append({'id': 3, 'headline': 'NEW lowers guidance', 'source': 'synthetic', 'symbols': ['NEW'],
+                                     'created_at': iso(at-timedelta(minutes=1)), 'updated_at': iso(at-timedelta(minutes=1))})
         elif parsed.path == '/v2/assets':
             body = [{'id': 'synthetic-' + s, 'symbol': s, 'class': 'us_equity', 'name': s, 'exchange': 'NASDAQ', 'status': 'active', 'shortable': True,
-                     'easy_to_borrow': True} for s in sn.STOCKS + sn.ETFS + sn.BENCHMARKS + ('SMLL',)] if params['status'] == 'active' else []
+                     'easy_to_borrow': True} for s in sn.STOCKS + sn.ETFS + sn.BENCHMARKS + ('SMLL', 'NEW')] if params['status'] == 'active' else []
         elif parsed.path == '/files/company_tickers.json':
             body = {'0': {'ticker': 'SMLL', 'cik_str': 1}}
         elif parsed.path.startswith('/submissions/'):
@@ -364,8 +367,18 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
         return collect.Collector(*a, **kw, getter=getter, sleep=lambda _: None)
     result = collect_plan.live(tmp_path, authority, key, 'synthetic', clock=lambda: at, collector_factory=factory)
     assert result['shown_candidates'] == 1 and result['session'] == '2026-10-20'
+    first_end = at
+    for next_at in (at + timedelta(minutes=5), T - timedelta(minutes=2)):
+        count = len(requests)
+        at = next_at
+        polled = collect_plan.live(tmp_path, authority, key, 'synthetic', clock=lambda: at, collector_factory=factory)
+        # One incremental page and, only for a new candidate, its daily history.
+        assert len(requests) - count == polled['requests'] == (2 if at == T - timedelta(minutes=2) else 1)
+        assert polled['news_query_start'] == iso(first_end - timedelta(minutes=5))
+        assert polled['news_query_end'] == iso(at)
+        first_end = at
     value = forward.snapshot(tmp_path, T)
-    assert value['contexts']['cd']['candidates'][0]['symbol'] == 'SMLL'
+    assert {c['symbol'] for c in value['contexts']['cd']['candidates']} == {'SMLL', 'NEW'}
     assert value['archive']['objects']
     for url in requests:
         parsed = urlsplit(url)
@@ -375,6 +388,99 @@ def test_live_collector_real_shapes_feed_a_snapshot_with_receipts_before_T(tmp_p
     with pytest.raises(ReplayError, match='OUTSIDE_LIVE_COLLECTION_WINDOW'):
         collect_plan.live(tmp_path, authority, key, 'synthetic', clock=lambda: T, collector_factory=factory)
     assert len(requests) == count
+
+
+def test_partial_live_news_pagination_does_not_advance_the_next_poll(tmp_path, grants):
+    from datetime import timedelta
+    from urllib.parse import parse_qs, urlsplit
+    from scripts.trading_lab.replay_bench.grant import iso
+    authority, _ = grants
+    keys = tmp_path / 'keys.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
+    directory = tmp_path / 'live'
+    index = directory / 'archive_index.json'
+    calls, fail = [], [True]
+    def getter(url, headers):
+        params = parse_qs(urlsplit(url).query)
+        calls.append(params)
+        if fail[0] and 'page_token' in params:
+            raise ReplayError('HTTP_403')
+        return json.dumps({'news': [], 'next_page_token': 'tail' if fail[0] else None}).encode()
+    def make(at):
+        return collect.Collector(authority, Budget(tmp_path / 'budget'), directory / 'cache', alpaca_env=keys,
+            getter=getter, sleep=lambda _: None, clock=lambda: at)
+    start, end = AT - timedelta(hours=72), AT
+    collector = make(end)
+    with pytest.raises(ReplayError, match='HTTP_403'):
+        collect.live_news(collector, index, start, end, end + timedelta(hours=1))
+    collector.save(index)
+    fail[0] = False
+    _, queried = collect.live_news(make(end + timedelta(minutes=5)), index, start,
+                                  end + timedelta(minutes=5), end + timedelta(hours=1))
+    assert queried == start
+    assert calls[-1]['start'] == [iso(start)]
+
+
+def test_five_hour_news_polling_stays_inside_the_original_input_budget(tmp_path, grants):
+    from datetime import timedelta
+    from urllib.parse import parse_qs, urlsplit
+    from scripts.trading_lab.replay_bench.grant import iso
+    authority, _ = grants
+    keys = tmp_path / 'keys.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
+    budget = Budget(tmp_path / 'budget')
+    at = instant('2026-10-20T08:00:00Z')
+    earliest, deadline = at - timedelta(hours=72), at + timedelta(hours=5, minutes=5)
+    requests = []
+    def getter(url, headers):
+        query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+        requests.append(query)
+        count = 3000 if instant(query['end']) - instant(query['start']) > timedelta(hours=24) else 5
+        page = int(query.get('page_token', '0'))
+        rows = [{'id': i, 'headline': 'synthetic', 'source': 'synthetic', 'symbols': ['SMLL'],
+                 'created_at': query['start'], 'updated_at': query['start']}
+                for i in range(page * 50, min((page + 1) * 50, count))]
+        return json.dumps({'news': rows, 'next_page_token': str(page + 1) if (page + 1) * 50 < count else None}).encode()
+    for poll in range(61):
+        current = at + timedelta(minutes=5 * poll)
+        collector = collect.Collector(authority, budget, tmp_path / 'live/cache', alpaca_env=keys,
+            getter=getter, sleep=lambda _: None, clock=lambda: current, before=deadline, budget_reserve=1000)
+        collect.live_news(collector, tmp_path / 'live/archive_index.json', earliest, current, deadline)
+    assert len(requests) == budget.used('data.alpaca.markets', at) == 120
+    assert all(instant(q['end']) <= at + timedelta(hours=5) for q in requests)
+
+
+def test_old_future_query_end_cannot_skip_an_uncollected_outage(tmp_path, grants):
+    from datetime import timedelta
+    from scripts.trading_lab.replay_bench.grant import iso
+    from tests.replay_seal_forward.test_inputs import add
+    authority, _ = grants
+    objects = []
+    start, future = AT - timedelta(hours=72), AT + timedelta(hours=1)
+    add(tmp_path, objects, md.ALPACA, '/v1beta1/news', {'start': iso(start), 'end': iso(future)},
+        {'news': [], 'next_page_token': None}, received=iso(AT))
+    index = tmp_path / 'archive_index.json'
+    index.write_text(json.dumps({'schema': 'replay-vendor-request-index-v1', 'objects': objects}))
+    keys = tmp_path / 'keys.env'
+    keys.write_text('APCA_API_KEY_ID=synthetic\nAPCA_API_SECRET_KEY=synthetic\n')
+    collector = collect.Collector(authority, Budget(tmp_path / 'budget'), tmp_path / 'cache', alpaca_env=keys,
+        getter=lambda *a: b'{"news":[],"next_page_token":null}', sleep=lambda _: None,
+        clock=lambda: AT + timedelta(minutes=30))
+    _, queried = collect.live_news(collector, index, start, AT + timedelta(minutes=30), future)
+    assert queried == AT - timedelta(minutes=5)
+
+
+def test_live_poll_rejects_an_invalid_index_before_any_request_or_rewrite(tmp_path, grants):
+    from datetime import timedelta
+    authority, _ = grants
+    index = tmp_path / 'archive_index.json'
+    index.write_text('{"schema":"invalid","objects":[]}')
+    before = index.read_bytes()
+    collector = collect.Collector(authority, Budget(tmp_path / 'budget'), tmp_path / 'cache',
+        getter=lambda *a: pytest.fail('invalid evidence must block before collection'), clock=lambda: AT)
+    with pytest.raises(ReplayError, match='ARCHIVE_INDEX_INVALID'):
+        collect.live_news(collector, index, AT-timedelta(hours=72), AT, AT+timedelta(hours=1))
+    assert index.read_bytes() == before and collector.requests == 0
 
 
 @pytest.mark.parametrize('scope', ['replay', 'forward'])

@@ -4,11 +4,12 @@ import json
 import os
 from pathlib import Path
 import sys
+import shutil
 
 from scripts.trading_lab.replay_bench.grant import Grant, ReplayError, Transport, instant, now
 from scripts.trading_lab.replay_bench.storage import atomic_json, owned
 from scripts.trading_lab.sources.canonical import sha256_canonical
-from . import audit, experiment as ex, forward, spec
+from . import audit, experiment as ex, forward, models, spec
 from .models import Models, DuelBudget, api_billing
 
 
@@ -110,19 +111,29 @@ def main(argv=None):
             elif args.command == 'reparse-stops':
                 paths = list(root.glob('*/transcripts/**/*.json')) + list((root / 'transcripts').rglob('*.json'))
                 result = dict(budget.reparse_stops(paths), status='REPARSED')
-            elif args.command in ('forward-dry-run', 'forward-drill'):
+            elif args.command in ('forward-dry-run', 'forward-drill', 'forward-prebuild'):
                 from .collect import Grants
-                day = args.session
+                day = (now().astimezone(forward.md.NEW_YORK).date().isoformat()
+                       if args.command == 'forward-prebuild' else args.session)
                 if day is None:
                     from datetime import timedelta
                     first = (now() + timedelta(days=1)).date().isoformat()
                     day = forward.md.sessions(first, (now() + timedelta(days=14)).date().isoformat())[0].session_date
                 Grants(os.environ['REPLAY_COLLECTION_GRANT'], args.authorization,
                        clock=lambda: forward.decision_time(day))
-                action = forward.drill if args.command == 'forward-drill' else forward.dry_run
-                result = action(root, day, grant, expected_commit=args.expected_commit)
-            elif args.command == 'forward-prebuild':
-                result = forward.prebuild(root, expected_commit=args.expected_commit)
+                from . import commitment
+                ledger = commitment.from_environment(root)
+                if not ledger.worktree.is_dir() or not os.access(ledger.notify, os.X_OK):
+                    raise ReplayError('COMMITMENT_NOT_CONFIGURED')
+                for family in ex.FAMILIES:
+                    executable = models.argv(family, forward.SCHEMA, Path('dry-run-schema.json'))[0]
+                    if shutil.which(executable) is None:
+                        raise ReplayError('MODEL_EXECUTABLE_MISSING:' + family)
+                if args.command == 'forward-prebuild':
+                    result = forward.prebuild(root, grant, expected_commit=args.expected_commit)
+                else:
+                    action = forward.drill if args.command == 'forward-drill' else forward.dry_run
+                    result = action(root, day, grant, expected_commit=args.expected_commit)
             elif args.command in ('freeze', 'seal-inputs'):
                 target = ex.FREEZE if args.command == 'freeze' else ex.INPUT_SEAL
                 if target.exists():
@@ -181,7 +192,7 @@ def main(argv=None):
     except (ReplayError, FileNotFoundError, ValueError, KeyError, TypeError) as error:
         result = {'status': 'BLOCKED', 'error': error.code if isinstance(error, ReplayError) else 'INVALID_OR_MISSING_INPUT'}
         if (isinstance(error, ReplayError) and error.code == 'PIPELINE_DEFECT' or
-                args.command in ('forward-prebuild', 'forward-drill')):
+                args.command in ('forward-prebuild', 'forward-drill', 'forward-dry-run', 'forward')):
             from .quality import alert
             result['alert_confirmed'] = alert(result['error'])
         if root is not None:

@@ -96,7 +96,7 @@ def small_mid(rows, T):
     return dict(stats, mean_dollar_volume_50d=dollar, history_sessions=len(rows))
 
 
-def build(archive, T, method_hash):
+def build(archive, T, method_hash, *, live=False):
     from collections import Counter
     day_errors = []
     try:
@@ -105,13 +105,28 @@ def build(archive, T, method_hash):
         day_errors.append(quality.require_data_error(error))
     start = md.previous_close(T)
     earliest = min(T - timedelta(hours=72), start)
-    try:
-        archive.require_news(earliest, T)
-    except ReplayError as error:
-        day_errors.append(quality.require_data_error(error))
-    visible = [n for n in news_at(archive.news.values(), T) if instant(n['created_at']) >= earliest]
+    gaps = []
+    if live and hasattr(archive, 'news_gaps'):
+        gaps = archive.news_gaps(earliest, T)
+        short = timedelta(seconds=spec.spec()['forward']['news_coverage']['short_gap_seconds'])
+        # A missing older lookback segment cannot invalidate completed prices or
+        # the candidate window. A short partial gap carries explicit uncertainty;
+        # a missing entire decision window or a long recent outage blocks the day.
+        if any(left <= start and right >= T or
+               right > start and right - max(left, start) > short for left, right in gaps):
+            day_errors.append('NEWS_ARCHIVE_COVERAGE_MISSING')
+    else:
+        try:
+            archive.require_news(earliest, T)
+        except ReplayError as error:
+            day_errors.append(quality.require_data_error(error))
+    uncovered = {str(n['id']) for n in archive.news.values() if not quality.news_reason(n) and
+                 any(left <= instant(n[k]) < right for left, right in gaps for k in ('created_at', 'updated_at'))}
+    visible = [n for n in news_at(archive.news.values(), T)
+               if instant(n['created_at']) >= earliest and str(n['id']) not in uncovered]
     news_errors = {str(n['id']): quality.news_reason(n) for n in archive.news.values() if quality.news_reason(n)}
     news_errors.update(getattr(archive, 'invalid_news', {}))
+    news_errors.update({identity: 'NEWS_ARCHIVE_COVERAGE_MISSING' for identity in uncovered})
     invalid_news = sorted(news_errors)
     sec_policy = spec.spec()['unblock_2_amendment']['sec_policy']
     filings_unavailable = sec_policy['state'] == 'UNAVAILABLE'
@@ -236,12 +251,22 @@ def build(archive, T, method_hash):
     manifest['asset_metadata_exclusions'] = {'rule': 'exclude contradictory asset metadata uniformly',
         'excluded_count': len(archive.ambiguous_assets),
         'excluded_symbols_sha256': sha256_canonical(sorted(archive.ambiguous_assets))}
+    intervals = [{'start': iso(left), 'end': iso(right)} for left, right in gaps]
+    if live:
+        coverage = {'state': 'PARTIAL' if gaps else 'AVAILABLE', 'missing_intervals': intervals,
+                    'decision_window_start': iso(start), 'input_cutoff': iso(T),
+                    'rule': 'complete requested intervals; no inference of absent news identities'}
+        manifest['news_archive_coverage'] = coverage
+        ab['news_archive_coverage'] = cd['news_archive_coverage'] = coverage
     if day_errors:
         ab.update(universe=[], prices={}, headlines={})
         cd['candidates'] = []
     records = ([dict(scope='news', identity=k, reason=v) for k, v in sorted(news_errors.items())] +
                [dict(scope='fixed', identity=r['symbol'], reason=r['reason']) for r in excluded] +
                [dict(scope='candidate', identity=k, reason=v) for k, v in sorted(rejections.items())] +
+               [dict(scope='news_interval', identity=r['start'] + '/' + r['end'],
+                     reason='NEWS_ARCHIVE_COVERAGE_MISSING') for r in intervals
+                if 'NEWS_ARCHIVE_COVERAGE_MISSING' not in day_errors] +
                [dict(scope='day', identity=iso(T), reason=r) for r in sorted(set(day_errors))])
     manifest['data_quality'] = {'rule': 'uniform shared exclusions before model calls; no repair or retry',
         'counts_by_reason': dict(Counter(r['reason'] for r in records)),

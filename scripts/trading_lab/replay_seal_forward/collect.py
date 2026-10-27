@@ -214,6 +214,50 @@ def news_rows(collector, start, end):
             for row in body.get('news', [])]
 
 
+def live_news(collector, index_file, earliest, cutoff, deadline):
+    """Resume only verified contiguous pagination; an interrupted page never advances it."""
+    from urllib.parse import urlencode
+    from .archive import complete_news_intervals
+    index_file = Path(index_file)
+    windows, rows = [], {}
+    index = json.loads(index_file.read_text()) if index_file.exists() else None
+    if index is not None and index.get('schema') != 'replay-vendor-request-index-v1':
+        raise ReplayError('ARCHIVE_INDEX_INVALID')
+    objects = index['objects'] if index is not None else []
+    for item in objects:
+        if item['origin'] != md.ALPACA or item['path'] != '/v1beta1/news':
+            continue
+        params = item['params']
+        url = md.ALPACA + item['path'] + '?' + urlencode(sorted(params.items()))
+        key = hashlib.sha256(url.encode()).hexdigest()
+        file = collector.cache / key[:2] / (key + '.json.gz')
+        if item['cache_key'] != key or hashlib.sha256(file.read_bytes()).hexdigest() != item['sha256']:
+            raise ReplayError('ARCHIVE_OBJECT_HASH_MISMATCH')
+        entry = json.loads(gzip.decompress(file.read_bytes()))
+        received = instant(entry['received_at'])
+        if received >= deadline:
+            raise ReplayError('LIVE_ARCHIVE_RECEIVED_AFTER_T')
+        body = entry['body']
+        windows.append((params, {'next_page_token': body.get('next_page_token'), 'received_at': entry['received_at']}))
+        for row in body.get('news', []):
+            identity = row.get('id', sha256_canonical(row))
+            if identity not in rows or received > rows[identity][0]:
+                rows[identity] = received, row
+    watermark = earliest
+    for left, right in complete_news_intervals(windows):
+        if left <= watermark < right:
+            watermark = right
+    overlap = spec.spec()['forward']['news_coverage']['poll_overlap_seconds']
+    # New queries end at the actual poll start, never in the future. Old requested
+    # future bounds are not a watermark from which newly arrived news can be skipped.
+    start = max(earliest, min(watermark, cutoff) - timedelta(seconds=overlap))
+    fresh = news_rows(collector, iso(start), iso(cutoff))
+    collector.save(index_file)  # All pages are durable before the next poll can advance.
+    for row in fresh:
+        rows[row.get('id', sha256_canonical(row))] = cutoff, row
+    return [row for _, row in rows.values()], start
+
+
 def news_symbols(rows, start, end):
     """Symbols that could become c/d candidates: 1-2 tagged equities, not fixed names or known ETFs."""
     out = set()
