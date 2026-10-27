@@ -1,0 +1,3 @@
+# Isolated router dependencies; keep the research-bound pyproject unchanged.
+cryptography==50.0.2
+discord.py==2.6.4
