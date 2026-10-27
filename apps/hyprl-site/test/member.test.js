@@ -9,7 +9,7 @@ const { loadConfig } = require('../server/config');
 const { createApp } = require('../server/app');
 const { Snapshots } = require('../server/member/snapshots');
 const { Discord } = require('../server/member/discord');
-const { FEATURES, TIERS, hash, memberKey, Budget } = require('../server/member/security');
+const { hash, memberKey, Budget } = require('../server/member/security');
 const { IDS, roleIds, environment, fixture, fakeDiscord } = require('./member-fixtures');
 async function setup(t, opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyprl-member-test-'));
@@ -34,26 +34,27 @@ async function setup(t, opts = {}) {
   async function start() { const r = await request('/auth/discord/start'); return { cookie: r.headers.get('set-cookie').split(';')[0], state: new URL(r.headers.get('location')).searchParams.get('state'), response: r }; }
   async function login(code = 'primary') {
     const flow = await start(); const r = await request('/auth/discord/complete', { method: 'POST', cookies: flow.cookie, data: { code, state: flow.state } }); assert.equal(r.status, 200);
-    const cookies = r.headers.getSetCookie().find(c => c.startsWith('hyprl_member=')).split(';')[0]; const s = await (await request('/api/member/v1/session', { cookies })).json(); return { cookies, csrf: s.csrf };
+    const cookies = r.headers.getSetCookie().find(c => c.startsWith('hyprl_member=')).split(';')[0]; const s = await (await request('/api/member/v2/session', { cookies })).json(); return { cookies, csrf: s.csrf };
   }
   t.after(async () => { app.close(); server.closeAllConnections(); await new Promise(r => server.close(r)); fs.rmSync(dir, { recursive: true, force: true }); });
   return { dir, config, discord, snapshot, routerCalls, request, start, login, app, advance: ms => { clock += ms; } };
 }
 const features = ['dashboard', 'briefs', 'radar', 'calendar', 'duel', 'luck', 'screener', 'claims', 'alerts', 'account', 'watchlist', 'proofs'];
-for (const tier of Object.keys(TIERS)) {
+const tierFeatures = { early: ['dashboard', 'claims', 'account'], essentiel: ['dashboard', 'claims', 'account', 'briefs', 'radar', 'calendar', 'watchlist'], premium: features, fondateur: features, equipe: features };
+for (const tier of ['early', 'essentiel', 'premium', 'fondateur', 'equipe']) {
   test('all API and HTML boundaries for Discord tier ' + tier, async t => {
     const s = await setup(t); s.discord.rolesByUser.set(IDS.user, [roleIds[tier]]); const auth = await s.login();
     const pages = { dashboard: '', briefs: '/brief', radar: '/radar', calendar: '/calendrier', duel: '/duel', luck: '/chance', screener: '/screener', claims: '/chance-ou-pas', alerts: '/alertes', account: '/compte', proofs: '/preuves' };
     for (const feature of features) {
-      const allowed = TIERS[tier] >= FEATURES[feature]; const route = feature === 'proofs' ? feature + '/' + s.snapshot.forecasts[0].sha256 : feature;
-      const r = await s.request('/api/member/v1/' + route, auth); assert.equal(r.status, allowed ? 200 : 403, feature); assert.equal(r.headers.get('cache-control'), 'no-store');
+      const allowed = tierFeatures[tier].includes(feature); const route = feature === 'proofs' ? feature + '/' + s.snapshot.reveals[0].id : feature;
+      const r = await s.request('/api/member/v2/' + route, auth); assert.equal(r.status, allowed ? 200 : 403, feature); assert.equal(r.headers.get('cache-control'), 'no-store');
       if (pages[feature] !== undefined) { const page = await s.request('/membre' + pages[feature], auth); assert.equal(page.status, allowed ? 200 : 403, feature + ' page'); }
     }
   });
 }
 test('anonymous requests never reveal any member resource', async t => {
   const s = await setup(t);
-  for (const feature of [...features, 'unknown']) { const r = await s.request('/api/member/v1/' + feature); assert.equal(r.status, 401, feature); assert.ok(!(await r.text()).includes('synthetic')); }
+  for (const feature of [...features, 'unknown']) { const r = await s.request('/api/member/v2/' + feature); assert.equal(r.status, 401, feature); assert.ok(!(await r.text()).includes('synthetic')); }
   const page = await s.request('/membre/duel'); assert.equal(page.status, 303); assert.equal(page.headers.get('location'), '/membre/connexion');
 });
 test('OAuth binds PKCE/state to a Strict HttpOnly cookie, one use, no fixation', async t => {
@@ -73,55 +74,55 @@ test('expired OAuth transaction is refused without contacting Discord', async t 
 });
 test('role downgrade and removal take effect on the next request; outage fails closed', async t => {
   const s = await setup(t), auth = await s.login(); s.discord.rolesByUser.set(IDS.user, [roleIds.early]);
-  assert.equal((await s.request('/api/member/v1/duel', auth)).status, 403);
-  assert.equal((await s.request('/api/member/v1/claims', auth)).status, 200);
+  assert.equal((await s.request('/api/member/v2/duel', auth)).status, 403);
+  assert.equal((await s.request('/api/member/v2/claims', auth)).status, 200);
   s.discord.roles = async () => { throw Object.assign(Error('discord_unavailable'), { status: 503 }); };
-  assert.equal((await s.request('/api/member/v1/claims', auth)).status, 503);
+  assert.equal((await s.request('/api/member/v2/claims', auth)).status, 503);
   s.discord.roles = async () => [];
-  assert.equal((await s.request('/api/member/v1/claims', auth)).status, 403);
-  assert.equal((await s.request('/api/member/v1/session', auth)).status, 401);
+  assert.equal((await s.request('/api/member/v2/claims', auth)).status, 403);
+  assert.equal((await s.request('/api/member/v2/session', auth)).status, 401);
 });
 test('idle and absolute session expiry; logout destroys its hash', async t => {
   const s = await setup(t), first = await s.login(); s.advance(30 * 60000);
-  assert.equal((await s.request('/api/member/v1/session', first)).status, 401);
+  assert.equal((await s.request('/api/member/v2/session', first)).status, 401);
   const second = await s.login();
-  for (let i = 0; i < 24; i++) { s.advance(29 * 60000); assert.equal((await s.request('/api/member/v1/session', second)).status, 200); }
-  s.advance(24 * 60000); assert.equal((await s.request('/api/member/v1/session', second)).status, 401);
-  const third = await s.login(); assert.equal((await s.request('/api/member/v1/logout', { ...third, method: 'POST', data: {} })).status, 200); assert.equal((await s.request('/api/member/v1/session', third)).status, 401);
+  for (let i = 0; i < 24; i++) { s.advance(29 * 60000); assert.equal((await s.request('/api/member/v2/session', second)).status, 200); }
+  s.advance(24 * 60000); assert.equal((await s.request('/api/member/v2/session', second)).status, 401);
+  const third = await s.login(); assert.equal((await s.request('/api/member/v2/logout', { ...third, method: 'POST', data: {} })).status, 200); assert.equal((await s.request('/api/member/v2/session', third)).status, 401);
 });
 test('CSRF and cross-member watchlist, radar, alert destinations and billing isolation', async t => {
   const s = await setup(t), a = await s.login(), b = await s.login('other');
-  assert.equal((await s.request('/api/member/v1/watchlist', { cookies: a.cookies, method: 'PUT', data: { symbols: ['DEMO'] } })).status, 403);
-  assert.equal((await s.request('/api/member/v1/watchlist', { ...a, method: 'PUT', origin: 'https://example.com', data: { symbols: ['DEMO'] } })).status, 403);
-  assert.equal((await s.request('/api/member/v1/watchlist', { ...a, method: 'PUT', data: { symbols: ['DEMO'] } })).status, 200);
-  assert.deepEqual((await (await s.request('/api/member/v1/watchlist', b)).json()).symbols, []);
-  assert.equal((await (await s.request('/api/member/v1/radar', a)).json()).items.length, 2); assert.equal((await (await s.request('/api/member/v1/radar', b)).json()).items.length, 1);
-  const add = await s.request('/api/member/v1/alerts', { ...a, method: 'POST', data: { channel: 'webhook', config: { url: 'https://example.com/destination', signing_key: 'x'.repeat(32) }, kinds: ['sec_filing'], watchlist: ['DEMO'] } }); assert.equal(add.status, 200); const dest = (await add.json()).id;
-  assert.equal((await (await s.request('/api/member/v1/alerts', b)).json()).destinations.length, 0);
-  assert.equal((await s.request('/api/member/v1/alerts', { ...b, method: 'DELETE', data: { destination: dest } })).status, 400);
-  assert.equal((await s.request('/api/member/v1/alerts', { ...a, method: 'PATCH', data: { destination: dest, paused: true } })).status, 200);
+  assert.equal((await s.request('/api/member/v2/watchlist', { cookies: a.cookies, method: 'PUT', data: { symbols: ['DEMO'] } })).status, 403);
+  assert.equal((await s.request('/api/member/v2/watchlist', { ...a, method: 'PUT', origin: 'https://example.com', data: { symbols: ['DEMO'] } })).status, 403);
+  assert.equal((await s.request('/api/member/v2/watchlist', { ...a, method: 'PUT', data: { symbols: ['DEMO'] } })).status, 200);
+  assert.deepEqual((await (await s.request('/api/member/v2/watchlist', b)).json()).symbols, []);
+  assert.equal((await (await s.request('/api/member/v2/radar', a)).json()).items.length, 2); assert.equal((await (await s.request('/api/member/v2/radar', b)).json()).items.length, 1);
+  const add = await s.request('/api/member/v2/alerts', { ...a, method: 'POST', data: { channel: 'webhook', config: { url: 'https://example.com/destination', signing_key: 'x'.repeat(32) }, kinds: ['sec_filing'], watchlist: ['DEMO'] } }); assert.equal(add.status, 200); const dest = (await add.json()).id;
+  assert.equal((await (await s.request('/api/member/v2/alerts', b)).json()).destinations.length, 0);
+  assert.equal((await s.request('/api/member/v2/alerts', { ...b, method: 'DELETE', data: { destination: dest } })).status, 400);
+  assert.equal((await s.request('/api/member/v2/alerts', { ...a, method: 'PATCH', data: { destination: dest, paused: true } })).status, 200);
   assert.equal(s.routerCalls.at(-1).customer, IDS.guild + '/' + IDS.user);
   s.app.member.state.billingOrigin = 'https://example.com';
   await s.app.member.state.applyBillingUpdate(memberKey(IDS.user, s.config.member), { renewal_at: '2027-01-01T00:00:00Z', manage_url: 'https://example.com/manage/private-a', cancel_url: 'https://example.com/cancel/private-a' });
-  assert.equal((await (await s.request('/api/member/v1/account', b)).json()).billing, null); assert.ok((await s.request('/api/member/v1/account', a)).status === 200);
+  assert.equal((await (await s.request('/api/member/v2/account', b)).json()).billing, null); assert.ok((await s.request('/api/member/v2/account', a)).status === 200);
   assert.ok(!fs.readFileSync(s.config.member.stateFile, 'utf8').includes(IDS.user)); assert.equal(fs.statSync(s.config.member.stateFile).mode & 0o777, 0o600);
 });
 test('all write verbs retain tier guards; rejects extra fields and malformed symbols', async t => {
   const s = await setup(t); s.discord.rolesByUser.set(IDS.user, [roleIds.early]); const auth = await s.login();
-  for (const [route, method] of [['watchlist', 'PUT'], ['alerts', 'POST'], ['alerts', 'PATCH'], ['alerts', 'DELETE']]) assert.equal((await s.request('/api/member/v1/' + route, { ...auth, method, data: {} })).status, 403);
+  for (const [route, method] of [['watchlist', 'PUT'], ['alerts', 'POST'], ['alerts', 'PATCH'], ['alerts', 'DELETE']]) assert.equal((await s.request('/api/member/v2/' + route, { ...auth, method, data: {} })).status, 403);
   s.discord.rolesByUser.set(IDS.user, [roleIds.premium]);
-  for (const symbols of [['bad<script>'], ['lowercase'], Array(51).fill('DEMO')]) assert.equal((await s.request('/api/member/v1/watchlist', { ...auth, method: 'PUT', data: { symbols } })).status, 400);
-  assert.equal((await s.request('/api/member/v1/watchlist', { ...auth, method: 'PUT', data: { symbols: [], user: IDS.other } })).status, 400);
+  for (const symbols of [['bad<script>'], ['lowercase'], Array(51).fill('DEMO')]) assert.equal((await s.request('/api/member/v2/watchlist', { ...auth, method: 'PUT', data: { symbols } })).status, 400);
+  assert.equal((await s.request('/api/member/v2/watchlist', { ...auth, method: 'PUT', data: { symbols: [], user: IDS.other } })).status, 400);
 });
 test('missing production snapshots return pending; schema rejects synthetic, symlinks and unrevealed content', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyprl-snapshot-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const reader = new Snapshots(dir); assert.throws(() => reader.read(), /snapshot_unavailable/);
-  const file = path.join(dir, 'member-v1.json'), data = fixture();
+  const file = path.join(dir, 'member-v2.json'), data = fixture();
   const write = () => { if (fs.existsSync(file)) fs.unlinkSync(file); fs.writeFileSync(file, JSON.stringify(data)); fs.chmodSync(file, 0o440); };
   write(); assert.throws(() => reader.read(), /snapshot_unavailable/);
   const testReader = new Snapshots(dir, { allowSynthetic: true }); assert.equal(testReader.read().forecasts.length, 1);
   data.provenance = 'observed'; write(); assert.equal(reader.read().forecasts.length, 1);
-  data.forecasts[0].commitment.reveal_at = '2099-01-01T00:00:00Z'; write(); assert.throws(() => testReader.read(), /snapshot_unavailable/);
+  data.reveals[0].published_at = '2099-01-01T00:00:00Z'; write(); assert.throws(() => testReader.read(), /snapshot_unavailable/);
   fs.unlinkSync(file); fs.symlinkSync(path.join(dir, 'other.json'), file); assert.throws(() => testReader.read(), /snapshot_unavailable/);
 });
 test('strict CSP and secure Strict cookies in production config, no OAuth credential leaks', async t => {
@@ -161,6 +162,34 @@ test('member state refuses unsafe permissions, write failure cannot change anoth
 });
 test('member bodies are bounded and malformed JSON media are rejected without leaking content', async t => {
   const s = await setup(t), auth = await s.login();
-  const r = await s.request('/api/member/v1/watchlist', { ...auth, method: 'PUT', data: { symbols: ['DEMO'], extra: 'x'.repeat(17000) } });
+  const r = await s.request('/api/member/v2/watchlist', { ...auth, method: 'PUT', data: { symbols: ['DEMO'], extra: 'x'.repeat(17000) } });
   assert.equal(r.status, 413); assert.ok(!(await r.text()).includes('xxxxxxxx'));
+});
+test('v2 exposes session proofs and horizon metrics without implicit v1 API migration', async t => {
+  const s = await setup(t), auth = await s.login();
+  const duel = await (await s.request('/api/member/v2/duel', auth)).json();
+  assert.equal(duel.schema_version, 2);
+  assert.equal(duel.forecasts[0].event, 'outperform_spy');
+  assert.ok(!('commitment' in duel.forecasts[0]));
+  assert.equal(duel.series.filter(r => r.n > 0).length, 1);
+  assert.equal(duel.series.find(r => r.n).hits, 1);
+  assert.deepEqual((await (await s.request('/api/member/v2/luck', auth)).json()).series, []);
+  assert.equal((await s.request('/api/member/v1/duel', auth)).status, 404);
+  const proof = await (await s.request('/api/member/v2/proofs/' + duel.reveals[0].id, auth)).json();
+  assert.equal(proof.reveal.file.endsWith('HypR-A1.json'), true);
+  assert.ok(!('canonical' in proof) && !('digest_matches' in proof));
+  assert.equal((await (await s.request('/api/member/v2/proofs', auth)).json()).items.length, 2);
+});
+test('v2 reader rejects invented points, modified metrics, old snapshots and synthetic production data', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyprl-v2-integrity-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'member-v2.json');
+  const reader = new Snapshots(dir, { allowSynthetic: true });
+  const write = data => { if (fs.existsSync(file)) fs.unlinkSync(file); fs.writeFileSync(file, JSON.stringify(data)); fs.chmodSync(file, 0o440); };
+  for (const mutate of [d => d.series[0].n++, d => d.series[0].points.push(d.series[0].points[0]), d => d.series[0].brier = .1, d => d.series[0].hits = 0, d => d.baseline.probability = .5, d => d.calendar[0].scheduled_at = d.calendar[0].date + 'T00:00:00Z', d => d.forecasts[0].horizon = '2d', d => d.forecasts[0].reveal_id = 'missing', d => d.schema_version = 1]) {
+    const data = fixture(); mutate(data); write(data); assert.throws(() => reader.read(), /snapshot_unavailable/);
+  }
+  write(fixture()); assert.throws(() => new Snapshots(dir).read(), /snapshot_unavailable/);
+  fs.renameSync(file, path.join(dir, 'member-v1.json'));
+  assert.throws(() => reader.read(), /snapshot_unavailable/);
 });

@@ -104,19 +104,20 @@ function createMemberApp(site, deps = {}) {
       return json(res, 200, { generated_at: data?.generated_at || null, provenance: data?.provenance || null, stale: data ? now() - Date.parse(data.generated_at) > 26 * 3600000 : true });
     }
     const data = snapshots.read();
-    const meta = { generated_at: data.generated_at, provenance: data.provenance, stale: now() - Date.parse(data.generated_at) > 26 * 3600000 };
+    const meta = { schema_version: data.schema_version, generated_at: data.generated_at, provenance: data.provenance, stale: now() - Date.parse(data.generated_at) > 26 * 3600000 };
     const filtered = rows => { const symbols = new Set(state.get(s.key).watchlist); return rows.filter(r => ['fed', 'cpi', 'nfp'].includes(r.kind) || symbols.has(r.symbol)); };
     if (feature === 'briefs') return json(res, 200, { ...meta, items: data.briefs });
     if (feature === 'radar') return json(res, 200, { ...meta, items: filtered(data.radar) });
     if (feature === 'calendar') return json(res, 200, { ...meta, items: filtered(data.calendar) });
-    if (feature === 'duel') return json(res, 200, { ...meta, forecasts: data.forecasts, failures: data.failures, series: data.series });
-    if (feature === 'luck') return json(res, 200, { ...meta, series: data.series });
+    if (feature === 'duel') return json(res, 200, { ...meta, baseline: data.baseline, forecasts: data.forecasts, failures: data.failures, reveals: data.reveals, series: data.series });
+    if (feature === 'luck') return json(res, 200, { ...meta, series: [] });
     if (feature === 'screener') return json(res, 200, { ...meta, items: data.screener });
     if (feature === 'claims') return json(res, 200, { ...meta, items: data.claims });
     if (feature === 'proofs') {
-      const row = parts.length === 2 && data.forecasts.find(r => r.sha256 === parts[1]);
+      if (parts.length === 1) return json(res, 200, { ...meta, items: data.reveals });
+      const row = parts.length === 2 && data.reveals.find(r => r.id === parts[1]);
       if (!row) throw fail(404, 'not_found');
-      return json(res, 200, { ...meta, ...row, canonical: require('./snapshots').canonical(row.commitment), digest_matches: true });
+      return json(res, 200, { ...meta, reveal: row });
     }
     throw fail(404, 'not_found');
   }
@@ -157,13 +158,13 @@ function createMemberApp(site, deps = {}) {
         res.setHeader('Set-Cookie', [cookieValue(SESSION, token, secure), cookieValue(FLOW, '', secure, 0)]);
         json(res, 200, { ok: true }); return true;
       }
-      if (p === '/api/member/v1/logout' && req.method === 'POST') {
+      if (p === '/api/member/v2/logout' && req.method === 'POST') {
         const s = sessions.get(cookie(req, SESSION)); sameOrigin(req);
         if (req.headers['x-csrf-token'] !== s.csrf) throw fail(403, 'csrf_required');
         sessions.destroy(cookie(req, SESSION)); setCookie(res, SESSION, '', 0);
         json(res, 200, { ok: true }); return true;
       }
-      if (p.startsWith('/api/member/v1/')) { await api(req, res, p.slice('/api/member/v1/'.length).split('/')); return true; }
+      if (p.startsWith('/api/member/v2/')) { await api(req, res, p.slice('/api/member/v2/'.length).split('/')); return true; }
       if (p === '/membre' || p.startsWith('/membre/')) {
         if (req.method !== 'GET') throw fail(405, 'method_not_allowed');
         const route = p === '/membre' ? '' : p.slice('/membre/'.length);

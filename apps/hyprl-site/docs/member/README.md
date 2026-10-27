@@ -1,5 +1,11 @@
 # Espace membre v1
 
+**Document historique v1.** La release courante utilise le
+[contrat v2](../../../../docs/MEMBER_CONTRACT_V2.md), le namespace
+`/api/member/v2/` et [DEPLOY_V2.md](DEPLOY_V2.md). Le schéma v1 n’est ni modifié
+ni migré implicitement. Les règles OAuth, données personnelles et niveaux
+d’accès décrites ci-dessous restent applicables.
+
 French member workspace for hyprlcore.com, served by the existing Node site.
 No animation, remote font, third-party script, analytics, brokerage connection,
 position sizing or account performance chart. IBM Plex and uPlot 1.6.32 (MIT)

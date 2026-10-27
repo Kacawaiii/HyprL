@@ -29,4 +29,4 @@ class Snapshots {
     finally { if (fd !== undefined) fs.closeSync(fd); }
   }
 }
-module.exports = { Snapshots, canonical };
+module.exports = { Snapshots: require('./snapshots-v2').Snapshots, LegacySnapshots: Snapshots, canonical };

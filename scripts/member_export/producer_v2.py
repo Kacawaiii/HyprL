@@ -38,6 +38,8 @@ def public_blob(config, commit, name):
 
 
 def reveal(config, session, family, mode, expected, now, excluded, expected_spec=None):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", session) or mode not in ("REGULAR_0905", "INTRADAY"):
+        raise ValueError("INVALID_FORWARD_SESSION")
     key = session + ("-intraday" if mode == "INTRADAY" else "")
     marker = Path(config["reveal_dir"]) / (key + ".json")
     if not marker.is_file():
@@ -174,6 +176,9 @@ def produce(config, *, now=None):
     for r in score["rows"]:
         if r["provenance"] != "LIVE_FORWARD" or r["family"] not in AGENTS:
             raise ValueError("SCORE_NOT_OBSERVED")
+        variant = {"ab": "a_v1_as_live", "cd": "c_news_small_mid"}.get(r["group"])
+        if variant is None or r["panel"] != variant + ":" + r["horizon"]:
+            raise ValueError("SCORE_PANEL_MISMATCH")
         key = (r["session"], r["family"], r["mode"], r["decision_hash"], r["source_spec_hash"])
         if key not in cache:
             cache[key] = reveal(config, *key[:3], key[3], now, excluded, key[4])

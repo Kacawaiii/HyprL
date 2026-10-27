@@ -1,5 +1,7 @@
 # Operator deployment: member v1
 
+Historical instructions. Use [DEPLOY_V2.md](DEPLOY_V2.md) for the current release.
+
 These steps are a handoff, not an executed deployment. No nginx, system unit,
 other application, bot, trader timer or runtime tool may be edited by a coding
 agent. Keep sales closed until the public site's legal prerequisites and the

@@ -226,7 +226,7 @@ def test_python_publisher_and_node_reader_agree_on_canonical_commitments(tmp_pat
 
     publish(run(handoff()), tmp_path)
     script = """
-    const {Snapshots}=require('./apps/hyprl-site/server/member/snapshots');
+    const {LegacySnapshots:Snapshots}=require('./apps/hyprl-site/server/member/snapshots');
     const dir=process.env.TEST_SNAPSHOT_DIR;
     try { new Snapshots(dir).read(); process.exit(2); } catch(e) {}
     const data=new Snapshots(dir,{allowSynthetic:true}).read();

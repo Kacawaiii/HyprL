@@ -1,5 +1,14 @@
 # Member HTTP API v1
 
+Historical v1 reference. The current site uses `/api/member/v2/` with the same
+session, OAuth, watchlist, account and alert guards. Duel returns `baseline`,
+`forecasts`, `series`, `failures`, `reveals`; `GET /proofs` lists session proofs,
+`GET /proofs/:id` returns `{reveal}`. There is no unit canonical preimage or
+browser digest-match claim. Luck returns an empty series until a valid
+dependence-aware method exists. Calendar preserves date-only marker precision.
+See [the v2 contract](../../../../docs/MEMBER_CONTRACT_V2.md).
+The v1 namespace is rejected (404); no implicit response migration.
+
 Namespace `/api/member/v1/`. All responses are `Cache-Control: no-store`,
 `X-Robots-Tag: noindex, nofollow`; no CORS. Authentication is the necessary
 HttpOnly member cookie. Every resource rechecks current Discord roles on the

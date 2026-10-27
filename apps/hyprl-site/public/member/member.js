@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id), page = $('page'), notice = $('notice');
-  const routes = { '': ['dashboard', 'Tableau de bord'], brief: ['briefs', 'Brief du jour'], radar: ['radar', 'Radar des événements'], calendrier: ['calendar', 'Calendrier'], duel: ['duel', 'HypR-A1 vs HypR-E1'], chance: ['luck', 'Compteur de chance'], screener: ['screener', 'Accélération du chiffre d’affaires'], 'chance-ou-pas': ['claims', 'Chance ou pas ?'], alertes: ['alerts', 'Alertes'], compte: ['account', 'Compte'], preuves: ['proofs', 'Vérifier une empreinte'] };
+  const routes = { '': ['dashboard', 'Tableau de bord'], brief: ['briefs', 'Brief du jour'], radar: ['radar', 'Radar des événements'], calendrier: ['calendar', 'Calendrier'], duel: ['duel', 'HypR-A1 vs HypR-E1'], chance: ['luck', 'Compteur de chance'], screener: ['screener', 'Accélération du chiffre d’affaires'], 'chance-ou-pas': ['claims', 'Chance ou pas ?'], alertes: ['alerts', 'Alertes'], compte: ['account', 'Compte'], preuves: ['proofs', 'Preuves de séance'] };
   const route = location.pathname.replace(/^\/membre\/?/, ''), [feature, title] = routes[route] || routes[''];
   const kinds = { sec_8k: 'SEC · 8-K', sec_10q: 'SEC · 10-Q', sec_form4: 'SEC · Form 4', fed: 'Fed', cpi: 'CPI', nfp: 'NFP', earnings: 'Résultats d’entreprise' };
   const fmt = (value, digits = 2) => value == null ? 'Indéfini' : new Intl.NumberFormat('fr-FR', { maximumFractionDigits: digits }).format(value);
@@ -25,7 +25,7 @@
     else message('Service indisponible ou données en cours de constitution. Réessayez plus tard.');
   }
   async function api(path, method = 'GET', data) {
-    const response = await fetch('/api/member/v1/' + path, { method, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000), headers: { ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-CSRF-Token': session?.csrf || '' } : {}) }, ...(data ? { body: JSON.stringify(data) } : {}) });
+    const response = await fetch('/api/member/v2/' + path, { method, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000), headers: { ...(method !== 'GET' ? { 'Content-Type': 'application/json', 'X-CSRF-Token': session?.csrf || '' } : {}) }, ...(data ? { body: JSON.stringify(data) } : {}) });
     if (!response.ok) throw Object.assign(Error('request_failed'), { status: response.status });
     return response.json();
   }
@@ -87,56 +87,55 @@
     }); page.append(form);
   }
   async function radar(data, calendar) {
-    intro(calendar ? 'Les prochains rendez-vous macro et ceux de votre liste de suivi. Horaires en UTC ; ils peuvent être révisés par la source.' : 'Dépôts SEC 8-K, 10-Q et Form 4, résultats et publications macro. Les événements de société suivent votre liste privée.'); metadata(data);
+    intro(calendar ? 'Les rendez-vous macro et ceux de votre liste de suivi. Les repères de journée indiquent une date seule ; une heure n’est affichée que si elle est confirmée.' : 'Dépôts SEC 8-K, 10-Q et Form 4, résultats et publications macro. Les événements de société suivent votre liste privée.'); metadata(data);
     await watchlistForm();
     if (!data.items.length) return empty(page, 'Complétez votre liste de suivi. Les prochains faits vérifiés apparaîtront ici.');
     if (!calendar) return facts(page, data.items);
-    table(['Date et heure UTC', 'Événement', 'Titre', 'Source'], [...data.items].sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)).map(r => [date(r.scheduled_at), kinds[r.kind], r.symbol || 'Macro', link('Source', r.source.url)]), 'Calendrier des événements sourcés');
+    table(['Date / horaire confirmé', 'Événement', 'Titre', 'Preuve'], [...data.items].sort((a, b) => a.date.localeCompare(b.date)).map(r => [r.precision === 'time' ? date(r.scheduled_at) : r.date + ' · heure inconnue', kinds[r.kind], r.symbol || 'Macro', r.source ? link('Source', r.source.url) : append(el('details'), el('summary', 'Repère de journée observé, date non confirmée par l’émetteur'), el('p', 'Reçu : ' + date(r.evidence.received_at)), el('code', r.evidence.sha256, 'digest'))]), 'Calendrier · précision de la date conservée');
   }
   function chart(parent, points, key, label, mode) {
     const panel = append(el('section', undefined, 'chart-panel'), el('h3', label)); const target = el('div', undefined, 'chart'); target.setAttribute('role', 'img'); target.setAttribute('aria-label', label + '. Valeurs accessibles dans le tableau qui suit.'); panel.append(target); parent.append(panel);
     const styles = getComputedStyle(document.documentElement), accent = styles.getPropertyValue('--accent').trim(), muted = styles.getPropertyValue('--muted').trim(), line = styles.getPropertyValue('--line').trim();
-    const plot = new uPlot({ width: Math.max(180, target.clientWidth), height: 210, legend: { show: false }, cursor: { show: false }, select: { show: false }, scales: { x: { time: false }, y: mode === 'percentage' ? { range: [0, 1] } : {} }, axes: [{ label: 'Prévision observée', stroke: muted, grid: { stroke: line }, ticks: { stroke: line }, values: (_u, ticks) => ticks.map(x => Number.isInteger(x) ? String(x) : '') }, { stroke: muted, grid: { stroke: line }, ticks: { stroke: line }, values: (_u, ticks) => ticks.map(x => mode === 'percentage' ? pct(x) : fmt(x)) }], series: [{}, { label, stroke: accent, width: 2.5, points: { show: points.length === 1, size: 6 } }] }, [points.map(p => p.n), points.map(p => p[key])], target);
+    const plot = new uPlot({ width: Math.max(180, target.clientWidth), height: 210, legend: { show: false }, cursor: { show: false }, select: { show: false }, scales: { x: { time: false }, y: mode === 'percentage' ? { range: [0, 1] } : {} }, axes: [{ label: 'Prévision observée', stroke: muted, grid: { stroke: line }, ticks: { stroke: line }, values: (_u, ticks) => ticks.map(x => Number.isInteger(x) ? String(x) : '') }, { stroke: muted, grid: { stroke: line }, ticks: { stroke: line }, values: (_u, ticks) => ticks.map(x => mode === 'percentage' ? pct(x) : fmt(x)) }], series: [{}, { label, stroke: accent, width: 2.5, points: { show: true, size: 5 } }] }, [points.map(p => p.n), points.map(p => p[key])], target);
     let previousWidth = Math.max(180, target.clientWidth);
     const observer = new ResizeObserver(() => { const width = Math.max(180, target.clientWidth); if (target.clientWidth && width !== previousWidth) { previousWidth = width; plot.setSize({ width, height: 210 }); } }); observer.observe(target); plots.push(plot); chartObservers.push(observer);
   }
+  const modeLabel = mode => mode === 'INTRADAY' ? 'Intraday' : 'Régulier';
+  const seriesLabel = r => r.agent + ' · ' + r.variant + ' · ' + r.horizon + ' · ' + modeLabel(r.mode);
   function metrics(data, luck) {
-    intro(luck ? 'La probabilité d’obtenir au moins autant de réussites par hasard, selon les taux de base enregistrés. Elle ne prouve ni le talent, ni son absence.' : 'Les prévisions sont visibles après leur révélation. La qualité est mesurée face au taux de base enregistré avant observation.'); metadata(data);
-    if (!data.series.length && !(data.failures || []).length) return empty();
-    if (data.series.length) {
-      const label = el('label', 'Agent et variante'); label.htmlFor = 'variant'; const select = el('select'); select.id = 'variant';
-      data.series.forEach((r, i) => { const option = el('option', r.agent + ' · ' + r.variant); option.value = String(i); select.append(option); });
-      const content = el('div'); append(page, label, select, content);
-      const render = () => {
-        plots.forEach(p => p.destroy()); chartObservers.forEach(o => o.disconnect()); plots = []; chartObservers = []; content.replaceChildren();
-        const series = data.series[Number(select.value)], last = series.points.at(-1); if (!last) return empty(content);
-        if (luck) {
-          content.append(el('p', `${series.agent} / ${series.variant} : sous les hypothèses de référence, au moins autant de réussites surviendraient dans ${pct(last.luck_tail)} des cas (${last.n} prévisions).`));
-          chart(content, series.points, 'luck_tail', 'Compteur de chance · probabilité de référence', 'percentage');
-          content.append(el('p', 'Calcul exact de Poisson-binomial sous indépendance des observations. Les dépendances de marché, le choix des variantes et les tests multiples ne sont pas corrigés. Une faible valeur n’est pas une preuve de compétence.', 'data-note'));
-        } else {
-          chart(content, series.points, 'brier_skill', 'Brier skill cumulé vs taux de base');
-          chart(content, series.points, 'rolling_hit_rate', 'Taux de réussite · 20 dernières prévisions', 'percentage');
-          content.append(el('p', 'Brier skill = 1 − somme des erreurs quadratiques / somme des erreurs du taux de base. Zéro : même score que la référence ; une valeur négative : moins bon. Le score reste indéfini si l’erreur de référence est nulle. Réussite : seuil de probabilité à 0,5 ; fenêtre de 20 observations, plus courte au démarrage.', 'data-note'));
-        }
-        table(['Prévision', 'Notation UTC', luck ? 'Probabilité de référence' : 'Brier skill', ...(luck ? [] : ['Réussite glissante'])], series.points.map(p => [String(p.n), date(p.at), luck ? pct(p.luck_tail) : fmt(p.brier_skill, 4), ...(luck ? [] : [pct(p.rolling_hit_rate)])]), 'Valeurs de la courbe · ' + series.agent + ' / ' + series.variant, content);
-      };
-      select.addEventListener('change', render); redrawCharts = render; render();
-    }
-    if (luck) return;
-    const variants = new Map(data.series.map(s => [s.agent + '/' + s.variant, s]));
-    data.failures.forEach(f => { const k = f.agent + '/' + f.variant; if (!variants.has(k)) variants.set(k, { agent: f.agent, variant: f.variant, points: [] }); });
-    page.append(el('h2', 'Comparaison des variantes'));
-    table(['Agent', 'Variante', 'Prévisions notées', 'Brier skill', 'Échecs dans cet export'], [...variants.values()].map(s => [s.agent, s.variant, String(s.points.length), fmt(s.points.at(-1)?.brier_skill, 4), String(data.failures.filter(f => f.agent === s.agent && f.variant === s.variant).length)]), 'Scores par variante, sans agrégation de stratégies différentes');
-    page.append(el('h2', 'Prévisions révélées'));
-    if (!data.forecasts.length) empty(); else table(['Séance', 'Agent / variante', 'Événement', 'Probabilité / taux de base', 'Observation', 'Empreinte'], data.forecasts.map(r => [r.commitment.session, r.commitment.agent + ' / ' + r.commitment.variant, r.commitment.symbol + ' · clôture au-dessus de l’ouverture', pct(Number(r.commitment.probability)) + ' / ' + pct(Number(r.commitment.base_rate)), r.outcome ? 'Oui' : 'Non', link('Vérifier ' + r.sha256.slice(0, 12), '/membre/preuves?hash=' + r.sha256)]), 'Prévisions binaires et empreintes après révélation');
-    if (data.failures.length) { page.append(el('h2', 'Échecs documentés')); table(['Séance', 'Agent / variante', 'Motif', 'Source'], data.failures.map(f => [f.session, f.agent + ' / ' + f.variant, ({ missing: 'Manquante', late: 'Tardive', invalid: 'Invalide', unscorable: 'Non notée' })[f.code], link('Source', f.source.url)]), 'Les échecs ne sont pas effacés des publications'); }
+    metadata(data);
+    if (luck) { intro('L’échantillon et les dépendances entre prévisions doivent être établis avant de publier une probabilité de chance.'); return empty(); }
+    intro('Probabilité de surperformer le SPY à l’horizon annoncé. Chaque variante, horizon et mode garde son propre score. Seules les observations notées et reliées à une révélation publique alimentent les courbes.');
+    if (!data.forecasts.length && !data.failures.length) return empty();
+    if (data.baseline) append(page, el('p', 'Référence figée : ' + pct(data.baseline.probability) + ' · ' + data.baseline.successes + ' succès / ' + data.baseline.n + ' observations de développement, lissage de Laplace. Le même taux de référence est utilisé pour chaque horizon.'), link('Consulter le gel du taux de base', data.baseline.url));
+    const label = el('label', 'Agent, variante, horizon et mode'); label.htmlFor = 'variant'; const select = el('select'); select.id = 'variant';
+    data.series.forEach((r, i) => { const option = el('option', seriesLabel(r) + (r.n ? '' : ' · aucune observation')); option.value = String(i); select.append(option); });
+    const first = data.series.findIndex(r => r.n > 0); select.value = String(first < 0 ? 0 : first);
+    const content = el('div'); append(page, label, select, content);
+    const render = () => {
+      plots.forEach(p => p.destroy()); chartObservers.forEach(o => o.disconnect()); plots = []; chartObservers = []; content.replaceChildren();
+      const s = data.series[Number(select.value)]; if (!s?.points.length) return empty(content, 'Aucune observation notée et révélée pour cet horizon. Aucun point n’est ajouté.');
+      content.append(el('h2', seriesLabel(s)));
+      chart(content, s.points, 'brier_skill', 'Brier skill cumulé vs taux de base figé');
+      chart(content, s.points, 'rolling_hit_rate', 'Taux de réussite · 20 dernières prévisions', 'percentage');
+      content.append(el('p', 'Brier = moyenne de (probabilité − observation)². Skill = 1 − Brier / Brier de référence ; négatif signifie moins bon que la référence. Réussite de prévision : seuil de probabilité ≥ 0,5. Fenêtre de 20 observations, plus courte au démarrage. Ordre : séance, heure de décision, symbole. Les observations d’une même séance sont dépendantes.', 'data-note'));
+      table(['Observation', 'Séance / titre', 'Notation UTC', 'Réussites / n', 'Brier', 'Brier skill', 'Réussite glissante'], s.points.map(p => [String(p.n), p.session + ' / ' + p.symbol, date(p.at), p.hits + ' / ' + p.n, fmt(p.brier, 4), fmt(p.brier_skill, 4), pct(p.rolling_hit_rate)]), 'Valeurs observées · ' + seriesLabel(s), content);
+    };
+    select.addEventListener('change', render); redrawCharts = render; render();
+    page.append(el('h2', 'Comparaison par horizon'));
+    table(['Agent / variante / horizon / mode', 'n', 'Réussites de prévision', 'Brier', 'Brier skill', 'Réussite glissante', 'Trades réussis / notés', 'Échecs / MODEL_FAILURE'], data.series.map(s => [seriesLabel(s), String(s.n), String(s.hits), fmt(s.brier, 4), fmt(s.brier_skill, 4), pct(s.rolling_hit_rate), s.trade_hits + ' / ' + s.trade_n, s.failures + ' / ' + s.model_failures]), 'Scores séparés par horizon et mode');
+    page.append(el('p', 'Les échecs sont des séances sans décision : le même compte est rappelé sur chaque horizon du mode concerné et ne s’additionne pas. Les réussites de trades sont celles du score amont, distinctes des réussites de prévision ; les trades news ont leur propre durée et restent hors de ce tableau.', 'data-note'));
+    page.append(el('h2', 'Révélations par séance'));
+    table(['Séance', 'Agent / mode', 'État', 'Preuve'], data.reveals.map(r => [r.session, r.agent + ' / ' + modeLabel(r.mode), r.status, link('Vérifier ' + r.sha256.slice(0, 12), '/membre/preuves?id=' + r.id)]), 'Records entiers publiés et engagements antérieurs');
+    page.append(el('h2', 'Prévisions révélées et notées'));
+    if (!data.forecasts.length) empty(); else table(['Séance', 'Agent / variante / horizon / mode', 'Événement', 'Probabilité', 'Observation', 'Record révélé'], data.forecasts.map(r => [r.session, seriesLabel(r), r.symbol + ' · surperformance vs SPY · ' + r.horizon, pct(r.probability), r.outcome ? 'Surperformance' : 'Pas de surperformance', link('Record de séance', '/membre/preuves?id=' + r.reveal_id)]), 'Prévisions effectivement notées, sans points simulés');
+    if (data.failures.length) { page.append(el('h2', 'Échecs documentés')); table(['Séance', 'Agent / mode', 'Statut / motif', 'Preuve'], data.failures.map(f => [f.session, f.agent + ' / ' + modeLabel(f.mode), f.status + ' / ' + f.code, link('Vérifier l’échec', '/membre/preuves?id=' + f.reveal_id)]), 'Séances MODEL_FAILURE, comptées une fois par agent et mode'); }
   }
   function screener(data) {
     intro('Évolution factuelle du chiffre d’affaires déclaré à la SEC, sur trois trimestres consécutifs comparables. Tri alphabétique des symboles. Les variations peuvent refléter la saisonnalité, des acquisitions ou une révision comptable.'); metadata(data);
     if (!data.items.length) return empty();
     table(['Titre / CIK', 'Périodes / chiffre d’affaires déclaré', 'Croissance précédente', 'Croissance récente', 'Accélération'], data.items.map(r => {
-      const periods = el('div'); r.periods.forEach(p => append(periods, el('p', p.end + ' · ' + p.revenue + ' ' + p.currency), link('Dépôt SEC du ' + p.end, p.source.url)));
+      const periods = el('div'); r.periods.forEach(p => append(periods, el('p', p.start + ' → ' + p.end + ' · ' + p.revenue + ' ' + p.currency), link('Dépôt SEC ' + p.accession, p.source.url)));
       return [r.symbol + ' / ' + r.cik, periods, fmt(r.growth_previous) + ' %', fmt(r.growth_latest) + ' %', fmt(r.acceleration_pp) + ' points'];
     }), 'Croissances séquentielles, sans classement d’investissement');
   }
@@ -147,9 +146,15 @@
     data.items.forEach(r => { const item = append(el('li'), el('h2', r.claim), el('p', ({ verified: 'Vérifiée', not_supported: 'Non étayée', inconclusive: 'Conclusion indéterminée' })[r.verdict] + ' · ' + date(r.verified_at))); source(item, r.source); list.append(item); }); page.append(list);
   }
   async function proofs(data) {
-    metadata(data); intro('Recalculez l’empreinte SHA-256 du contenu canonique publié. Comparez-la avec le reçu horodaté : l’égalité seule ne prouve pas une publication antérieure.');
-    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data.canonical)))).map(x => x.toString(16).padStart(2, '0')).join('');
-    append(page, el('p', digest === data.sha256 ? 'Empreinte recalculée : correspondance confirmée.' : 'Échec de vérification : les empreintes diffèrent.'), el('code', data.sha256, 'digest'), el('h2', 'Contenu canonique'), el('pre', data.canonical, 'proof-content'), el('p', 'Engagement : ' + date(data.commitment.committed_at) + ' · Révélation : ' + date(data.commitment.reveal_at)), link('Consulter le reçu de publication', data.receipt_url)); source(page, data.source);
+    metadata(data); intro('La preuve porte sur le record entier de la séance. Le producteur vérifie les octets du fichier dans Git et son engagement antérieur ; la page ne recalcule aucune empreinte unitaire de prévision.');
+    if (!data.reveal) {
+      if (!data.items.length) return empty();
+      return table(['Séance', 'Agent / mode', 'État', 'Preuve'], data.items.map(r => [r.session, r.agent + ' / ' + modeLabel(r.mode), r.status, link('Ouvrir la preuve', '/membre/preuves?id=' + r.id)]), 'Révélations de séance');
+    }
+    const r = data.reveal;
+    append(page, el('h2', r.session + ' · ' + r.agent + ' · ' + modeLabel(r.mode)), el('p', 'État : ' + r.status), link('Ouvrir le fichier au commit de révélation', r.url), el('p', 'Commit : ' + r.ledger_commit), el('p', 'Fichier : ' + r.file), el('p', 'SHA-256 du fichier révélé :'), el('code', r.sha256, 'digest'), el('p', 'Publié : ' + date(r.published_at) + ' · Disponible : ' + date(r.available_at)), link('Ouvrir l’engagement antérieur dans le registre', r.commitment.url), el('p', 'Engagé : ' + date(r.commitment.committed_at) + ' · Publication confirmée : ' + date(r.commitment.published_at)), el('p', 'SHA-256 engagé :'), el('code', r.commitment.sha256, 'digest'));
+    if (r.status === 'REVEALED') append(page, el('p', 'Après téléchargement brut du fichier, comparez son SHA-256 avec l’engagement du registre.'), el('pre', 'sha256sum ' + r.agent + '.json', 'proof-content'));
+    else page.append(el('p', 'NO_DECISION : le fichier révélé est la notice README. Son hash est distinct de l’engagement d’échec ; aucun record de décision ni résultat nul n’est fabriqué.'));
   }
   function account(data) {
     intro('Vos accès suivent les rôles de votre compte Discord dans le serveur HyprL.');
@@ -201,7 +206,8 @@
       document.querySelectorAll('[data-feature]').forEach(a => { a.dataset.entitled = String(session.features.includes(a.dataset.feature)); if (a.dataset.feature === (feature === 'proofs' ? 'duel' : feature)) a.setAttribute('aria-current', 'page'); });
       page.replaceChildren();
       if (!session.features.includes(feature)) { intro('Cet espace est compris dans une formule supérieure à votre accès actuel.'); page.append(link('Consulter mon compte', '/membre/compte')); return; }
-      const path = feature === 'proofs' ? 'proofs/' + encodeURIComponent(new URLSearchParams(location.search).get('hash') || '') : feature;
+      const proofId = new URLSearchParams(location.search).get('id');
+      const path = feature === 'proofs' && proofId ? 'proofs/' + encodeURIComponent(proofId) : feature;
       let data;
       try { data = await api(path); }
       catch (e) { if (e.status === 503) { intro('Les publications vérifiées et les connexions se préparent.'); empty(); } throw e; }

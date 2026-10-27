@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "http://127.0.0.1:3827"
 EMPTY = "http://127.0.0.1:3828"
-OUT = ROOT / "docs/member/screenshots"
+OUT = ROOT / "docs/member/screenshots/v2"
 OUT.mkdir(parents=True, exist_ok=True)
 AXE = (ROOT / "node_modules/axe-core/axe.min.js").read_text()
 ROUTES = ["", "/brief", "/radar", "/calendrier", "/duel", "/chance", "/screener", "/chance-ou-pas", "/alertes", "/compte"]
@@ -65,16 +65,28 @@ with sync_playwright() as p:
             assert "Chargement" not in page.locator("#page").inner_text()
             assert "Service indisponible" not in page.locator("#notice").inner_text(), (route, errors, csp)
             audit(page, scheme + route)
-            if route in ["/duel", "/chance"]:
+            if route == "/duel":
                 assert page.locator("canvas").count() >= 1
                 assert page.locator("#notice").inner_text().startswith("Aperçu de test")
             if route == "/duel":
                 page.screenshot(path=str(OUT / ("duel-synthetic-" + scheme + ".png")), full_page=False)
+                page.locator("#variant").select_option("3")
+                assert page.locator("canvas").count() == 0
+                page.get_by_role("heading", name="En cours de constitution").wait_for()
                 page.locator("#variant").select_option("1")
                 page.get_by_role("button", name="Changer de thème").click()
                 assert page.locator("canvas").count() == 2
             if route == "/chance" and scheme == "light":
+                assert page.locator("canvas").count() == 0
+                page.get_by_role("heading", name="En cours de constitution").wait_for()
                 page.screenshot(path=str(OUT / "luck-synthetic-light.png"))
+    page.goto(BASE + "/membre/calendrier", wait_until="networkidle")
+    assert 'heure inconnue' in page.locator('#page').inner_text()
+    assert '00:00' not in page.locator('tbody').inner_text()
+    page.screenshot(path=str(OUT / "calendar-date-only.png"))
+    page.goto(BASE + "/membre/screener", wait_until="networkidle")
+    page.get_by_role('heading', name='En cours de constitution').wait_for()
+    page.screenshot(path=str(OUT / "revenue-empty.png"))
     page.goto(BASE + "/membre/radar")
     page.wait_for_load_state("networkidle")
     page.locator("#symbols").fill("DEMO")
@@ -86,7 +98,7 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
     page.get_by_role("link", name="Vérifier ").first.click()
     page.wait_for_load_state("networkidle")
-    page.get_by_text("Empreinte recalculée : correspondance confirmée.", exact=True).wait_for()
+    page.get_by_text("SHA-256 du fichier révélé :", exact=True).wait_for()
     audit(page, "proof")
     page.goto(BASE + "/membre/alertes")
     page.wait_for_load_state("networkidle")
