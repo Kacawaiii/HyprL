@@ -1,72 +1,92 @@
-"""Operator-approved evergreen copy (2026-10-27), with no invented observations."""
+"""Product-presentation copy approved by the operator on 2026-10-28."""
 
 DISCLAIMER = "Information, pas un conseil en investissement"
 INVITE = "discord.gg/BCgmuk6kXE"
-HASHTAGS = ["#HyprL", "#ChanceOuPas", "#Transparence", "#Bourse", "#IA"]
+SITE = "hyprlcore.com"
+HASHTAGS = ["#HyprL", "#Marchés", "#BriefMarché", "#Transparence"]
+SCRIPT_REVISION = "v2"
+SCRIPT_SHA256 = "5023a8ca5ffd4bacb9f52e53b34bf26aeb34960faac09fc857caa1727ad1880e"
 
-# Keep these sentences verbatim. The teaser's wording is not the study's event:
-# a later sweep of the Asia low does NOT mean the daily low occurred in Asia.
 EVERGREENS = (
-    ("Deux IA, la même info", (
-        "J'ai mis deux IA en duel sur la bourse. Mêmes infos, même heure, chaque matin.",
-        "Elles s'appellent HypR-A1 et HypR-E1. À 9 h 05 heure de New York, elles reçoivent exactement les mêmes news.",
-        "Leurs décisions sont scellées avant l'ouverture : impossible de tricher après coup.",
-        "Le soir, on compare. Et on dit aussi quand c'est juste de la chance.",
-        "Les résultats sont publics chaque jour. Lien en bio.",
-    )),
-    ("Pourquoi tu peux me croire", (
-        "La plupart des comptes de trading montrent leurs gains après coup.",
-        "Nous, avant l'ouverture, on publie une empreinte numérique de chaque décision.",
-        "Si on modifiait une seule virgule, l'empreinte ne correspondrait plus.",
-        "Le soir, on révèle les décisions. Tout le monde peut vérifier.",
-        "Transparence totale. Lien en bio.",
-    )),
-    ("10 trades gagnants ne prouvent rien", (
-        "Quelqu'un gagne 10 trades d'affilée. Génie ?",
-        "Pas forcément. Avec assez de gens qui lancent une pièce, quelqu'un fera 10 piles d'affilée.",
-        "Pour prouver qu'on gagne 55 % du temps, il faut environ 380 trades.",
-        "On affiche donc, pour chaque IA, la probabilité que son résultat soit juste du hasard.",
-        "Personne d'autre ne le fait. Lien en bio.",
-    )),
-    ("Mes IA ont perdu", (
-        "On a fait rejouer à nos IA juillet et août, sans qu'elles connaissent la suite.",
-        "Résultat : sur les grosses actions, au jour le jour, elles ne battent pas le hasard.",
-        "Pourquoi je te le dis ? Parce que tout le monde cache ses échecs.",
-        "Maintenant, on les teste là où une IA peut vraiment aider : lire les rapports officiels que personne ne lit.",
-        "La suite en direct. Lien en bio.",
-    )),
-    ("Chance ou pas ?", (
-        "Cette affirmation tourne en ce moment : le bitcoin ferait son plus bas de la journée pendant la séance asiatique, 60 % des vendredis.",
-        "60 %, ça a l'air énorme. Mais sur 52 vendredis, une pièce peut faire ça.",
-        "On va le tester honnêtement, sur des années qu'elle n'a jamais vues.",
-        "Chance ou pas ? Verdict dans la prochaine vidéo.",
-        "Abonne-toi pour la suite.",
-    )),
+    (
+        "HyprL en 30 secondes",
+        (
+            "Chaque matin, les marchés produisent des centaines d'informations.",
+            "HyprL fait le tri : ce qui s'est passé, ce qui compte aujourd'hui, et pourquoi.",
+            "Un brief clair avant l'ouverture de New York.",
+            "Les publications officielles et les rendez-vous macro, au moment où ils tombent.",
+            "Et des résultats que chacun peut vérifier.",
+            "HyprL. L'information de marché, vérifiable. Accès anticipé gratuit, lien en bio.",
+        ),
+    ),
+    (
+        "Votre matinée de marché en deux minutes",
+        (
+            "Avant l'ouverture, vous n'avez pas le temps de tout lire.",
+            "Le brief HyprL résume la séance précédente, les mouvements de la nuit et l'agenda du jour.",
+            "Chaque information a sa source et son heure.",
+            "Deux minutes de lecture, et vous savez où regarder.",
+            "À découvrir gratuitement pendant le lancement. Lien en bio.",
+        ),
+    ),
+    (
+        "Ne ratez plus un événement",
+        (
+            "Un dépôt officiel tombe sur une action que vous suivez. Les chiffres de l'inflation sortent. Une entreprise publie ses résultats.",
+            "HyprL vous prévient, avec la source, là où vous travaillez déjà : Discord, Slack, Telegram.",
+            "Vous choisissez vos actions et vos sujets.",
+            "De l'information, jamais de conseil. Lien en bio.",
+        ),
+    ),
+    (
+        "La transparence comme règle",
+        (
+            "Beaucoup montrent leurs réussites, rarement leurs erreurs.",
+            "Chez HyprL, nos analyses sont horodatées et publiées avant l'ouverture.",
+            "Les résultats sont affichés en entier, bons ou mauvais.",
+            "Et nous indiquons même la part que le hasard peut expliquer.",
+            "Vous jugez sur pièces. Lien en bio.",
+        ),
+    ),
+    (
+        "L'accès anticipé est ouvert",
+        (
+            "HyprL ouvre ses portes.",
+            "Le brief du jour, le radar des événements, le calendrier et l'espace membre, gratuitement pendant le lancement.",
+            "Ensuite, trois formules, à partir de 19 euros par mois.",
+            "Les premiers inscrits seront prévenus en premier.",
+            "Rejoignez-nous : lien en bio.",
+        ),
+    ),
 )
 
 
 def evergreen(index):
     title, captions = EVERGREENS[index % len(EVERGREENS)]
-    notes = (
-        "Script éditorial approuvé par l'opérateur. Les exemples de pièce et de taille "
-        "d'échantillon sont pédagogiques ; aucune promesse de rendement. Les prévisions "
-        "ne sont pas des trades. Un indicateur de hasard n'est pas une probabilité que "
-        "l'IA ait ou non du talent. Les affirmations éditoriales générales ne constituent "
-        "pas un audit de tous les autres comptes."
-    )
-    if index % 5 == 4:
-        notes += (
-            " Précision : le test porte sur une cassure du bas asiatique APRÈS 11 h, "
-            "pas sur l'heure du plus bas journalier. Le teaser reprend le texte approuvé."
-        )
-    return {"kind": "evergreen", "title": title, "captions": list(captions), "notes": notes}
+    return {
+        "kind": "evergreen",
+        "title": title,
+        "captions": list(captions),
+        "edition": "version présentation produit",
+        "notes": "HyprL : le brief de marché, les événements et leurs sources. "
+        "Accès anticipé gratuit pendant le lancement.",
+        "provenance": {
+            "kind": "operator_approved_product_script",
+            "revision": SCRIPT_REVISION,
+            "sha256": SCRIPT_SHA256,
+        },
+    }
 
 
 def blocked_verdict():
     return {
-        "kind": "verdict", "title": "BTC le vendredi : verdict non vérifiable",
-        "provenance": {"kind": "research_blockage", "study_status": "BLOCKED",
-                       "reason": "expired_research_grant_and_daily_only_local_candles"},
+        "kind": "verdict",
+        "title": "BTC le vendredi : verdict non vérifiable",
+        "provenance": {
+            "kind": "research_blockage",
+            "study_status": "BLOCKED",
+            "reason": "expired_research_grant_and_daily_only_local_candles",
+        },
         "captions": [
             "Le bas asiatique du bitcoin serait pris 60 % des vendredis. Chance ou pas ?",
             "La règle testée : Asie de 2 h à 11 h, heure de Paris. Puis un prix strictement inférieur, avant minuit.",
@@ -75,10 +95,10 @@ def blocked_verdict():
             "Verdict : non vérifiable à ce stade. Il faudra comparer le vendredi aux autres jours, année par année.",
         ],
         "notes": "Étude BLOQUÉE : aucun taux ni intervalle de confiance observé. "
-                 "60 % n'est ni confirmé ni réfuté. Aucune conclusion sur le hasard. "
-                 "Asie [02:00,11:00), Londres [09:00,18:00), New York [14:00,23:00), "
-                 "Europe/Paris, changements d'heure inclus. Événement : low après 11:00 "
-                 "strictement inférieur au low asiatique, jusqu'à minuit local. "
-                 "Le plus bas journalier en Asie est une autre hypothèse. "
-                 "Aucune donnée BTC/ETH du holdout septembre–novembre 2026 utilisée.",
+        "60 % n'est ni confirmé ni réfuté. Aucune conclusion sur le hasard. "
+        "Asie [02:00,11:00), Londres [09:00,18:00), New York [14:00,23:00), "
+        "Europe/Paris, changements d'heure inclus. Événement : low après 11:00 "
+        "strictement inférieur au low asiatique, jusqu'à minuit local. "
+        "Le plus bas journalier en Asie est une autre hypothèse. "
+        "Aucune donnée BTC/ETH du holdout septembre–novembre 2026 utilisée.",
     }
