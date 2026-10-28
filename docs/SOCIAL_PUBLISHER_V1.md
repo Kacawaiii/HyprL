@@ -1,4 +1,4 @@
-# Publieur social v1 — guide opérateur
+# Publieur social v1 — carrousels, guide opérateur
 
 Le programme est dans `scripts/social_publisher`. Les cinq destinations sont indépendantes,
 toutes désactivées initialement, et le mode simulation est activé. Aucun compte, aucune application,
@@ -7,33 +7,45 @@ aucun jeton ni aucun audit n'est créé par cette livraison. Les appels de publi
 
 ## Contrat avec la fabrique et horaire
 
-Le contrat accepté est celui de la fabrique produit au commit
-`f11d90c2191991b1b64b8c6c75e2b714bed733ee`, schéma `hyprl-video-v2`.
-Le publieur lit uniquement `daily-AAAA-MM-JJ`, jamais « la dernière vidéo trouvée ».
-Il exige `metadata.json`, `video.mp4`, `delivery.json` et le reçu quotidien de la fabrique.
-Les deux reçus doivent être `delivered` et désigner le même SHA-256 ; le reçu quotidien doit
-nommer la date et le bundle. Il recalcule le digest, contrôle le disclaimer, le format,
-la provenance observée des actualités et bilans, puis vérifie le MP4 avec ffprobe :
-H.264 silencieux, 720 × 1280, 25–45,1 secondes, moins de 9 000 000 octets.
-Le texte provient des métadonnées de cette sortie. X utilise le titre, le disclaimer et les hashtags ;
-les autres publications gardent aussi la description. YouTube ajoute `#Shorts`.
-Le publieur ne refait pas la recherche ni le contrôle des sources : il fait confiance au producteur
-et à ses fichiers privés. Une sortie seulement rendue, sans acquittement de la fabrique, est refusée.
+Le mode par défaut est désormais `media_kind=carousel`, producteur épinglé à
+`8979fada748458208509b7377a45eacdaf27c3a4`, schéma `hyprl-carousel-v1`.
+Le publieur lit exclusivement `carousel-v1-daily-AAAA-MM-JJ` et les reçus
+`delivery.json`, `carousel-v1-daily-AAAA-MM-JJ.json`, `slot-daily-AAAA-MM-JJ.json`.
+Tous doivent être acquittés, liés au manifeste canonique et au contenu attendu.
+Une sortie seulement rendue, un ancien exemple ou un reçu incertain sont refusés.
 
-**18 h 30 Paris ne peut pas être après la fabrique actuellement active.** Celle-ci démarre à
-17 h 05 New York. Le timer proposé passe à **17 h 20 America/New_York**, les jours de semaine,
-et le programme vérifie les séances NYSE, y compris les jours fériés. Cela correspond normalement
-à 23 h 20 Paris ; durant le décalage des changements d'heure, à 22 h 20 Paris.
-Les demi-séances conservent cette heure. Pas de rattrapage automatique (`Persistent=false`).
-Une sortie absente à cette heure fait échouer le service et déclenche l'alerte.
-Rendre réellement possible 18 h 30 Paris nécessite une décision et un changement amont de la
-fabrique ; ce publieur ne déplace pas les autres traitements.
+Il vérifie les empreintes et tailles de tous les fichiers, légende et ZIP compris, les
+listes complètes, le disclaimer et les tailles minimales de texte enregistrées. Il ouvre
+chaque PNG : RGB, 1080 × 1350 pour Instagram/X, 1080 × 1920 pour TikTok. Les packs ZIP ne
+sont jamais extraits. La conversion JPEG qualité 95 ne modifie ni dimensions, ni ordre,
+ni texte ; les JPEG restent sous 5 Mo. Facebook reçoit le pack Instagram ; X reçoit le
+pack X, au plus quatre images. La légende complète validée accompagne Meta ; X reprend
+le titre, le disclaimer et les hashtags, dans sa limite de texte.
+
+Le publieur fait confiance à la fabrique pour les faits, les sources et la validation éditoriale.
+Il ne refait pas sa recherche, ne consulte aucun document officiel et ne transforme pas un
+ancien brief en information du jour. Les autres créneaux de la fabrique (calendrier du lundi,
+recherche du mercredi, documents) restent dans les brouillons : cette v1 automatise un seul
+carrousel quotidien par plateforme. Une évolution distincte sera nécessaire pour ces créneaux.
+
+La fabrique quotidienne démarre à 18 h 30 Paris et dispose de dix minutes. Le publieur passe à
+**18 h 42 Europe/Paris**, les jours de séance NYSE ; il accepte seulement la fenêtre
+18 h 42–19 h 02. Le fuseau Paris gère ses changements d'heure indépendamment de New York.
+Pas de rattrapage (`Persistent=false`) : une sortie absente fait échouer et alerte.
+La marge ne garantit pas une réussite amont ; son reçu reste obligatoire.
+
+YouTube n'a pas d'endpoint carrousel dans cette implémentation : il est explicitement ignoré
+pour les images, sans réservation, secret ni appel API. Le support vidéo demeure optionnel :
+configuration séparée `media_kind=video`, `factory_revision=f11d90c2191991b1b64b8c6c75e2b714bed733ee`,
+répertoires de la fabrique vidéo v2 et timer 17 h 20 New York. Le lecteur conserve le contrôle
+des reçus et ffprobe (H.264 silencieux, 720 × 1280, 25–45,1 s). Le timer vidéo amont étant
+désactivé, aucune nouvelle vidéo n'est supposée disponible. Ne pas le réactiver implicitement.
 
 ## Créer la configuration et préparer les secrets
 
-Depuis le checkout dédié, avec Python 3.11+ et ffprobe. Le seul paquet Python requis en plus de
-la bibliothèque standard est le calendrier déjà utilisé par la fabrique :
-`pandas_market_calendars==5.4.0`. Réutiliser son environnement validé ; ne pas mettre à jour
+Depuis le checkout dédié, avec Python 3.11+, Pillow et
+`pandas_market_calendars==5.4.0` déjà utilisés par la fabrique. ffprobe sert au mode vidéo optionnel.
+Réutiliser son environnement validé ; ne pas mettre à jour
 un environnement partagé pendant le déploiement.
 
 ```bash
@@ -46,13 +58,15 @@ Cette commande crée un fichier privé, sans secret, sans appel réseau. Modifie
 | Champ | Valeur attendue |
 | --- | --- |
 | `factory_root` | Répertoire de sortie déjà configuré dans la fabrique |
-| `factory_state` | Son répertoire de reçus quotidiens, **pas** son fichier de configuration |
+| `factory_state` | Le `state_dir` réel de la configuration de fabrique, **pas** son fichier de configuration |
+| `media_kind` | `carousel` par défaut ; `video` uniquement pour le contrat vidéo optionnel |
 | `factory_revision` | Révision de producteur acceptée ci-dessus |
 | `state_dir` | Nouveau répertoire privé propre au publieur ; garder ce chemin lors des mises à jour |
 | `authorization` | Fichier opérateur dans `~/authorizations/`, voir plus bas |
 | `dry_run` | Garder `true` jusqu'à la revue des destinations et du texte |
 | `platforms.<nom>.enabled` | `true` pour chaque destination choisie individuellement |
 | `platforms.<nom>.account_id` | Identifiant exact de l'IG professionnel, Page, utilisateur X, chaîne YouTube ou open ID TikTok |
+| `platforms.instagram.public_media_ready` | `true` seulement après ajout et contrôle du proxy HTTPS d'images par l'opérateur |
 
 Les secrets vont **uniquement** dans `~/private/social/instagram.env`, `facebook.env`, `x.env`,
 `youtube.env`, `tiktok.env`. Répertoire `0700`, fichiers réguliers appartenant à l'utilisateur,
@@ -132,7 +146,7 @@ endpoints et son budget : le publieur ne fait pas cet échange initial.
    Business/Creator. Donner au compte opérateur les droits de création de contenu. Terminer les
    éventuelles vérifications de publication de Page. Ajouter l'opérateur comme administrateur/
    développeur/testeur de l'application et accepter l'invitation.
-3. Ajouter **Facebook Login for Business**, nécessaire au flux Instagram resumable choisi.
+3. Ajouter **Facebook Login for Business**, pour le compte Instagram relié à la Page.
    Enregistrer exactement `https://hyprlcore.com/auth/meta/callback` comme URI de retour HTTPS.
    Les deux adaptateurs partagent ce retour ; ne pas utiliser le flux Instagram Login à sa place.
 4. Demander `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`,
@@ -146,19 +160,28 @@ endpoints et son budget : le publieur ne fait pas cet échange initial.
 6. Conserver le mode développement pour les comptes ayant un rôle sur l'application ; vérifier
    l'accès standard effectif aux permissions dans la console. L'accès à des comptes tiers exige
    les vérifications et accès avancés applicables. Ne pas promettre un accès universel en mode dev.
-7. Après autorisation écrite : essai sur les comptes opérateur, simulation d'abord. Instagram crée
-   un conteneur `REELS`, `upload_type=resumable`, envoie les octets vers le `uri` retourné, attend
-   `FINISHED`, puis appelle `media_publish`. Facebook fait `start`, binaire, `finish`, puis contrôle
-   la phase de publication. Ces deux adaptateurs n'ont besoin d'aucun hébergement public du MP4.
-   Référence du contrat Instagram : [Content Publishing](https://developers.facebook.com/docs/instagram-platform/content-publishing/).
+7. Faire ajouter le proxy HTTPS décrit ci-dessous avant d'activer Instagram images, puis déclarer
+   `public_media_ready=true`. Après autorisation écrite, essayer sur les comptes opérateur.
+   Instagram crée un enfant par JPEG avec `image_url` et `is_carousel_item=true`, sans légende ;
+   il crée ensuite le parent `media_type=CAROUSEL`, avec les enfants dans l'ordre et la légende,
+   attend `FINISHED`, puis appelle `media_publish`. Facebook envoie chaque JPEG en multipart
+   à `/{PAGE_ID}/photos` avec `published=false`, puis une seule publication `/{PAGE_ID}/feed`
+   avec `message` et `attached_media[i]={"media_fbid":"..."}`. Facebook n'exige pas d'URL publique.
+   Références : [publication Instagram](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/content-publishing/)
+   et [publications de Page](https://developers.facebook.com/docs/pages-api/posts/).
+   Les pages Meta ont répondu 429 au lecteur documentaire pendant cette tâche ; le contrat
+   est testé hors ligne, mais son acceptation par la version Graph et les comptes réels reste à vérifier.
+8. Le mode vidéo facultatif conserve les flux resumable des Reels Instagram/Facebook et l'envoi
+   binaire local ; ne pas envoyer un PNG à ces endpoints vidéo.
 
 Texte de revue Meta, à adapter seulement à ce qui a été réellement déployé :
 
 > HyprL publie sur la Page et le compte Instagram professionnel explicitement reliés par leur
 > propriétaire. L'utilisateur choisit séparément chaque destination et autorise la publication de
-> ses vidéos originales de synthèse d'information. Nous utilisons la liste des Pages pour sélectionner
+> ses carrousels originaux de synthèse d'information. Nous utilisons la liste des Pages pour sélectionner
 > la destination, les droits de lecture nécessaires pour le lien Page–Instagram, et les droits de
-> publication pour envoyer un Reel validé. Nous n'automatisons ni abonnements, ni likes, ni commentaires.
+> publication pour envoyer des images validées, en carrousel Instagram ou publication multi-photo de Page.
+> Nous n'automatisons ni abonnements, ni likes, ni commentaires.
 > La révocation arrête les futurs envois ; les jetons sont conservés dans des fichiers privés
 > accessibles au seul compte de service.
 
@@ -185,19 +208,24 @@ le chiffrement du disque doit être confirmé par l'opérateur avant de le menti
    les tentatives incertaines. Les autres outils partageant l'application consomment aussi ses limites.
 5. Le protocole implémenté utilise les chemins v2 `initialize`, `/{id}/append`, `/{id}/finalize`, puis
    le statut `GET /2/media/upload?command=STATUS&media_id=...` et `POST /2/tweets`.
-   Les segments multipart font 4 Mo. Le texte n'ajoute aucun lien ; le disclaimer reste présent.
+   Chaque JPEG du pack X passe par ce flux, puis les quatre identifiants au plus sont joints à un
+   seul post. Les segments multipart font 4 Mo ; catégorie `tweet_image`, MIME `image/jpeg`.
+   La vidéo optionnelle utilise `tweet_video`. Le texte n'ajoute aucun lien ; le disclaimer reste présent.
    Revoir le [guide officiel des médias](https://docs.x.com/x-api/media/quickstart/media-upload-chunked)
    lors du premier essai autorisé : l'ancien exemple officiel publié sur GitHub utilise encore
    le protocole à commandes et ne suffit pas à prouver l'accès effectif de votre application.
 
 Déclaration d'usage X :
 
-> Publication quotidienne de nos vidéos originales de présentation et d'information de marché,
+> Publication quotidienne de nos carrousels originaux de présentation et d'information de marché,
 > uniquement sur notre compte autorisé. Aucun suivi, like, commentaire, message privé, collecte
 > de données d'audience ou conseil de placement automatisé. Limites locales : une tentative par
 > séance, plafond mensuel conservateur et arrêt sur quota, erreur ou incertitude de publication.
 
 ## Google Cloud et YouTube Shorts
+
+Cette destination sert uniquement au mode vidéo optionnel. Aucun diaporama vidéo n'est fabriqué
+par le publieur à partir du carrousel ; le mode images indique `youtube_requires_optional_video`.
 
 1. Créer un projet dans [Google Cloud Console](https://console.cloud.google.com/), activer
    **YouTube Data API v3**, et choisir la chaîne opérateur destinée aux Shorts.
@@ -260,18 +288,24 @@ Script de démonstration YouTube (3–4 minutes, aucune clé visible) :
 ## TikTok : limites bloquantes, configuration et audit honnête
 
 Les [directives TikTok](https://developers.tiktok.com/docs/en/content-sharing-guidelines) excluent
-l'utilitaire réservé aux comptes de sa propre équipe, imposent une prévisualisation et un consentement
-par vidéo, et interdisent l'ajout d'habillage promotionnel par l'intégration. Le produit demandé
-(autopublieur interne) et les cartes actuelles de la fabrique ne satisfont donc pas ces critères.
-**L'orchestrateur refuse toujours les sorties du producteur v2 vers TikTok**, même si `enabled=true`.
+l'utilitaire interne demandé et l'habillage promotionnel ajouté par l'intégration. Les carrousels
+actuels portent le nom et le lien du produit sur chaque slide ; le passage aux photos ne lève
+donc pas le blocage antérieur. **L'orchestrateur refuse ces carrousels vers TikTok**, même si
+`enabled=true`, avec `carousel_branding_incompatible_with_tiktok_guidelines`.
 Ne pas falsifier un dossier d'audit ni retirer cette garde pour obtenir un résultat vert.
-Les tests du protocole utilisent uniquement un contenu original synthétique sans habillage.
+Les tests du protocole sont synthétiques et ne prouvent aucune admissibilité à l'audit.
 
-L'adaptateur de transport complet est présent et testé : identité utilisateur, creator info,
-Direct Post privé ou envoi en boîte de réception, PULL_FROM_URL, `publish_id`, suivi de statut et erreurs.
-Sa présence ne livre pas une interface créateur conforme et ne rend pas les vidéos actuelles éligibles.
-L'activation réelle nécessitera une nouvelle tâche : produit/UX admissible, sortie propre validée par
-la fabrique, nouveau contrat de producteur et revue des exigences. Ce n'est pas fait dans cette v1.
+L'adaptateur photo complet est testé : `POST /v2/post/publish/content/init/`, `media_type=PHOTO`,
+`post_mode=DIRECT_POST` ou `MEDIA_UPLOAD`, `source_info.source=PULL_FROM_URL`, liste ordonnée
+`photo_images` et `photo_cover_index=0`. `is_aigc=true` est **à la racine**, dans les deux modes.
+Il vérifie l'identité et creator info, envoie puis suit `publish_id` jusqu'au privé ou à la boîte
+de réception. La [référence Photo](https://developers.tiktok.com/docs/en/content-posting-api-reference-photo-post)
+décrit ce contrat ; ce n'est ni l'endpoint vidéo ni l'API Business.
+
+Le mode privé impose `SELF_ONLY`, musique automatique désactivée et déclarations commerciales
+explicites. Le brouillon transmet titre/description et le champ IA photo ; il attend
+`SEND_TO_USER_INBOX`. Il ne prétend pas avoir publié : le créateur termine dans TikTok et doit
+garder une visibilité privée jusqu'à validation du parcours. Aucun passage public automatique.
 
 1. Dans [TikTok for Developers](https://developers.tiktok.com/), créer l'application, compléter nom,
    site, domaine vérifié, confidentialité et conditions existantes. Ajouter Login Kit et Content
@@ -282,21 +316,21 @@ la fabrique, nouveau contrat de producteur et revue des exigences. Ce n'est pas 
 3. Sans audit, les essais Direct Post restent `SELF_ONLY` sur un compte privé ; TikTok limite aussi
    le nombre d'utilisateurs d'un client non audité. Ne pas promettre un passage public automatique.
    Notre adaptateur refuse la visibilité publique **même après audit** dans cette version.
-4. Pour un produit admissible futur, lire les informations créateur à l'ouverture de la page :
-   montrer le nickname, la prévisualisation et le texte modifiable, proposer les visibilités retournées
-   sans présélection, les interactions désactivées initialement et les divulgations commerciales.
-   Recueillir le consentement explicite avant de transférer du contenu ; fixer `is_aigc=true`.
-   Le [contrat Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post)
-   documente ces champs. Le manifeste privé testé lie vidéo, métadonnées, compte, choix, consentement
-   et expiration de moins de 24 h ; il ne remplace pas cette interface.
+4. Pour un futur produit admissible, construire d'abord une vraie prévisualisation avec nickname,
+   texte modifiable, visibilité choisie sans valeur initiale et options de commentaires/disclosure.
+   Pour les photos, ne pas afficher duo/collage. Consentement explicite par carrousel avant tout
+   transfert ; le manifeste privé lie SHA du contenu, SHA des métadonnées, compte, nickname,
+   prévisualisation, choix, confirmation musique, mode et échéance de moins de 24 h.
+   Il ne remplace pas le parcours créateur exigé. Les tests vidéo historiques restent applicables
+   uniquement au mode vidéo optionnel.
+   Le protocole photo n'accepte que le titre et la légende déjà validés par la fabrique : une
+   modification dans l'interface future devra repasser ses contrôles avant consentement et envoi.
 5. Le serveur possède déjà le fichier : utiliser `PULL_FROM_URL` après vérification de propriété de
    `https://hyprlcore.com/social-media/`. Ne pas détourner `FILE_UPLOAD`, destiné aux fichiers du
    terminal de l'utilisateur, pour éviter cette vérification. Voir l'hébergement ci-dessous.
-6. En brouillon, l'[Upload API](https://developers.tiktok.com/docs/en/content-posting-api-reference-upload-video)
-   ne prend pas les champs `post_info` / `is_aigc` de Direct Post. Le créateur doit terminer dans
-   l'application TikTok, choisir privé et activer le label IA avant toute publication ; le programme
-   n'annonce donc pas qu'un brouillon a reçu automatiquement ce label. L'acquittement attendu est
-   `SEND_TO_USER_INBOX`, contre `PUBLISH_COMPLETE` pour Direct Post privé.
+6. Contrairement à la photo, l'[Upload API vidéo](https://developers.tiktok.com/docs/en/content-posting-api-reference-upload-video)
+   ne transmet pas les mêmes champs de titre/IA. Pour une vidéo optionnelle en brouillon, le
+   créateur doit appliquer ces choix dans TikTok. Ne pas copier les paramètres photo dans ce flux.
 
 Texte **à ne pas soumettre comme demande d'audit de l'outil interne actuel** :
 
@@ -308,10 +342,10 @@ Texte **à ne pas soumettre comme demande d'audit de l'outil interne actuel** :
 Texte de soumission **conditionnel**, uniquement après réalisation d'un vrai produit créateur :
 
 > HyprL propose aux créateurs un outil de production d'informations sourcées sur hyprlcore.com.
-> Chaque utilisateur connecte son propre compte, voit son identité, prévisualise sa vidéo originale,
+> Chaque utilisateur connecte son propre compte, voit son identité, prévisualise son carrousel original,
 > modifie le texte et choisit explicitement la visibilité et les divulgations. Aucun contenu n'est
 > transmis avant son consentement. Nous respectons les limites de durée retournées, les restrictions
-> d'interactions et le label IA. Aucun habillage promotionnel n'est ajouté à la vidéo exportée.
+> d'interactions et le label IA. Aucun habillage promotionnel n'est ajouté aux images exportées.
 > Nous demandons l'audit de ce parcours effectivement accessible au public, sans automatisation
 > d'engagement et sans promesse de rendement financier.
 
@@ -319,11 +353,11 @@ Script de démonstration TikTok **à réaliser après ces développements**, pas
 présentée comme existante (4–5 minutes) :
 
 1. Montrer le vrai produit ouvert aux créateurs, le site, les pages juridiques et le parcours Login Kit.
-2. Afficher le nickname provenant de creator info et une vidéo propre produite dans l'outil.
+2. Afficher le nickname provenant de creator info et les images originales propres produites dans l'outil.
 3. Éditer le titre ; ouvrir la liste de visibilité sans valeur sélectionnée ; choisir privé.
-   Montrer commentaires/duo/collage désactivés et les options interdites par le compte grisées.
+   Montrer les commentaires désactivés initialement et l'option grisée si le compte l'interdit.
 4. Montrer les choix contenu commercial / marque propre / partenariat, leurs conséquences et
-   l'option IA. Recueillir l'accord relatif à l'usage de musique, même pour une vidéo silencieuse.
+   l'option IA. Recueillir l'accord relatif à l'usage de musique, même sans ajout de musique.
 5. Valider explicitement ; montrer le transfert depuis le domaine vérifié, l'état de traitement et
    le résultat privé. Pour le mode brouillon, montrer aussi la notification et la finition dans TikTok.
 6. Révoquer l'accès et montrer le contrôle des doublons. Ne montrer aucun token ni de tiers identifiable.
@@ -356,12 +390,15 @@ existants et documenter durée de conservation, révocation et effacement des je
 
 ## HTTPS éphémère : étape nginx réservée au propriétaire
 
-Meta utilise l'upload local resumable : aucun besoin de servir son MP4. Pour le futur parcours
-TikTok admissible, `hyprl-social-media.service` écoute **uniquement 127.0.0.1:8767**.
-Les vidéos validées sont copiées dans le spool privé du publieur et accessibles par un jeton de
-256 bits, TTL une heure (limites du code : cinq minutes à six heures). GET/HEAD et Range sont
+Instagram images exige maintenant ce proxy ; Facebook images reste en envoi binaire local.
+`hyprl-social-media.service` écoute **uniquement 127.0.0.1:8767** et lit le spool privé du publieur.
+Chaque JPEG validé reçoit une URL indépendante
+`https://hyprlcore.com/social-media/<jeton-aléatoire-256-bits>/image.jpg`, TTL **deux heures**.
+Le mode vidéo optionnel utilise `/video.mp4`, TTL une heure. Limites configurables dans le code :
+cinq minutes à six heures. GET/HEAD et Range sont
 pris en charge, sans index ni journaux d'accès. Les URLs expirées répondent 404 ; le ménage local
-retire les blobs expirés. Aucune URL de capacité n'est imprimée par le CLI.
+retire les blobs expirés. Les fichiers restent privés, liés à leur digest ; un verrou protège la
+création contre le nettoyage par l'autre processus. Aucune URL de capacité n'est imprimée par le CLI.
 
 Le propriétaire nginx doit ajouter lui-même, dans le vhost HTTPS existant de hyprlcore.com :
 
@@ -379,11 +416,20 @@ location ^~ /social-media/ {
 }
 ```
 
-Ne jamais exposer le dossier des vidéos ni un listing nginx ; garder l'URI complète lors du proxy.
+Ne jamais exposer le dossier des carrousels ni un listing nginx ; garder l'URI complète lors du proxy.
 Le propriétaire vérifie puis recharge sa configuration selon ses procédures. Cette tâche n'y touche
-pas. Vérifier le domaine/préfixe dans TikTok et tester le téléchargement d'un fichier synthétique
-uniquement sous une autorisation explicite. Le service de médias n'est pas nécessaire tant que
-TikTok reste bloqué ; ne pas l'activer par défaut.
+pas. Les routes OAuth et les pages juridiques restent hors de ce proxy.
+
+Pour la vérification TikTok future : ouvrir l'application dans TikTok for Developers, puis
+**Manage URL properties**, ajouter le domaine `hyprlcore.com`, faire ajouter par le propriétaire
+DNS la valeur de vérification fournie par TikTok et valider dans la console. Autre choix : propriété
+de préfixe exactement `https://hyprlcore.com/social-media/`, avec la preuve proposée par la console
+servie par le propriétaire du site. Ne pas fabriquer de valeur DNS ou de nom de fichier de preuve.
+La [documentation de transfert](https://developers.tiktok.com/docs/en/content-posting-api-media-transfer-guide)
+exige HTTPS sans redirection et une disponibilité pendant le téléchargement ; le délai possible
+est d'une heure, couvert par les deux heures de nos URLs. Le JPEG conserve les dimensions du pack
+photo 1080 × 1920. Aucun PNG ni ZIP n'est envoyé à TikTok. Tester l'accès avec un fichier synthétique
+seulement après autorisation ; ne pas copier une URL réelle dans un ticket ou des analytics.
 
 ## Installation par la session opérateur
 
@@ -407,9 +453,10 @@ préconditions locales mais ne prouve pas la validité du consentement, du compt
 l'autorisation réseau. Elle nécessite une sortie quotidienne terminée et une heure admissible.
 Le mode `dry_run=true` de configuration gagne toujours ; `--dry-run` ne peut pas déclencher d'envoi.
 
-L'opérateur installe **seulement** les trois unités du publieur, après contrôle qu'elles n'existent pas,
-puis recharge le gestionnaire utilisateur et active son timer. Ne pas activer le service médias
-avant le parcours TikTok conforme et le proxy relu par le propriétaire du site :
+L'opérateur installe les trois unités du publieur après contrôle qu'elles n'existent pas, puis
+recharge le gestionnaire utilisateur et active son timer. Pour Instagram images, installer aussi
+`hyprl-social-media.service` depuis le même staging et l'activer après revue du proxy ; cette
+unité n'est pas nécessaire à Facebook/X. Aucun service n'est installé par la branche :
 
 ```bash
 mkdir -p "$HOME/.config/systemd/user"
@@ -434,10 +481,13 @@ n'a été faite pour tester cette branche.
 
 ## Incidents, reprises et arrêt
 
-Le verrou sérialise les passages ; SQLite réserve `(plateforme, SHA-256 vidéo)` et `(plateforme,
-séance)` avant le premier appel réseau. Un changement de titre, de compte ou un redémarrage ne
-permet pas de renvoyer une vidéo déjà acquittée. La réservation demeure après crash. Garder le
-ledger durablement, y compris après rétention des fichiers vidéo ou changement de branche.
+Le verrou sérialise les passages ; SQLite réserve `(plateforme, SHA-256 contenu)`, l'empreinte
+de la liste ordonnée des JPEG de cette plateforme, et `(plateforme, séance)` avant le premier
+appel réseau. Un changement de titre, de compte ou un redémarrage ne
+permet pas de renvoyer un carrousel déjà acquitté. Le même evergreen un autre jour reste déjà
+publié : cette v1 ne le répète pas pour remplir le calendrier. La réservation demeure après crash.
+Garder le ledger durablement, y compris après rétention des images ou changement de branche.
+Une table supplémentaire indexe les albums JPEG ; les tables et anciens reçus vidéo sont conservés.
 
 GET et consultations POST sans effet de publication sont répétés au plus quatre fois avec
 attente exponentielle ; un rejet explicite HTTP 429 peut aussi être répété avec `Retry-After`.
@@ -445,6 +495,9 @@ Un délai supérieur à trente secondes arrête l'essai. Les créations dont le 
 (timeout/5xx) ne sont **jamais** répétées à l'aveugle. Exception sûre : sondage et reprise par offset
 sur la même session resumable YouTube. Les phases de traitement sont sondées avec un plafond.
 Une attente persistante laisse une identité connue et une réservation à rapprocher.
+Un échec peut laisser des conteneurs Instagram ou des photos Facebook non publiées. Le programme
+ne les republie ni ne les supprime automatiquement ; la dernière identité intermédiaire reste
+dans le ledger pour le rapprochement opérateur sur les outils officiels.
 
 ```bash
 python -m scripts.social_publisher --config "$HOME/data/social-publisher-v1/config.json" ledger
@@ -455,7 +508,7 @@ son identifiant vérifié ; cette action n'envoie rien :
 
 ```bash
 python -m scripts.social_publisher --config "$HOME/data/social-publisher-v1/config.json" \
-  reconcile-posted --platform youtube --sha256 '<digest de la vidéo>' \
+  reconcile-posted --platform instagram --sha256 '<digest du contenu>' \
   --remote-id '<identifiant officiel vérifié>' --confirmation I_VERIFIED_REMOTE_POST
 ```
 
