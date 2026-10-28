@@ -49,6 +49,15 @@ class SubscriberStore {
     return this._mutate((items) => items.some((s) => s.email === record.email)
       ? { items, result: null } : { items: [...items, record], result: record });
   }
+  update(id, change) {
+    return this._mutate((items) => {
+      const current = items.find(s => s.id === id);
+      if (!current) return { items, result: null };
+      const next = change(structuredClone(current));
+      if (!next) return { items, result: null };
+      return { items: items.map(s => s.id === id ? next : s), result: next };
+    });
+  }
   remove(id) {
     return this._mutate((items) => {
       const kept = items.filter((s) => s.id !== id);

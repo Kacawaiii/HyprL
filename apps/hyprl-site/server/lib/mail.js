@@ -69,6 +69,9 @@ function createMailer(config, logger = console) {
     port: config.smtp.port,
     secure: config.smtp.secure,
     requireTLS: !config.smtp.secure,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000,
     auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.pass } : undefined,
   });
   return {
