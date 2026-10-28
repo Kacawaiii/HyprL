@@ -53,7 +53,7 @@ def stage_units(directory, config, expected):
     command = f"{quote(sys.executable)} -m scripts.social_publisher --config {quote(Path(config).absolute())} --expected-revision {quote(expected)}"
     common = f"""[Service]
 Type=oneshot
-WorkingDirectory={quote(root)}
+WorkingDirectory={quote(root)[1:-1]}
 Environment=OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 UMask=0077
 Nice=19
@@ -90,7 +90,7 @@ Description=HyprL expiring video URLs on loopback only
 OnFailure=hyprl-social-publisher-alert.service
 [Service]
 Type=simple
-WorkingDirectory={quote(root)}
+WorkingDirectory={quote(root)[1:-1]}
 ExecStart={command} serve-media
 UMask=0077
 Nice=19

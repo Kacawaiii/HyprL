@@ -170,6 +170,9 @@ def test_cli_never_emits_exception_values_or_tokens(tmp_path, capsys):
 
 
 def test_units_are_staged_pinned_and_resource_bounded(tmp_path):
+    import shutil
+    import subprocess
+
     output = tmp_path / "units"
     names = stage_units(output, tmp_path / "config.json", "a" * 40)
     assert len(names) == 4
@@ -181,6 +184,14 @@ def test_units_are_staged_pinned_and_resource_bounded(tmp_path):
     assert "Persistent=false" in timer
     assert "17:20:00 America/New_York" in timer
     assert not (Path.home() / ".config/systemd/user/hyprl-social-publisher.timer").exists()
+    if shutil.which("systemd-analyze"):
+        checked = subprocess.run(
+            ["systemd-analyze", "--user", "verify", *[str(output / name) for name in names]],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert checked.returncode == 0, checked.stderr
 
 
 def test_only_existing_pending_identity_can_be_operator_reconciled(
