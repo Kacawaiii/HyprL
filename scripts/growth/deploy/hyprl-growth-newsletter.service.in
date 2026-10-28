@@ -1,0 +1,15 @@
+[Unit]
+Description=HyprL weekly opt-in newsletter request
+After=hyprl-site.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@SITE_RELEASE@
+EnvironmentFile=@SITE_ENV@
+ExecStart=@NODE@ server/growth/send-weekly.js
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+MemoryMax=100M
+CPUQuota=20%

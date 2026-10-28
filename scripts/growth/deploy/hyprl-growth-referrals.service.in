@@ -1,0 +1,19 @@
+[Unit]
+Description=HyprL dedicated referral service
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@GROWTH_RELEASE@
+EnvironmentFile=%h/.config/hyprl-growth/referral.env
+ExecStart=@PYTHON@ -m scripts.growth.discord_bot
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=160M
+CPUQuota=20%
+
+[Install]
+WantedBy=default.target
