@@ -1,0 +1,14 @@
+node_modules/
+data/
+coverage/
+test-results/
+playwright-report/
+.env
+.env.*
+!.env.example
+!package.json
+!package-lock.json
+!public/contracts/v1/*.json
+.qa-deps/
+!docs/member/*.json
+.qa-ruff/

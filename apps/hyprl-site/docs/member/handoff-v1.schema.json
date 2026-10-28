@@ -1,0 +1,536 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HyprL member handoff v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "enum": [
+        1
+      ]
+    },
+    "provenance": {
+      "enum": [
+        "observed",
+        "synthetic"
+      ]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "briefs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/brief"
+      },
+      "maxItems": 90
+    },
+    "radar": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fact"
+      },
+      "maxItems": 500
+    },
+    "calendar": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/calendar"
+      },
+      "maxItems": 500
+    },
+    "forecasts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/forecast"
+      },
+      "maxItems": 500
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/failure"
+      },
+      "maxItems": 500
+    },
+    "revenue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+          },
+          "cik": {
+            "type": "string",
+            "pattern": "^\\d{10}$"
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "end": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "revenue": {
+                  "type": "string",
+                  "pattern": "^\\d{1,18}(?:\\.\\d{1,4})?$"
+                },
+                "currency": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                },
+                "source": {
+                  "$ref": "#/$defs/source"
+                },
+                "start": {
+                  "type": "string",
+                  "format": "date"
+                }
+              },
+              "required": [
+                "end",
+                "revenue",
+                "currency",
+                "source",
+                "start"
+              ]
+            },
+            "maxItems": 3
+          },
+          "concept": {
+            "enum": [
+              "Revenues",
+              "RevenueFromContractWithCustomerExcludingAssessedTax",
+              "SalesRevenueNet"
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "cik",
+          "periods",
+          "concept"
+        ]
+      },
+      "maxItems": 500
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/claim"
+      },
+      "maxItems": 500
+    }
+  },
+  "required": [
+    "schema_version",
+    "provenance",
+    "generated_at",
+    "briefs",
+    "radar",
+    "calendar",
+    "forecasts",
+    "failures",
+    "revenue",
+    "claims"
+  ],
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 400,
+          "pattern": "^https://[^\\s<>@\\\\?#]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "available_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "url",
+        "sha256",
+        "published_at",
+        "available_at"
+      ]
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "sec_8k",
+            "sec_10q",
+            "sec_form4",
+            "fed",
+            "cpi",
+            "nfp",
+            "earnings"
+          ]
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^<>\\x00-\\x1f]+$"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "kind",
+        "symbol",
+        "summary",
+        "source"
+      ]
+    },
+    "commitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$"
+        },
+        "session": {
+          "type": "string",
+          "format": "date"
+        },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+        },
+        "event": {
+          "enum": [
+            "close_above_open"
+          ]
+        },
+        "probability": {
+          "type": "string",
+          "pattern": "^(?:0\\.\\d{1,8}|1\\.0{1,8})$"
+        },
+        "base_rate": {
+          "type": "string",
+          "pattern": "^(?:0\\.\\d{1,8}|1\\.0{1,8})$"
+        },
+        "committed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "reveal_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "agent",
+        "variant",
+        "session",
+        "symbol",
+        "event",
+        "probability",
+        "base_rate",
+        "committed_at",
+        "reveal_at",
+        "nonce"
+      ]
+    },
+    "forecast": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commitment": {
+          "$ref": "#/$defs/commitment"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "receipt_url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 400,
+          "pattern": "^https://[^\\s<>@\\\\?#]+$"
+        },
+        "outcome": {
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "scored_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "commitment",
+        "sha256",
+        "receipt_url",
+        "outcome",
+        "scored_at",
+        "source"
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$"
+        },
+        "session": {
+          "type": "string",
+          "format": "date"
+        },
+        "code": {
+          "enum": [
+            "missing",
+            "late",
+            "invalid",
+            "unscorable"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "agent",
+        "variant",
+        "session",
+        "code",
+        "source"
+      ]
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "brier_skill": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rolling_hit_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "luck_tail": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "at",
+        "n",
+        "brier_skill",
+        "rolling_hit_rate",
+        "luck_tail"
+      ]
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "enum": [
+            "HypR-A1",
+            "HypR-E1"
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/point"
+          },
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "agent",
+        "variant",
+        "points"
+      ]
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          },
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "date",
+        "published_at",
+        "facts"
+      ]
+    },
+    "calendar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "sec_8k",
+            "sec_10q",
+            "sec_form4",
+            "fed",
+            "cpi",
+            "nfp",
+            "earnings"
+          ]
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9.\\-]{0,14}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scheduled_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "kind",
+        "symbol",
+        "scheduled_at",
+        "source"
+      ]
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^<>\\x00-\\x1f]+$"
+        },
+        "verdict": {
+          "enum": [
+            "verified",
+            "not_supported",
+            "inconclusive"
+          ]
+        },
+        "verified_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "required": [
+        "claim",
+        "verdict",
+        "verified_at",
+        "source"
+      ]
+    }
+  }
+}

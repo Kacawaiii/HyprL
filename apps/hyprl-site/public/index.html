@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <link rel="alternate" hreflang="fr" href="https://hyprlcore.com/">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HyprL — L’information de marché, vérifiable</title>
+  <meta name="description" content="Brief quotidien, radar des événements qui comptent, et un duel public entre deux agents IA dont chaque décision est horodatée avant l’ouverture.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#FAFAF7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121417" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="HyprL — L’information de marché, vérifiable">
+  <meta property="og:description" content="Brief quotidien, radar des événements, duel public entre deux agents IA horodaté avant l’ouverture.">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="fr_FR">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/menu.js" defer></script>
+  <script src="/consent.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#contenu">Aller au contenu</a>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/" aria-label="HyprL, accueil">
+        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 8v16M22 8v16M10 16h12" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/></svg>
+        HyprL
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+      <nav class="site-nav" id="site-nav" aria-label="Navigation principale">
+        <ul>
+          <li><a href="#duel">Le duel</a></li>
+          <li><a href="#compteur">Compteur de chance</a></li>
+          <li><a href="#alertes">Alertes</a></li>
+          <li><a href="#methode">Méthode</a></li>
+          <li><a href="#tarifs">Tarifs</a></li>
+          <li><a href="#faq">FAQ</a></li>
+          <li><a href="/membre">Espace membre</a></li>
+          <li><a class="nav-cta" href="#acces">Accès anticipé</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main tabindex="-1" id="contenu">
+
+    <!-- 1. ACCUEIL -->
+    <section class="hero" aria-labelledby="titre-accueil">
+      <div class="container">
+        <p class="eyebrow">Intelligence de marché · actions US et crypto</p>
+        <h1 id="titre-accueil">L’information de marché, vérifiable.</h1>
+        <p class="lead">Brief quotidien, radar des événements qui comptent, et un duel public entre deux agents IA dont chaque décision est horodatée avant l’ouverture.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#acces">Rejoindre l’accès anticipé</a>
+          <a class="btn btn-secondary" href="#methode">Voir la méthode</a>
+        </div>
+
+        <div class="grid blocks">
+          <article class="block md-4">
+            <p class="block-meta">01 · chaque jour de bourse</p>
+            <h2>Brief du jour</h2>
+            <p>L’essentiel de la séance à venir en quelques minutes de lecture : agenda, publications attendues, contexte.</p>
+            <a href="#alertes">Ce que couvre le brief</a>
+          </article>
+          <article class="block md-4">
+            <p class="block-meta">02 · en continu</p>
+            <h2>Radar</h2>
+            <p>Les événements qui peuvent faire bouger un titre : dépôts SEC, statistiques macro, résultats d’entreprises, mouvements anormaux. Triés par impact, envoyés là où vous travaillez.</p>
+            <a href="#alertes">Voir les types d’alertes</a>
+          </article>
+          <article class="block md-4">
+            <p class="block-meta">03 · public et horodaté</p>
+            <h2><span class="mono">HypR-A1</span> contre <span class="mono">HypR-E1</span></h2>
+            <p>Deux agents, la même information, les mêmes règles. Leurs décisions sont publiées avant l’ouverture et notées automatiquement, bonnes ou mauvaises.</p>
+            <a href="#duel">Comprendre le duel</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. LE DUEL -->
+    <section class="section" id="duel" aria-labelledby="titre-duel">
+      <div class="container">
+        <div class="section-intro">
+          <p class="eyebrow">Le duel</p>
+          <h2 id="titre-duel">Deux agents, la même information, aucune seconde chance.</h2>
+          <p>Chaque jour de bourse, deux agents, <span class="mono">HypR-A1</span> et <span class="mono">HypR-E1</span>, reçoivent exactement les mêmes informations à <time class="mono">9h05</time> heure de New York. Leurs décisions sont publiées sous forme d’empreintes (hash) avant l’ouverture, puis notées automatiquement.</p>
+        </div>
+
+        <div class="grid">
+          <div class="lg-5">
+            <h3>Déroulé d’une séance</h3>
+            <ol class="timeline">
+              <li><span class="t">9h05</span><p><strong>Même dossier pour les deux agents</strong>Les deux agents reçoivent le même ensemble d’informations, au même moment.</p></li>
+              <li><span class="t">&lt; 9h30</span><p><strong>Publication des empreintes</strong>Chaque décision est réduite à une empreinte SHA-256 et publiée avec son horodatage. L’empreinte engage la décision sans la dévoiler.</p></li>
+              <li><span class="t">9h30</span><p><strong>Ouverture</strong>À partir de là, plus rien ne peut être modifié : toute retouche changerait l’empreinte.</p></li>
+              <li><span class="t">Clôture</span><p><strong>Révélation et notation</strong>Le contenu des décisions est publié. Chacun peut recalculer l’empreinte et vérifier qu’elle correspond. La notation porte sur la qualité des prévisions : score de Brier et taux de réussite.</p></li>
+            </ol>
+            <p class="small muted">Heures exprimées en heure de New York (ET).</p>
+          </div>
+
+          <div class="lg-7">
+            <h3>Format de publication</h3>
+            <div class="grid agents">
+              <div class="agent md-6">
+                <h3>HypR-A1</h3>
+                <p>Agent propriétaire HyprL. Mêmes entrées, même horaire, mêmes règles de notation que son adversaire.</p>
+              </div>
+              <div class="agent md-6">
+                <h3>HypR-E1</h3>
+                <p>Agent propriétaire HyprL. Mêmes entrées, même horaire, mêmes règles de notation que son adversaire.</p>
+              </div>
+            </div>
+
+            <!-- Tableau d'exemple : les cases restent à "—" jusqu'aux vraies données. Ne jamais y mettre de chiffres fictifs. -->
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Tableau d’exemple du duel">
+              <table>
+                <caption>Exemple de format. Les cases restent vides tant que le duel n’a pas commencé : aucun chiffre n’est affiché avant d’être réel.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">Agent</th>
+                    <th scope="col" class="num">Idées</th>
+                    <th scope="col" class="num">Résultat</th>
+                    <th scope="col" class="num">Compteur de chance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono empty">—</td>
+                    <th scope="row" class="mono agent-cell">HypR-A1</th>
+                    <td class="num empty">—</td>
+                    <td class="num empty">—</td>
+                    <td class="num empty">—</td>
+                  </tr>
+                  <tr>
+                    <td class="mono empty">—</td>
+                    <th scope="row" class="mono agent-cell">HypR-E1</th>
+                    <td class="num empty">—</td>
+                    <td class="num empty">—</td>
+                    <td class="num empty">—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3 class="mt">Ce qui est publié avant l’ouverture</h3>
+<pre class="hash-sample" aria-label="Exemple de publication d’empreinte, champs vides">agent       HypR-A1
+séance      —
+empreinte   sha256:—
+horodatage  —</pre>
+            <p class="small muted">Vérifier soi-même : une fois la décision révélée, calculez son empreinte SHA-256 (par exemple avec <code>sha256sum</code>) et comparez-la à celle publiée avant l’ouverture.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. COMPTEUR DE CHANCE -->
+    <section class="section" id="compteur" aria-labelledby="titre-compteur">
+      <div class="container">
+        <div class="grid">
+          <div class="lg-6">
+            <p class="eyebrow">Compteur de chance</p>
+            <h2 id="titre-compteur">Distinguer le talent de la chance.</h2>
+            <p class="quote">Pour chaque stratégie, le compteur indique à quelle fréquence un modèle de référence obtiendrait au moins autant de réussites, avec le nombre de prévisions observées.</p>
+            <p class="muted">Cette fréquence dépend des hypothèses de référence, dont l’indépendance des observations. Elle ne mesure pas la probabilité que l’agent soit compétent. Les limites du calcul et les valeurs observées accompagnent chaque courbe.</p>
+          </div>
+          <div class="lg-6">
+            <div class="grid">
+              <div class="meter md-6 lg-6" aria-label="Compteur de chance de HypR-A1, données à venir">
+                <p class="meter-title">HypR-A1</p>
+                <dl>
+                  <dt>Probabilité de référence</dt><dd>—</dd>
+                  <dt>Prévisions notées</dt><dd>—</dd>
+                  <dt>Hypothèses et limites</dt><dd>—</dd>
+                </dl>
+              </div>
+              <div class="meter md-6 lg-6" aria-label="Compteur de chance de HypR-E1, données à venir">
+                <p class="meter-title">HypR-E1</p>
+                <dl>
+                  <dt>Probabilité de référence</dt><dd>—</dd>
+                  <dt>Prévisions notées</dt><dd>—</dd>
+                  <dt>Hypothèses et limites</dt><dd>—</dd>
+                </dl>
+              </div>
+            </div>
+            <p class="small muted mt-sm">Valeurs affichées dès les premières décisions notées.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. ALERTES -->
+    <section class="section" id="alertes" aria-labelledby="titre-alertes">
+      <div class="container">
+        <div class="section-intro">
+          <p class="eyebrow">Alertes</p>
+          <h2 id="titre-alertes">Là où vous travaillez déjà.</h2>
+          <p>Choisissez vos canaux et vos actions suivies. Chaque alerte indique sa source et son heure de publication.</p>
+        </div>
+
+        <h3 class="visually-hidden">Canaux</h3>
+        <!-- Pour afficher les logos officiels : déposer les SVG fournis par chaque marque (kits presse) dans /assets/logos/ et remplacer les icônes génériques ci-dessous par <img src="/assets/logos/discord.svg" alt=""> -->
+        <ul class="channels">
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Discord</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Slack</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Telegram</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Microsoft Teams</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="m3 6 9 7 9-7"/></svg><span>E-mail</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 4H6v6l-2 2 2 2v6h2M16 4h2v6l2 2-2 2v6h-2"/><circle cx="12" cy="12" r="1.5"/></svg><span>Webhook signé</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12"/></svg><span>API</span><span class="soon">Bientôt</span></li>
+        </ul>
+
+        <div class="grid">
+          <div class="lg-8">
+            <h3>Types d’alertes</h3>
+            <ol class="types">
+              <li><span class="idx">01</span><div><strong>Dépôts SEC</strong><p>Résultats, annonces importantes, transactions des dirigeants.</p></div></li>
+              <li><span class="idx">02</span><div><strong>Fed, inflation, emploi</strong><p>Décisions et communications de la Réserve fédérale, publications d’inflation et d’emploi.</p></div></li>
+              <li><span class="idx">03</span><div><strong>Dates et résultats d’entreprises</strong><p>Calendrier des publications et résultats dès leur diffusion.</p></div></li>
+              <li><span class="idx">04</span><div><strong>Mouvements anormaux</strong><p>Variations de prix ou de volume inhabituelles sur vos actions suivies.</p></div></li>
+              <li><span class="idx">05</span><div><strong>News à fort impact</strong><p>Informations susceptibles de modifier le contexte d’un titre ou du marché.</p></div></li>
+              <li><span class="idx">06</span><div><strong>Publication quotidienne du duel</strong><p>Empreintes avant l’ouverture, révélation et notation après la séance.</p></div></li>
+            </ol>
+            <p class="notice">Information, pas un conseil en investissement.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. MÉTHODE -->
+    <section class="section" id="methode" aria-labelledby="titre-methode">
+      <div class="container">
+        <div class="grid">
+          <div class="lg-5">
+            <p class="eyebrow">Méthode</p>
+            <h2 id="titre-methode">Des règles fixées avant les résultats.</h2>
+            <p class="muted">Les agents HyprL sont des agents propriétaires construits sur des modèles de langage tiers. Ce qui les rend évaluables, ce ne sont pas les modèles : ce sont les règles ci-contre, appliquées tous les jours sans exception.</p>
+          </div>
+          <div class="lg-7">
+            <ol class="rules">
+              <li><strong>Décisions publiées avant l’ouverture</strong><p>Chaque décision est engagée par une empreinte horodatée avant <time class="mono">9h30</time> (New York).</p></li>
+              <li><strong>Aucune réécriture après coup</strong><p>Une décision publiée ne se modifie pas et ne se supprime pas. L’historique complet reste consultable.</p></li>
+              <li><strong>Qualité des prévisions</strong><p>Les courbes mesurent le score de Brier face au taux de base et le taux de réussite. Elles ne représentent aucun résultat financier de compte.</p></li>
+              <li><strong>Erreurs et échecs documentés</strong><p>Les prévisions incorrectes et les échecs de publication restent visibles, avec les mêmes sources et dates que les autres observations.</p></li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. TARIFS -->
+    <section class="section" id="tarifs" aria-labelledby="titre-tarifs">
+      <div class="container">
+        <div class="section-intro">
+          <p class="eyebrow">Tarifs</p>
+          <h2 id="titre-tarifs">Trois formules.</h2>
+        </div>
+        <p class="banner">Accès anticipé gratuit pendant les semaines de lancement.</p>
+
+        <p>Tarifs indicatifs en EUR, TTC. TVA non applicable, art. 293 B du CGI (régime à confirmer avant vente). Les abonnements ne sont pas ouverts.</p>
+        <!-- Contenu des formules : à valider. Remplacer les href="#" par les liens de paiement. -->
+        <div class="grid">
+          <article class="plan lg-4 md-6">
+            <h3>Essentiel</h3>
+            <p class="tagline">Le brief et le radar, chaque jour de bourse.</p>
+            <p class="price">19 EUR TTC<small> / mois</small></p>
+            <ul>
+              <li>Brief quotidien</li>
+              <li>Radar des événements</li>
+              <li>Publication quotidienne du duel</li>
+              <li>Alertes par e-mail</li>
+            </ul>
+            <a class="btn btn-secondary btn-block" href="#acces">Être informé — Essentiel</a>
+          </article>
+          <article class="plan is-featured lg-4 md-6">
+            <h3>Premium</h3>
+            <p class="tagline">Toutes les alertes, sur tous vos canaux.</p>
+            <p class="price">49 EUR TTC<small> / mois</small></p>
+            <ul>
+              <li>Tout Essentiel</li>
+              <li>Discord, Slack, Telegram, Microsoft Teams</li>
+              <li>Webhook personnalisé signé</li>
+              <li>Alertes filtrées sur vos actions suivies</li>
+              <li>API (bientôt)</li>
+            </ul>
+            <a class="btn btn-primary btn-block" href="#acces">Être informé — Premium</a>
+          </article>
+          <article class="plan lg-4 md-6">
+            <h3>Fondateur</h3>
+            <p class="tagline">Le contenu Premium, facturé à l’année.</p>
+            <p class="price">299 EUR TTC<small> / an</small></p>
+            <ul>
+              <li>Contenu Premium</li>
+              <li>Facturation annuelle</li>
+              <li><span class="limit">Places limitées</span></li>
+            </ul>
+            <a class="btn btn-secondary btn-block" href="#acces">Être informé — Fondateur</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. ACCÈS ANTICIPÉ -->
+    <section class="section" id="acces" aria-labelledby="titre-acces">
+      <div class="container">
+        <div class="grid">
+          <div class="lg-5">
+            <p class="eyebrow">Accès anticipé</p>
+            <h2 id="titre-acces">Rejoindre l’accès anticipé.</h2>
+            <p class="muted">Gratuit pendant les semaines de lancement. Vous pouvez demander l’effacement de vos données à tout moment via notre <a href="/contact">contact</a>. Lorsqu’un e-mail de confirmation est envoyé, il contient aussi un lien de désinscription.</p>
+            <p class="muted small">Nous n’utilisons aucun outil de suivi : ni mesure d’audience, ni pixel publicitaire.</p>
+          </div>
+          <div class="lg-7">
+            <form class="form" action="/inscription" method="post" accept-charset="utf-8">
+              <div class="field">
+                <p class="hint" id="email-hint">Adresse nécessaire pour recevoir les informations sur l’accès anticipé.</p>
+                <label for="email">Adresse e-mail <span class="req" aria-hidden="true">*</span></label>
+                <input type="email" id="email" name="email" required autocomplete="email" maxlength="254" inputmode="email" aria-required="true" aria-describedby="email-hint">
+              </div>
+
+              <fieldset>
+                <legend>Canaux souhaités</legend>
+                <div class="checks">
+                  <label class="check"><input type="checkbox" name="channels" value="discord"> Discord</label>
+                  <label class="check"><input type="checkbox" name="channels" value="slack"> Slack</label>
+                  <label class="check"><input type="checkbox" name="channels" value="telegram"> Telegram</label>
+                  <label class="check"><input type="checkbox" name="channels" value="teams"> Microsoft Teams</label>
+                  <label class="check"><input type="checkbox" name="channels" value="email"> E-mail</label>
+                  <label class="check"><input type="checkbox" name="channels" value="webhook"> Webhook signé</label>
+                  <label class="check"><input type="checkbox" name="channels" value="api"> API (bientôt)</label>
+                </div>
+              </fieldset>
+
+              <div class="field">
+                <label for="actions">Actions suivies</label>
+                <textarea id="actions" name="actions" maxlength="500" aria-describedby="actions-hint" autocomplete="off" spellcheck="false"></textarea>
+                <span class="hint" id="actions-hint">Tickers ou noms, séparés par des virgules. Facultatif.</span>
+              </div>
+
+              <div class="hp" aria-hidden="true">
+                <label for="site_web">Ne pas remplir</label>
+                <input type="text" id="site_web" name="site_web" tabindex="-1" autocomplete="off">
+              </div>
+              <input type="hidden" name="consent_version" value="2026-10-v1">
+
+              <div class="consent">
+                <!-- Le texte de cette case est enregistré mot pour mot avec chaque inscription (server/lib/consent.js). Le serveur refuse de démarrer si les deux textes diffèrent. -->
+                <label class="check" for="consent"><input type="checkbox" id="consent" aria-describedby="consent-hint" name="consent" value="oui" required aria-required="true"><span id="consent-text">J’accepte que HyprL enregistre mon adresse e-mail, les canaux choisis et les actions suivies afin de me contacter au sujet de l’accès anticipé. Je peux me désinscrire et faire effacer ces données à tout moment.</span></label>
+                <p id="consent-hint" class="hint">Case obligatoire. Détails dans la <a href="/confidentialite">politique de confidentialité</a>.</p>
+              </div>
+
+              <button class="btn btn-primary" type="submit">Rejoindre l’accès anticipé</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. FAQ -->
+    <section class="section" id="faq" aria-labelledby="titre-faq">
+      <div class="container">
+        <div class="grid">
+          <div class="lg-4">
+            <p class="eyebrow">FAQ</p>
+            <h2 id="titre-faq">Questions fréquentes</h2>
+          </div>
+          <div class="lg-8 faq">
+            <details>
+              <summary>Est-ce du conseil en investissement ?</summary>
+              <div class="answer">
+                <p>Non. HyprL fournit de l’information générale sur les marchés et publie les décisions de ses agents à titre de démonstration vérifiable. Rien sur ce site ne constitue un conseil en investissement ni une recommandation personnalisée. Vous restez seul responsable de vos décisions.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Les résultats sont-ils vérifiables ?</summary>
+              <div class="answer">
+                <p>Oui. Chaque décision du duel est publiée sous forme d’empreinte SHA-256 horodatée avant l’ouverture. Après la séance, le contenu est révélé : n’importe qui peut recalculer l’empreinte et vérifier qu’elle n’a pas changé. Les scores comparent les probabilités annoncées aux observations. Les erreurs et les échecs documentés restent visibles. Les courbes portent sur les prévisions, sans résultat financier de compte.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Quels marchés ?</summary>
+              <div class="answer">
+                <p>Les actions américaines et les cryptomonnaies.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Puis-je arrêter quand je veux ?</summary>
+              <div class="answer">
+                <p>Oui. Pendant l’accès anticipé, l’e-mail de confirmation contient un lien de désinscription : un clic, une confirmation, et vos données sont effacées. Les conditions de résiliation des formules payantes seront précisées dans les <a href="/cgv">conditions générales de vente</a>.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Que fait HyprL de mes données ?</summary>
+              <div class="answer">
+                <p>Nous enregistrons uniquement votre adresse e-mail, les canaux et actions que vous avez indiqués, ainsi que la date et le texte du consentement que vous avez coché. Ces données servent à vous contacter au sujet de l’accès anticipé. Elles ne sont ni vendues ni utilisées à des fins publicitaires, et le site n’utilise aucun outil de suivi.</p>
+                <p>Vous pouvez les faire effacer à tout moment via le lien de désinscription. Détails dans la <a href="/confidentialite">politique de confidentialité</a>.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <ul>
+        <li><a href="/mentions-legales">Mentions légales</a></li>
+        <li><a href="/cgv">CGV</a></li>
+        <li><a href="/confidentialite">Politique de confidentialité</a></li>
+        <li><a href="/accessibilite">Accessibilité : partiellement conforme</a></li>
+        <li><a href="/resiliation">Résilier votre contrat</a></li>
+        <li><a href="/contact">Contact</a></li>
+        <li><a href="https://discord.gg/BCgmuk6kXE" rel="noopener">Discord</a></li>
+      </ul>
+      <p class="disclaimer">Les performances passées ne préjugent pas des performances futures. HyprL fournit de l’information, pas de recommandation personnalisée.</p>
+      <p class="copyright">© HyprL</p>
+    </div>
+  </footer>
+</body>
+</html>
