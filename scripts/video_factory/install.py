@@ -25,7 +25,7 @@ def units(checkout, python, config):
     command = " ".join(map(unit_quote, [python, "-m", "scripts.video_factory", "daily", "--config", config, "--publish"]))
     alert = " ".join(map(unit_quote, [python, "-m", "scripts.video_factory", "alert", "--config", config]))
     service = f"""[Unit]
-Description=HyprL silent daily video drafts
+Description=HyprL product and market video drafts
 OnFailure=hyprl-video-factory-alert.service
 
 [Service]
@@ -45,7 +45,7 @@ NoNewPrivileges=yes
 Restart=no
 """
     timer = """[Unit]
-Description=HyprL one short after the duel score, weekdays
+Description=HyprL daily market short and Friday published-score recap
 
 [Timer]
 OnCalendar=Mon..Fri *-*-* 17:05:00 America/New_York
