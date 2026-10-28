@@ -64,6 +64,8 @@ class Adapter:
 
 class Instagram(Adapter):
     def publish(self, bundle):
+        if hasattr(bundle, "images"):
+            return self.carousel(bundle)
         base = self.graph()
         account = numeric(self.account)
         self.checkpoint("creating_container")
@@ -99,9 +101,68 @@ class Instagram(Adapter):
         result = self.form(base + f"/{account}/media_publish", {"creation_id": media})
         return numeric(result["id"])
 
+    def carousel(self, bundle):
+        base, account = self.graph(), numeric(self.account)
+        urls = self.options["image_urls"]
+        validate_image_urls(urls, len(bundle.images["instagram"]))
+        children = []
+        for url in urls:
+            self.checkpoint("creating_carousel_child")
+            value = self.form(
+                base + f"/{account}/media", {"image_url": url, "is_carousel_item": "true"}
+            )
+            child = numeric(value["id"])
+            children.append(child)
+            self.checkpoint("carousel_child_created", child)
+        value = self.form(
+            base + f"/{account}/media",
+            {
+                "media_type": "CAROUSEL",
+                "children": ",".join(children),
+                "caption": bundle.caption,
+            },
+        )
+        parent = numeric(value["id"])
+        self.checkpoint("carousel_parent_created", parent)
+        self.wait(
+            lambda: self.call("GET", base + f"/{parent}?fields=status_code", safe=True),
+            lambda v: v.get("status_code") == "FINISHED",
+            lambda v: v.get("status_code") in ("ERROR", "EXPIRED"),
+        )
+        self.checkpoint("publishing_carousel", parent)
+        result = self.form(base + f"/{account}/media_publish", {"creation_id": parent})
+        return numeric(result["id"])
+
+
+def validate_image_urls(urls, count):
+    if not isinstance(urls, list) or len(urls) != count:
+        raise Blocked("image_url_count_mismatch")
+    for url in urls:
+        https_url(url, {"hyprlcore.com"})
+        if not re.fullmatch(r"https://hyprlcore\.com/social-media/[a-f0-9]{64}/image\.jpg", url):
+            raise Blocked("verified_image_prefix_required")
+
+
+def photo_form(image, **fields):
+    boundary = "HyprL" + secrets.token_hex(16)
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
+        for key, value in fields.items()
+    ]
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="source"; filename="image.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'.encode()
+        + image
+        + b"\r\n"
+    )
+    return b"".join(parts) + f"--{boundary}--\r\n".encode(), {
+        "Content-Type": "multipart/form-data; boundary=" + boundary
+    }
+
 
 class Facebook(Adapter):
     def publish(self, bundle):
+        if hasattr(bundle, "images"):
+            return self.photos(bundle)
         base, account = self.graph(), numeric(self.account)
         self.checkpoint("creating_reel")
         value = self.form(base + f"/{account}/video_reels", {"upload_phase": "start"})
@@ -145,6 +206,20 @@ class Facebook(Adapter):
         )
         return media
 
+    def photos(self, bundle):
+        base, account = self.graph(), numeric(self.account)
+        attachments = {}
+        for index, image in enumerate(bundle.images["instagram"]):
+            self.checkpoint("uploading_unpublished_photo")
+            body, headers = photo_form(image, published="false")
+            value = self.call("POST", base + f"/{account}/photos", body=body, headers=headers)
+            media = numeric(value["id"])
+            self.checkpoint("unpublished_photo_created", media)
+            attachments[f"attached_media[{index}]"] = json.dumps({"media_fbid": media})
+        self.checkpoint("publishing_multi_photo_feed")
+        result = self.form(base + f"/{account}/feed", {"message": bundle.caption, **attachments})
+        return identity(result["id"])
+
 
 def x_text(bundle):
     # No URL: no unsolicited URL-post charge. All text derives from factory metadata.
@@ -175,28 +250,48 @@ class X(Adapter):
         owner = self.call("GET", "https://api.x.com/2/users/me", safe=True)
         if numeric(owner["data"]["id"]) != numeric(self.account):
             raise Blocked("x_authorized_account_mismatch")
+        if hasattr(bundle, "images"):
+            images = bundle.images["x"]
+            if not 1 <= len(images) <= 4:
+                raise Blocked("x_max_four_images")
+            media = [self.upload(image, "image/jpeg", "tweet_image") for image in images]
+        else:
+            media = [self.upload(bundle.video, "video/mp4", "tweet_video")]
+        self.checkpoint("creating_post")
+        result = self.call(
+            "POST",
+            "https://api.x.com/2/tweets",
+            body={
+                "text": text,
+                "media": {"media_ids": media},
+            },
+        )
+        return numeric(result["data"]["id"])
+
+    def upload(self, data, mime, category):
         base = "https://api.x.com/2/media/upload"
         self.checkpoint("initializing_media")
         result = self.call(
             "POST",
             base + "/initialize",
             body={
-                "media_type": "video/mp4",
-                "total_bytes": len(bundle.video),
-                "media_category": "tweet_video",
+                "media_type": mime,
+                "total_bytes": len(data),
+                "media_category": category,
             },
         )
         media = numeric(result["data"]["id"])
         self.checkpoint("media_initialized", media)
         # 4 MB leaves headroom below the recommended 5 MB segment size.
-        for index, offset in enumerate(range(0, len(bundle.video), 4_000_000)):
+        for index, offset in enumerate(range(0, len(data), 4_000_000)):
             boundary = "HyprL" + secrets.token_hex(16)
-            chunk = bundle.video[offset : offset + 4_000_000]
+            chunk = data[offset : offset + 4_000_000]
+            filename = "chunk.jpg" if mime == "image/jpeg" else "chunk.mp4"
             body = (
                 (
                     f'--{boundary}\r\nContent-Disposition: form-data; name="segment_index"\r\n\r\n{index}\r\n'
-                    f'--{boundary}\r\nContent-Disposition: form-data; name="media"; filename="chunk.mp4"\r\n'
-                    "Content-Type: video/mp4\r\n\r\n"
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="media"; filename="{filename}"\r\n'
+                    f"Content-Type: {mime}\r\n\r\n"
                 ).encode()
                 + chunk
                 + f"\r\n--{boundary}--\r\n".encode()
@@ -221,16 +316,7 @@ class X(Adapter):
             result = self.call("GET", base + "?command=STATUS&media_id=" + media, safe=True)
         else:
             raise Uncertain("x_media_processing_pending")
-        self.checkpoint("creating_post", media)
-        result = self.call(
-            "POST",
-            "https://api.x.com/2/tweets",
-            body={
-                "text": text,
-                "media": {"media_ids": [media]},
-            },
-        )
-        return numeric(result["data"]["id"])
+        return media
 
 
 class YouTube(Adapter):
@@ -350,6 +436,44 @@ def tiktok_approval(path, bundle, account, creator, *, now=None):
     ):
         raise Blocked("tiktok_per_video_consent_required")
     info = value.get("post_info", {})
+    if hasattr(bundle, "images"):
+        if (
+            set(info)
+            != {
+                "title",
+                "description",
+                "privacy_level",
+                "disable_comment",
+                "auto_add_music",
+                "brand_content_toggle",
+                "brand_organic_toggle",
+            }
+            or info.get("title") != bundle.metadata["title"]
+            or info.get("description") != bundle.caption
+            or value.get("mode") not in ("private", "draft")
+            or value.get("is_aigc") is not True
+            or value.get("music_usage_confirmation") is not True
+            or info.get("privacy_level") != "SELF_ONLY"
+            or info["privacy_level"] not in creator["privacy_level_options"]
+            or not isinstance(info.get("title"), str)
+            or len(info["title"].encode("utf-16-le")) // 2 > 90
+            or not isinstance(info.get("description"), str)
+            or len(info["description"].encode("utf-16-le")) // 2 > 4000
+            or any(
+                type(info.get(k)) is not bool
+                for k in (
+                    "disable_comment",
+                    "auto_add_music",
+                    "brand_content_toggle",
+                    "brand_organic_toggle",
+                )
+            )
+            or info["auto_add_music"] is not False
+            or info["brand_content_toggle"] is not False
+            or (creator.get("comment_disabled") and not info["disable_comment"])
+        ):
+            raise Blocked("tiktok_photo_settings_invalid")
+        return {"post_info": info, "is_aigc": True, "mode": value["mode"]}
     if (
         info.get("privacy_level") != "SELF_ONLY"
         or info["privacy_level"] not in creator["privacy_level_options"]
@@ -395,6 +519,8 @@ class TikTok(Adapter):
             raise Blocked("tiktok_authorized_account_mismatch")
         creator = self.creator()
         info = tiktok_approval(self.options["approval"], bundle, self.account, creator)
+        if hasattr(bundle, "images"):
+            return self.photos(bundle, info)
         media_url = self.options["media_url"]
         https_url(media_url, {"hyprlcore.com"})
         if not re.fullmatch(
@@ -415,6 +541,46 @@ class TikTok(Adapter):
         )
         publish_id = identity(result["data"]["publish_id"])
         self.checkpoint("processing_" + mode, publish_id)
+        self.wait(
+            lambda: self.call(
+                "POST",
+                "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+                body={"publish_id": publish_id},
+                safe=True,
+            )["data"],
+            lambda v: v.get("status")
+            == ("PUBLISH_COMPLETE" if mode == "private" else "SEND_TO_USER_INBOX"),
+            lambda v: v.get("status") == "FAILED",
+        )
+        return publish_id
+
+    def photos(self, bundle, approved):
+        mode = self.options.get("mode", "private")
+        if mode not in ("private", "draft") or approved["mode"] != mode:
+            raise Blocked("tiktok_photo_consent_mode_mismatch")
+        urls = self.options["image_urls"]
+        validate_image_urls(urls, len(bundle.images["tiktok"]))
+        info = approved["post_info"]
+        # Photo mode has a different endpoint and top-level AI field, in both modes.
+        body = {
+            "media_type": "PHOTO",
+            "post_mode": "DIRECT_POST" if mode == "private" else "MEDIA_UPLOAD",
+            "is_aigc": approved["is_aigc"],
+            "post_info": info
+            if mode == "private"
+            else {k: info[k] for k in ("title", "description")},
+            "source_info": {
+                "source": "PULL_FROM_URL",
+                "photo_images": urls,
+                "photo_cover_index": 0,
+            },
+        }
+        self.checkpoint("initializing_photo_" + mode)
+        result = self.call(
+            "POST", "https://open.tiktokapis.com/v2/post/publish/content/init/", body=body
+        )
+        publish_id = identity(result["data"]["publish_id"])
+        self.checkpoint("processing_photo_" + mode, publish_id)
         self.wait(
             lambda: self.call(
                 "POST",

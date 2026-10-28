@@ -47,7 +47,7 @@ def quote(value):
     return '"' + value.replace("%", "%%") + '"'
 
 
-def stage_units(directory, config, expected):
+def stage_units(directory, config, expected, *, media_kind="carousel"):
     directory = private_dir(directory)
     root = Path(__file__).resolve().parents[2]
     command = f"{quote(sys.executable)} -m scripts.social_publisher --config {quote(Path(config).absolute())} --expected-revision {quote(expected)}"
@@ -64,16 +64,17 @@ TasksMax=16
 NoNewPrivileges=true
 TimeoutStartSec=20min
 """
+    schedule = "18:42:00 Europe/Paris" if media_kind == "carousel" else "17:20:00 America/New_York"
     units = {
         "hyprl-social-publisher.service": f"""[Unit]
 Description=HyprL official social publisher
 OnFailure=hyprl-social-publisher-alert.service
 {common}ExecStart={command} daily
 """,
-        "hyprl-social-publisher.timer": """[Unit]
-Description=Publish after the 17:05 New York video factory
+        "hyprl-social-publisher.timer": f"""[Unit]
+Description=Publish after the daily factory
 [Timer]
-OnCalendar=Mon..Fri *-*-* 17:20:00 America/New_York
+OnCalendar=Mon..Fri *-*-* {schedule}
 Persistent=false
 AccuracySec=30s
 Unit=hyprl-social-publisher.service
@@ -86,7 +87,7 @@ Description=Alert on social publisher failure or process death
 TimeoutStartSec=60s
 """,
         "hyprl-social-media.service": f"""[Unit]
-Description=HyprL expiring video URLs on loopback only
+Description=HyprL expiring image and optional video URLs on loopback only
 OnFailure=hyprl-social-publisher-alert.service
 [Service]
 Type=simple

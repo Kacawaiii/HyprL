@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from scripts.social_publisher.__main__ import main
-from scripts.social_publisher.core import Ledger, atomic_json
+from scripts.social_publisher.core import FACTORY_REVISION, Ledger, atomic_json
 from scripts.social_publisher.ops import stage_units
 from scripts.social_publisher.runner import daily, default_config
 
@@ -40,6 +40,7 @@ class API:
 def config_for(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = default_config()
+    config.update(media_kind="video", factory_revision=FACTORY_REVISION)
     config["state_dir"] = str(tmp_path / "runtime")
     for platform in ("instagram", "youtube"):
         config["platforms"][platform].update(enabled=True, account_id="123")
@@ -146,7 +147,9 @@ def test_x_without_free_entitlement_and_current_tiktok_branding_stay_blocked(
 def test_all_platforms_disabled_does_not_open_factory(tmp_path, monkeypatch, now):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = daily(
-        default_config(), now=now, loader=lambda *args: pytest.fail("no factory read needed")
+        default_config(),
+        now=now.replace(hour=17, minute=42),
+        loader=lambda *args: pytest.fail("no factory read needed"),
     )
     assert result["status"] == "disabled"
 
@@ -182,7 +185,7 @@ def test_units_are_staged_pinned_and_resource_bounded(tmp_path):
     assert "--expected-revision" in service and "a" * 40 in service
     timer = (output / "hyprl-social-publisher.timer").read_text()
     assert "Persistent=false" in timer
-    assert "17:20:00 America/New_York" in timer
+    assert "18:42:00 Europe/Paris" in timer
     assert not (Path.home() / ".config/systemd/user/hyprl-social-publisher.timer").exists()
     if shutil.which("systemd-analyze"):
         checked = subprocess.run(

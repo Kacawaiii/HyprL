@@ -244,6 +244,9 @@ class Ledger:
                 status TEXT NOT NULL, stage TEXT NOT NULL, remote_id TEXT,
                 PRIMARY KEY(platform, sha), UNIQUE(platform, day));
             CREATE TABLE IF NOT EXISTS budgets (grant_sha TEXT PRIMARY KEY, used INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS carousel_media (
+                platform TEXT NOT NULL, media_sha TEXT NOT NULL, post_sha TEXT NOT NULL,
+                PRIMARY KEY(platform, media_sha));
         """)
         self.db.commit()
 
@@ -256,6 +259,22 @@ class Ledger:
                 if old[0] == "posted":
                     return False
                 raise Blocked("previous_attempt_needs_reconciliation")
+            media_sha = None
+            if hasattr(bundle, "images"):
+                pack = "instagram" if platform == "facebook" else platform
+                media_sha = digest(
+                    json.dumps([digest(image) for image in bundle.images[pack]]).encode()
+                )
+                previous = self.db.execute(
+                    "SELECT p.status FROM carousel_media m JOIN posts p "
+                    "ON p.platform=m.platform AND p.sha=m.post_sha "
+                    "WHERE m.platform=? AND m.media_sha=?",
+                    (platform, media_sha),
+                ).fetchone()
+                if previous:
+                    if previous[0] == "posted":
+                        return False
+                    raise Blocked("previous_attempt_needs_reconciliation")
             if self.db.execute(
                 "SELECT 1 FROM posts WHERE platform=? AND day=?", (platform, bundle.day)
             ).fetchone():
@@ -276,6 +295,11 @@ class Ledger:
                     digest(account.encode()),
                 ),
             )
+            if media_sha is not None:
+                self.db.execute(
+                    "INSERT INTO carousel_media VALUES (?,?,?)",
+                    (platform, media_sha, bundle.sha256),
+                )
         return True
 
     def status(self, platform, sha):

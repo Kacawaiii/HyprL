@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .adapters import ADAPTERS, x_text
+from .carousel import CAROUSEL_REVISION, carousel_session, load_carousel
 from .core import (
     FACTORY_REVISION,
     PLATFORMS,
@@ -26,9 +27,10 @@ def default_config():
     return {
         "schema": "hyprl-social-publisher-v1",
         "dry_run": True,
-        "factory_revision": FACTORY_REVISION,
-        "factory_root": str(home / "data" / "videos"),
-        "factory_state": str(home / "data" / "video-factory-v1" / "state"),
+        "media_kind": "carousel",
+        "factory_revision": CAROUSEL_REVISION,
+        "factory_root": str(home / "data" / "carousels"),
+        "factory_state": str(home / "data" / "carousel-factory-v1" / "state"),
         "state_dir": str(home / "data" / "social-publisher-v1" / "runtime"),
         "authorization": str(home / "authorizations" / "social-publisher-v1.json"),
         "platforms": {
@@ -36,7 +38,7 @@ def default_config():
                 "enabled": False,
                 "account_id": "",
                 **(
-                    {"graph_version": "v25.0"}
+                    {"graph_version": "v25.0", "public_media_ready": False}
                     if p in ("instagram", "facebook")
                     else {"zero_cost_write_access_confirmed": False, "monthly_post_cap": 25}
                     if p == "x"
@@ -53,7 +55,9 @@ def default_config():
 def validate_config(config):
     if (
         config.get("schema") != "hyprl-social-publisher-v1"
-        or config.get("factory_revision") != FACTORY_REVISION
+        or config.get("media_kind", "video") not in ("video", "carousel")
+        or config.get("factory_revision")
+        != (CAROUSEL_REVISION if config.get("media_kind") == "carousel" else FACTORY_REVISION)
         or type(config.get("dry_run")) is not bool
         or not isinstance(config.get("platforms"), dict)
         or set(config["platforms"]) - set(PLATFORMS)
@@ -71,6 +75,12 @@ def validate_config(config):
 def preflight(platform, bundle, options):
     if platform in ("instagram", "facebook") and len(bundle.caption) > 2200:
         raise Blocked("meta_caption_limit")
+    if (
+        platform == "instagram"
+        and hasattr(bundle, "images")
+        and options.get("public_media_ready") is not True
+    ):
+        raise Blocked("instagram_public_image_proxy_required")
     if platform == "x":
         if options.get("zero_cost_write_access_confirmed") is not True:
             raise Blocked("x_zero_cost_access_unproven")
@@ -81,7 +91,11 @@ def preflight(platform, bundle, options):
     if platform == "tiktok":
         # The pinned factory renderer always burns in logo/site/promotional text.
         # A human consent record cannot override that incompatible source contract.
-        raise Blocked("factory_v2_branding_incompatible_with_tiktok_guidelines")
+        raise Blocked(
+            "carousel_branding_incompatible_with_tiktok_guidelines"
+            if hasattr(bundle, "images")
+            else "factory_v2_branding_incompatible_with_tiktok_guidelines"
+        )
 
 
 def daily(
@@ -89,23 +103,31 @@ def daily(
     *,
     now=None,
     dry_run=False,
-    loader=load_bundle,
+    loader=None,
     transport_factory=Transport,
     credential_factory=Credentials,
 ):
     validate_config(config)
     now = now or datetime.now(UTC)
-    day = session(now)
+    carousel = config.get("media_kind") == "carousel"
+    day = carousel_session(now) if carousel else session(now)
     if day is None:
         return {"status": "skipped", "reason": "outside_current_nyse_session_after_factory"}
     enabled = {p: o for p, o in config["platforms"].items() if o["enabled"]}
     if not enabled:
         return {"status": "disabled", "day": day}
+    loader = loader or (load_carousel if carousel else load_bundle)
     bundle = loader(config["factory_root"], config["factory_state"], day)
     is_dry = dry_run or config["dry_run"]
     results = {}
     if is_dry:
         for platform, options in enabled.items():
+            if platform == "youtube" and hasattr(bundle, "images"):
+                results[platform] = {
+                    "status": "skipped",
+                    "reason": "youtube_requires_optional_video",
+                }
+                continue
             try:
                 preflight(platform, bundle, options)
                 results[platform] = {
@@ -138,6 +160,12 @@ def daily(
         ledger = Ledger(state)
         try:
             for platform, options in enabled.items():
+                if platform == "youtube" and hasattr(bundle, "images"):
+                    results[platform] = {
+                        "status": "skipped",
+                        "reason": "youtube_requires_optional_video",
+                    }
+                    continue
                 try:
                     previous = ledger.status(platform, bundle.sha256)
                     if previous == "posted":
@@ -167,7 +195,11 @@ def daily(
                         ledger.checkpoint(p, bundle.sha256, stage, remote_id)
 
                     adapter_options = dict(options)
-                    if platform == "tiktok":
+                    if hasattr(bundle, "images") and platform in ("instagram", "tiktok"):
+                        adapter_options["image_urls"] = MediaPool(state / "media").issue_images(
+                            bundle.images[platform]
+                        )
+                    elif platform == "tiktok":
                         adapter_options["media_url"] = MediaPool(state / "media").issue(bundle)
                     adapter = ADAPTERS[platform](
                         platform, http, token, account, adapter_options, checkpoint

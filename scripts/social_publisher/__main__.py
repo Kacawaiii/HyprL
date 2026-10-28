@@ -51,11 +51,18 @@ def main(argv=None):
                 or not re.fullmatch(r"[a-f0-9]{40}", args.expected_revision)
             ):
                 raise Blocked("config_and_full_revision_required")
+            config = json.loads(read_regular(args.config, 64_000, private=True))
+            validate_config(config)
             print(
                 json.dumps(
                     {
                         "status": "staged_only",
-                        "units": stage_units(args.output, args.config, args.expected_revision),
+                        "units": stage_units(
+                            args.output,
+                            args.config,
+                            args.expected_revision,
+                            media_kind=config.get("media_kind", "video"),
+                        ),
                     }
                 )
             )
