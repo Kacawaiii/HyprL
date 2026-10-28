@@ -1,0 +1,11 @@
+[Unit]
+Description=HyprL free weekly newsletter
+
+[Timer]
+OnCalendar=Mon *-*-* 18:00:00 Europe/Paris
+Persistent=true
+RandomizedDelaySec=120
+Unit=hyprl-growth-newsletter.service
+
+[Install]
+WantedBy=timers.target
