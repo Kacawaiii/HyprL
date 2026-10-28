@@ -70,6 +70,10 @@
       var text = document.createElement('div');
       text.textContent = '« ' + s.consent.text + ' »';
       consent.append(when, text);
+      var letter = document.createElement('div');
+      var n = s.newsletter || { status: 'not_requested' };
+      letter.textContent = 'Lettre : ' + ({ not_requested: 'non demandée', pending: 'à confirmer', confirmed: 'confirmée', unsubscribed: 'désabonné' }[n.status] || n.status) + (n.confirmed_at ? ' · ' + fmt.format(new Date(n.confirmed_at)) : '');
+      consent.appendChild(letter);
       tr.appendChild(consent);
       var actions = td('', 'nowrap');
       var exp = document.createElement('a');

@@ -24,6 +24,14 @@ function createPages(publicDir) {
   const back = '<p><a class="btn btn-secondary" href="/">Retour à l’accueil</a></p>';
 
   return {
+    content(title, description, canonical, bodyHtml, schema) {
+      const ld = JSON.stringify(schema).replace(/</g, '\\u003c');
+      const html = render(title, bodyHtml).replace('<meta name="robots" content="noindex, nofollow">',
+        '<meta name="description" content="' + esc(description) + '"><link rel="canonical" href="' + esc(canonical) + '">' +
+        '<meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(description) + '"><meta property="og:url" content="' + esc(canonical) + '"><meta property="og:locale" content="fr_FR">')
+        .replace('</head>', '<script type="application/ld+json">' + ld + '</script></head>');
+      return { html, ld };
+    },
     error(title, message) {
       return render(title, '<h1>' + esc(title) + '</h1>\n<p>' + esc(message) + '</p>\n' +
         '<p><a class="btn btn-secondary" href="/#acces">Revenir au formulaire</a></p>');

@@ -12,6 +12,8 @@ const { expiresAt, startRetentionJob } = require('./lib/retention');
 const { passwordMatches, AttemptLimiter, SessionStore, sha256 } = require('./lib/auth');
 const { createMailer, notificationMessage, confirmationMessage } = require('./lib/mail');
 const { createPages, maskEmail, esc } = require('./lib/pages');
+const { VERSION: NEWSLETTER_VERSION, assertNewsletterPage, publicNewsletter, createNewsletter } = require('./growth/newsletter');
+const { PublicContent } = require('./growth/content');
 
 const ALLOWED_CHANNELS = ['discord', 'slack', 'telegram', 'teams', 'email', 'webhook', 'api'];
 const EMAIL_RE = /^[^\s@<>()",;:\\[\]]+@[^\s@<>()",;:\\[\]]+\.[^\s@<>()",;:\\[\]]{2,}$/;
@@ -37,6 +39,7 @@ function createApp(config, deps = {}) {
 
   const indexHtml = fs.readFileSync(path.join(config.publicDir, 'index.html'), 'utf8');
   assertPageMatches(indexHtml);
+  assertNewsletterPage(indexHtml);
 
   const store = deps.store || new SubscriberStore(config.dataFile).load();
   const retention = startRetentionJob(store, { now, logger, ...(deps.retention || {}) });
@@ -47,6 +50,8 @@ function createApp(config, deps = {}) {
   const sessions = new SessionStore({ idleMs: config.session.idleMs, maxMs: config.session.maxMs, now });
   const member = require('./member/app').createMemberApp(config, { now, ...(deps.member || {}) });
   const publicOrigin = new URL(config.publicUrl).origin;
+  const content = deps.content || new PublicContent(config, { now, ...(deps.publicContent || {}) });
+  const newsletter = createNewsletter({ config, store, mailer, content, now });
 
   const sweeper = setInterval(() => { loginLimiter.sweep(); subscribeLimiter.sweep(); sessions.sweep(); }, 60 * 1000);
   sweeper.unref();
@@ -188,6 +193,9 @@ function createApp(config, deps = {}) {
     if (version !== CURRENT_VERSION || !CONSENT_TEXTS[version]) {
       return fail(400, 'Formulaire périmé', 'Le formulaire a changé depuis l’ouverture de la page. Rechargez-la puis réessayez. Aucune donnée n’a été enregistrée.');
     }
+    const wantsNewsletter = form.get('newsletter') === 'oui';
+    if (wantsNewsletter && form.get('newsletter_version') !== NEWSLETTER_VERSION) return fail(400, 'Formulaire périmé', 'Rechargez la page pour lire le texte actuel de la lettre.');
+    if (wantsNewsletter && !config.newsletter.enabled) return fail(503, 'Lettre temporairement indisponible', 'La lettre ne peut pas accepter de nouvelles demandes. Réessayez ultérieurement ou décochez cette option pour l’accès anticipé seul.');
 
     const email = (form.get('email') || '').trim().toLowerCase();
     if (email.length > 254 || !EMAIL_RE.test(email)) {
@@ -202,7 +210,9 @@ function createApp(config, deps = {}) {
       .slice(0, 500);
 
     // Adresse déjà inscrite : même réponse, aucune donnée modifiée, aucun e-mail renvoyé (pas de fuite d'information).
-    if (store.findByEmail(email)) {
+    const existing = store.findByEmail(email);
+    if (existing) {
+      if (wantsNewsletter) await newsletter.enroll(existing.id);
       return wantsJson ? json(res, 200, { ok: true }) : redirect(res, '/merci');
     }
 
@@ -218,7 +228,11 @@ function createApp(config, deps = {}) {
       unsubscribe_token_hash: hash,
     };
     const added = await store.add(record);
-    if (!added) return wantsJson ? json(res, 200, { ok: true }) : redirect(res, '/merci');
+    if (!added) {
+      if (wantsNewsletter) await newsletter.enroll(store.findByEmail(email).id);
+      return wantsJson ? json(res, 200, { ok: true }) : redirect(res, '/merci');
+    }
+    if (wantsNewsletter) await newsletter.enroll(record.id);
 
     if (config.notifyEmail) deliver(notificationMessage(record, { to: config.notifyEmail, from: config.mailFrom }), 'notification');
     deliver(confirmationMessage(record, { from: config.mailFrom, unsubscribeUrl: unsubscribeUrl(token) }), 'confirmation');
@@ -281,7 +295,7 @@ function createApp(config, deps = {}) {
     if (!requireAdmin(req, res)) return;
     const subscribers = store.all()
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
-      .map(({ unsubscribe_token_hash, ...rest }) => rest);
+      .map(({ unsubscribe_token_hash, newsletter: n, ...rest }) => ({ ...rest, newsletter: publicNewsletter(n) }));
     return json(res, 200, { subscribers });
   }
 
@@ -293,7 +307,7 @@ function createApp(config, deps = {}) {
     return json(res, 200, {
       schema_version: '1.0.0', exported_at: new Date(now()).toISOString(),
       retention_expires_at: expiresAt(created_at),
-      subscriber: { id: personId, email, channels, actions, created_at, consent },
+      subscriber: { id: personId, email, channels, actions, created_at, consent, newsletter: publicNewsletter(record.newsletter) },
     }, { 'Content-Disposition': 'attachment; filename="hyprl-personal-data.json"' });
   }
 
@@ -359,7 +373,37 @@ function createApp(config, deps = {}) {
       const p = url.pathname;
       const m = req.method;
       if (await member.handle(req, res, url)) return;
-      if (p.startsWith('/api/') || p === '/desinscription' || p === '/inscription') await retention.run();
+      if (p.startsWith('/api/') || p.startsWith('/lettre/') || p === '/desinscription' || p === '/inscription') await retention.run();
+      if (p === '/api/internal/newsletter/send') {
+        if (m !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
+        const provided = String(req.headers.authorization || ''), expected = 'Bearer ' + config.newsletter.workerKey;
+        const loopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+        if (!loopback || !config.newsletter.enabled || Buffer.byteLength(provided) !== Buffer.byteLength(expected) || !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) return json(res, 403, { error: 'forbidden' });
+        return json(res, 200, await newsletter.sendWeekly());
+      }
+      if (p === '/api/admin/newsletter/export') {
+        if (m !== 'GET') return json(res, 405, { error: 'method_not_allowed' });
+        if (!requireAdmin(req, res)) return;
+        return json(res, 200, { schema_version: 1, exported_at: new Date(now()).toISOString(), subscribers: store.all().map(s => ({ id: s.id, email: s.email, newsletter: publicNewsletter(s.newsletter) })) }, { 'Content-Disposition': 'attachment; filename="hyprl-newsletter-consents.json"' });
+      }
+      if (p === '/lettre/confirmation' || p === '/lettre/desabonnement') {
+        if (!['GET', 'HEAD', 'POST'].includes(m)) return json(res, 405, { error: 'method_not_allowed' });
+        const token = m === 'POST' ? (await readForm(req)).get('token') || url.searchParams.get('token') : url.searchParams.get('token');
+        const confirmation = p === '/lettre/confirmation';
+        const person = confirmation ? newsletter.pending(token) : newsletter.findUnsubscribe(token);
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        if (!person) return send(res, 404, pages.error('Lien invalide ou expiré', 'Vous pouvez faire une nouvelle demande depuis le formulaire d’accès anticipé.'));
+        if (m !== 'POST') {
+          const action = confirmation ? 'Confirmer mon inscription à la lettre' : 'Me désabonner de la lettre';
+          return send(res, 200, pages.error(action, confirmation ? 'Votre choix sera activé après validation ci-dessous.' : 'L’accès anticipé est conservé. Vous ne recevrez plus la lettre.').replace('<p><a class="btn', '<form method="post" action="' + p + '"><input type="hidden" name="token" value="' + esc(token) + '"><button class="btn btn-primary" type="submit">' + action + '</button></form><p><a class="btn'));
+        }
+        // The no-referrer token page can submit Origin:null. Its unguessable, expiring,
+        // single-use bearer token still binds the action; explicit foreign origins fail.
+        if (confirmation && req.headers.origin !== 'null' && !sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
+        const ok = confirmation ? await newsletter.confirm(token) : await newsletter.unsubscribe(token);
+        return send(res, ok ? 200 : 404, pages.error(ok ? (confirmation ? 'Votre inscription à la lettre est confirmée.' : 'Vous êtes désabonné de la lettre.') : 'Lien invalide ou expiré', confirmation ? 'Vous recevrez la prochaine lettre hebdomadaire gratuite.' : 'Votre choix a été enregistré.'));
+      }
       if (p === '/api/subscribe') return m === 'POST' ? await subscribe(req, res, true) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/inscription') return m === 'POST' ? await subscribe(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/desinscription') {
@@ -391,13 +435,20 @@ function createApp(config, deps = {}) {
         return send(res, 200, m === 'HEAD' ? '' : body, 'text/plain; charset=utf-8');
       }
       if (p === '/sitemap.xml') {
-        const locations = ['/', '/mentions-legales', '/confidentialite', '/cgv', '/accessibilite', '/contact', '/securite', '/resiliation'];
+        const locations = ['/', '/mentions-legales', '/confidentialite', '/cgv', '/accessibilite', '/contact', '/securite', '/resiliation', ...content.paths()];
         const body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
           locations.map((loc) => '<url><loc>' + esc(config.publicUrl + loc) + '</loc></url>').join('') + '</urlset>';
         return send(res, 200, m === 'HEAD' ? '' : body, 'application/xml; charset=utf-8');
       }
       if (p === '/robots.txt') return send(res, 200, m === 'HEAD' ? '' :
-        'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nDisallow: /membre\nDisallow: /auth/\nDisallow: /desinscription\nDisallow: /merci\nSitemap: ' + config.publicUrl + '/sitemap.xml\n', 'text/plain; charset=utf-8');
+        'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nDisallow: /membre\nDisallow: /auth/\nDisallow: /lettre/\nDisallow: /desinscription\nDisallow: /merci\nSitemap: ' + config.publicUrl + '/sitemap.xml\n', 'text/plain; charset=utf-8');
+      const article = content.page(p);
+      if (article) {
+        const { title, description, body, status = 200 } = article;
+        const schema = article.schema || content.schema(p, title, description);
+        const rendered = pages.content(title, description, config.publicUrl + p, body, schema);
+        return send(res, status, m === 'HEAD' ? '' : rendered.html, undefined, { 'Content-Security-Policy': CSP.replace("script-src 'self'", "script-src 'self' 'sha256-" + crypto.createHash('sha256').update(rendered.ld).digest('base64') + "'"), ...(status === 503 ? { 'Retry-After': '1800' } : {}) });
+      }
       return serveStatic(req, res, p);
     } catch (err) {
       if (err && err.status) return json(res, err.status, { error: err.message });
@@ -410,6 +461,7 @@ function createApp(config, deps = {}) {
   handle.store = store;
   handle.sessions = sessions;
   handle.member = member;
+  handle.newsletter = newsletter;
   handle.close = () => { clearInterval(sweeper); retention.close(); member.close(); };
   return handle;
 }

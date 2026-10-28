@@ -35,6 +35,13 @@ function loadConfig(env = process.env) {
     login: { maxAttempts: 5, windowMs: 15 * 60 * 1000 },
     session: { idleMs: 30 * 60 * 1000, maxMs: 12 * 60 * 60 * 1000 },
     subscribeLimit: { max: 10, windowMs: 60 * 60 * 1000 },
+    newsletter: {
+      enabled: env.NEWSLETTER_ENABLED === 'true',
+      trackingDisabled: bool(env.NEWSLETTER_TRACKING_DISABLED),
+      tokenKey: env.NEWSLETTER_TOKEN_KEY || '',
+      workerKey: env.NEWSLETTER_WORKER_KEY || '',
+    },
+    publicSnapshotDir: env.PUBLIC_SNAPSHOT_DIR || env.MEMBER_SNAPSHOT_DIR || '',
   };
 
   const errors = [];
@@ -42,6 +49,8 @@ function loadConfig(env = process.env) {
   else if (config.adminPassword.length < 20) errors.push('ADMIN_PASSWORD doit contenir au moins 20 caractères.');
   if (config.smtp.host && !config.mailFrom) errors.push('MAIL_FROM est obligatoire quand SMTP_HOST est défini.');
   if (config.production && !/^https:\/\//.test(config.publicUrl)) errors.push('PUBLIC_URL doit être en https:// en production.');
+  if (config.newsletter.enabled && (!/^[a-f0-9]{64}$/.test(config.newsletter.tokenKey) || !/^[a-f0-9]{64}$/.test(config.newsletter.workerKey))) errors.push('Newsletter: two private 32-byte hex keys required.');
+  if (config.newsletter.enabled && !config.newsletter.trackingDisabled) errors.push('Newsletter: disable and verify Brevo open/click tracking before setting NEWSLETTER_TRACKING_DISABLED=true.');
   if (errors.length) {
     const err = new Error('Configuration invalide :\n  - ' + errors.join('\n  - '));
     err.code = 'CONFIG';
