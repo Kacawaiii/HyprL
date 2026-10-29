@@ -1,0 +1,16 @@
+{
+  "schema": "member-baseline-projection-spec-v1",
+  "revision": 1,
+  "source_url": "https://github.com/Kacawaiii/HyprL/blob/f5a5f544824255174e0fe8c903448acdb52c0002/docs/artifacts/replay_duel_test_freeze_v16.json",
+  "source_rate": {
+    "n": 1214,
+    "outcomes_sha256": "eb5fd2f9545feb62ff07ffc4e76e0ccd4073789cf4317ee2a3167e6ee4989dc3",
+    "panel": "a_v1_as_live:1d",
+    "spec_hash": "09f4437a3177e10d9b6df544a2847e6a7ab6285b27e33accd028055b69c4a5c8",
+    "successes": 590
+  },
+  "source_rate_sha256": "3fcb283e482925074cad023edcf33ea0452ec6ed2464904cad0c78830345734f",
+  "target_rate_sha256": "0693f1dc690d690ea6e3bd1d797e0ba6f8506640173126c1565ae7d2466bb4f4",
+  "rule": "Require exact source and target preimages and identical n, successes, panel and outcomes_sha256. Only spec_hash may differ. Preserve original score and decision hashes; the exported baseline retains the original v2 identity.",
+  "canonical_sha256": "a7068fa420aa3662879a3612c6c308b13d23efd33a64134d83334c0b93dad0c3"
+}
