@@ -291,6 +291,15 @@ def test_statistics_do_not_assume_random_means_fifty_percent():
     assert study.wilson(5, 10)["ci95"] == pytest.approx([.236593, .763407], abs=1e-6)
 
 
+def test_iso_week_bootstrap_does_not_split_the_civil_year_boundary():
+    start = date(2019, 12, 30)
+    events = []
+    for i in range(7):
+        day = start + timedelta(days=i)
+        events.append({'day': day.isoformat(), 'weekday': day.weekday(), 'taken': day.weekday() != 4})
+    assert study.paired_week_blocks(events) == [[0, 1, 6, 6]]
+
+
 def test_units_only_schedule_this_job_with_bounded_resources():
     value = units("/synthetic/checkout", "/synthetic/python", "/synthetic/config")
     assert set(value) == {"hyprl-video-factory.service", "hyprl-video-factory.timer", "hyprl-video-factory-alert.service"}

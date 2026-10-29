@@ -1,10 +1,10 @@
 {
-  "analysis_implementation_sha256": "10aadf5681e1e22283ceefbe8c745334a178c452e7482f31e6b4e73340e82b4c",
+  "analysis_implementation_sha256": "81e03f7b55de2b3886af3438a961a0a90f09fae4ed20b2aceaa8ba75ad1836e6",
   "authorization_id": "video-factory-btc-asia-v1",
   "authorization_sha256": "f078fccf9d458c3acb33f900bc9fab9cea35fc14f11eb8c2c68e679533e60b34",
   "caution": "Historical exploratory evidence; Wilson/binomial calculations assume independence. The random-day baseline is empirical, not 50%. Weekly blocks cannot rule out longer dependence.",
   "compatible_with_60_percent": true,
-  "computed_at": "2026-10-29T14:26:13.068167+00:00",
+  "computed_at": "2026-10-29T14:36:55.663699+00:00",
   "excluded_days": 14,
   "friday": {
     "ci95": [
@@ -32,6 +32,12 @@
     "n": 2701,
     "rate": 0.5801554979637171
   },
+  "paired_sample": {
+    "friday_k": 251,
+    "friday_n": 450,
+    "other_k": 1560,
+    "other_n": 2688
+  },
   "paired_weeks": 450,
   "plan_sha256": "2f2e51605173ad8c6a7502505fc2dfb43a09e4be0ca4571622a54621095e3209",
   "random_baseline_rate_ci95": [
@@ -55,8 +61,8 @@
   "status": "DONE",
   "verdict": "Friday advantage not established; chance is not ruled out.",
   "week_block_difference_ci95": [
-    -0.0710449768896646,
-    0.028996835293390182
+    -0.07136015415820178,
+    0.02858242885909002
   ],
   "years": [
     {

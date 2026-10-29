@@ -8,7 +8,7 @@ The fixed rule is the strict later-same-day breach of the 02:00–11:00 Europe/P
 
 Coinbase Exchange BTC-USD hourly candles, UTC 2018-01-01 through 2026-09-01 exclusive: 264 authorized GETs, no retry, at most one request per second; 75,919 observed candles. Complete measurement windows: 3,151 days; 14 incomplete days excluded, with no filling. Year 2026 ends on August 31. Friday exceeds the other-day point estimate in 4/9 years; those subgroup comparisons are descriptive.
 
-The empirical all-day rate is 57.7%; uniform year-stratified random samples use the Friday sample size, with a simulated 95% range of 53.6–62.0%. It is not a 50% coin baseline. The primary contrast resamples 450 paired ISO-week blocks 10,000 times with the fixed seed. Longer dependence may remain. Wilson intervals and the separate binomial test assume independent observations. This historical exploratory check is not untouched out-of-sample evidence.
+The empirical all-day rate is 57.7%; uniform year-stratified random samples use the Friday sample size, with a simulated 95% range of 53.6–62.0%. It is not a 50% coin baseline. The primary contrast resamples 450 paired ISO-week blocks 10,000 times with the fixed seed. These blocks include 450 Fridays and 2,688 matching other days; 13 otherwise valid non-Friday days have no complete Friday in their ISO week. Weeks spanning civil years remain intact. Longer dependence may remain. Wilson intervals and the separate binomial test assume independent observations. This historical exploratory check is not untouched out-of-sample evidence.
 
 | Year | Friday k/n | Friday % [95% CI] | Other days % [95% CI] | All-day random-pool % [95% CI] | Excluded days |
 | --- | ---: | --- | --- | --- | ---: |
@@ -30,11 +30,11 @@ Collection requires the signed exact-scope operator grant; its durable shared bu
 
 - Plan SHA256: `2f2e51605173ad8c6a7502505fc2dfb43a09e4be0ca4571622a54621095e3209`.
 - Private input manifest SHA256: `fb3f8bc813f626cfbb4c7fbf89eff72647ee60f49aa3beb4ac6419a019fa9876`.
-- Analysis implementation SHA256: `10aadf5681e1e22283ceefbe8c745334a178c452e7482f31e6b4e73340e82b4c`.
+- Analysis implementation SHA256: `81e03f7b55de2b3886af3438a961a0a90f09fae4ed20b2aceaa8ba75ad1836e6`.
 - Signed authorization byte SHA256: `f078fccf9d458c3acb33f900bc9fab9cea35fc14f11eb8c2c68e679533e60b34`.
 - [Aggregate result](artifacts/btc_asia_study_result_v1.json). No private source body or individual candle is published.
 - [An actual in-scope Coinbase request](https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600&start=2018-01-01T00%3A00%3A00Z&end=2018-01-12T23%3A59%3A59Z).
 
-The existing offline API is `load_candles`, `daily_events`, then `summarize` in `scripts/video_factory/study.py`. The study plan is unchanged. The only analysis correction converts the SciPy p-value to a native Python float so its derived boolean and completed result can be serialized to JSON. A regression check serializes and reads the complete result. No data-dependent rule or threshold was tuned.
+The existing offline API is `load_candles`, `daily_events`, then `summarize` in `scripts/video_factory/study.py`. The study plan is unchanged. Two implementation corrections preserve the declared plan: convert the SciPy p-value to a native Python float for JSON serialization, and group ISO weeks globally before the civil-year descriptive summaries. The former civil-year loop split cross-year weeks. Regression checks serialize the result and keep all seven days of a December/January ISO week together. Aggregates were recomputed offline without another source request; rounded rates and the conclusion are unchanged. No data-dependent rule or threshold was tuned.
 
 The seven-slide carousel reports the observed sample/uncertainty, compares yearly empirical rates, and separates compatibility with 60%, a weekday advantage, and profitability. No video is produced.

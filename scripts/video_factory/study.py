@@ -130,6 +130,21 @@ def daily_events(bars, step, start=START, end=END):
     return events, excluded
 
 
+def paired_week_blocks(events):
+    """Keep each ISO week intact, including weeks spanning civil calendar years."""
+    weeks = defaultdict(list)
+    for row in events:
+        weeks[date.fromisoformat(row["day"]).isocalendar()[:2]].append(row)
+    blocks = []
+    for week in weeks.values():
+        friday = [row for row in week if row["weekday"] == 4]
+        other = [row for row in week if row["weekday"] != 4]
+        if friday and other:
+            blocks.append([sum(row["taken"] for row in friday), len(friday),
+                           sum(row["taken"] for row in other), len(other)])
+    return blocks
+
+
 def summarize(events, excluded):
     import numpy as np
     from scipy.stats import binomtest
@@ -140,7 +155,7 @@ def summarize(events, excluded):
     years = []
     random_samples = np.zeros(PLAN["replicates"])
     friday_n = 0
-    blocks = []
+    blocks = paired_week_blocks(events)
     for year in range(START.year, END.year + 1):
         rows = [r for r in events if int(r["day"][:4]) == year]
         friday = [r for r in rows if r["weekday"] == 4]
@@ -154,13 +169,6 @@ def summarize(events, excluded):
                                                 sum(not r["taken"] for r in rows),
                                                 len(friday), PLAN["replicates"])
             friday_n += len(friday)
-        weeks = defaultdict(list)
-        for r in rows:
-            weeks[date.fromisoformat(r["day"]).isocalendar()[:2]].append(r)
-        for week in weeks.values():
-            f, o = [r for r in week if r["weekday"] == 4], [r for r in week if r["weekday"] != 4]
-            if f and o:
-                blocks.append([sum(r["taken"] for r in f), len(f), sum(r["taken"] for r in o), len(o)])
         entry["excluded_days"] = sum(d.startswith(str(year)) for d in excluded)
         entry["partial_calendar_year"] = year == END.year
         years.append(entry)
@@ -175,6 +183,8 @@ def summarize(events, excluded):
         "random_baseline_rate_ci95": (np.quantile(random_samples / friday_n, [.025, .975]).tolist() if friday_n else None),
         "friday_vs_60_two_sided_p": (float(binomtest(sum(r["taken"] for r in friday), len(friday), .60).pvalue) if friday else None),
         "week_block_difference_ci95": None,
+        "paired_sample": {key: sum(block[i] for block in blocks) for i, key in
+                          enumerate(("friday_k", "friday_n", "other_k", "other_n"))},
         "caution": "Historical exploratory evidence; Wilson/binomial calculations assume independence. "
                    "The random-day baseline is empirical, not 50%. Weekly blocks cannot rule out longer dependence.",
     }
