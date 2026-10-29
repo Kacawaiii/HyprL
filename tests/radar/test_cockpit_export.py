@@ -162,16 +162,43 @@ def test_momo_tag_comes_from_the_journal_engine():
 
 @pytest.mark.parametrize("poison", ["someone@example.invalid", "PKABCDEFGHIJKLMNOPQRS", "Bearer abcdef", "api_key=zzz",
                                     "/home/agent/private"])
-def test_secret_shaped_text_is_refused(poison):
+def test_secret_shaped_text_is_redacted_and_counted(poison):
     radar = json.loads(json.dumps(RADAR))
     radar["events"][0]["headline"] = "ok " + poison
-    with pytest.raises(export.ExportError):
-        export.build_home(radar, None, None)
+    snapshot = export.build_home(radar, None, None)
+    assert next(e for e in snapshot['events'] if e['id'] == radar['events'][0]['id'])['headline'] is None
+    assert snapshot['redactions']['secret_shaped_strings'] > 0
+    assert poison not in json.dumps(snapshot)
+    export.assert_clean(snapshot)
 
 
 def test_forbidden_field_is_refused():
     with pytest.raises(export.ExportError):
         export.assert_clean({"a": [{"account_number": "123"}]})
+
+
+def test_redaction_covers_arbitrary_nested_strings_and_write_boundary(tmp_path):
+    from copy import deepcopy
+    snapshot = {'overlays': [{'label': 'Bearer synthetic', 'title': 'api_key=synthetic',
+                              'url': 'https://example.invalid/home/synthetic',
+                              'verification': 'VERIFIED', 'notes': ['safe', 'password=synthetic']}],
+                'safe': 'Visible'}
+    original = deepcopy(snapshot)
+    clean = export.redact_urls(snapshot)
+    assert clean['overlays'] == [{'label': None, 'title': None, 'url': None,
+                                  'verification': 'NON VERIFIE', 'notes': ['safe', None]}]
+    assert clean['redactions'] == {'secret_shaped_urls': 1, 'secret_shaped_strings': 4}
+    assert clean['safe'] == 'Visible' and snapshot == original
+    assert export.redact_urls(clean) == clean
+    target = export.write_snapshot(tmp_path, 'analysis.json', snapshot)
+    assert json.loads(target.read_text()) == clean
+    export.assert_clean(clean)
+
+
+def test_redaction_does_not_bypass_forbidden_fields(tmp_path):
+    with pytest.raises(export.ExportError):
+        export.write_snapshot(tmp_path, 'analysis.json', {'token': 'Bearer synthetic'})
+    assert not (tmp_path / 'analysis.json').exists()
 
 
 def test_history_appends_once_per_timestamp(tmp_path):

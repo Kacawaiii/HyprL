@@ -101,34 +101,37 @@ def assert_clean(value, path="$"):
 
 
 def redact_urls(snapshot):
-    """Drop suspect URL values locally, then run the unchanged strict export guard.
+    """Redact every suspect string value, then run the strict export guard.
 
     Count candidate value occurrences, without retaining the offending value.
-    Free text and forbidden fields still fail closed. Build a fresh tree so shared
+    Forbidden fields still fail closed. Build a fresh tree so shared
     decision chains and the caller's inputs cannot hide or inherit a redaction.
     """
-    count = 0
-    def visit(value):
-        nonlocal count
+    previous = snapshot.get('redactions') or {}
+    count = previous.get('secret_shaped_strings', previous.get('secret_shaped_urls', 0))
+    urls = previous.get('secret_shaped_urls', 0)
+    if any(type(n) is not int or n < 0 for n in (count, urls)):
+        raise ExportError('invalid redaction counts')
+    def visit(value, key=None):
+        nonlocal count, urls
+        if isinstance(value, str) and any(pattern.search(value) for pattern in SECRET_TEXT):
+            count += 1
+            urls += int(key in {'url', 'source_url', 'link'})
+            return None
         if isinstance(value, list):
             return [visit(item) for item in value]
         if not isinstance(value, dict):
             return value
         out = {}
         for key, item in value.items():
-            if (key in {'url', 'source_url', 'link'} and isinstance(item, str)
-                    and any(pattern.search(item) for pattern in SECRET_TEXT)):
-                out[key] = None
-                count += 1
-            else:
-                out[key] = visit(item)
+            out[key] = visit(item, key)
         if 'verification' in out and 'url' in out and out['url'] is None:
             out['verification'] = 'NON VERIFIE'
         if isinstance(out.get('sources'), list) and out['sources'] and 'verification' in out:
             out['verification'] = out['sources'][0]['verification']
         return out
     result = visit(snapshot)
-    result['redactions'] = {'secret_shaped_urls': count}
+    result['redactions'] = {'secret_shaped_urls': urls, 'secret_shaped_strings': count}
     assert_clean(result)
     return result
 
@@ -573,7 +576,7 @@ def read_jsonl(path):
 def write_snapshot(directory: Path, name: str, snapshot: dict):
     import os
     import tempfile
-    assert_clean(snapshot)
+    snapshot = redact_urls(snapshot)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / name
     temporary = None

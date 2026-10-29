@@ -73,14 +73,15 @@ def test_join_results_to_exact_run_analyst_asset_horizon():
     assert all(o['decision']['result'] is None for o in snapshot['overlays'] if o['kind'] == 'event')
 
 
-def test_missing_fields_and_secret_refusal():
+def test_missing_fields_and_secret_redaction():
     snapshot = build_analysis(RADAR)
     d = next(o['decision'] for o in snapshot['overlays'] if o['kind'] == 'event')
     assert d['entry_condition'] is None and d['expectation_at'] is None and d['result'] is None
     poisoned = intent('AAA', 'news')
     poisoned['journal']['plan'] = 'api_key=SECRET'
-    with pytest.raises(ExportError):
-        build_analysis(RADAR, journal=[poisoned])
+    snapshot = build_analysis(RADAR, journal=[poisoned])
+    assert 'api_key=SECRET' not in json.dumps(snapshot)
+    assert snapshot['redactions']['secret_shaped_strings'] > 0
 
 
 def test_secret_shaped_source_url_is_redacted_and_counted_without_losing_events(tmp_path):

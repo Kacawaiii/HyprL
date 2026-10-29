@@ -188,7 +188,7 @@ def refresh(config, *, at=None, read_units=True):
                     for s in known_sources.values()]})
             except (sqlite3.Error, OSError, ValueError):
                 analysis['limitations'].append('Santé du ledger radar indisponible; dernier rapport conservé avec sa date.')
-        export.assert_clean(analysis)
+        analysis = export.redact_urls(analysis)
         optional = {key: export.read_json(config[key]) if config.get(key) and Path(config[key]).is_file() else None
                     for key in ('calendar', 'book_watchlist', 'paper_report')}
         home = export.build_home(radar, trader, paper, generated_at=stamp,
@@ -202,7 +202,9 @@ def refresh(config, *, at=None, read_units=True):
         return {'state': 'EXPORTED', 'events': len(home['events']), 'overlays': len(analysis['overlays']),
                 'omitted_overlays': analysis['omitted_overlays'],
                 'redacted_urls': sum(s.get('redactions', {}).get('secret_shaped_urls', 0)
-                                     for s in (home, analysis, paper) if s)}
+                                     for s in (home, analysis, paper) if s),
+                'redacted_strings': sum(s.get('redactions', {}).get('secret_shaped_strings', 0)
+                                        for s in (home, analysis, paper) if s)}
 
 
 def render_units(repo, interpreter, config):
