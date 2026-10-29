@@ -199,7 +199,7 @@ def briefs(db, directory, now, excluded):
         ]
         if observed_hash != meta["report"]["hash"]:
             raise ValueError("BRIEF_REPORT_HASH_MISMATCH")
-        stories = {s["headline"]: s for e in report.get("events", []) for s in e.get("stories", [])}
+        events = report.get('events', [])
         facts = []
         for item in meta.get("items", []):
             # Topical labels alone do not make an item official. The source URL
@@ -214,13 +214,37 @@ def briefs(db, directory, now, excluded):
                 r"\b(?:CPI|Consumer Price Index)\b", headline, re.I
             ):
                 kind = "cpi"
-            story = stories.get(item["headline"])
-            if not story or kind is None:
+            matches = [s for e in events for s in e.get('stories', []) if s.get('headline') == headline]
+            if not matches:
+                grouped = [e for e in events if e.get('headline') == headline]
+                if len(grouped) == 1:
+                    # Export the observed source headlines, never attribute the
+                    # grouped editorial wording to an invented source.
+                    matches = grouped[0].get('stories', [])
+            eligible = False
+            seen_sources = set()
+            for story in matches:
+                source_kind = kind
+                if story.get('primary') is True:
+                    if story.get('source', '').startswith('fed:'):
+                        source_kind = 'fed'
+                    elif story.get('source') == 'sec:8k':
+                        source_kind = 'sec_8k'
+                    elif (urlsplit(story.get('url', '')).hostname == 'www.bls.gov'
+                          and story.get('macro_kind') in ('cpi', 'nfp')):
+                        source_kind = story['macro_kind']
+                if source_kind is None:
+                    continue
+                eligible = True
+                identity = (story.get('url'), story.get('headline_hash'))
+                if identity in seen_sources:
+                    continue
+                seen_sources.add(identity)
+                value = fact(story, cutoff, excluded, kind=source_kind)
+                if value:
+                    facts.append(value)
+            if not eligible:
                 excluded["brief_item_without_v1_source_projection"] += 1
-                continue
-            value = fact(story, cutoff, excluded, kind=kind)
-            if value:
-                facts.append(value)
         if facts:
             day = key[:10]
             results[day] = {"date": day, "published_at": iso(published), "facts": facts[:100]}

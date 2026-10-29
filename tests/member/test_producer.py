@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from datetime import datetime, timezone
+import pytest
 
 from scripts.member_export.producer import produce
 
@@ -308,3 +309,38 @@ def test_failures_need_published_reveal_bytes_and_keep_public_agent_names(tmp_pa
     proof.write_text(json.dumps(marker))
     with pytest.raises(ValueError, match="REVEAL_MANIFEST_MISMATCH"):
         produce(config, now=NOW)
+
+
+@pytest.mark.parametrize('case', ['sourced', 'future', 'ambiguous', 'unrelated'])
+def test_grouped_brief_projects_only_its_observed_source_headline(tmp_path, case):
+    import hashlib
+    from pathlib import Path
+    config = sources(tmp_path)
+    story = news(config, source='sec:8k', headline='Company reports a quarterly filing',
+                 url='https://www.sec.gov/Archives/edgar/data/1/000000000126000001/report.htm')
+    if case == 'future': story['received_at'] = '2026-10-26T12:05:00Z'
+    grouped = 'Synthetic grouped results'
+    report = {'live':True, 'markdown':'Synthetic report',
+              'events':[{'headline':grouped,'stories':[story]}]}
+    if case == 'ambiguous': report['events'].append(dict(report['events'][0]))
+    if case == 'unrelated': report['events'][0]['headline'] = 'Another group'
+    stored = '2026-10-26T12:02:00Z'
+    with sqlite3.connect(config['radar_db']) as db:
+        db.execute('INSERT INTO evidence(kind,key,at,body) VALUES(?,?,?,?)',
+                   ('report','synthetic-report',stored,json.dumps(report)))
+    meta = {'id':'2026-10-26-semaine','at':'2026-10-26T12:03:00Z',
+            'report':{'key':'synthetic-report','stored_at':stored,
+                      'hash':hashlib.sha256(json.dumps(report['markdown']).encode()).hexdigest()[:16]},
+            'items':[{'topic':'resultats','headline':grouped}]}
+    directory=Path(config['brief_dir'])
+    (directory/'2026-10-26-semaine.json').write_text(json.dumps(meta))
+    (directory/'deliveries.jsonl').write_text(json.dumps({'brief':meta['id'],'at':'2026-10-26T12:04:00Z',
+                                                       'status':'SENT','messages':1,'sent':1})+'\n')
+    value,_=produce(config,now=NOW)
+    if case == 'sourced':
+        row=value['briefs'][0]['facts'][0]
+        assert row['kind']=='sec_8k' and row['summary']==story['headline']
+        assert row['summary']!=grouped and row['source']['url']==story['url']
+        assert row['source']['sha256']==story['headline_hash']
+    else:
+        assert value['briefs']==[]

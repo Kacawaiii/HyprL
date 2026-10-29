@@ -10,6 +10,7 @@ SCHEMA_HASHES = {
     "snapshot": "12d94734cfdef908afb7d3b4d6282a2d8c607429d7e20b56f85fef0f32340435",
 }
 FROZEN_RATE_SHA256 = "0693f1dc690d690ea6e3bd1d797e0ba6f8506640173126c1565ae7d2466bb4f4"
+BASELINE_PROJECTION_SHA256 = "a7068fa420aa3662879a3612c6c308b13d23efd33a64134d83334c0b93dad0c3"
 REPOSITORY = "https://github.com/Kacawaiii/HyprL"
 BASELINE_URL = (
     REPOSITORY
@@ -29,4 +30,12 @@ def schema(name):
     value = json.loads((SCHEMAS / (name + "-v2.schema.json")).read_text())
     if hashlib.sha256(canonical(value)).hexdigest() != SCHEMA_HASHES[name]:
         raise ValueError("MEMBER_SCHEMA_BINDING_MISMATCH")
+    return value
+
+
+def baseline_projection():
+    path = SCHEMAS.parents[3] / 'docs/artifacts/member_baseline_projection_spec_v1.json'
+    value = json.loads(path.read_text())
+    if value.pop('canonical_sha256') != BASELINE_PROJECTION_SHA256 or hashlib.sha256(canonical(value)).hexdigest() != BASELINE_PROJECTION_SHA256:
+        raise ValueError('BASELINE_PROJECTION_BINDING_MISMATCH')
     return value

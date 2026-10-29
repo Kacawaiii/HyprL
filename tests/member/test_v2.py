@@ -274,6 +274,56 @@ def test_negative_skill_empty_horizons_and_missing_baseline_are_honest(tmp_path)
     assert all(r["n"] == 0 and r["points"] == [] for r in build(value, now=NOW)["series"])
 
 
+def test_revised_source_baseline_maps_only_the_identical_frozen_outcome_sample(tmp_path):
+    from scripts.member_export.spec import baseline_projection
+    config = observed(tmp_path)
+    base = Path(config['forward_dir'])
+    score = json.loads((base/'scores.json').read_text())
+    mapping = baseline_projection()
+    score['base_rate_source'] = 'FROZEN_DEV_BASE_RATE:' + mapping['source_rate_sha256']
+    save_score(config, score)
+    value, status = produce(config, now=NOW)
+    assert value['baseline']['sha256'] == FROZEN_RATE_SHA256
+    assert status['baseline_projection']['identical_observed_outcomes'] is True
+    assert len(value['forecasts']) == 2
+    assert build(value, now=NOW)['baseline'] == value['baseline']
+    score['base_rate_source'] = 'FROZEN_DEV_BASE_RATE:' + 'f'*64
+    save_score(config, score)
+    with pytest.raises(ValueError, match='FROZEN_BASE_RATE_MISMATCH'):
+        produce(config, now=NOW)
+
+
+def test_baseline_projection_cannot_substitute_a_different_outcome_sample(tmp_path, monkeypatch):
+    from scripts.member_export import producer_v2
+    from scripts.member_export.spec import baseline_projection
+    config = observed(tmp_path)
+    base = Path(config['forward_dir'])
+    score = json.loads((base/'scores.json').read_text())
+    mapping = copy.deepcopy(baseline_projection())
+    mapping['source_rate']['outcomes_sha256'] = 'f'*64
+    mapping['source_rate_sha256'] = research_digest(mapping['source_rate'])
+    score['base_rate_source'] = 'FROZEN_DEV_BASE_RATE:' + mapping['source_rate_sha256']
+    save_score(config, score)
+    monkeypatch.setattr(producer_v2,'baseline_projection',lambda:mapping)
+    with pytest.raises(ValueError, match='FROZEN_BASE_RATE_MISMATCH'):
+        produce(config, now=NOW)
+
+
+def test_member_calendar_follows_a_complete_daily_config_generation(tmp_path):
+    config = observed(tmp_path)
+    current = tmp_path/'current-config.json'
+    fresh = tmp_path/'fresh-calendar.json'
+    cal = json.loads(Path(config['calendar_file']).read_text())
+    cal['events'] = [{'kind':'EARNINGS','symbol':'DEMO','at':'2026-10-30T23:59:59Z'}]
+    fresh.write_text(json.dumps(cal))
+    current.write_text(json.dumps({'calendar':str(fresh)}))
+    config['calendar_config'] = str(current)
+    value,_ = produce(config,now=NOW)
+    assert len(value['calendar']) == 1 and value['calendar'][0]['date']=='2026-10-30'
+    assert value['calendar'][0]['scheduled_at'] is None
+    assert value['calendar'][0]['source'] is None
+
+
 @pytest.mark.parametrize("change", ["baseline", "hour", "proof", "future", "extra", "v1"])
 def test_contract_rejects_fabricated_evidence_and_implicit_migration(tmp_path, change):
     value, _ = produce(observed(tmp_path), now=NOW)

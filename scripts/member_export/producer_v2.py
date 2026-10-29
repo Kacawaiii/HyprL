@@ -18,7 +18,7 @@ from .export import MAX_BYTES, canonical, instant
 from .export_v2 import build, publish
 from .producer import AGENTS, atomic, git, iso, read_json, research_digest
 from .producer import produce as produce_v1
-from .spec import BASELINE_URL, FROZEN_RATE_SHA256, REPOSITORY
+from .spec import BASELINE_URL, FROZEN_RATE_SHA256, REPOSITORY, baseline_projection
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_FILE = "forward-duel-ledger.jsonl"
@@ -128,6 +128,8 @@ def reveal(config, session, family, mode, expected, now, excluded, expected_spec
 
 def produce(config, *, now=None):
     now = now or datetime.now(timezone.utc)
+    if config.get('calendar_config'):
+        config = {**config, 'calendar_file': read_json(config['calendar_config'])['calendar']}
     old, status = produce_v1(config, now=now)
     excluded = Counter(status["excluded"])
     excluded.pop("forecast_event_and_commitment_incompatible_v1", None)
@@ -146,11 +148,21 @@ def produce(config, *, now=None):
     rate = read_json(ROOT / "docs/artifacts/replay_duel_test_freeze_v15.json")[
         "frozen_dev_base_rate"
     ]
-    if (
-        research_digest(rate) != FROZEN_RATE_SHA256
-        or score["base_rate_source"] != "FROZEN_DEV_BASE_RATE:" + FROZEN_RATE_SHA256
-    ):
+    if research_digest(rate) != FROZEN_RATE_SHA256:
         raise ValueError("FROZEN_BASE_RATE_MISMATCH")
+    source = score['base_rate_source']
+    if source != 'FROZEN_DEV_BASE_RATE:' + FROZEN_RATE_SHA256:
+        mapping = baseline_projection()
+        projected = mapping['source_rate']
+        if (mapping['target_rate_sha256'] != FROZEN_RATE_SHA256
+                or research_digest(projected) != mapping['source_rate_sha256']
+                or source != 'FROZEN_DEV_BASE_RATE:' + mapping['source_rate_sha256']
+                or set(projected) != set(rate)
+                or {k:v for k,v in projected.items() if k != 'spec_hash'} != {k:v for k,v in rate.items() if k != 'spec_hash'}):
+            raise ValueError('FROZEN_BASE_RATE_MISMATCH')
+        status['baseline_projection'] = {'source_sha256': mapping['source_rate_sha256'],
+                                         'target_sha256': FROZEN_RATE_SHA256,
+                                         'identical_observed_outcomes': True}
     pbase = (rate["successes"] + 1) / (rate["n"] + 2)
     if score["primary_endpoint"]["base_rate"] != pbase:
         raise ValueError("SCORE_BASE_RATE_MISMATCH")
