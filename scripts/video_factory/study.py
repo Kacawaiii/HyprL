@@ -173,7 +173,7 @@ def summarize(events, excluded):
         "years_comparable": len(usable), "excluded_days": len(excluded),
         "share_years_friday_beats_other_days": (sum(r["friday_beats_other_days"] for r in usable) / len(usable) if usable else None),
         "random_baseline_rate_ci95": (np.quantile(random_samples / friday_n, [.025, .975]).tolist() if friday_n else None),
-        "friday_vs_60_two_sided_p": (binomtest(sum(r["taken"] for r in friday), len(friday), .60).pvalue if friday else None),
+        "friday_vs_60_two_sided_p": (float(binomtest(sum(r["taken"] for r in friday), len(friday), .60).pvalue) if friday else None),
         "week_block_difference_ci95": None,
         "caution": "Historical exploratory evidence; Wilson/binomial calculations assume independence. "
                    "The random-day baseline is empirical, not 50%. Weekly blocks cannot rule out longer dependence.",

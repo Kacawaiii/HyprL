@@ -283,6 +283,7 @@ def test_statistics_do_not_assume_random_means_fifty_percent():
         day = start+timedelta(days=i)
         events.append({"day": day.isoformat(), "weekday": day.weekday(), "taken": True})
     result = study.summarize(events, [])
+    assert json.loads(json.dumps(result, allow_nan=False)) == result
     assert result["random_day"]["rate"] == 1
     assert result["random_baseline_rate_ci95"] == [1, 1]
     assert result["years_friday_beats_other_days"] == 0

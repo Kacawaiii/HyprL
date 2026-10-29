@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from scripts.video_factory.factory import AGENTS, PUBLIC_REVEAL
 from scripts.video_factory.market import DIGEST, instant, marker_sources, public_url, source
-from scripts.video_factory.study import PLAN, plan_hash
+from scripts.video_factory.study import plan_hash
 
 from .content import post, slide
 
@@ -407,9 +407,36 @@ def verdict(path, now):
         if proven is True
         else "Le hasard reste une explication possible"
     )
-    stamp = (
-        f"Étude HyprL · plan {plan_hash()[:12]}\nRésultat local calculé ; publication non horodatée"
+    stamp = f"Coinbase BTC/USD · plan {plan_hash()[:12]}\n2018–31/08/2026 ; 2026 partielle"
+    for key in ("friday", "other_days"):
+        value = r[key]
+        if (
+            type(value["n"]) is not int
+            or type(value["k"]) is not int
+            or not 0 <= value["k"] <= value["n"]
+            or not value["n"]
+            or not math.isclose(value["rate"], value["k"] / value["n"])
+            or len(value["ci95"]) != 2
+            or not 0 <= value["ci95"][0] <= value["rate"] <= value["ci95"][1] <= 1
+        ):
+            raise ValueError("invalid overall study rate")
+        if (
+            sum(y[key]["n"] for y in r["years"]) != value["n"]
+            or sum(y[key]["k"] for y in r["years"]) != value["k"]
+        ):
+            raise ValueError("yearly and overall study samples differ")
+    friday, other = r["friday"], r["other_days"]
+    rate = f"Vendredi : {friday['k']}/{friday['n']} = {friday['rate'] * 100:.1f} % ; IC 95 % [{friday['ci95'][0] * 100:.1f} ; {friday['ci95'][1] * 100:.1f}] %."
+    comparison = f"Autres jours : {other['rate'] * 100:.1f} %."
+    p = r["friday_vs_60_two_sided_p"]
+    if not isinstance(p, (int, float)) or not 0 <= p <= 1:
+        raise ValueError("invalid 60-percent test")
+    compatibility = (
+        "60 % non écarté ; ce test ne le confirme pas."
+        if r["compatible_with_60_percent"]
+        else "60 % écarté au seuil de 5 %."
     )
+    probability = "p < 0,001" if p < 0.001 else f"p = {p:.3f}"
     ci = r.get("week_block_difference_ci95")
     detail = (
         f"Écart vendredi / autres jours : intervalle 95 % [{ci[0] * 100:.1f} ; {ci[1] * 100:.1f}] points."
@@ -422,33 +449,37 @@ def verdict(path, now):
             "BTC : le plus bas de la session Asie est-il ensuite franchi ?",
         ),
         slide(
-            "Une règle qui semble simple",
-            "Un jour de semaine, une session, un seuil. Une affirmation précise devient testable.",
+            "Une règle fixée avant le calcul",
+            "Asie : 02h–11h, heure de Paris. Après 11h et avant minuit, le cours doit passer strictement sous ce plus bas. Une simple touche ne compte pas.",
+            source=stamp,
         ),
         slide(
-            "Une règle fixée avant le calcul",
-            f"{PLAN['period'] if 'period' in PLAN else '2018 au 31 août 2026'}. Bougies intrajournalières. Asie : 02h–11h Paris. Franchissement strict après 11h. Les jours incomplets sont exclus.",
+            "L'échantillon, sans remplir les trous",
+            f"2018 au 31 août 2026 : {friday['n'] + other['n']} jours complets, {r['excluded_days']} exclus. Bougies de {r.get('granularity_seconds', 3600) // 60} minutes. Aucun prix du holdout septembre–novembre 2026.",
             source=stamp,
         ),
         slide(
             "Vendredis, autres jours, hasard",
-            "Taux par année. Le hasard correspond à des jours tirés dans les mêmes années, jamais à 50 % par défaut.",
+            "Taux par année ; 2026 s'arrête en août. Le hasard utilise des jours des mêmes années, sans supposer 50 %.",
             source=stamp,
             chart=chart,
         ),
         slide(
             decision,
-            detail + " Ce constat historique exploratoire ne prédit pas les gains futurs.",
+            rate + " " + comparison + " " + detail,
             source=stamp,
         ),
         slide(
-            "Un taux ne suffit pas",
-            "Le seuil de 60 %, l'écart avec les autres jours et la rentabilité sont trois questions distinctes.",
+            "60 % n'est pas une stratégie",
+            compatibility
+            + " "
+            + probability
+            + ". Le test binomial suppose l'indépendance ; les blocs hebdomadaires n'excluent pas une dépendance plus longue. Aucun gain estimé.",
             source=stamp,
         ),
         slide(
             "Les vérifications continuent",
-            "Les données, la règle et les limites accompagnent le verdict.",
+            "Les résultats agrégés, la règle et les limites accompagnent ce verdict.",
             cta="D'autres vérifications sur hyprlcore.com",
         ),
     ]
@@ -457,7 +488,22 @@ def verdict(path, now):
         "Problem-Proof",
         cards[0]["title"],
         cards,
-        "Une affirmation virale sur le BTC confrontée à une règle fixée et à des jours comparables. Étude historique exploratoire.",
+        "Chance ou pas ? #1 — Étude historique exploratoire. "
+        + rate
+        + " "
+        + comparison
+        + " "
+        + detail
+        + " "
+        + compatibility
+        + " "
+        + probability
+        + ". "
+        + f"Vendredi dépasse les autres jours dans {r['years_friday_beats_other_days']}/{r['years_comparable']} années (2026 partielle). "
+        + "Règle Paris 02h–11h, puis franchissement strict avant minuit. Comparaison par blocs de semaines, 10 000 réplications. "
+        + "Dépendance plus longue possible ; les IC Wilson et le test contre 60 % supposent l'indépendance. "
+        + "Ce taux ne mesure ni rentabilité, ni causalité. Aucun ordre, entraînement ou prix du holdout septembre–novembre 2026.",
+        sources=[u for u in (r.get("public_evidence_url"), r.get("source_url")) if u],
         evidence=[r],
         provenance={"result_sha256": hashlib.sha256(raw).hexdigest()},
     )

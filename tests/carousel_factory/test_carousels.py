@@ -231,6 +231,8 @@ def test_missing_study_or_blocked_result_never_becomes_a_verdict(tmp_path):
 
 
 def test_complete_synthetic_verdict_renders_real_yearly_comparisons(config, tmp_path):
+    from scripts.video_factory.study import wilson
+
     path = tmp_path / "complete-study.json"
     count = {"n": 10, "k": 4, "rate": 0.4, "ci95": [0.1, 0.7]}
     other = {"n": 10, "k": 2, "rate": 0.2, "ci95": [0.05, 0.5]}
@@ -246,14 +248,26 @@ def test_complete_synthetic_verdict_renders_real_yearly_comparisons(config, tmp_
         ],
         "friday_advantage_established": False,
         "week_block_difference_ci95": [-0.1, 0.4],
+        "friday": wilson(36, 90),
+        "other_days": wilson(18, 90),
+        "excluded_days": 0,
+        "friday_vs_60_two_sided_p": 0.001,
+        "compatible_with_60_percent": False,
+        "years_friday_beats_other_days": 9,
+        "years_comparable": 9,
     }
     path.write_text(json.dumps(result))
     p = verdict(path, NOW)
     assert p["slides"][4]["title"] == "Le hasard reste une explication possible"
     assert p["slides"][3]["chart"][0]["values"] == [0.4, 0.2, 0.3]
+    assert "36/90" in p["slides"][4]["body"] and "IC 95 %" in p["slides"][4]["body"]
     m = render(p, Path(config["output_dir"]) / "study", config["font_dir"])
     assert len(m["platforms"]["instagram"]) == 7
     assert m["platforms"]["x"][1]["chart"]
+    result["friday"]["n"] += 1
+    path.write_text(json.dumps(result))
+    with pytest.raises(ValueError):
+        verdict(path, NOW)
 
 
 def test_document_requires_four_official_citations(tmp_path):
