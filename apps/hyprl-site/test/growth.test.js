@@ -11,6 +11,7 @@ const { VERSION, TEXT, assertNewsletterPage } = require('../server/growth/newsle
 const { CURRENT_VERSION } = require('../server/lib/consent');
 const { PublicContent, weekAt, claimId } = require('../server/growth/content');
 const { fixture } = require('./member-fixtures');
+const { proof } = require('./signup-client');
 const quiet = { info() {}, warn() {}, error() {} };
 const workerKey = '2'.repeat(64), password = 'synthetic-growth-test-password';
 const valid = { email: 'reader@example.test', consent: 'oui', consent_version: CURRENT_VERSION, newsletter: 'oui', newsletter_version: VERSION };
@@ -21,7 +22,7 @@ async function setup(t, extra = {}) {
   value.calendar.push({ ...value.calendar[0], kind: 'earnings', symbol: 'DEMO', date: '2026-10-29' });
   value.claims[0].verdict = 'verified';
   const snapshots = { read() { return structuredClone(value); } };
-  const config = loadConfig({ ADMIN_PASSWORD: password, PUBLIC_URL: 'http://localhost:9999', DATA_FILE: path.join(dir, 'subs.json'), NEWSLETTER_ENABLED: 'true', NEWSLETTER_TRACKING_DISABLED: 'true', NEWSLETTER_TOKEN_KEY: '1'.repeat(64), NEWSLETTER_WORKER_KEY: workerKey, SMTP_HOST: 'smtp.example.test', MAIL_FROM: 'letter@example.test', SMTP_EU_APPROVED: 'true', ...extra });
+  const config = loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), ADMIN_PASSWORD: password, PUBLIC_URL: 'http://localhost:9999', DATA_FILE: path.join(dir, 'subs.json'), NEWSLETTER_ENABLED: 'true', NEWSLETTER_TRACKING_DISABLED: 'true', NEWSLETTER_TOKEN_KEY: '1'.repeat(64), NEWSLETTER_WORKER_KEY: workerKey, SMTP_HOST: 'smtp.example.test', MAIL_FROM: 'letter@example.test', SMTP_EU_APPROVED: 'true', ...extra });
   const content = new PublicContent(config, { now: () => clock, snapshots });
   let app;
   const start = () => createApp(config, { now: () => clock, logger: quiet, publicContent: { snapshots }, mailer: { async send(m) { mails.push(m); if (m.subject.startsWith('La lettre') && extra.failDelivery) throw Error('synthetic SMTP uncertain'); return true; } } });
@@ -30,13 +31,16 @@ async function setup(t, extra = {}) {
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   let base = 'http://127.0.0.1:' + server.address().port;
   t.after(async () => { app.close(); await new Promise(r => server.close(r)); fs.rmSync(dir, { recursive: true, force: true }); });
-  const request = (route, body, headers = {}, method = 'POST') => fetch(base + route, { method, headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers }, body: method === 'GET' ? undefined : new URLSearchParams(body), redirect: 'manual' });
+  const request = async (route, body, headers = {}, method = 'POST') => {
+    if (route === '/api/subscribe') { body = { ...body, ...await proof(base, ms => { clock += ms; }) }; headers = { Origin: config.publicUrl, ...headers }; }
+    return fetch(base + route, { method, headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers }, body: method === 'GET' ? undefined : new URLSearchParams(body), redirect: 'manual' });
+  };
   return { get app() { return app; }, config, content, value, mails, request,
     get: route => fetch(base + route), advance: ms => { clock += ms; },
     send: () => request('/api/internal/newsletter/send', {}, { Authorization: 'Bearer ' + workerKey }),
     async restart() { app.close(); await new Promise(r => server.close(r)); app = start(); server = http.createServer(app); await new Promise(r => server.listen(0, '127.0.0.1', r)); base = 'http://127.0.0.1:' + server.address().port; },
     async enroll(email = valid.email) { return request('/api/subscribe', { ...valid, email }); },
-    confirmation() { const m = mails.findLast(m => m.subject.startsWith('Confirmez')); return new URL(m.text.match(/http:\/\/localhost:9999\/lettre\/confirmation\?token=[\w-]+/)[0]); },
+    confirmation() { const m = mails.findLast(m => m.subject.startsWith('Confirmez')); return new URL(m.text.match(/http:\/\/localhost:9999\/confirmation\?token=[\w-]+/)[0]); },
     async confirm() { return request('/lettre/confirmation', { token: this.confirmation().searchParams.get('token') }); },
     async login() { const r = await fetch(base + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }); return r.headers.get('set-cookie').split(';')[0]; },
   };
@@ -57,7 +61,7 @@ test('unchecked/channel-email/legacy entries never become newsletter subscribers
   assert.equal(c.app.store.all()[0].newsletter, undefined);
   const send = await c.send(); assert.equal(send.status, 200);
   assert.equal((await send.json()).sent, 0);
-  assert.equal(c.mails.filter(m => m.subject.startsWith('Confirmez')).length, 0);
+  assert.equal(c.mails.filter(m => m.subject.startsWith('Confirmez')).length, 1);
 });
 
 test('separate consent is required at the API and fails atomically when version or config is wrong', async t => {
@@ -90,19 +94,16 @@ test('double opt-in uses a hashed 48h token; GET/scanners never activate; POST i
   assert.equal((await c.request('/lettre/confirmation', { token: 'x'.repeat(43) })).status, 404);
 });
 
-test('expired confirmation, rate limited resend and enrollment for an existing early-access address', async t => {
+test('expired confirmation never resends or enrolls an unauthenticated duplicate', async t => {
   const c = await setup(t);
-  await c.request('/api/subscribe', { ...valid, newsletter: '' });
-  await c.enroll(); await c.enroll();
-  assert.equal(c.app.store.all().length, 1);
-  assert.equal(c.mails.filter(m => m.subject.startsWith('Confirmez')).length, 1);
+  await c.enroll();
   const old = c.confirmation().searchParams.get('token');
   c.advance(48 * 3600000);
-  assert.equal((await c.request('/lettre/confirmation', { token: old })).status, 404);
+  assert.equal((await c.request('/confirmation', { token: old })).status, 404);
   await c.enroll();
-  assert.notEqual(c.confirmation().searchParams.get('token'), old);
-  assert.equal((await c.request('/lettre/confirmation', { token: old })).status, 404);
-  assert.equal((await c.confirm()).status, 200);
+  assert.equal(c.mails.filter(m => m.subject.startsWith('Confirmez')).length, 1);
+  assert.equal(c.confirmation().searchParams.get('token'), old);
+  assert.equal(c.app.store.all()[0].status, 'pending');
 });
 
 test('weekly delivery only confirmed recipients, durable at-most-once across retries and restarts', async t => {
@@ -151,7 +152,7 @@ test('concurrent worker requests never duplicate a letter; general deletion remo
   const responses = await Promise.all([c.send(), c.send()]);
   assert.ok(responses.every(r => [200, 409].includes(r.status)));
   assert.equal(c.mails.filter(m => m.subject.startsWith('La lettre')).length, 1);
-  const early = c.mails.find(m => m.subject.startsWith('Votre inscription'));
+  const early = c.mails.find(m => m.subject.startsWith('Confirmez'));
   const deletion = new URL(early.list.unsubscribe.url);
   assert.equal((await c.request(deletion.pathname + deletion.search, { 'List-Unsubscribe': 'One-Click' })).status, 200);
   assert.equal(c.app.store.all().length, 0);
@@ -169,7 +170,7 @@ test('unsubscribe GET has no effect; one-click POST stops letters and retains ea
   assert.equal(c.app.store.all()[0].newsletter.status, 'unsubscribed');
   assert.equal(c.app.store.all()[0].consent.given, true);
   assert.equal((await (await c.send()).json()).sent, 0);
-  await c.enroll(); assert.equal(c.app.store.all()[0].newsletter.status, 'pending');
+  await c.enroll(); assert.equal(c.app.store.all()[0].newsletter.status, 'unsubscribed');
 });
 
 test('admin exports require authentication and expose consent evidence without any token/hash', async t => {

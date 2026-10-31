@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { expiresAt } = require('./retention');
+const { expiresAt, recordExpiresAt } = require('./retention');
 
 class SubscriberStore {
   constructor(file) {
@@ -24,7 +24,11 @@ class SubscriberStore {
     try {
       fs.writeFileSync(tmp, JSON.stringify({ subscribers: items }, null, 2), { mode: 0o600 });
       fs.chmodSync(tmp, 0o600);
+      const fd = fs.openSync(tmp, 'r');
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       fs.renameSync(tmp, this.file);
+      const directory = fs.openSync(path.dirname(this.file), 'r');
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
     } finally {
       fs.rmSync(tmp, { force: true });
     }
@@ -65,14 +69,14 @@ class SubscriberStore {
     });
   }
   purgeExpiredSync(now) {
-    const kept = this.items.filter((s) => Date.parse(expiresAt(s.created_at)) > now);
+    const kept = this.items.filter((s) => Date.parse(recordExpiresAt(s)) > now);
     const removed = this.items.length - kept.length;
     if (removed) { this._writeSync(kept); this.items = kept; }
     return removed;
   }
   purgeExpired(now) {
     return this._mutate((items) => {
-      const kept = items.filter((s) => Date.parse(expiresAt(s.created_at)) > now);
+      const kept = items.filter((s) => Date.parse(recordExpiresAt(s)) > now);
       return { items: kept.length === items.length ? items : kept, result: items.length - kept.length };
     });
   }

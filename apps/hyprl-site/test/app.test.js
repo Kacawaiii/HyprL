@@ -12,6 +12,8 @@ const { loadConfig } = require('../server/config');
 const { createApp } = require('../server/app');
 const { CONSENT_TEXTS, CURRENT_VERSION } = require('../server/lib/consent');
 
+const { proof } = require('./signup-client');
+const clients = new Map();
 const PASSWORD = 'mot-de-passe-de-test-tres-long-0123';
 
 async function setup() {
@@ -19,7 +21,7 @@ async function setup() {
   let clock = Date.parse('2026-10-26T13:05:00Z');
   const mails = [];
   const logs = [];
-  const config = loadConfig({ ADMIN_PASSWORD: PASSWORD, NOTIFY_EMAIL: 'notification@example.test', DATA_FILE: path.join(dir, 'subs.json'), PUBLIC_URL: 'http://localhost:9999' });
+  const config = loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), SMTP_HOST: 'smtp.example.test', MAIL_FROM: 'from@example.test', SMTP_EU_APPROVED: 'true', ADMIN_PASSWORD: PASSWORD, NOTIFY_EMAIL: 'notification@example.test', DATA_FILE: path.join(dir, 'subs.json'), PUBLIC_URL: 'http://localhost:9999' });
   const app = createApp(config, {
     now: () => clock,
     mailer: { send: async (m) => { mails.push(m); return true; } },
@@ -28,6 +30,7 @@ async function setup() {
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = 'http://127.0.0.1:' + server.address().port;
+  clients.set(base, { advance: ms => { clock += ms; }, origin: config.publicUrl });
   return {
     base, mails, logs, app, config, dir,
     advance: (ms) => { clock += ms; },
@@ -46,10 +49,16 @@ const valid = {
   consent: 'oui', consent_version: CURRENT_VERSION,
 };
 
-const post = (base, p, body, headers = {}) => fetch(base + p, {
-  method: 'POST', redirect: 'manual', body,
-  headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
-});
+const post = async (base, p, body, headers = {}) => {
+  const client = clients.get(base);
+  if (['/api/subscribe', '/inscription'].includes(p)) {
+    const fields = new URLSearchParams(body);
+    for (const [k, v] of Object.entries(await proof(base, client.advance))) fields.set(k, v);
+    body = fields.toString(); headers = { Origin: client.origin, ...headers };
+  }
+  return fetch(base + p, { method: 'POST', redirect: 'manual', body,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers } });
+};
 const tick = () => new Promise((r) => setImmediate(r));
 
 async function loginCookie(t) {
@@ -89,8 +98,9 @@ test('inscription : date, heure, texte exact du consentement, e-mails', async ()
     assert.equal(s.email, 'subscriber1@example.test');
     assert.deepEqual(s.channels, ['discord', 'email']);
     assert.equal(s.actions, 'AAPL, NVDA, BTC');
-    assert.equal(s.created_at, '2026-10-26T13:05:00.000Z');
-    assert.deepEqual(s.consent, { given: true, version: CURRENT_VERSION, text: CONSENT_TEXTS[CURRENT_VERSION], checked_at: '2026-10-26T13:05:00.000Z' });
+    assert.equal(s.created_at, '2026-10-26T13:05:03.000Z');
+    assert.equal(s.status, 'pending');
+    assert.deepEqual(s.consent, { given: true, version: CURRENT_VERSION, text: CONSENT_TEXTS[CURRENT_VERSION], checked_at: '2026-10-26T13:05:03.000Z' });
     assert.ok(/^[0-9a-f]{64}$/.test(s.unsubscribe_token_hash));
 
     const disk = JSON.parse(fs.readFileSync(t.config.dataFile, 'utf8'));
@@ -98,13 +108,7 @@ test('inscription : date, heure, texte exact du consentement, e-mails', async ()
     if (process.platform !== 'win32') assert.equal(fs.statSync(t.config.dataFile).mode & 0o777, 0o600);
 
     await tick();
-    const notif = t.mails.find((m) => m.to === 'notification@example.test');
-    assert.ok(notif, 'notification envoyée à notification@example.test');
-    assert.equal(notif.text,
-      'Date : 26/10/2026 14:05:00 (heure de Paris)\n' +
-      'Adresse : subscriber1@example.test\n' +
-      'Canaux : Discord, E-mail\n' +
-      'Actions suivies : AAPL, NVDA, BTC\n');
+    assert.equal(t.mails.length, 1, 'one confirmation only; no immediate operator mail');
     const conf = t.mails.find((m) => m.to === 'subscriber1@example.test');
     assert.match(conf.text, /http:\/\/localhost:9999\/desinscription\?token=[A-Za-z0-9_-]{43}/);
     assert.equal(conf.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
@@ -230,8 +234,8 @@ test('admin : liste et DELETE /api/admin/subscribers/{id}', async () => {
 });
 
 test('configuration : mot de passe obligatoire, 20 caractères minimum', () => {
-  assert.throws(() => loadConfig({}), /ADMIN_PASSWORD est obligatoire/);
-  assert.throws(() => loadConfig({ ADMIN_PASSWORD: 'court' }), /au moins 20/);
+  assert.throws(() => loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64),}), /ADMIN_PASSWORD est obligatoire/);
+  assert.throws(() => loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), SMTP_HOST: 'smtp.example.test', MAIL_FROM: 'from@example.test', SMTP_EU_APPROVED: 'true', ADMIN_PASSWORD: 'court' }), /au moins 20/);
 });
 
 test('statique : pages, en-têtes de sécurité, pas de traversée de répertoire', async () => {

@@ -15,6 +15,12 @@ function expiresAt(createdAt) {
   return target.toISOString();
 }
 
+function recordExpiresAt(record) {
+  // Legacy entries have no evidence of early-access double opt-in.
+  return record.status === 'confirmed' ? expiresAt(record.created_at)
+    : new Date(Date.parse(record.created_at) + 7 * 86400000).toISOString();
+}
+
 function startRetentionJob(store, { now = Date.now, logger = console, schedule = setInterval, cancel = clearInterval } = {}) {
   // Fail startup if the store cannot be purged; never quietly retain overdue records.
   store.purgeExpiredSync(now());
@@ -25,4 +31,4 @@ function startRetentionJob(store, { now = Date.now, logger = console, schedule =
   timer.unref?.();
   return { run, close: () => cancel(timer) };
 }
-module.exports = { expiresAt, startRetentionJob };
+module.exports = { expiresAt, recordExpiresAt, startRetentionJob };

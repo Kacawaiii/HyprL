@@ -48,7 +48,7 @@ function createPages(publicDir) {
     },
     unsubscribeDone() {
       return render('Désinscription effectuée',
-        '<h1>Vous êtes désinscrit.</h1>\n<p>Vos données ont été effacées. Vous ne recevrez plus d’e-mail de HyprL.</p>\n' + back);
+        '<h1>Vous êtes désinscrit.</h1>\n<p>Votre inscription et ses données personnelles ont été effacées. Vous ne recevrez plus d’e-mail de HyprL. Seule une empreinte à clé anti-renvoi reste conservée, au plus 24 mois, comme indiqué dans la politique de confidentialité.</p>\n' + back);
     },
     unsubscribeInvalid() {
       return render('Lien invalide',

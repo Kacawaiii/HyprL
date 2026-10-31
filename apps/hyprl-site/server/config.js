@@ -34,7 +34,8 @@ function loadConfig(env = process.env) {
     },
     login: { maxAttempts: 5, windowMs: 15 * 60 * 1000 },
     session: { idleMs: 30 * 60 * 1000, maxMs: 12 * 60 * 60 * 1000 },
-    subscribeLimit: { max: 10, windowMs: 60 * 60 * 1000 },
+    formTokenKey: env.FORM_TOKEN_KEY || '',
+    signupGuardFile: path.resolve(ROOT, env.SIGNUP_GUARD_FILE || (env.DATA_FILE || 'data/subscribers.json') + '.guard.json'),
     newsletter: {
       enabled: env.NEWSLETTER_ENABLED === 'true',
       trackingDisabled: bool(env.NEWSLETTER_TRACKING_DISABLED),
@@ -45,6 +46,10 @@ function loadConfig(env = process.env) {
   };
 
   const errors = [];
+  if ((config.production || config.formTokenKey) && !/^[a-f0-9]{64}$/.test(config.formTokenKey)) errors.push('FORM_TOKEN_KEY: private 32-byte hex key required.');
+  if (!config.production && !config.formTokenKey) config.formTokenKey = require('node:crypto').randomBytes(32).toString('hex');
+  if (config.formTokenKey === config.newsletter.tokenKey || config.formTokenKey === config.newsletter.workerKey) errors.push('FORM_TOKEN_KEY must be independent.');
+  if (config.signupGuardFile === config.dataFile) errors.push('Separate signup guard state required.');
   if (!config.adminPassword) errors.push('ADMIN_PASSWORD est obligatoire (variable d’environnement).');
   else if (config.adminPassword.length < 20) errors.push('ADMIN_PASSWORD doit contenir au moins 20 caractères.');
   if (config.smtp.host && !config.mailFrom) errors.push('MAIL_FROM est obligatoire quand SMTP_HOST est défini.');
@@ -57,6 +62,7 @@ function loadConfig(env = process.env) {
     throw err;
   }
   config.member = require('./member/config').memberConfig(env, config);
+  if (config.signupGuardFile === config.member.stateFile) throw new Error('Separate signup guard state required.');
   config.secureCookies = /^https:\/\//.test(config.publicUrl);
   return config;
 }

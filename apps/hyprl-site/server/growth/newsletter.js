@@ -19,23 +19,12 @@ function createNewsletter({ config, store, mailer, content, now = Date.now }) {
   let sending = false;
   const unsubscribeToken = (sub) => crypto.createHmac('sha256', config.newsletter.tokenKey).update(sub.id + ':' + sub.newsletter.requested_at).digest('base64url');
   const unsubscribeUrl = sub => config.publicUrl + '/lettre/desabonnement?token=' + unsubscribeToken(sub);
-  function requested() {
-    const at = new Date(now()).toISOString(), token = crypto.randomBytes(32).toString('base64url');
-    return { token, state: { status: 'pending', version: VERSION, text: TEXT, requested_at: at, confirmation_hash: sha(token), confirmation_expires_at: new Date(now() + 2 * DAY).toISOString(), confirmed_at: null, unsubscribed_at: null, deliveries: {} } };
-  }
-  async function enroll(id) {
-    let token;
-    const sub = await store.update(id, s => {
-      if (s.newsletter?.status === 'confirmed' || (s.newsletter?.status === 'pending' && now() - Date.parse(s.newsletter.requested_at) < 3600000)) return null;
-      const request = requested(); token = request.token; s.newsletter = request.state;
-      s.newsletter.unsubscribe_hash = sha(unsubscribeToken(s));
-      return s;
-    });
-    if (!sub) return;
-    // Only the explicit optional request triggers this transactional message.
-    try {
-      await mailer.send({ from: config.mailFrom, to: sub.email, subject: 'Confirmez votre inscription à la lettre HyprL', text: 'Vous avez demandé la lettre hebdomadaire gratuite de HyprL.\n\nPour confirmer votre choix, ouvrez ce lien puis validez le formulaire :\n' + config.publicUrl + '/lettre/confirmation?token=' + token + '\n\nCe lien expire dans 48 heures. Si vous n’avez pas fait cette demande, ignorez cet e-mail. Vous ne recevrez pas la lettre.\n\nAnnuler cette demande : ' + unsubscribeUrl(sub) + '\n\nHyprL' });
-    } catch { /* No recipient, token or provider response in logs. A later request can retry. */ }
+  function prepare(id, token, at) {
+    const sub = { id, newsletter: { status: 'pending', version: VERSION, text: TEXT, requested_at: at,
+      confirmation_hash: sha(token), confirmation_expires_at: new Date(now() + 2 * DAY).toISOString(),
+      confirmed_at: null, unsubscribed_at: null, deliveries: {} } };
+    sub.newsletter.unsubscribe_hash = sha(unsubscribeToken(sub));
+    return sub.newsletter;
   }
   function find(token, field) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token || '')) return null;
@@ -45,16 +34,6 @@ function createNewsletter({ config, store, mailer, content, now = Date.now }) {
   function pending(token) {
     const s = find(token, 'confirmation_hash');
     return s?.newsletter.status === 'pending' && Date.parse(s.newsletter.confirmation_expires_at) > now() ? s : null;
-  }
-  async function confirm(token) {
-    const sub = pending(token);
-    if (!sub) return false;
-    return Boolean(await store.update(sub.id, s => {
-      if (s.newsletter?.status !== 'pending' || s.newsletter.confirmation_hash !== sha(token) || Date.parse(s.newsletter.confirmation_expires_at) <= now()) return null;
-      s.newsletter.status = 'confirmed'; s.newsletter.confirmed_at = new Date(now()).toISOString();
-      delete s.newsletter.confirmation_hash;
-      return s;
-    }));
   }
   async function unsubscribe(token) {
     const sub = find(token, 'unsubscribe_hash');
@@ -75,7 +54,7 @@ function createNewsletter({ config, store, mailer, content, now = Date.now }) {
       for (const candidate of store.all()) {
         const sub = await store.update(candidate.id, s => {
           const n = s.newsletter;
-          if (n?.status !== 'confirmed' || !n.confirmed_at || n.version !== VERSION || n.deliveries?.[edition.id]) return null;
+          if (s.status !== 'confirmed' || n?.status !== 'confirmed' || !n.confirmed_at || n.version !== VERSION || n.deliveries?.[edition.id]) return null;
           n.deliveries ||= {};
           // Persist BEFORE SMTP: a crash or ambiguous SMTP error never triggers an automatic duplicate.
           n.deliveries[edition.id] = { status: 'reserved', at: new Date(now()).toISOString(), sha256: sha(edition.text) };
@@ -99,6 +78,6 @@ function createNewsletter({ config, store, mailer, content, now = Date.now }) {
       return { edition: edition.id, ...counts };
     } finally { sending = false; }
   }
-  return { enroll, pending, confirm, findUnsubscribe: token => find(token, 'unsubscribe_hash'), unsubscribe, sendWeekly, unsubscribeUrl };
+  return { prepare, pending, findUnsubscribe: token => find(token, 'unsubscribe_hash'), unsubscribe, sendWeekly, unsubscribeUrl };
 }
 module.exports = { VERSION, TEXT, assertNewsletterPage, publicNewsletter, createNewsletter };

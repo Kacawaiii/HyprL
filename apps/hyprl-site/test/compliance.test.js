@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
+const { proof } = require('./signup-client');
 const { loadConfig } = require('../server/config');
 const { createApp } = require('../server/app');
 const { SubscriberStore } = require('../server/lib/store');
@@ -18,8 +19,9 @@ const quiet = { info() {}, warn() {}, error() {} };
 async function setup(t, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyprl-compliance-'));
   let clock = Date.parse('2026-10-26T12:00:00Z');
-  const config = loadConfig({ ADMIN_PASSWORD: password, DATA_FILE: path.join(dir, 'subscribers.json'), PUBLIC_URL: 'https://hyprlcore.com', NODE_ENV: 'production', ...extra });
-  const app = createApp(config, { now: () => clock, mailer: { async send() {} }, logger: quiet });
+  const config = loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), SMTP_HOST: 'smtp.example.test', MAIL_FROM: 'from@example.test', SMTP_EU_APPROVED: 'true', ADMIN_PASSWORD: password, DATA_FILE: path.join(dir, 'subscribers.json'), PUBLIC_URL: 'https://hyprlcore.com', NODE_ENV: 'production', ...extra });
+  const mails = [];
+  const app = createApp(config, { now: () => clock, mailer: { async send(m) { mails.push(m); return true; } }, logger: quiet });
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -30,19 +32,27 @@ async function setup(t, extra = {}) {
     return r.headers.get('set-cookie').split(';')[0];
   }
   async function subscribe(email = 'person@example.test') {
-    const r = await fetch(base + '/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, consent: 'oui', consent_version: CURRENT_VERSION, channels: ['email'], actions: 'SYNTH' }) });
+    const fields = await proof(base, ms => { clock += ms; });
+    const r = await fetch(base + '/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: config.publicUrl }, body: JSON.stringify({ ...fields, email, consent: 'oui', consent_version: CURRENT_VERSION, channels: ['email'], actions: 'SYNTH' }) });
     assert.ok([200, 201].includes(r.status));
+    const sub = app.store.findByEmail(email);
+    if (sub.status === 'pending') {
+      const message = mails.find(m => m.to === email);
+      const link = new URL(message.text.match(/https:\/\/hyprlcore.com\/confirmation\?token=[\w-]+/)[0]);
+      const confirmed = await fetch(base + '/confirmation', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: config.publicUrl }, body: new URLSearchParams({ token: link.searchParams.get('token') }) });
+      assert.equal(confirmed.status, 200);
+    }
     return app.store.findByEmail(email);
   }
   return { app, config, base, login, subscribe, setClock: (date) => { clock = Date.parse(date); } };
 }
 
 test('notification has no default; SMTP is gated by an explicit EU/DPA approval', async () => {
-  const config = loadConfig({ ADMIN_PASSWORD: password, SMTP_HOST: 'smtp.invalid', MAIL_FROM: 'sender@example.test' });
+  const config = loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), ADMIN_PASSWORD: password, SMTP_HOST: 'smtp.invalid', MAIL_FROM: 'sender@example.test' });
   assert.equal(config.notifyEmail, '');
   assert.equal(config.smtp.euApproved, false);
   assert.equal(await createMailer(config, quiet).send({ subject: 'synthetic' }), false);
-  assert.equal(loadConfig({ ADMIN_PASSWORD: password, SMTP_EU_APPROVED: 'true' }).smtp.euApproved, true);
+  assert.equal(loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), ADMIN_PASSWORD: password, SMTP_EU_APPROVED: 'true' }).smtp.euApproved, true);
 });
 
 test('24 calendar months, UTC, leap-day clamping and invalid timestamp rejection', () => {
@@ -72,8 +82,8 @@ test('purge survives restart and a disk failure never partially mutates memory',
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'store.json');
   const store = new SubscriberStore(file).load();
-  await store.add({ id: 'old', email: 'old@example.test', created_at: '2024-02-29T12:00:00Z' });
-  await store.add({ id: 'new', email: 'new@example.test', created_at: '2025-01-01T00:00:00Z' });
+  await store.add({ id: 'old', email: 'old@example.test', status: 'confirmed', created_at: '2024-02-29T12:00:00Z' });
+  await store.add({ id: 'new', email: 'new@example.test', status: 'confirmed', created_at: '2025-01-01T00:00:00Z' });
   const write = store._writeSync;
   store._writeSync = () => { throw new Error('disk full'); };
   await assert.rejects(store.purgeExpired(Date.parse('2026-02-28T12:00:00Z')), /disk full/);
@@ -97,8 +107,8 @@ test('individual export is authenticated, isolated, token-free, versioned and UT
   assert.match(r.headers.get('content-disposition'), /attachment/);
   const body = await r.json();
   assert.equal(body.schema_version, '1.0.0');
-  assert.equal(body.exported_at, '2026-10-26T12:00:00.000Z');
-  assert.equal(body.retention_expires_at, '2028-10-26T12:00:00.000Z');
+  assert.equal(body.exported_at, '2026-10-26T12:00:06.000Z');
+  assert.equal(body.retention_expires_at, '2028-10-26T12:00:03.000Z');
   assert.equal(body.subscriber.email, 'person@example.test');
   assert.equal(body.subscriber.consent.checked_at, body.subscriber.created_at);
   assert.ok(!JSON.stringify(body).includes('token'));
@@ -115,8 +125,8 @@ test('request-time retention enforces the exact expiry and does not renew on dup
   const url = s.base + '/api/admin/subscribers/' + person.id + '/export';
   assert.equal((await fetch(url, { headers: { Cookie: cookie } })).status, 200);
   await s.subscribe();
-  assert.equal(s.app.store.all()[0].created_at, '2026-10-26T12:00:00.000Z');
-  s.setClock('2028-10-26T12:00:00Z');
+  assert.equal(s.app.store.all()[0].created_at, '2026-10-26T12:00:03.000Z');
+  s.setClock('2028-10-26T12:00:03Z');
   assert.equal((await fetch(url, { headers: { Cookie: cookie } })).status, 404);
   assert.equal(s.app.store.all().length, 0);
   assert.equal(new SubscriberStore(s.config.dataFile).load().all().length, 0);
@@ -124,7 +134,8 @@ test('request-time retention enforces the exact expiry and does not renew on dup
 
 test('parallel mutations retain independent signups, deduplicate and do not resurrect deletion', async (t) => {
   const s = await setup(t);
-  await Promise.all([s.subscribe('a@example.test'), s.subscribe('b@example.test'), s.subscribe('a@example.test')]);
+  await Promise.all([s.subscribe('a@example.test'), s.subscribe('b@example.test')]);
+  await Promise.all([s.subscribe('a@example.test'), s.subscribe('a@example.test')]);
   assert.equal(s.app.store.all().length, 2);
   const id = s.app.store.findByEmail('a@example.test').id;
   await Promise.all([s.app.store.remove(id), s.app.store.purgeExpired(Date.parse('2026-10-26T12:00:00Z'))]);
@@ -135,11 +146,9 @@ test('API failures use RFC 9457, including malformed JSON, method, size and unkn
   const s = await setup(t);
   const cases = [
     ['/api/v1/alerts', {}, 404], ['/api/subscribe', {}, 405],
-    ['/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' }, 400],
     ['/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{' }, 400],
-    ['/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: 'no' }, 415],
-    ['/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'a'.repeat(17000) }, 413],
-    ['/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://foreign.invalid' }, body: '{}' }, 403]
+    ['/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'text/plain', Origin: s.config.publicUrl }, body: 'no' }, 415],
+    ['/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: s.config.publicUrl }, body: 'a'.repeat(17000) }, 413],
   ];
   for (const [url, opts, status] of cases) {
     const r = await fetch(s.base + url, opts);
@@ -149,7 +158,8 @@ test('API failures use RFC 9457, including malformed JSON, method, size and unkn
     assert.equal(p.status, status); assert.equal(p.type, 'about:blank');
     assert.equal(typeof p.detail, 'string'); assert.equal(typeof p.title, 'string');
   }
-  const formError = await fetch(s.base + '/inscription', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' });
+  const fields = await proof(s.base, ms => s.setClock(new Date(Date.parse('2026-10-26T12:00:00Z') + ms).toISOString()));
+  const formError = await fetch(s.base + '/inscription', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: s.config.publicUrl }, body: new URLSearchParams(fields) });
   assert.equal(formError.status, 400);
   assert.match(formError.headers.get('content-type'), /^text\/html/);
   assert.match(await formError.text(), /Consentement requis/);

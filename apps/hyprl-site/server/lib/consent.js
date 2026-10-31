@@ -9,9 +9,11 @@ const CONSENT_TEXTS = Object.freeze({
     'J’accepte que HyprL enregistre mon adresse e-mail, les canaux choisis et les actions suivies ' +
     'afin de me contacter au sujet de l’accès anticipé. Je peux me désinscrire et faire effacer ' +
     'ces données à tout moment.',
+  '2026-10-v2-doi':
+    'J’accepte que HyprL enregistre mon adresse e-mail, les canaux choisis et les actions suivies afin de me contacter au sujet de l’accès anticipé, après confirmation de mon adresse par e-mail. Sans confirmation, la demande est effacée après 7 jours. Je peux me désinscrire et faire effacer ces données à tout moment.',
 });
 
-const CURRENT_VERSION = '2026-10-v1';
+const CURRENT_VERSION = '2026-10-v2-doi';
 
 function normalizeSpaces(s) {
   return s.replace(/\s+/g, ' ').trim();

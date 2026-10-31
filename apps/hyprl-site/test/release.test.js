@@ -26,15 +26,35 @@ test('release preflight refuses stale/synthetic exports and state within either 
   const file = path.join(snapshots, 'member-v2.json');
   const write = () => { if (fs.existsSync(file)) fs.chmodSync(file, 0o600); fs.writeFileSync(file, JSON.stringify(value)); fs.chmodSync(file, 0o440); };
   write();
-  const config = { root, production: true, host: '127.0.0.1', port: 3000, publicUrl: 'https://hyprlcore.com', dataFile: path.join(directory, 'data/subscribers.json'), publicSnapshotDir: snapshots, member: { enabled: true, stateFile: path.join(directory, 'data/member.json'), snapshotDir: snapshots }, newsletter: { enabled: false } };
+  const config = { root, formTokenKey: 'a'.repeat(64), signupGuardFile: path.join(directory, 'data/guard.json'), production: true, host: '127.0.0.1', port: 3000, publicUrl: 'https://hyprlcore.com', dataFile: path.join(directory, 'data/subscribers.json'), publicSnapshotDir: snapshots, member: { enabled: true, stateFile: path.join(directory, 'data/member.json'), snapshotDir: snapshots }, newsletter: { enabled: false } };
   assert.equal(check(config, live, now).schema, 2);
   assert.throws(() => check(config, live, now + 27 * 3600000), /Fresh/);
   value.provenance = 'synthetic'; write();
   assert.throws(() => check(config, live, now), /snapshot_unavailable/);
   value.provenance = 'observed'; write();
   assert.throws(() => check({ ...config, dataFile: path.join(live, 'private.json') }, live, now), /outside/);
+  assert.throws(() => check({ ...config, signupGuardFile: path.join(live, 'guard.json') }, live, now), /outside/);
   fs.symlinkSync(root, path.join(directory, 'alias'));
   assert.throws(() => check({ ...config, dataFile: path.join(directory, 'alias/private.json') }, live, now), /outside/);
+  const shared = path.join(directory, 'shared-state.json');
+  fs.writeFileSync(shared, '{}');
+  fs.symlinkSync(shared, path.join(directory, 'guard-alias.json'));
+  assert.throws(() => check({ ...config, dataFile: shared, signupGuardFile: path.join(directory, 'guard-alias.json') }, live, now), /distinct/);
   fs.chmodSync(file, 0o640);
   assert.throws(() => check(config, live, now));
+});
+
+test('signup privacy merge retains actual live processor/publisher/member facts and is idempotent', () => {
+  const { mergeSignupPrivacy } = require('../server/growth/merge-signup-privacy');
+  const proposed = fs.readFileSync(path.join(__dirname, '../public/confidentialite.html'), 'utf8');
+  const live = proposed.replace('[IDENTITÉ / RAISON SOCIALE ET ADRESSE À COMPLÉTER PAR L’OPÉRATEUR]', 'synthetic reviewed publisher')
+    .replace('Le prestataire d’envoi d’e-mails reste à choisir', 'Synthetic reviewed processor')
+    .replace('Les contrôles automatiques du formulaire servent uniquement à prévenir les envois abusifs.', 'Previous signup behavior');
+  const merged = mergeSignupPrivacy(live, proposed);
+  assert.ok(merged.includes('synthetic reviewed publisher'));
+  assert.ok(merged.includes('Synthetic reviewed processor'));
+  assert.ok(!merged.includes('Previous signup behavior'));
+  assert.ok(merged.includes('après 7 jours'));
+  assert.equal(mergeSignupPrivacy(merged, proposed), merged);
+  assert.throws(() => mergeSignupPrivacy('<h1>Unexpected layout</h1>', proposed), /structure/);
 });

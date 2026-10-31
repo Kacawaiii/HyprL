@@ -7,7 +7,7 @@ const http = require('node:http');
 const { loadConfig } = require('../server/config');
 const { createApp } = require('../server/app');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyprl-browser-'));
-const config = loadConfig({ ADMIN_PASSWORD: 'synthetic-browser-test-password', DATA_FILE: path.join(dir, 'subs.json'), PUBLIC_URL: 'http://127.0.0.1:3817' });
+const config = loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), SMTP_HOST: 'smtp.example.test', MAIL_FROM: 'from@example.test', SMTP_EU_APPROVED: 'true', ADMIN_PASSWORD: 'synthetic-browser-test-password', DATA_FILE: path.join(dir, 'subs.json'), PUBLIC_URL: 'http://127.0.0.1:3817' });
 const app = createApp(config, { mailer: { async send() {} }, logger: { info() {}, warn() {}, error() {} } });
 const server = http.createServer(app);
 server.listen(3817, '127.0.0.1');

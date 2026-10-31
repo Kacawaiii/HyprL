@@ -128,8 +128,8 @@ test('missing production snapshots return pending; schema rejects synthetic, sym
 test('strict CSP and secure Strict cookies in production config, no OAuth credential leaks', async t => {
   const s = await setup(t); const auth = await s.login(); const r = await s.request('/membre/duel', auth);
   assert.match(r.headers.get('content-security-policy'), /script-src 'self'/); assert.ok(!r.headers.get('content-security-policy').includes('unsafe-inline')); assert.ok(!(await r.text()).includes('synthetic-oauth-secret'));
-  const c = loadConfig({ ...environment(s.dir, 'https://hyprlcore.com'), NODE_ENV: 'production' }); assert.equal(c.secureCookies, true);
-  assert.throws(() => loadConfig({ ...environment(s.dir, 'https://hyprlcore.com'), MEMBER_STATE_FILE: path.join(c.root, 'private.json'), NODE_ENV: 'production' }));
+  const c = loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), ...environment(s.dir, 'https://hyprlcore.com'), NODE_ENV: 'production' }); assert.equal(c.secureCookies, true);
+  assert.throws(() => loadConfig({ FORM_TOKEN_KEY: 'a'.repeat(64), ...environment(s.dir, 'https://hyprlcore.com'), MEMBER_STATE_FILE: path.join(c.root, 'private.json'), NODE_ENV: 'production' }));
 });
 test('OAuth endpoints are pinned, redirects fail, refresh preserves expected contract', async () => {
   const calls = [], d = new Discord({ clientId: 'x', clientSecret: 'synthetic', guildId: IDS.guild }, 'https://example.com', async (url, options) => { calls.push({ url, options }); return { ok: true, text: async () => JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_in: 60, token_type: 'Bearer' }) }; });
