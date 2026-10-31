@@ -217,9 +217,10 @@ class Authorization:
             raise TraderError("INVALID_PAPER_CAPITAL")
         self.gpt_model
 
-    def extension_metadata(self, at, *, slot='am'):
+    def extension_metadata(self, at, *, slot='am', prospective=False):
         try:
-            return expiry_receipt(self.source_path, self.source_payload or self.payload, at, slot=slot)
+            return expiry_receipt(self.source_path, self.source_payload or self.payload, at,
+                                  slot=slot, prospective=prospective)
         except ExtensionError:
             raise TraderError("AUTHORIZATION_EXPIRED_OR_NOT_STARTED")
 

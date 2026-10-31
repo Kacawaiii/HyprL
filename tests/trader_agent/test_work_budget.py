@@ -28,6 +28,52 @@ def approved(grant):
         'not_after': '2026-11-01T00:00:00Z'})
 
 
+@pytest.mark.parametrize('at', ['2026-11-03T00:00:00Z', '2026-11-06T12:00:00Z'])
+def test_approval_expiry_uses_hash_bound_extended_parent(grant, tmp_path, at):
+    from test_authorization_extension import OLD, NEW, extension, write_extension
+    path = tmp_path / 'grant.json'
+    path.write_text(json.dumps({**grant.payload, 'not_after': OLD}))
+    record = write_extension(path, extension(path))
+    loaded = approved(Authorization.load(path))
+    loaded.work_budget_approval['not_after'] = NEW
+    assert work.policy(loaded, instant(at))['revision'] == 2
+    record.unlink()
+    with pytest.raises(TraderError, match='WORK_BUDGET_APPROVAL_INVALID'):
+        work.policy(loaded, instant(at))
+
+
+@pytest.mark.parametrize('fault', ['hash', 'grant_bytes', 'from', 'slots', 'extra',
+                                  'future', 'over_cap', 'expired', 'duplicate_record'])
+def test_extended_approval_rejects_tampering(grant, tmp_path, fault):
+    from test_authorization_extension import OLD, NEW, extension, write_extension
+    path = tmp_path / 'grant.json'
+    path.write_text(json.dumps({**grant.payload, 'not_after': OLD}))
+    value = extension(path)
+    record = write_extension(path, value)
+    loaded = approved(Authorization.load(path))
+    loaded.work_budget_approval['not_after'] = NEW
+    if fault == 'hash':
+        value['extends'][0]['sha256'] = '0' * 64
+    elif fault == 'grant_bytes':
+        path.write_text(path.read_text() + '\n')
+    elif fault == 'from':
+        value['extends'][0]['not_after_from'] = '2026-11-04T00:00:00Z'
+    elif fault == 'slots':
+        value['slots'] = ['am', 'pm']
+    elif fault == 'extra':
+        value['extends'][0]['max_calls'] = 999
+    elif fault == 'future':
+        value['decided_at'] = '2026-11-04T00:00:00Z'
+    elif fault == 'over_cap':
+        loaded.work_budget_approval['not_after'] = '2026-12-31T00:00:01Z'
+    elif fault == 'duplicate_record':
+        write_extension(path, value, name='trader-v1-extension-2-2026-10-31.json')
+    record.write_text(json.dumps(value))
+    at = instant(NEW if fault == 'expired' else '2026-11-03T00:00:00Z')
+    with pytest.raises(TraderError, match='WORK_BUDGET_APPROVAL_INVALID'):
+        work.policy(loaded, at)
+
+
 @pytest.fixture
 def bounded(ledger, clock):
     clock.at = instant('2026-10-21T12:00:00Z')

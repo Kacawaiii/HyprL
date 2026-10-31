@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 
 TRADER_RECORD = 'trader-v1-extension-2026-10-26.json'
+TRADER_RECORDS = (TRADER_RECORD, 'trader-v1-extension-2-2026-10-31.json')
 SEC_RECORD = 'sec-user-agent-extension-2026-10-26.json'
 SEC_SCOPE = 'https://www.sec.gov'
 
@@ -40,23 +41,42 @@ def strict_json(raw):
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
 
 
-def expiry_receipt(path, payload, at, *, slot=None, scope=None):
+def expiry_receipt(path, payload, at, *, slot=None, scope=None, prospective=False):
     """Return separate extension evidence only when the original grant expired.
 
     Before expiry the old window is authoritative, even if no extension exists.
     Every extended use rechecks all referenced bytes; no cached approval survives
-    deletion, replacement or a changed scope. Errors never include private data.
+    deletion, replacement or a changed scope. Prospective approval caps require
+    this same evidence before original expiry; the decision must already exist
+    at the actual approval-check time. Errors never include private data.
     """
     try:
         if at < instant(payload['granted_at']):
             raise ExtensionError('AUTHORIZATION_NOT_STARTED')
-        if at < instant(payload['not_after']):
+        if at < instant(payload['not_after']) and not prospective:
             return {}
         if path is None or (slot is None) == (scope is None):
             raise ExtensionError('EXTENSION_CONTEXT_REQUIRED')
         path = Path(path).expanduser().resolve(strict=True)
         trader = slot is not None
-        record = path.parent / (TRADER_RECORD if trader else SEC_RECORD)
+        records = [path.parent / name for name in (TRADER_RECORDS if trader else (SEC_RECORD,))
+                   if (path.parent / name).exists()]
+        matches = []
+        for record in records:
+            receipt = _record_receipt(record, path, payload, at, slot=slot, scope=scope)
+            if receipt is not None:
+                matches.append(receipt)
+        if len(matches) != 1:
+            raise ExtensionError('EXTENSION_REFERENCE_MISSING_OR_AMBIGUOUS')
+        return matches[0]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
+        raise ExtensionError('AUTHORIZATION_EXTENSION_UNAVAILABLE_OR_INVALID') from None
+
+
+def _record_receipt(record, path, payload, at, *, slot, scope):
+    """Validate a whole named record; independent grants never imply renewal."""
+    trader = slot is not None
+    try:
         raw = record.read_bytes()
         value = strict_json(raw)
         keys = {'schema', 'decided_at', 'decided_by', 'decision', 'extends'}
@@ -100,8 +120,6 @@ def expiry_receipt(path, payload, at, *, slot=None, scope=None):
                 match = {'authorization_file_sha256': entry['sha256'],
                          'authorization_extension_sha256': sha256(raw).hexdigest(),
                          'authorization_not_after': entry['not_after_to']}
-        if match is None:
-            raise ExtensionError('EXTENSION_REFERENCE_MISSING')
         return match
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         raise ExtensionError('AUTHORIZATION_EXTENSION_UNAVAILABLE_OR_INVALID') from None

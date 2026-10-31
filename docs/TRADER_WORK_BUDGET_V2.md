@@ -68,3 +68,12 @@ Deployment requires a reviewed `trader-agent-work-budget-amendment-v2.json` and
 a fresh UTC dispatch day. Retain the original grants and shared bank. Do not
 reset counters, migrate old reservations or restore historical journals to
 activate the new method. Only the single-owner operator installs units/tools.
+
+The approval expiry may reach the AM parent's extended expiry only with the
+same strictly validated, byte-hash-bound operator records used by dispatch.
+Both named October 26 and October 31 records are checked on every extended use;
+overlapping references are refused. Prospective approval checks validate the
+record at the actual check time, even before the original November 5 expiry.
+Deleting or tampering with the record or its bound grant invalidates that cap.
+An unsigned draft remains insufficient. Independent crypto and data capabilities
+still require their own explicit entries; extending the parent never renews them.

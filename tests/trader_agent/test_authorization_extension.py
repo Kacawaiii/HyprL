@@ -23,10 +23,31 @@ def extension(path, *, schema='trader-authorization-extension-v1', scope=False):
     return value
 
 
-def write_extension(path, value):
-    target = path.parent / 'trader-v1-extension-2026-10-26.json'
+def write_extension(path, value, *, name='trader-v1-extension-2026-10-26.json'):
+    target = path.parent / name
     target.write_text(json.dumps(value))
     return target
+
+
+def test_second_record_extends_independent_crypto_grant(grant, tmp_path):
+    from dataclasses import replace
+    path = tmp_path / 'grant.json'
+    path.write_text(json.dumps({**grant.payload, 'not_after': OLD}))
+    write_extension(path, extension(path))
+    amendment = tmp_path / 'crypto.json'
+    payload = {'granted_at': '2026-01-01T00:00:00Z', 'not_after': OLD}
+    amendment.write_text(json.dumps(payload))
+    record = write_extension(amendment, extension(amendment),
+                            name='trader-v1-extension-2-2026-10-31.json')
+    loaded = replace(Authorization.load(path), amendment=payload, amendment_source_path=amendment)
+    receipt = loaded.check(AFTER)
+    assert receipt['crypto_amendment_extension_sha256'] == sha256(record.read_bytes()).hexdigest()
+    assert loaded.amendment == payload
+    with pytest.raises(TraderError):
+        loaded.check(AFTER, slot='pm')
+    record.unlink()
+    with pytest.raises(TraderError, match='CRYPTO_AMENDMENT_EXPIRED_OR_NOT_STARTED'):
+        loaded.check(AFTER)
 
 
 def test_trader_extension_preserves_grant_and_authorizes_am(grant, tmp_path):
@@ -46,7 +67,9 @@ def test_trader_extension_preserves_grant_and_authorizes_am(grant, tmp_path):
 @pytest.mark.parametrize('fault', ['missing', 'wrong_hash', 'extra_field', 'pm', 'wrong_schema',
                                     'wrong_from', 'shorten', 'missing_reference', 'mutated_grant',
                                     'duplicate_key', 'self_reference', 'future_decision'])
-def test_invalid_extensions_fail_closed_without_changing_original_window(grant, tmp_path, fault):
+@pytest.mark.parametrize('record_name', ['trader-v1-extension-2026-10-26.json',
+                                        'trader-v1-extension-2-2026-10-31.json'])
+def test_invalid_extensions_fail_closed_without_changing_original_window(grant, tmp_path, fault, record_name):
     path = tmp_path / 'grant.json'
     path.write_text(json.dumps({**grant.payload, 'not_after': OLD}))
     value = extension(path)
@@ -66,7 +89,7 @@ def test_invalid_extensions_fail_closed_without_changing_original_window(grant, 
         value['extends'][0]['file'] = str(tmp_path / 'absent.json')
     elif fault == 'future_decision':
         value['decided_at'] = NEW
-    target = write_extension(path, value)
+    target = write_extension(path, value, name=record_name)
     if fault == 'missing':
         target.unlink()
     elif fault == 'mutated_grant':
@@ -158,8 +181,7 @@ def test_paper_extension_keeps_parent_and_paper_bindings(grant, tmp_path):
     data_grant = DataAuthorization.load(data_path, loaded)
     with pytest.raises(TraderError, match='DATA_AUTHORIZATION_EXPIRED_OR_NOT_STARTED'):
         data_grant.check(AFTER)
-    value['extends'] += extension(data_path)['extends']
-    record.write_text(json.dumps(value))
+    write_extension(data_path, extension(data_path), name='trader-v1-extension-2-2026-10-31.json')
     assert data_grant.check(AFTER)['authorization_extension_sha256']
 
 

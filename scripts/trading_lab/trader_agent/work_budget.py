@@ -32,13 +32,16 @@ def policy(grant, at):
             for key in ('approved_at', 'effective_from', 'not_after')):
         raise TraderError('WORK_BUDGET_APPROVAL_INVALID')
     try:
+        parent_expiry = grant.payload['not_after']
+        if instant(approval['not_after']) > instant(parent_expiry):
+            parent_expiry = grant.extension_metadata(at, slot='am', prospective=True)['authorization_not_after']
         valid = (approval['schema'] == 'trader-agent-work-budget-amendment-v2'
             and approval['status'] == 'APPROVED'
             and approval['spec_hash'] == SPEC_HASH
             and approval['parent_preregistration_hash'] == value['base_preregistration_hash']
             and approval['base_grant_hash'] == (grant.base_identity or grant.identity)
             and instant(approval['approved_at']) <= instant(approval['effective_from']) <= at
-            < instant(approval['not_after']) <= instant(grant.payload['not_after']))
+            < instant(approval['not_after']) <= instant(parent_expiry))
     except (KeyError, ValueError, TypeError):
         valid = False
     if not valid:
