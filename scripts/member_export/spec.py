@@ -34,7 +34,7 @@ def schema(name):
 
 
 def baseline_projection():
-    path = SCHEMAS.parents[3] / 'docs/artifacts/member_baseline_projection_spec_v1.json'
+    path = SCHEMAS.parents[3] / 'docs/member/member_baseline_projection_spec_v1.json'
     value = json.loads(path.read_text())
     if value.pop('canonical_sha256') != BASELINE_PROJECTION_SHA256 or hashlib.sha256(canonical(value)).hexdigest() != BASELINE_PROJECTION_SHA256:
         raise ValueError('BASELINE_PROJECTION_BINDING_MISMATCH')

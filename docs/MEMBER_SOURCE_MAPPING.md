@@ -1,7 +1,7 @@
 # Member source mapping
 
 The v2 adapter accepts the explicitly pinned revision-sixteen research baseline
-only through `member_baseline_projection_spec_v1.json`. Its preimage must hash to
+only through `docs/member/member_baseline_projection_spec_v1.json`. Its preimage must hash to
 the source score's exact identity. The original v2 baseline preimage remains
 pinned, and every field except `spec_hash` must be identical: sample count,
 successes, panel and outcome digest. Unknown identities or a different sample
