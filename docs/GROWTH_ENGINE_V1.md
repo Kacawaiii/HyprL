@@ -1,3 +1,5 @@
+> Integration update: see `docs/GROWTH_INTEGRATION.md`. It supersedes the original new-application and no-completed-study assumptions below.
+
 # Growth engine v1 — operator handoff
 
 This branch prepares code and user-service templates. It does not deploy,
@@ -6,7 +8,7 @@ or enable payments. Production activation belongs to the operator.
 
 ## Dedicated Discord referral service
 
-`python -m scripts.growth.discord_bot` runs a **separate Discord application**.
+`python -m scripts.growth.discord_bot` reuses the **existing HyprL Discord application**, as explicitly directed by the operator. It is a separate process and ledger; it never modifies kyoko-bot.
 Install `scripts/growth/requirements.txt` in a dedicated virtual environment.
 Render `scripts/growth/deploy/hyprl-growth-referrals.service.in` with absolute
 release/Python paths, and install it as a **user** unit. Do not edit any existing
@@ -15,7 +17,7 @@ bot, trader, proxy or system unit. Environment example:
 `python -m scripts.growth.render_units --help` describes the offline renderer;
 it writes only the three new growth units to an empty staging directory.
 
-Enable Guild Members intent in this new application's developer settings.
+The existing HyprL application has Guild Members intent enabled. Do not create another application. Its identity environment is loaded separately by the unit via `--discord-env`; never copy or print its token. Registration upserts only `/parrainage`, preserving all other application commands.
 Install with scopes `bot` and `applications.commands`, restricted to the HyprL
 guild. Grant Create Invite on the invitation channel, Manage Guild to read
 invitation counters, View Channel/Send Messages on the leaderboard channel, and
