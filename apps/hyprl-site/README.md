@@ -26,7 +26,8 @@ The single-process JSON store is private runtime data (`DATA_FILE`), never sourc
 Create its directory with mode 0700 and restrict an existing file to 0600. Do not
 run two writers against one file. Mutations are serialized and atomically saved;
 an invalid store stops startup instead of being silently replaced. Purging runs
-on startup, hourly, and before API/data access, with a 24-calendar-month UTC cutoff.
+on startup, hourly, and before API/data access: seven days for unconfirmed requests,
+24 calendar months from creation for confirmed signups.
 Any purge failure prevents data access through the API. Backups and mailbox copies
 require an operator retention policy; a restored store is purged before access.
 
@@ -103,3 +104,80 @@ handoff report; this checkout does not alter the live service.
 Member routes are disabled by default. See [member architecture, API and data
 contract](docs/member/README.md) and the [operator deployment handoff](docs/member/DEPLOY.md).
 No snapshot or real member credential is bundled; no Stripe/payment flow is active.
+
+## Signup abuse controls
+
+Production requires an independent stable `FORM_TOKEN_KEY` (32 random bytes,
+64 lowercase hex characters), plus `SIGNUP_GUARD_FILE`, a private persistent
+file outside code releases. Keep this file alongside external subscriber state,
+with exactly one site writer. Losing it or changing the key loses suppression
+history; an existing file with a different key binding refuses startup. The
+release preflight checks external paths without opening personal state.
+
+The self-hosted script obtains a signed IP-bound token (10-minute lifetime),
+waits at least three seconds and solves a 16-bit SHA-256 puzzle. No tracker,
+cookie or browser storage is added. POST requires the exact `PUBLIC_URL` origin;
+missing/null/foreign origins, invalid/replayed proofs, honeypots and exhausted
+quotas receive ordinary success with no personal record or email. Static HTML
+has no token. Without JavaScript the form is disabled and offers Discord.
+
+Rolling limits: 5 verified attempts/IP/hour, 30 globally/hour, 30 confirmation
+emails globally/24 hours. Token minting has separate limits of 20/IP/hour and
+300 globally/hour. These quotas and single-use token/address reservations are
+persisted before SMTP and survive restart. A rejected request can update security
+counters, never personal subscriber fields. IPs are keyed digests, not raw IPs;
+expired entries are swept every minute and on guard operations. The guard file
+contains only keyed digests, timestamps and counters. Confirmation reservations
+remain for at most 24 calendar months, suppressing repeat email even after a
+pending record or subscriber has been erased. No SMTP retry follows ambiguity.
+
+Actions accept up to 10 comma-separated tickers/company labels (60 characters
+each, 300 total), using letters, numbers, dots, hyphens and spaces. Multiword
+company names use capitals and common lowercase connectors. Request phrases are
+refused with a visible explanation. This is a bounded lexical filter, not a
+company registry or a guarantee that an entry names an actual company.
+
+All new records are pending. One email offers an explicit POST confirmation
+within 48 hours for early access and, only if separately selected, the newsletter.
+GET/HEAD does not confirm. No reminder or automatic resend exists. Unconfirmed
+records expire seven days after creation (startup/hourly/request-time purge).
+Confirmed records retain the existing 24-month limit from creation. Legacy
+records without early-access confirmation proof remain unverified, receive no
+newsletter/digest, and expire on the same seven-day rule; never mark them
+confirmed by inference. Duplicate submissions cannot enroll a new purpose or
+undo a newsletter withdrawal. Changes require the operator contact channel.
+SMTP disabled returns a clear error after proof validation, with no personal
+record or address reservation, so enabling mail later does not strand addresses.
+
+The site process checks hourly for a digest of confirmed signups from previous
+UTC dates. At most one digest is attempted per rolling 24 hours. It reserves the
+attempt and each included signup before SMTP; ambiguous sends are never retried.
+Pending/legacy entries are never included. Existing newsletter weekly worker and
+unsubscribe/erasure flows remain in place; it also requires confirmed early access.
+No additional timer or service is needed for the digest. Logs contain counters
+and fixed operational messages, never forms, email addresses, IPs or mail bodies.
+
+`server/growth/merge-signup-privacy.js` updates signup behavior in the live privacy
+page while preserving publisher/provider/member facts. Deploy using the existing
+pinned archive, tests, preflight, code-directory swap and site-only restart
+procedure. Keep SMTP disabled through deployment and rejected-bot acceptance;
+the operator enables it only after reviewing the exact release. Rollback must
+first disable SMTP because the previous code lacks these controls. Never restore
+subscriber or guard state from a code rollback. An active service alone is not
+public acceptance; use an operator-owned seed address for confirmation and erase
+it afterwards. A custom solver can still pass the puzzle: quotas bound this risk,
+and double opt-in prevents unconfirmed addresses receiving any follow-up.
+
+Run the signup browser regression with the isolated growth fixture server:
+
+```sh
+python "$WEBAPP_TESTING_SKILL/scripts/with_server.py" \
+  --server 'node test/growth-browser-server.js' --port 3818 -- \
+  python test/antispam_browser_audit.py
+```
+
+It verifies the no-JavaScript Discord fallback, visible validation errors,
+local proof of work under the strict CSP, a single combined confirmation,
+newsletter withdrawal, erasure and suppression of another request after erasure.
+All recipients and mail delivery are synthetic; external browser requests are
+intercepted and refused.
