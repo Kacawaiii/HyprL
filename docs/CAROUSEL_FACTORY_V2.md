@@ -14,9 +14,15 @@ reviewed files keep their edition when delivered later.
 The prototype palette is navy `#0A0E1A`, ink `#F5F7FC`, accent `#8FB4FF`.
 Large claims/numbers, series pills, a drawn arrow in the accent action block,
 a full accent flip for a key slide, and horizontal bars replace the old layout.
-Bars share a zero baseline and a 100% scale. X preserves all three daily facts
-and every calendar company/date within four images; its calendar groups days
-and states unknown hours once per group. Disclaimer and site appear on every
+Bars share a zero baseline and a 100% scale. IBM Plex Sans Regular/SemiBold
+sets all text, including digits and percent signs; Mono is reserved for the
+page counter. X preserves all three daily facts within four images. Its calendar
+uses up to three detail images with two day columns at most. Calendar slides
+use French dates, feed names with tickers (ticker alone if absent), and at most
+six companies per day followed by the remaining count. Feed order is retained;
+no size ranking is inferred. The caption and source evidence preserve the full
+count and list. Unknown-hour/modification notes appear only on the cover and
+in the caption. Disclaimer and site appear on every
 slide. Text that cannot fit at the configured minimum is refused atomically.
 
 `brand.logo` optionally names a local HD image; null keeps the typeset HyprL
@@ -24,6 +30,20 @@ mark. Logo paths remain private; metadata records only its digest. Changing a
 logo creates a new batch identity and cannot silently reuse an old rendering.
 IBM Plex Sans/Mono and the existing OFL licence are required; no font download
 is performed. Keep state and generated assets outside Git.
+
+When present beside the producer manifest, existing
+`calendar-sources/nasdaq-YYYY-MM-DD.body` files supply company names and the
+Nasdaq before/after-market hints. The adapter checks the complete body digest
+against the recovered source, then matches the selected date and ticker. It
+never expands the selected universe, fetches a body, or turns a session hint
+into an exact timestamp. Missing files leave ticker-only entries; mismatched
+digests stop rendering. The slide footer credits the Nasdaq calendar with its
+actual collection date; full URLs and identities stay in the caption/metadata.
+
+The four product hooks and BTC wording follow the reviewed prototype. Only
+those exact supplied long hooks are exempt from the usual eight-word cover
+limit. Cover actions describe the next slide. Advice and per-fact number checks
+remain unchanged.
 
 ## Daily edition: facts, then copy, then verification
 
@@ -108,7 +128,9 @@ The default BTC carousel uses price-free aggregate counts from public study
 revision `98c7189b207e857777e188318b7248e87616ddd1`. Evidence digest:
 `b7583307e2b785702a06cb935c958c3f9d150e04f8175195ad2aa36d1972064e`.
 It shows 251/450 Fridays versus 1567/2701 other days, and 1818/3151 for all days.
-The verdict says no Friday advantage established. Intervals, p-value, limitations
+The prototype's “Un jour au hasard” label denotes that empirical all-days
+frequency, as explained in the caption; it is not a newly simulated draw.
+The visible verdict is “Le vendredi n'a rien de spécial.” Intervals, p-value, limitations
 and immutable method links are in the caption. This imports received public
 counts; it neither reruns the study nor opens candles or protected data. The
 legacy result adapter retains its original plan-hash requirement. A previously

@@ -4,9 +4,16 @@ DISCLAIMER = "Information, pas un conseil en investissement"
 SITE = "hyprlcore.com"
 INVITE = "discord.gg/BCgmuk6kXE"
 EDITION = "carrousels v2"
+PRODUCT_HOOKS = (
+    "Une de vos actions publie demain. Le saviez-vous ?",
+    "Prédire après coup, tout le monde sait faire.",
+    "Une capture de gains ne prouve rien",
+    "15h30, Wall Street ouvre. Vous savez ce qui a changé ?",
+)
+BTC_HOOK = "« Le bitcoin casse son plus bas d'Asie"
 
 
-def slide(title, body="", *, source=None, metric=None, chart=None, cta=None, flip=False):
+def slide(title, body="", *, source=None, metric=None, chart=None, cta=None, flip=False, **layout):
     return {
         "title": title,
         "body": body,
@@ -15,10 +22,22 @@ def slide(title, body="", *, source=None, metric=None, chart=None, cta=None, fli
         "chart": chart,
         "cta": cta,
         "flip": flip,
+        **layout,
     }
 
 
-def post(kind, framework, title, slides, context, *, sources=(), evidence=(), provenance=None):
+def post(
+    kind,
+    framework,
+    title,
+    slides,
+    context,
+    *,
+    sources=(),
+    evidence=(),
+    provenance=None,
+    cover_action=None,
+):
     return {
         "kind": kind,
         "framework": framework,
@@ -29,6 +48,7 @@ def post(kind, framework, title, slides, context, *, sources=(), evidence=(), pr
         "source_evidence": list(evidence),
         "provenance": provenance,
         "hashtags": ["#bourse", "#actions", "#investir", "#wallstreet"],
+        "cover_action": cover_action or slides[1]["title"],
     }
 
 
@@ -38,10 +58,10 @@ def evergreen(index, *, proof=None, excerpt=None, agenda=None):
         return post(
             "product-a",
             "Demo Walkthrough",
-            "Vos actions. Les événements qui les concernent.",
+            PRODUCT_HOOKS[0],
             [
                 slide(
-                    "Vos actions. Les événements qui les concernent.",
+                    PRODUCT_HOOKS[0],
                     "HyprL réunit le brief, les publications officielles et votre calendrier.",
                 ),
                 slide(
@@ -64,6 +84,7 @@ def evergreen(index, *, proof=None, excerpt=None, agenda=None):
                 ),
             ],
             "Votre veille de marché tient dans un même parcours. Voici le brief, le radar, les alertes, le calendrier et les preuves.",
+            cover_action="Le brief, avec sa source",
         )
     if index == 1:
         detail = proof or {}
@@ -71,11 +92,11 @@ def evergreen(index, *, proof=None, excerpt=None, agenda=None):
         return post(
             "product-b",
             "Problem-Proof",
-            "Une analyse retouchée, ça se vérifie.",
+            PRODUCT_HOOKS[1],
             [
                 slide(
-                    "Une analyse retouchée, ça se vérifie.",
-                    "Une empreinte avant la séance. Le fichier exact après la clôture.",
+                    PRODUCT_HOOKS[1],
+                    "HyprL publie l'empreinte de chaque analyse avant le résultat. Après la clôture, le fichier révélé permet de vérifier qu'elle n'a pas changé.",
                 ),
                 slide(
                     "L'analyse est engagée avant la séance.",
@@ -109,6 +130,7 @@ def evergreen(index, *, proof=None, excerpt=None, agenda=None):
             sources=detail.get("urls", ()),
             evidence=detail.get("evidence", ()),
             provenance=detail.get("provenance"),
+            cover_action="L'empreinte, avant la séance",
         )
     if index == 2:
         return post(
@@ -139,21 +161,22 @@ def evergreen(index, *, proof=None, excerpt=None, agenda=None):
                 ),
                 slide(
                     "Regardez la série complète.",
-                    "HyprL publie les décisions du banc d'essai et leurs résultats, même défavorables.",
+                    "HyprL publie ses décisions de test avant le résultat, même quand elles perdent. Ce sont des tests, pas des gains.",
                     cta="Vérifiez la méthode",
                 ),
             ],
             "Un gain affiché raconte une opération. Pour juger une méthode, regardez aussi les décisions manquantes et la place du hasard.",
+            cover_action="Ce que la capture ne montre pas",
         )
     if index == 3:
         item = excerpt or {}
         return post(
             "product-d",
             "Demo Walkthrough",
-            "Avant New York, retrouvez les faits sourcés.",
+            PRODUCT_HOOKS[3],
             [
                 slide(
-                    "Avant New York, retrouvez les faits sourcés.",
+                    PRODUCT_HOOKS[3],
                     "Un extrait réel du brief. Sa source. Puis le prochain rendez-vous.",
                 ),
                 slide(
@@ -188,5 +211,6 @@ def evergreen(index, *, proof=None, excerpt=None, agenda=None):
             sources=list(item.get("urls", ())) + list((agenda or {}).get("urls", ())),
             evidence=list(item.get("evidence", ())) + list((agenda or {}).get("evidence", ())),
             provenance=item.get("provenance"),
+            cover_action="Du résumé au document",
         )
     raise ValueError("unknown product carousel")

@@ -131,11 +131,12 @@ def test_weekly_count_delivers_all_events_without_invented_hours():
         event("DDD", "2026-11-02"),
     ]
     p = weekly_calendar(observed(), rows, "2026-10-28")
-    assert p["title"] == "3 résultats US du 26/10 au 30/10"
+    assert p["title"] == "3 résultats US cette semaine"
     text = " ".join(s["body"] for s in p["slides"])
     assert all(symbol in text for symbol in ("AAA", "BBB", "CCC"))
     assert "DDD" not in text
-    assert "Horaire non confirmé" in text
+    assert "Horaires non indiqués : à confirmer." in p["slides"][0]["source"]
+    assert "2026-10-26" not in text
     assert len(p["source_evidence"]) == 3
 
 

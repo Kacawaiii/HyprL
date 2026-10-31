@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from scripts.video_factory.market import digest
 
-from .content import DISCLAIMER, EDITION, INVITE, SITE
+from .content import BTC_HOOK, DISCLAIMER, EDITION, INVITE, PRODUCT_HOOKS, SITE
 
 BG, FG, ACCENT = "#0A0E1A", "#F5F7FC", "#8FB4FF"
 MUTED, TAG = "#9AA6BF", "#10203F"
@@ -31,27 +31,13 @@ def font(directory, style, size):
     return ImageFont.truetype(str(Path(directory) / FONTS[style]), size)
 
 
-def runs(text, face, number_face):
-    return [
-        (part, number_face if re.search(r"\d", part) else face)
-        for part in re.split(r"(\s+)", text)
-        if part
-    ]
-
-
-def measure(draw, text, face, number_face):
-    return sum(
-        draw.textlength(part, font=selected) for part, selected in runs(text, face, number_face)
-    )
-
-
-def wrap(draw, text, face, number_face, width):
+def wrap(draw, text, face, width):
     result = []
     for paragraph in text.split("\n"):
         current = ""
         for word in paragraph.split():
             candidate = (current + " " + word).strip()
-            if measure(draw, candidate, face, number_face) > width and current:
+            if draw.textlength(candidate, font=face) > width and current:
                 result.append(current)
                 current = word
             else:
@@ -67,32 +53,30 @@ def block(draw, text, box, directory, *, size=44, minimum=28, style="regular", f
     left, top, right, bottom = box
     for n in range(size, minimum - 1, -1):
         face = font(str(directory), style, n)
-        number_face = font(str(directory), "mono", n)
-        lines = wrap(draw, text, face, number_face, right - left - 2 * stroke)
+        lines = wrap(draw, text, face, right - left - 2 * stroke)
         step = round(n * 1.15)
         if len(lines) * step <= bottom - top and all(
-            measure(draw, line, face, number_face) + 2 * stroke <= right - left for line in lines
+            draw.textlength(line, font=face) + 2 * stroke <= right - left for line in lines
         ):
             for i, line in enumerate(lines):
-                x = left
-                for part, selected in runs(line, face, number_face):
-                    draw.text(
-                        (x, top + i * step), part, font=selected, fill=fill, stroke_width=stroke
-                    )
-                    x += draw.textlength(part, font=selected)
+                draw.text((left, top + i * step), line, font=face, fill=fill, stroke_width=stroke)
             return {
                 "box": list(box),
                 "size": n,
                 "lines": len(lines),
                 "text": text,
                 "used_height": len(lines) * step,
+                "font_style": style,
             }
     raise ValueError("slide text does not fit at the minimum font size")
 
 
 def validate(content):
     slides = content["slides"]
-    if not 3 <= len(slides) <= 7 or len(slides[0]["title"].split()) > 8:
+    hook = slides[0]["title"]
+    if not 3 <= len(slides) <= 7 or (
+        len(hook.split()) > 8 and hook not in (*PRODUCT_HOOKS, BTC_HOOK)
+    ):
         raise ValueError("invalid carousel length or cover hook")
     text = " ".join(s["title"] + " " + s["body"] + " " + (s.get("cta") or "") for s in slides)
     if "—" in text or len(re.findall(r"\b(?:IA|AI|intelligence artificielle)\b", text, re.I)) > 1:
@@ -151,6 +135,54 @@ def chart(draw, rows, box, directory, *, ink=FG):
     return layout
 
 
+def calendar_entries(draw, item, box, directory, *, ink=FG, muted=MUTED, compact=False):
+    left, top, right, bottom = box
+    entries = item["entries"]
+    remaining = item.get("remaining", 0)
+    step = min(170, (bottom - top) / (len(entries) + bool(remaining)))
+    layout = []
+    for i, entry in enumerate(entries):
+        y = top + i * step
+        timing = entry["timing"]
+        name = block(
+            draw,
+            entry["name"],
+            (left, y, right, y + step - ((40 if compact else 46) if timing else 14)),
+            directory,
+            size=44 if compact else 64,
+            minimum=28 if compact else 36,
+            style="bold",
+            fill=ink,
+        )
+        layout.append(name)
+        if timing:
+            timing_top = y + name["used_height"] + 4
+            layout.append(
+                block(
+                    draw,
+                    timing,
+                    (left, timing_top, right, y + step - 4),
+                    directory,
+                    size=30 if compact else 36,
+                    minimum=28,
+                    fill=muted,
+                )
+            )
+    if remaining:
+        layout.append(
+            block(
+                draw,
+                f"et {remaining} {'autre' if remaining == 1 else 'autres'}",
+                (left, top + len(entries) * step, right, bottom),
+                directory,
+                size=40,
+                minimum=28,
+                fill=muted,
+            )
+        )
+    return layout
+
+
 def card(content, item, index, total, size, directory, brand=None):
     width, height = size
     brand = brand or {}
@@ -183,42 +215,107 @@ def card(content, item, index, total, size, directory, brand=None):
     draw.rounded_rectangle((left, 58, width - 72, 116), 29, fill=BG if flipped else TAG)
     draw.text((left + 22, 67), tag, font=tag_font, fill=ACCENT)
     footer_top = height - 128
-    source_height = max(135, 34 * ((item.get("source") or "").count("\n") + 1) + 16)
-    source_top = footer_top - source_height if item.get("source") else footer_top
-    action = item.get("cta") or (
-        content.get("cover_action", "Les faits, puis les sources") if index == 0 else None
+    source_height = max(
+        50 if content["kind"] == "calendar" else 135,
+        34 * ((item.get("source") or "").count("\n") + 1) + 16,
     )
+    source_top = footer_top - source_height if item.get("source") else footer_top
+    action = item.get("cta") or (content["cover_action"] if index == 0 else None)
     action_top = source_top - 164 if action else source_top
     body_bottom = action_top - 40
     top = 220 + (height - 1350) // 8
+    if item.get("eyebrow"):
+        layout.append(
+            block(
+                draw,
+                item["eyebrow"],
+                (72, top - 20, width - 72, top + 60),
+                directory,
+                size=50,
+                minimum=32,
+                style="bold",
+                fill=ink if flipped else ACCENT,
+            )
+        )
+        top += 90
     metric = item.get("metric")
-    if metric:
+    groups = item.get("calendar_groups")
+    if groups:
+        # X keeps five readable days in three detail images, two columns at most.
+        column_width = (width - 144 - 40 * (len(groups) - 1)) / len(groups)
+        for i, group in enumerate(groups):
+            left = 72 + i * (column_width + 40)
+            heading = block(
+                draw,
+                group["title"],
+                (left, top, left + column_width, top + 125),
+                directory,
+                size=54,
+                minimum=40,
+                style="bold",
+                fill=ink,
+            )
+            layout.append(heading)
+            layout.extend(
+                calendar_entries(
+                    draw,
+                    group,
+                    (left, top + 140, left + column_width, body_bottom),
+                    directory,
+                    ink=ink,
+                    muted=muted,
+                    compact=len(groups) > 1,
+                )
+            )
+    elif item.get("entries"):
         title = block(
             draw,
             item["title"],
-            (72, top, width - 72, top + 240),
+            (72, top, width - 72, top + 180),
             directory,
             size=88,
+            minimum=58,
+            style="bold",
+            fill=ink,
+        )
+        layout.append(title)
+        layout.extend(
+            calendar_entries(
+                draw,
+                item,
+                (72, top + title["used_height"] + 55, width - 72, body_bottom),
+                directory,
+                ink=ink,
+                muted=muted,
+            )
+        )
+    elif metric:
+        title = block(
+            draw,
+            item["title"],
+            (72, top, width - 72, top + (320 if item.get("quote") else 240)),
+            directory,
+            size=92 if item.get("quote") else 60,
             minimum=52,
             style="bold",
             fill=ink,
         )
         layout.append(title)
-        metric_top = top + title["used_height"] + 28
+        metric_top = top + title["used_height"] + (8 if item.get("quote") else 28)
         layout.append(
             block(
                 draw,
                 metric,
                 (66, metric_top, width - 66, metric_top + 330),
                 directory,
-                size=270,
+                size=250 if item.get("quote") else 270,
                 minimum=120,
                 style="bold",
                 fill=ink if flipped else ACCENT,
                 stroke=1,
             )
         )
-        body_top = metric_top + 310
+        body_top = metric_top + (300 if item.get("quote") else 310)
     else:
         # A short claim is set large. Longer sourced excerpts get their own measured space.
         title_height = min(int((body_bottom - top) * 0.53), 530)
@@ -235,7 +332,9 @@ def card(content, item, index, total, size, directory, brand=None):
         )
         layout.append(title)
         body_top = top + max(title["used_height"] + 70, int((body_bottom - top) * 0.48))
-    if item.get("chart"):
+    if groups or item.get("entries"):
+        pass
+    elif item.get("chart"):
         body_top = max(top + title["used_height"] + 35, body_bottom - 3 * 170)
         layout.extend(
             chart(draw, item["chart"], (72, body_top, width - 72, body_bottom), directory, ink=ink)
@@ -245,11 +344,23 @@ def card(content, item, index, total, size, directory, brand=None):
             block(
                 draw,
                 item["body"],
-                (72, body_top, width - 72, body_bottom),
+                (72, body_top, width - 72, body_bottom - (155 if item.get("after") else 0)),
                 directory,
-                size=64,
+                size=92 if item.get("quote") else (76 if metric else 64),
                 minimum=32,
                 fill=ink if flipped else muted,
+            )
+        )
+    if item.get("after"):
+        layout.append(
+            block(
+                draw,
+                item["after"],
+                (72, body_bottom - 145, width - 72, body_bottom),
+                directory,
+                size=58,
+                minimum=40,
+                fill=muted,
             )
         )
     if action:
@@ -314,26 +425,20 @@ def platform_slides(content, platform):
             # Cover plus all three facts. Carry the final CTA on the last fact.
             return [*slides[:-2], {**slides[-2], "cta": slides[-1]["cta"]}]
         if content["kind"] == "calendar" and len(slides) > 4:
-            # Keep every promised company/date within X's four-image budget.
             days = slides[1:-1]
-            middle = (len(days) + 1) // 2
             grouped = []
-            for title, group in (
-                ("Les premières dates", days[:middle]),
-                ("Les dernières dates", days[middle:]),
-            ):
-                unknown = "Horaire non confirmé pour les sociétés sans heure."
-                lines = [s["title"] + " : " + s["body"].replace("\n" + unknown, "") for s in group]
-                if any(unknown in s["body"] for s in group):
-                    lines.append(unknown)
+            for start in range(0, len(days), 2):
+                group = days[start : start + 2]
                 grouped.append(
                     {
-                        "title": title,
-                        "body": "\n".join(lines),
+                        "title": " / ".join(s["title"] for s in group),
+                        "body": "\n".join(s["body"] for s in group),
                         "source": "\n".join(dict.fromkeys(s["source"] for s in group)),
+                        "calendar_groups": group,
                     }
                 )
-            return [slides[0], *grouped, slides[-1]]
+            grouped[-1]["cta"] = slides[-1]["cta"]
+            return [slides[0], *grouped]
         indices = (
             [0, 3, 4, len(slides) - 1]
             if content["kind"] == "chance"
@@ -349,6 +454,8 @@ def caption(content):
     )
     if content["sources"]:
         text += "\n\nSources :\n" + "\n".join(content["sources"])
+    if content.get("calendar_listing"):
+        text += "\n\n" + content["calendar_listing"]
     for row in content["source_evidence"]:
         if row.get("commitment"):
             text += "\n\nEmpreinte SHA-256 complète : " + row["commitment"]["sha256"]

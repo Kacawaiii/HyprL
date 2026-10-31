@@ -1,6 +1,6 @@
 """Price-free counts already published by the completed study; no research or store access."""
 
-from .content import post, slide
+from .content import BTC_HOOK, post, slide
 
 REVISION = "98c7189b207e857777e188318b7248e87616ddd1"
 BASE = "https://github.com/Kacawaiii/HyprL/blob/" + REVISION
@@ -15,40 +15,44 @@ def verdict():
     stamp = "Étude HyprL · agrégats publics\nCalculée le 29/10/2026 à 14:36 UTC"
     cards = [
         slide(
-            "Bitcoin : 60 % des vendredis ?",
-            "Le plus bas d'Asie serait cassé ensuite. On a vérifié 450 vendredis.",
+            BTC_HOOK,
+            "des vendredis. »",
             metric="60 %",
+            quote=True,
         ),
         slide(
-            "Un plus bas fixé pendant la séance asiatique.",
-            "On regarde s'il est enfoncé plus tard dans la même journée. Un simple contact ne compte pas.",
+            "Le bitcoin fixe un plus bas pendant la séance asiatique.",
+            "Le vendredi, ce plus bas serait enfoncé plus tard dans la journée, 6 fois sur 10.",
+            eyebrow="L'idée qui circule",
             source=stamp,
         ),
         slide(
-            "Ce qu'on a mesuré",
-            "251 vendredis sur 450. De janvier 2018 à août 2026.",
+            "Ce qu'on a mesuré, vendredis de 2018 à août 2026",
+            "251 vendredis sur 450.",
             metric=f"{friday * 100:.1f} %".replace(".", ","),
             source=stamp,
+            after="Pas loin des 60 % annoncés. Alors, c'est vrai ?",
         ),
         slide(
-            "Les autres jours font aussi souvent.",
+            "Sauf que tous les jours font pareil.",
             chart=[
                 {"label": "Vendredi", "value": friday},
                 {"label": "Autres jours", "value": others},
-                {"label": "Tous les jours réunis", "value": empirical},
+                {"label": "Un jour au hasard", "value": empirical},
             ],
             source=stamp,
         ),
         slide(
-            "Aucun avantage du vendredi établi.",
-            "Le vendredi dépasse les autres jours dans 4 années sur 9. Ces observations historiques laissent une place au hasard.",
+            "Le vendredi n'a rien de spécial.",
+            "Ce plus bas tombe plus d'un jour sur deux, quel que soit le jour. Le vendredi ne bat les autres jours que 4 années sur 9.",
             source=stamp,
             flip=True,
+            eyebrow="Verdict",
         ),
         slide(
-            "Une stat se juge avec sa comparaison.",
-            "Chaque semaine, HyprL vérifie une idée qui circule sur les marchés. La méthode complète accompagne le verdict.",
-            cta="La méthode : lien en bio",
+            "Une stat qui claque ne prouve rien tant qu'on ne la compare pas.",
+            "Chaque semaine, on vérifie une idée qui circule sur les marchés.",
+            cta="La suite : lien en bio",
         ),
     ]
     value = post(
@@ -61,7 +65,7 @@ def verdict():
         "Intervalle de Wilson à 95 % : 51,2 à 60,3 %. Test bilatéral contre 60 % : p = 0,075 ; ne pas rejeter 60 % ne le confirme pas. "
         "Intervalle à 95 % de la différence vendredi moins autres jours, par blocs hebdomadaires : −7,1 à +2,9 points. "
         "Les intervalles de Wilson et le test binomial supposent l'indépendance ; les blocs n'excluent pas une dépendance plus longue. "
-        "Cette fréquence ne démontre ni rendement, ni rentabilité après coûts, ni effet causal. Le repère tous jours réunis est empirique : 57,7 %.",
+        "Cette fréquence ne démontre ni rendement, ni rentabilité après coûts, ni effet causal. Le repère « Un jour au hasard » est la fréquence empirique de tous les jours réunis : 1818 sur 3151, soit 57,7 % ; ce n'est pas un tirage simulé.",
         sources=[REPORT, EVIDENCE],
         evidence=[
             {

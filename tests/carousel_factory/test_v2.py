@@ -341,7 +341,24 @@ def test_public_btc_v2_has_honest_bars_plain_verdict_and_statistics_in_caption(c
     assert "p = 0,075" in p["caption_hook"]
     assert p["slides"][3]["chart"][0]["value"] == 251 / 450
     assert p["slides"][3]["chart"][1]["value"] == 1567 / 2701
-    assert p["slides"][4]["title"] == "Aucun avantage du vendredi établi."
+    assert p["slides"][4]["title"] == "Le vendredi n'a rien de spécial."
+    assert p["slides"][0]["metric"] == "60 %"
+    assert p["slides"][2]["metric"] == "55,8 %"
+    assert p["slides"][2]["body"] == "251 vendredis sur 450."
+    assert p["slides"][2]["after"] == "Pas loin des 60 % annoncés. Alors, c'est vrai ?"
+    assert p["slides"][4]["eyebrow"] == "Verdict"
+    assert p["slides"][4]["body"] == (
+        "Ce plus bas tombe plus d'un jour sur deux, quel que soit le jour. "
+        "Le vendredi ne bat les autres jours que 4 années sur 9."
+    )
+    assert "Ces observations historiques" not in visible
+    assert (
+        p["slides"][5]["title"]
+        == "Une stat qui claque ne prouve rien tant qu'on ne la compare pas."
+    )
+    assert p["slides"][3]["chart"][2]["value"] == 1818 / 3151
+    assert p["source_evidence"][0]["years_friday_beats_other_days"] == 4
+    assert p["source_evidence"][0]["years_comparable"] == 9
     dest = Path(config["output_dir"]) / "btc"
     meta = render(p, dest, config["font_dir"])
     assert meta["edition"] == "carrousels v2"
@@ -472,7 +489,175 @@ def test_x_keeps_every_fact_and_calendar_company_promised_on_cover(config):
     projected = platform_slides(p, "x")
     assert len(projected) == 4
     text = " ".join(s["title"] + " " + s["body"] for s in projected)
-    assert all(day in text for day in days)
+    from scripts.carousel_factory.data import human_date
+
+    assert all(human_date(day) in text for day in days)
+    assert all(day not in text for day in days)
     assert all(row["symbol"] in text for row in rows)
     meta = render(p, Path(config["output_dir"]) / "calendar-x", config["font_dir"])
     assert len(meta["platforms"]["x"]) == 4
+
+
+def test_digits_and_percent_use_the_surrounding_sans_face(config, monkeypatch):
+    from scripts.carousel_factory import render as renderer
+
+    selected = []
+    original = renderer.font
+
+    def observed_font(directory, style, size):
+        selected.append(style)
+        return original(directory, style, size)
+
+    monkeypatch.setattr(renderer, "font", observed_font)
+    p = verdict()
+    _, layout = renderer.card(p, p["slides"][2], 2, 6, (1080, 1350), config["font_dir"])
+    assert selected.count("mono") == 1  # Page counter only, even in 55,8 % / 251 / 450.
+    assert all(b["font_style"] in ("regular", "bold") for b in layout)
+    assert any(b["text"] == "55,8 %" and b["font_style"] == "bold" for b in layout)
+
+
+def test_product_hooks_and_next_slide_promises():
+    expected = [
+        "Une de vos actions publie demain. Le saviez-vous ?",
+        "Prédire après coup, tout le monde sait faire.",
+        "Une capture de gains ne prouve rien",
+        "15h30, Wall Street ouvre. Vous savez ce qui a changé ?",
+    ]
+    for i, hook in enumerate(expected):
+        p = evergreen(i)
+        assert p["title"] == p["slides"][0]["title"] == hook
+        assert p["cover_action"] != "Les faits, puis les sources"
+    assert "avant le résultat" in evergreen(1)["slides"][0]["body"]
+    assert evergreen(2)["slides"][-1]["body"] == (
+        "HyprL publie ses décisions de test avant le résultat, même quand elles perdent. "
+        "Ce sont des tests, pas des gains."
+    )
+
+
+def test_calendar_caps_each_day_and_preserves_names_order_and_unknown_hours(config):
+    from scripts.carousel_factory.data import UNKNOWN_HOURS, weekly_calendar
+    from scripts.carousel_factory.render import caption, platform_slides
+
+    rows = []
+    for i in range(9):
+        r = event(f"EX{i}")
+        r.update(precision="date", scheduled_at=None, company_name=f"Société exemple {i}")
+        rows.append(r)
+    rows[0].update(company_name=None, session="après la clôture")
+    rows[1]["session"] = "avant l'ouverture"
+    for i, row in enumerate(rows):
+        row["feed_order"] = i
+    rows.reverse()  # Projection order must not override the bound feed order.
+    p = weekly_calendar(snapshot(), rows, DAY)
+    detail = p["slides"][1]
+    assert detail["title"] == "Vendredi 30 octobre"
+    assert detail["body"].splitlines()[:2] == [
+        "EX0 · après la clôture",
+        "Société exemple 1 (EX1) · avant l'ouverture",
+    ]
+    assert detail["body"].endswith("et 3 autres")
+    assert len(detail["entries"]) == 6
+    assert "EX6" not in detail["body"]
+    assert len(p["source_evidence"]) == 9
+    assert "EX8" in caption(p)
+    assert UNKNOWN_HOURS in p["slides"][0]["source"]
+    for platform in ("instagram", "tiktok", "x"):
+        projected = platform_slides(p, platform)
+        assert sum(UNKNOWN_HOURS in (s.get("source") or "") for s in projected) == 1
+    render(p, Path(config["output_dir"]) / "calendar-cap", config["font_dir"])
+
+
+@pytest.mark.parametrize("change", [None, "body", "event", "dataset", "missing"])
+def test_calendar_names_and_sessions_are_bound_to_existing_feed_body(tmp_path, change):
+    import hashlib
+
+    from scripts.carousel_factory.data import calendar_rows
+    from scripts.video_factory.market import digest
+
+    # Real Nasdaq shape; all values are synthetic. No ticker directory or size guess.
+    feed = {
+        "data": {
+            "asOf": DAY,
+            "headers": {},
+            "rows": [
+                {
+                    "symbol": "EXM",
+                    "name": "Example Corporation",
+                    "time": "time-after-hours",
+                    "marketCap": "$1,000",
+                    "epsForecast": "$1",
+                    "fiscalQuarterEnding": "Sep/2026",
+                    "lastYearEPS": "$1",
+                    "lastYearRptDt": "10/30/2025",
+                    "noOfEsts": "1",
+                },
+                {"symbol": "OTHER", "name": "Excluded Company", "time": "time-pre-market"},
+            ],
+        },
+        "message": None,
+        "status": {"rCode": 200},
+    }
+    raw = json.dumps(feed).encode()
+    identity = hashlib.sha256(raw).hexdigest()
+    e = {"kind": "EARNINGS", "symbol": "EXM", "at": DAY + "T23:59:59Z"}
+    received = DAY + "T10:02:00Z"
+    calendar = {
+        "schema": "agent-v2-quality-calendar-v2",
+        "received_at": received,
+        "source_hashes": [identity],
+        "events": [e],
+    }
+    manifest = [
+        {
+            "method": "GET",
+            "status": 200,
+            "url": citation()["url"],
+            "body_sha256": identity,
+            "authorization_file_sha256": "c" * 64,
+            "started_at": DAY + "T10:00:00Z",
+            "received_at": DAY + "T10:01:00Z",
+        }
+    ]
+    x = snapshot()
+    x["calendar"] = [
+        {
+            "kind": "earnings",
+            "symbol": "EXM",
+            "date": DAY,
+            "precision": "date",
+            "scheduled_at": None,
+            "source": None,
+            "evidence": {
+                "kind": "observed_day_marker",
+                "dataset_sha256": digest(calendar),
+                "sha256": digest(e),
+                "received_at": received,
+            },
+        }
+    ]
+    if change in ("event", "dataset"):
+        x["calendar"][0]["evidence"]["sha256" if change == "event" else "dataset_sha256"] = "f" * 64
+    (tmp_path / "calendar.json").write_text(json.dumps(calendar))
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    bodies = tmp_path / "calendar-sources"
+    bodies.mkdir()
+    if change != "missing":
+        (bodies / f"nasdaq-{DAY}.body").write_bytes(raw + (b" " if change == "body" else b""))
+    c = {
+        "calendar_file": tmp_path / "calendar.json",
+        "calendar_manifest": tmp_path / "manifest.json",
+    }
+    if change == "body":
+        with pytest.raises(ValueError, match="digest mismatch"):
+            calendar_rows(x, c)
+        return
+    rows = calendar_rows(x, c)
+    if change in ("event", "dataset"):
+        assert rows == []
+    else:
+        assert len(rows) == 1 and rows[0]["symbol"] == "EXM"
+        assert rows[0].get("company_name") == (
+            None if change == "missing" else "Example Corporation"
+        )
+        assert rows[0].get("session") == (None if change == "missing" else "après la clôture")
+        assert rows[0]["precision"] == "date" and rows[0]["scheduled_at"] is None

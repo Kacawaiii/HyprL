@@ -8,7 +8,7 @@ import math
 import re
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from scripts.video_factory.factory import AGENTS, PUBLIC_REVEAL
@@ -20,6 +20,68 @@ from .content import post, slide
 PARIS = ZoneInfo("Europe/Paris")
 NY = ZoneInfo("America/New_York")
 DAYS = ("Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi")
+MONTHS = (
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+)
+SESSIONS = {"time-pre-market": "avant l'ouverture", "time-after-hours": "après la clôture"}
+UNKNOWN_HOURS = "Horaires non indiqués : à confirmer."
+
+
+def human_date(day):
+    d = date.fromisoformat(day)
+    return f"{DAYS[d.weekday()] if d.weekday() < 5 else ('Samedi', 'Dimanche')[d.weekday() - 5]} {d.day} {MONTHS[d.month - 1]}"
+
+
+def calendar_label(s):
+    if urlsplit(s["url"]).hostname == "api.nasdaq.com":
+        return f"Source : calendrier Nasdaq, relevé le {instant(s['available_at']).astimezone(PARIS):%d/%m}"
+    return label(s)
+
+
+def nasdaq_details(config, recovered):
+    """Read existing local feed bodies only after matching their recovered source digest.
+
+    The producer's date markers omit names/session hints. This optional enrichment
+    never expands the selected universe and never fetches a source.
+    """
+    if not config.get("calendar_manifest"):
+        return {}
+    root = Path(config["calendar_manifest"]).parent / "calendar-sources"
+    details = {}
+    for s in {s["url"]: s for s in recovered.values()}.values():
+        url = urlsplit(s["url"])
+        if url.hostname != "api.nasdaq.com" or url.path != "/api/calendar/earnings":
+            continue
+        day = parse_qs(url.query)["date"][0]
+        date.fromisoformat(day)
+        path = root / f"nasdaq-{day}.body"
+        if not path.exists():
+            continue
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != s["sha256"]:
+            raise ValueError("calendar detail source digest mismatch")
+        rows = (json.loads(raw).get("data") or {}).get("rows") or []
+        for position, row in enumerate(rows):
+            key = (s["sha256"], row["symbol"], day)
+            if key in details:
+                raise ValueError("duplicate calendar detail symbol")
+            details[key] = {
+                "company_name": row.get("name"),
+                "session": SESSIONS.get(row.get("time")),
+                "feed_order": position,
+            }
+    return details
 
 
 def label(s):
@@ -53,6 +115,7 @@ def calendar_rows(x, config):
         )
     except FileNotFoundError:
         recovered = {}
+    details = nasdaq_details(config, recovered)
     rows, seen = [], set()
     for entry in x.get("calendar", []):
         key = (entry["kind"], entry.get("symbol"), entry["date"])
@@ -95,7 +158,8 @@ def calendar_rows(x, config):
                 "nfp": "Emploi américain",
             }.get(entry["kind"])
         if title:
-            rows.append({**entry, "source": s, "title": title, "timing": timing})
+            extra = details.get((s["sha256"], entry.get("symbol"), entry["date"]), {})
+            rows.append({**entry, **extra, "source": s, "title": title, "timing": timing})
     return rows
 
 
@@ -191,8 +255,8 @@ def agenda_example(rows, day):
         0
     ]
     return {
-        "body": f"{r['date']} : {r['title']}, {r['timing']}.",
-        "source": label(r["source"]),
+        "body": f"{human_date(r['date'])} : {r['title']}, {r.get('session') or r['timing']}.",
+        "source": calendar_label(r["source"]),
         "urls": [r["source"]["url"]],
         "evidence": [r["source"]],
     }
@@ -283,31 +347,55 @@ def weekly_calendar(x, rows, day):
     ]
     if not events:
         return None
-    slides = [
-        slide(
-            f"{len(events)} résultats US du {start:%d/%m} au {end:%d/%m}",
-            f"Du {start:%d/%m} au {end:%d/%m/%Y}. Calendrier observé, susceptible de modification.",
-            metric=str(len(events)),
-            source=label(events[0]["source"]),
+    events = [
+        r
+        for _, r in sorted(
+            enumerate(events),
+            key=lambda item: (item[1]["date"], item[1].get("feed_order", item[0])),
         )
     ]
-    for offset, name in enumerate(DAYS):
+
+    def company(r):
+        name = (r.get("company_name") or r.get("name") or "").strip()
+        return f"{name} ({r['symbol']})" if name else r["symbol"]
+
+    def timing(r):
+        return (
+            r.get("session")
+            or SESSIONS.get(r.get("time"))
+            or (r["timing"] if r["precision"] == "time" else "")
+        )
+
+    unknown = any(not timing(r) for r in events)
+    note = UNKNOWN_HOURS if unknown else "Dates et horaires à confirmer."
+    period = f"Du {start.day} au {end.day} {MONTHS[end.month - 1]} {end.year}"
+    if start.month != end.month:
+        period = f"Du {start.day} {MONTHS[start.month - 1]} au {end.day} {MONTHS[end.month - 1]} {end.year}"
+    slides = [
+        slide(
+            f"{len(events)} résultats US cette semaine",
+            "\n".join(company(r) for r in events[:3]),
+            eyebrow=period,
+            source=calendar_label(events[0]["source"]) + ("\n" + note if note else ""),
+        )
+    ]
+    for offset in range(5):
         d = (start + timedelta(days=offset)).isoformat()
         group = [r for r in events if r["date"] == d]
         if not group:
             continue
-        # All named events are delivered, so the cover count is auditable.
-        text = " · ".join(
-            f"{r['symbol']} ({r['timing']})" if r["precision"] == "time" else r["symbol"]
-            for r in group
-        )
-        if any(r["precision"] == "date" for r in group):
-            text += "\nHoraire non confirmé pour les sociétés sans heure."
+        entries = [{"name": company(r), "timing": timing(r)} for r in group[:6]]
+        remaining = len(group) - len(entries)
+        text = "\n".join(e["name"] + (" · " + e["timing"] if e["timing"] else "") for e in entries)
+        if remaining:
+            text += f"\net {remaining} {'autre' if remaining == 1 else 'autres'}"
         slides.append(
             slide(
-                f"{name} · {d}",
+                human_date(d),
                 text,
-                source="\n".join(dict.fromkeys(label(r["source"]) for r in group)),
+                source="\n".join(dict.fromkeys(calendar_label(r["source"]) for r in group)),
+                entries=entries,
+                remaining=remaining,
             )
         )
     slides.append(
@@ -318,18 +406,34 @@ def weekly_calendar(x, rows, day):
             flip=True,
         )
     )
-    return post(
+    value = post(
         "calendar",
         "Value-Stack",
         slides[0]["title"],
         slides,
-        f"Les résultats US de la semaine du {start:%d/%m/%Y}, regroupés par jour. Le total compte les annonces présentes dans notre calendrier, sans prétendre couvrir tout le marché.",
+        f"{period}. Sélection partielle. {note}",
         sources=[r["source"]["url"] for r in events],
         evidence=[
-            {"date": r["date"], "symbol": r["symbol"], "source": r["source"]} for r in events
+            {
+                "date": r["date"],
+                "symbol": r["symbol"],
+                "company_name": r.get("company_name") or r.get("name"),
+                "timing": timing(r),
+                "source": r["source"],
+            }
+            for r in events
         ],
         provenance=x["_provenance"],
+        cover_action="Le détail, jour par jour",
     )
+    listing, previous_day = [], None
+    for r in events:
+        if r["date"] != previous_day:
+            listing.extend(["", human_date(r["date"])])
+            previous_day = r["date"]
+        listing.append(company(r) + (" · " + timing(r) if timing(r) else ""))
+    value["calendar_listing"] = "\n".join(listing).strip()
+    return value
 
 
 def documents(path, now):
