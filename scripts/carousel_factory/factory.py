@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import re
 import shutil
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -21,19 +22,27 @@ from .data import (
     documents,
     excerpt,
     load,
-    market,
     reveal,
-    verdict,
     weekly_calendar,
 )
 from .delivery import remove_owned, upload
+from .editorial import edit
+from .facts import select, to_post
+from .public_study import verdict as public_verdict
 from .render import render, verify
 
 PARIS = ZoneInfo("Europe/Paris")
 NY = ZoneInfo("America/New_York")
 UTC = timezone.utc
-SAFE_ID = re.compile(r"carousel-v1-[a-z0-9][a-z0-9-]{0,100}")
-SLOTS = {"daily": (18, 30), "calendar": (8, 0), "chance": (18, 45), "documents": (18, 50)}
+SAFE_ID = re.compile(r"carousel-v[12]-[a-z0-9][a-z0-9-]{0,100}")
+SLOTS = {
+    "daily": (18, 30),
+    "calendar": (8, 0),
+    "chance": (18, 45),
+    "documents": (18, 50),
+    "evergreen": (19, 15),
+    "prepare": (11, 15),
+}
 
 
 def retain(config, limit=30):
@@ -80,10 +89,14 @@ def produce(config, identifier, content, publish=False):
             raise ValueError("symlink carousel refused")
         if bundle.exists():
             meta = verify(bundle)
+            logo = (config.get("brand") or {}).get("logo")
+            logo_digest = hashlib.sha256(Path(logo).read_bytes()).hexdigest() if logo else None
+            if meta.get("style", {}).get("logo_sha256") != logo_digest:
+                raise ValueError("existing carousel uses a different logo")
             if meta["content_sha256"] != digest(content):
                 raise ValueError("existing carousel differs from selection")
         else:
-            render(content, bundle, config["font_dir"])
+            render(content, bundle, config["font_dir"], config.get("brand"))
         if not publish:
             return {"id": identifier, "status": "rendered", "kind": content["kind"]}
         result = upload(bundle, config["webhook_env"])
@@ -103,14 +116,23 @@ def inputs(config, now):
         x = load(config["snapshot"], now)
     except FileNotFoundError:
         return None, []
+    if config.get("calendar_config"):
+        calendar = Path(json.loads(Path(config["calendar_config"]).read_text())["calendar"])
+        config = {
+            **config,
+            "calendar_file": str(calendar),
+            "calendar_manifest": str(
+                calendar.parent.parent / "calendar-refresh/calendar-source-manifest.json"
+            ),
+        }
     return x, calendar_rows(x, config) if x else []
 
 
-def product(index, x, rows, day):
+def product(index, x, rows, day, translations=None):
     proof = reveal(x) if x and index == 1 else None
-    quote = excerpt(x) if x and index == 3 else None
+    quote = excerpt(x, translations) if x and index == 3 else None
     if (index == 1 and not proof) or (index == 3 and not quote):
-        return evergreen(0)
+        return None
     return evergreen(
         index, proof=proof, excerpt=quote, agenda=agenda_example(rows, day) if index == 3 else None
     )
@@ -120,32 +142,36 @@ def batch(config, now=None, publish=False):
     now = now or datetime.now(UTC)
     day = now.astimezone(NY).date().isoformat()
     x, rows = inputs(config, now)
-    selected = [(f"product-{i + 1:02}", product(i, x, rows, day)) for i in range(4)]
-    skipped = []
+    selected, skipped = [], []
+    for i in range(4):
+        item = product(i, x, rows, day, config.get("excerpt_translations"))
+        if item:
+            selected.append((f"product-{i + 1:02}", item))
+        else:
+            skipped.append({"kind": f"product-{i + 1:02}", "reason": "no real example"})
     if x:
-        # Initial examples retain their actual brief date, never today's label.
-        for b in sorted(x.get("briefs", []), key=lambda r: r["date"], reverse=True):
-            example = market(x, rows, b["date"])
-            if example:
-                example["caption_hook"] = f"Exemple daté du {b['date']}. " + example["caption_hook"]
-                selected.append(("market-example-" + b["date"], example))
-                break
-        cal = weekly_calendar(x, rows, day)
+        # Preview the next session's week after Friday; absolute dates stay visible.
+        calendar_day = date.fromisoformat(day)
+        if calendar_day.weekday() > 4:
+            calendar_day += timedelta(days=7 - calendar_day.weekday())
+        cal = weekly_calendar(x, rows, calendar_day.isoformat())
         if cal:
-            selected.append(("calendar-example-" + day, cal))
+            selected.append(("calendar-example-" + calendar_day.isoformat(), cal))
     for i, item in enumerate(documents(config.get("documents"), now)):
         if i == 0:
             selected.append(("document-example-" + digest(item)[:16], item))
-    study = verdict(config.get("study_result"), now)
+    study = public_verdict() if config.get("public_study", True) else None
     if study:
         selected.append(("chance-example-" + digest(study)[:16], study))
-    for kind in ("market", "calendar", "document", "chance"):
+    for kind in ("calendar", "document", "chance"):
         if not any(p["kind"] == kind for _, p in selected):
             skipped.append({"kind": kind, "reason": "no eligible observed evidence"})
     results = []
     for name, item in selected:
         # Content-addressed batch names permit a later real excerpt without overwrite.
-        identifier = "carousel-v1-" + name + "-" + digest(item)[:12]
+        logo = (config.get("brand") or {}).get("logo")
+        suffix = "-" + hashlib.sha256(Path(logo).read_bytes()).hexdigest()[:8] if logo else ""
+        identifier = "carousel-v2-" + name + "-" + digest(item)[:12] + suffix
         results.append(produce(config, identifier, item, publish))
     return {"status": "completed", "posts": results, "skipped": skipped}
 
@@ -154,14 +180,15 @@ def run(config, slot, now=None, publish=False):
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError("timezone required")
-    local = now.astimezone(PARIS)
-    expected = datetime.combine(local.date(), time(*SLOTS[slot]), PARIS)
+    local = now.astimezone(UTC if slot == "prepare" else PARIS)
+    expected = datetime.combine(local.date(), time(*SLOTS[slot]), local.tzinfo)
     if not 0 <= (local - expected).total_seconds() < 600:
         return {"status": "skipped", "reason": "outside scheduled slot"}
     if (
         local.weekday() > 4
         or (slot == "calendar" and local.weekday() != 0)
         or (slot == "chance" and local.weekday() != 2)
+        or (slot == "evergreen" and local.weekday() != 4)
     ):
         return {"status": "skipped", "reason": "outside scheduled weekday"}
     day = local.date().isoformat()
@@ -178,12 +205,22 @@ def run(config, slot, now=None, publish=False):
             return {"status": "already_delivered", "slot": slot, "day": day}
         x, rows = inputs(config, now)
         item = None
-        if slot == "daily" and x:
-            item = market(x, rows, day)
+        if slot in ("daily", "prepare"):
+            facts = select(x, rows, day, config.get("documents"))
+            if not facts:
+                return {"status": "skipped", "reason": "no eligible facts today"}
+            copy = edit(config, facts, now)
+            if not copy:
+                return {"status": "skipped", "reason": "editorial unavailable or rejected"}
+            if slot == "prepare":
+                return {"status": "prepared", "day": day}
+            item = to_post(facts, copy)
         elif slot == "calendar" and x:
             item = weekly_calendar(x, rows, day)
         elif slot == "chance":
-            item = verdict(config.get("study_result"), now)
+            item = public_verdict() if config.get("public_study", True) else None
+            if item and (state / f"chance-{digest(item)}.json").exists():
+                return {"status": "skipped", "reason": "study already delivered"}
         elif slot == "documents":
             candidates = documents(config.get("documents"), now)
             for candidate in candidates:
@@ -193,12 +230,24 @@ def run(config, slot, now=None, publish=False):
                     break
             if item is None:
                 return {"status": "skipped", "reason": "no new eligible official document"}
+        elif slot == "evergreen":
+            iso = date.fromisoformat(day).isocalendar()
+            week_record = state / f"evergreen-{iso.year}-W{iso.week:02}.json"
+            if week_record.exists():
+                return {"status": "skipped", "reason": "weekly evergreen already reserved"}
+            item = product(iso.week % 4, x, rows, day, config.get("excerpt_translations"))
         if item is None:
-            index = (date.fromisoformat(day).toordinal() + list(SLOTS).index(slot)) % 4
-            item = product(index, x, rows, day)
-        result = produce(config, f"carousel-v1-{slot}-{day}", item, publish)
+            return {"status": "skipped", "reason": "no eligible evidence"}
+        if publish and slot == "evergreen":
+            # Reserve before any upload. An uncertain delivery consumes the week's slot.
+            atomic_json(week_record, {"status": "pending", "day": day})
+        result = produce(config, f"carousel-v2-{slot}-{day}", item, publish)
         if publish:
             atomic_json(record, result)
+            if slot == "evergreen":
+                atomic_json(week_record, result)
+            if item["kind"] == "chance":
+                atomic_json(state / f"chance-{digest(item)}.json", result)
             if item["kind"] == "document":
                 atomic_json(state / f"document-{digest(item)}.json", result)
         return result

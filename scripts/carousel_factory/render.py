@@ -16,7 +16,8 @@ from scripts.video_factory.market import digest
 
 from .content import DISCLAIMER, EDITION, INVITE, SITE
 
-BG, FG, ACCENT = "#121417", "#FAFAF7", "#2F5D8A"
+BG, FG, ACCENT = "#0A0E1A", "#F5F7FC", "#8FB4FF"
+MUTED, TAG = "#9AA6BF", "#10203F"
 MAX_BYTES = 9_000_000
 FONTS = {
     "regular": "IBMPlexSans-Regular.ttf",
@@ -68,7 +69,7 @@ def block(draw, text, box, directory, *, size=44, minimum=28, style="regular", f
         face = font(str(directory), style, n)
         number_face = font(str(directory), "mono", n)
         lines = wrap(draw, text, face, number_face, right - left - 2 * stroke)
-        step = round(n * 1.32)
+        step = round(n * 1.15)
         if len(lines) * step <= bottom - top and all(
             measure(draw, line, face, number_face) + 2 * stroke <= right - left for line in lines
         ):
@@ -79,13 +80,19 @@ def block(draw, text, box, directory, *, size=44, minimum=28, style="regular", f
                         (x, top + i * step), part, font=selected, fill=fill, stroke_width=stroke
                     )
                     x += draw.textlength(part, font=selected)
-            return {"box": list(box), "size": n, "lines": len(lines), "text": text}
+            return {
+                "box": list(box),
+                "size": n,
+                "lines": len(lines),
+                "text": text,
+                "used_height": len(lines) * step,
+            }
     raise ValueError("slide text does not fit at the minimum font size")
 
 
 def validate(content):
     slides = content["slides"]
-    if not 4 <= len(slides) <= 7 or len(slides[0]["title"].split()) > 8:
+    if not 3 <= len(slides) <= 7 or len(slides[0]["title"].split()) > 8:
         raise ValueError("invalid carousel length or cover hook")
     text = " ".join(s["title"] + " " + s["body"] + " " + (s.get("cta") or "") for s in slides)
     if "—" in text or len(re.findall(r"\b(?:IA|AI|intelligence artificielle)\b", text, re.I)) > 1:
@@ -96,161 +103,201 @@ def validate(content):
         raise ValueError("three to five hashtags required")
 
 
-def chart(draw, rows, box, directory):
+def arrow(draw, x, y, ink):
+    draw.line((x, y, x + 66, y), fill=ink, width=8)
+    draw.line((x + 42, y - 24, x + 66, y, x + 42, y + 24), fill=ink, width=8)
+
+
+def chart(draw, rows, box, directory, *, ink=FG):
+    """Comparable horizontal bars share a zero baseline and the same 0–100 scale."""
     left, top, right, bottom = box
-    colors = (ACCENT, FG, FG)
-    for value in (0, 0.5, 1):
-        y = bottom - (bottom - top) * value
-        draw.line((left, y, right, y), fill=ACCENT, width=1)
-        draw.text(
-            (left - 70, y - 20),
-            f"{value * 100:.0f}%",
-            font=font(str(directory), "mono", 28),
-            fill=FG,
-        )
-    for j in range(3):
-        previous = None
-        for i, row in enumerate(rows):
-            x = left + (right - left) * i / max(1, len(rows) - 1)
-            rate = row["values"][j]
-            if rate is None:
-                previous = None
-                continue
-            if not 0 <= rate <= 1:
-                raise ValueError("chart rate outside range")
-            point = x, bottom - (bottom - top) * rate
-            if previous:
-                draw.line((*previous, *point), fill=colors[j], width=4 if j == 0 else 2)
-            if j == 1:
-                draw.rectangle(
-                    (point[0] - 6, point[1] - 6, point[0] + 6, point[1] + 6), outline=FG, width=2
-                )
-            else:
-                draw.ellipse(
-                    (point[0] - 6, point[1] - 6, point[0] + 6, point[1] + 6),
-                    fill=colors[j] if j == 0 else BG,
-                    outline=colors[j],
-                    width=2,
-                )
-            previous = point
-    for i, row in enumerate(rows):
-        x = left + (right - left) * i / max(1, len(rows) - 1)
-        draw.text(
-            (x - 28, bottom + 14),
-            str(row["year"])[2:],
-            font=font(str(directory), "mono", 28),
-            fill=FG,
-        )
-
-
-def card(content, item, index, total, size, directory):
-    width, height = size
-    im = Image.new("RGB", size, BG)
-    draw = ImageDraw.Draw(im)
+    step = (bottom - top) / len(rows)
     layout = []
-    draw.rectangle((72, 76, 83, 112), fill=ACCENT)
-    draw.text((100, 70), "HyprL", font=font(str(directory), "bold", 34), fill=FG)
-    draw.text(
-        (width - 175, 75),
-        f"{index + 1:02}/{total:02}",
-        font=font(str(directory), "mono", 28),
-        fill=FG,
-    )
-    label = {
-        "market": "Le point marché",
-        "calendar": "Les résultats US de la semaine",
-        "chance": "Chance ou pas ?",
-        "document": "Ce que dit le document officiel",
-    }.get(content["kind"], "Le service")
-    layout.append(block(draw, label, (72, 150, width - 72, 198), directory, size=28))
-    cover = index == 0
-    title_top = 275 if cover else 245
-    title_bottom = title_top + (370 if cover else 220)
-    layout.append(
-        block(
-            draw,
-            item["title"],
-            (72, title_top, width - 72, title_bottom),
-            directory,
-            size=100 if cover else 64,
-            minimum=48 if cover else 36,
-            style="bold",
-            stroke=1 if cover else 0,
-        )
-    )
-    # Extra vertical space on photo-mode slides keeps the same short narrative.
-    shift = max(0, height - 1350) // 3
-    body_top = title_bottom + 40 + shift
-    footer_top = height - 140
-    source_top = footer_top - 180
-    cta_top = source_top - 180
-    body_bottom = cta_top - 20 if item.get("cta") else source_top - 26
-    if item.get("chart"):
+    for i, row in enumerate(rows):
+        value = row["value"]
+        if not 0 <= value <= 1:
+            raise ValueError("chart rate outside range")
+        y = top + i * step
         layout.append(
             block(
-                draw, item["body"], (72, body_top, width - 72, body_top + 130), directory, size=32
+                draw,
+                row["label"],
+                (left, y, right, y + 62),
+                directory,
+                size=46,
+                minimum=36,
+                fill=ink,
             )
         )
-        plot_top = body_top + 175
-        chart(draw, item["chart"], (155, plot_top, 990, body_bottom - 90), directory)
-        legend_y = body_bottom - 12
-        for x, name, shape in (
-            (72, "Vendredis", "filled"),
-            (355, "Autres jours", "square"),
-            (715, "Aléatoire", "circle"),
-        ):
-            bounds = (x, legend_y, x + 16, legend_y + 16)
-            if shape == "square":
-                draw.rectangle(bounds, outline=FG, width=2)
-            else:
-                draw.ellipse(bounds, fill=ACCENT if shape == "filled" else BG, outline=FG, width=2)
-            draw.text(
-                (x + 28, legend_y - 8), name, font=font(str(directory), "regular", 28), fill=FG
+        bar_top = y + 76
+        draw.rounded_rectangle((left, bar_top, right, bar_top + 76), 12, fill=TAG)
+        end = left + (right - left) * value
+        draw.rounded_rectangle(
+            (left, bar_top, end, bar_top + 76), 12, fill=(ACCENT, FG, MUTED)[i % 3]
+        )
+        text = f"{value * 100:.1f} %".replace(".", ",")
+        layout.append(
+            block(
+                draw,
+                text,
+                (left + 20, bar_top + 7, right - 10, bar_top + 74),
+                directory,
+                size=48,
+                minimum=36,
+                style="bold",
+                fill=BG,
             )
+        )
+    return layout
+
+
+def card(content, item, index, total, size, directory, brand=None):
+    width, height = size
+    brand = brand or {}
+    flipped = item.get("flip", False)
+    bg, ink, muted = (ACCENT, BG, "#23345C") if flipped else (BG, FG, MUTED)
+    im = Image.new("RGB", size, bg)
+    draw = ImageDraw.Draw(im)
+    layout = []
+    logo = brand.get("logo")
+    if logo:
+        with Image.open(logo) as original:
+            mark = original.convert("RGBA")
+            mark.thumbnail((200, 70))
+            im.paste(mark, (72, 58), mark)
     else:
+        draw.text((72, 62), "HyprL", font=font(str(directory), "bold", 40), fill=ink)
+    tag = {
+        "market": "LE POINT MARCHÉ",
+        "calendar": "RÉSULTATS US",
+        "chance": "CHANCE OU PAS ?",
+        "document": "DOCUMENT OFFICIEL",
+        "product-a": "VOTRE VEILLE",
+        "product-b": "LES PREUVES",
+        "product-c": "SUR PIÈCES",
+        "product-d": "LE BRIEF",
+    }[content["kind"]]
+    tag_font = font(str(directory), "bold", 30)
+    tag_width = draw.textlength(tag, font=tag_font)
+    left = width - 72 - tag_width - 44
+    draw.rounded_rectangle((left, 58, width - 72, 116), 29, fill=BG if flipped else TAG)
+    draw.text((left + 22, 67), tag, font=tag_font, fill=ACCENT)
+    footer_top = height - 128
+    source_height = max(135, 34 * ((item.get("source") or "").count("\n") + 1) + 16)
+    source_top = footer_top - source_height if item.get("source") else footer_top
+    action = item.get("cta") or (
+        content.get("cover_action", "Les faits, puis les sources") if index == 0 else None
+    )
+    action_top = source_top - 164 if action else source_top
+    body_bottom = action_top - 40
+    top = 220 + (height - 1350) // 8
+    metric = item.get("metric")
+    if metric:
+        title = block(
+            draw,
+            item["title"],
+            (72, top, width - 72, top + 240),
+            directory,
+            size=88,
+            minimum=52,
+            style="bold",
+            fill=ink,
+        )
+        layout.append(title)
+        metric_top = top + title["used_height"] + 28
+        layout.append(
+            block(
+                draw,
+                metric,
+                (66, metric_top, width - 66, metric_top + 330),
+                directory,
+                size=270,
+                minimum=120,
+                style="bold",
+                fill=ink if flipped else ACCENT,
+                stroke=1,
+            )
+        )
+        body_top = metric_top + 310
+    else:
+        # A short claim is set large. Longer sourced excerpts get their own measured space.
+        title_height = min(int((body_bottom - top) * 0.53), 530)
+        title = block(
+            draw,
+            item["title"],
+            (72, top, width - 72, top + title_height),
+            directory,
+            size=124 if not item.get("chart") else 88,
+            minimum=58,
+            style="bold",
+            fill=ink,
+            stroke=1 if index == 0 else 0,
+        )
+        layout.append(title)
+        body_top = top + max(title["used_height"] + 70, int((body_bottom - top) * 0.48))
+    if item.get("chart"):
+        body_top = max(top + title["used_height"] + 35, body_bottom - 3 * 170)
+        layout.extend(
+            chart(draw, item["chart"], (72, body_top, width - 72, body_bottom), directory, ink=ink)
+        )
+    elif item["body"]:
         layout.append(
             block(
                 draw,
                 item["body"],
                 (72, body_top, width - 72, body_bottom),
                 directory,
-                size=42 if not cover else 36,
-                style="mono" if content["kind"] == "calendar" and not cover else "regular",
+                size=64,
+                minimum=32,
+                fill=ink if flipped else muted,
             )
         )
-    if item.get("cta"):
-        draw.rectangle((72, cta_top, width - 72, source_top - 16), fill=ACCENT)
+    if action:
+        action_fill, action_ink = (BG, ACCENT) if flipped else (ACCENT, BG)
+        draw.rounded_rectangle((72, action_top, width - 72, action_top + 134), 24, fill=action_fill)
         layout.append(
             block(
                 draw,
-                item["cta"],
-                (96, cta_top + 18, width - 96, source_top - 30),
+                action,
+                (108, action_top + 27, width - 210, action_top + 115),
                 directory,
-                size=40,
+                size=52,
+                minimum=32,
                 style="bold",
+                fill=action_ink,
             )
         )
+        arrow(draw, width - 178, action_top + 67, action_ink)
     if item.get("source"):
         layout.append(
             block(
                 draw,
                 item["source"],
-                (72, source_top, width - 72, footer_top - 15),
+                (72, source_top, width - 72, footer_top - 12),
                 directory,
                 size=28,
+                fill=muted,
             )
         )
-    if cover:
-        # The site's Latin-subset font has no arrow glyph. Draw the swipe cue.
-        draw.line((width - 176, 220, width - 76, 220), fill=FG, width=5)
-        draw.line((width - 100, 196, width - 76, 220, width - 100, 244), fill=FG, width=5)
-    draw.line((72, footer_top, width - 72, footer_top), fill=ACCENT, width=3)
     layout.append(
         block(
-            draw, DISCLAIMER, (72, footer_top + 18, width - 72, footer_top + 62), directory, size=28
+            draw,
+            DISCLAIMER,
+            (72, footer_top + 8, width - 72, footer_top + 54),
+            directory,
+            size=28,
+            fill=muted,
         )
     )
-    draw.text((72, footer_top + 68), SITE, font=font(str(directory), "bold", 28), fill=FG)
+    draw.text((72, height - 76), SITE, font=font(str(directory), "bold", 30), fill=ink)
+    counter = f"{index + 1}/{total}"
+    face = font(str(directory), "mono", 30)
+    draw.text(
+        (width - 72 - draw.textlength(counter, font=face), height - 76),
+        counter,
+        font=face,
+        fill=muted,
+    )
     return im, layout
 
 
@@ -263,6 +310,30 @@ def platform_slides(content, platform):
             *slides[3:],
         ]
     if platform == "x":
+        if content["kind"] == "market" and len(slides) == 5:
+            # Cover plus all three facts. Carry the final CTA on the last fact.
+            return [*slides[:-2], {**slides[-2], "cta": slides[-1]["cta"]}]
+        if content["kind"] == "calendar" and len(slides) > 4:
+            # Keep every promised company/date within X's four-image budget.
+            days = slides[1:-1]
+            middle = (len(days) + 1) // 2
+            grouped = []
+            for title, group in (
+                ("Les premières dates", days[:middle]),
+                ("Les dernières dates", days[middle:]),
+            ):
+                unknown = "Horaire non confirmé pour les sociétés sans heure."
+                lines = [s["title"] + " : " + s["body"].replace("\n" + unknown, "") for s in group]
+                if any(unknown in s["body"] for s in group):
+                    lines.append(unknown)
+                grouped.append(
+                    {
+                        "title": title,
+                        "body": "\n".join(lines),
+                        "source": "\n".join(dict.fromkeys(s["source"] for s in group)),
+                    }
+                )
+            return [slides[0], *grouped, slides[-1]]
         indices = (
             [0, 3, 4, len(slides) - 1]
             if content["kind"] == "chance"
@@ -284,7 +355,7 @@ def caption(content):
     return text + "\n"
 
 
-def render(content, destination, font_dir):
+def render(content, destination, font_dir, brand=None):
     validate(content)
     destination = Path(destination)
     if destination.exists():
@@ -307,7 +378,7 @@ def render(content, destination, font_dir):
             selected = platform_slides(content, platform)
             projections[platform] = selected
             for i, item in enumerate(selected):
-                im, layout = card(content, item, i, len(selected), size, font_dir)
+                im, layout = card(content, item, i, len(selected), size, font_dir, brand)
                 relative = f"{platform}/{i + 1:02}.png"
                 im.save(stage / relative, optimize=False)
                 layouts[relative] = layout
@@ -328,14 +399,22 @@ def render(content, destination, font_dir):
                     "bytes": len(body),
                 }
         meta = {
-            "schema": "hyprl-carousel-v1",
+            "schema": "hyprl-carousel-v2",
             "edition": EDITION,
             "content": content,
             "content_sha256": digest(content),
             "files": files,
             "layouts": layouts,
             "platforms": projections,
-            "style": {"background": BG, "foreground": FG, "accent": ACCENT, "minimum_font_px": 28},
+            "style": {
+                "background": BG,
+                "foreground": FG,
+                "accent": ACCENT,
+                "minimum_font_px": 28,
+                "logo_sha256": hashlib.sha256(Path(brand["logo"]).read_bytes()).hexdigest()
+                if brand and brand.get("logo")
+                else None,
+            },
             "font_sha256": {
                 style: hashlib.sha256((Path(font_dir) / name).read_bytes()).hexdigest()
                 for style, name in FONTS.items()
@@ -353,7 +432,7 @@ def verify(bundle):
     bundle = Path(bundle)
     meta = json.loads((bundle / "metadata.json").read_text())
     if (
-        meta.get("schema") != "hyprl-carousel-v1"
+        meta.get("schema") not in ("hyprl-carousel-v1", "hyprl-carousel-v2")
         or digest(meta["content"]) != meta["content_sha256"]
     ):
         raise ValueError("carousel manifest mismatch")

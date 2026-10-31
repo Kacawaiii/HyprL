@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 
 from .delivery import alert
-from .factory import SLOTS, batch, run
+from .factory import SLOTS, batch, produce, run
 from .render import verify
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("batch", "run", "verify", "alert"))
+    parser.add_argument("command", choices=("batch", "run", "verify", "deliver", "alert"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--slot", choices=SLOTS, default="daily")
     parser.add_argument("--bundle", type=Path)
@@ -39,6 +39,22 @@ def main():
             ).stdout.strip()
             if actual != expected:
                 raise ValueError("unexpected carousel checkout revision")
+            if subprocess.run(
+                [
+                    "git",
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=all",
+                    "--",
+                    "scripts/carousel_factory",
+                    "scripts/video_factory",
+                ],
+                cwd=checkout,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip():
+                raise ValueError("carousel checkout has modified or untracked code")
             subprocess.run(
                 [
                     "git",
@@ -57,6 +73,14 @@ def main():
                 parser.error("verify requires --bundle")
             meta = verify(args.bundle)
             result = {"status": "verified", "content_sha256": meta["content_sha256"]}
+        elif args.command == "deliver":
+            if not args.bundle or not args.publish:
+                parser.error("deliver requires --bundle and --publish")
+            bundle = args.bundle.resolve()
+            if bundle.parent != Path(config["output_dir"]).resolve() or args.bundle.is_symlink():
+                raise ValueError("bundle must belong to the configured output directory")
+            meta = verify(bundle)
+            result = produce(config, bundle.name, meta["content"], publish=True)
         elif args.command == "batch":
             result = batch(config, publish=args.publish)
         else:

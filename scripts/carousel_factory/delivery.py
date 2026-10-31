@@ -11,7 +11,6 @@ from pathlib import Path
 from scripts.video_factory.delivery import atomic_json, webhook
 from scripts.video_factory.market import digest
 
-from .content import EDITION
 from .render import verify
 
 
@@ -49,7 +48,7 @@ def upload(bundle, env_file):
     text = (bundle / "caption.txt").read_text()
     if len(text) > 1550:
         text = text.split("\n\nSources :")[0] + "\n\nLiens et empreintes complets dans caption.txt."
-    content = f"{EDITION}\n**{meta['content']['title']}**\n{text}\nAlbum Instagram ; packs TikTok photo et X joints."
+    content = f"{meta['edition']}\n**{meta['content']['title']}**\n{text}\nAlbum Instagram ; packs TikTok photo et X joints."
     if len(content) > 2000:
         raise ValueError("Discord caption exceeds limit")
     payload = {
@@ -86,7 +85,7 @@ def upload(bundle, env_file):
         method="POST",
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "HyprL-carousel-factory/1.0",
+            "User-Agent": "HyprL-carousel-factory/2.0",
         },
     )
     try:
