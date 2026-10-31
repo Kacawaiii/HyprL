@@ -28,7 +28,7 @@ def render(output, **paths):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ['growth-release', 'site-release', 'site-env', 'python', 'node', 'output']:
+    for name in ['growth-release', 'site-release', 'site-env', 'discord-env', 'python', 'node', 'output']:
         parser.add_argument('--' + name, required=True)
     args = vars(parser.parse_args())
     output = args.pop('output')

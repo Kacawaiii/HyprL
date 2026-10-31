@@ -68,8 +68,11 @@ class ReferralBot(discord.Client):
 
     async def setup_hook(self):
         guild = discord.Object(id=self.config['guild'])
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
+        # This is the existing HyprL application. Bulk tree.sync would delete its
+        # unrelated guild commands. Upsert only our one named command instead.
+        command = self.tree.get_command('parrainage')
+        await self.http.upsert_guild_command(self.application_id, guild.id,
+                                             payload=command.to_dict(self.tree))
 
     async def on_ready(self):
         if not self.job or self.job.done():
@@ -129,6 +132,8 @@ class ReferralBot(discord.Client):
                 present[row['member']] = member.joined_at.timestamp()
         self.ledger.mature(now.timestamp(), present)
         for reward in self.ledger.rewards():
+            if not self.config.get('apply_rewards', False):
+                continue
             if reward['state'] == 'role_granted':
                 continue
             try:
@@ -142,7 +147,7 @@ class ReferralBot(discord.Client):
             await member.add_roles(role, reason='Palier de parrainage HyprL validé')
             self.ledger.mark_role(reward['sponsor'], reward['threshold'])
         monday = (now - timedelta(days=now.weekday())).replace(hour=9, minute=0, second=0, microsecond=0)
-        if now >= monday:
+        if self.config.get('publish_leaderboard', False) and now >= monday:
             week = monday.date().isoformat()
             board = self.ledger.leaderboard()
             if board and self.ledger.reserve_post(week):
@@ -169,13 +174,37 @@ class ReferralBot(discord.Client):
         logging.error('Referral event failed; details withheld')
 
 
+def configuration(env):
+    # The operator explicitly chose the existing HyprL application. Its identity
+    # file is loaded by systemd, never rewritten or copied by this process.
+    required = ['DISCORD_BOT_TOKEN', 'DISCORD_GUILD_ID', 'REFERRAL_INVITE_CHANNEL_ID', 'REFERRAL_LEDGER', 'REFERRAL_ALIAS_KEY']
+    rewards = env.get('REFERRAL_APPLY_REWARDS') == 'true'
+    leaderboard = env.get('REFERRAL_PUBLISH_LEADERBOARD') == 'true'
+    if rewards:
+        required += ['REFERRAL_PREMIUM_CREDIT_ROLE_ID', 'REFERRAL_FONDATEUR_ROLE_ID']
+    if leaderboard:
+        required += ['REFERRAL_LEADERBOARD_CHANNEL_ID']
+    if any(not env.get(k) for k in required) or len(env['REFERRAL_ALIAS_KEY']) < 32:
+        raise SystemExit('HyprL referral configuration is incomplete')
+    numeric = ['DISCORD_GUILD_ID', 'REFERRAL_INVITE_CHANNEL_ID']
+    numeric += [k for k in required if k.endswith('_ROLE_ID') or k == 'REFERRAL_LEADERBOARD_CHANNEL_ID']
+    if any(not env[k].isdigit() or int(env[k]) <= 0 for k in numeric):
+        raise SystemExit('HyprL referral identifiers must be positive integers')
+    roles = {3: int(env['REFERRAL_PREMIUM_CREDIT_ROLE_ID']), 10: int(env['REFERRAL_FONDATEUR_ROLE_ID'])} if rewards else {}
+    if rewards and len(set(roles.values())) != 2:
+        raise SystemExit('Distinct reward marker roles required')
+    return {'guild': int(env['DISCORD_GUILD_ID']), 'invitation_channel': int(env['REFERRAL_INVITE_CHANNEL_ID']),
+            'leaderboard_channel': int(env['REFERRAL_LEADERBOARD_CHANNEL_ID']) if leaderboard else None,
+            'reward_roles': roles, 'apply_rewards': rewards, 'publish_leaderboard': leaderboard,
+            'public_url': env.get('PUBLIC_URL', 'https://hyprlcore.com')}
+
+
 def main():
     os.umask(0o077)
-    # Never reuse the other bot's identity. Dedicated env file/token supplied by the operator.
     env = os.environ
-    required = ['REFERRAL_BOT_TOKEN', 'REFERRAL_GUILD_ID', 'REFERRAL_INVITE_CHANNEL_ID', 'REFERRAL_LEADERBOARD_CHANNEL_ID', 'REFERRAL_PREMIUM_CREDIT_ROLE_ID', 'REFERRAL_FONDATEUR_ROLE_ID', 'REFERRAL_LEDGER', 'REFERRAL_ALIAS_KEY']
-    if any(not env.get(k) for k in required) or len(env['REFERRAL_ALIAS_KEY']) < 32:
-        raise SystemExit('Dedicated referral configuration is incomplete')
+    if env.get('REFERRAL_ENABLED') != 'true':
+        raise SystemExit('Referral networking disabled; operator activation required')
+    config = configuration(env)
     file = Path(env['REFERRAL_LEDGER'])
     if not file.is_absolute():
         raise SystemExit('Absolute private ledger path required')
@@ -183,9 +212,8 @@ def main():
     with open(str(file) + '.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         ledger = Ledger(file, env['REFERRAL_ALIAS_KEY'])
-        config = {'guild': int(env['REFERRAL_GUILD_ID']), 'invitation_channel': int(env['REFERRAL_INVITE_CHANNEL_ID']), 'leaderboard_channel': int(env['REFERRAL_LEADERBOARD_CHANNEL_ID']), 'reward_roles': {3: int(env['REFERRAL_PREMIUM_CREDIT_ROLE_ID']), 10: int(env['REFERRAL_FONDATEUR_ROLE_ID'])}, 'public_url': env.get('PUBLIC_URL', 'https://hyprlcore.com')}
         try:
-            ReferralBot(config, ledger).run(env['REFERRAL_BOT_TOKEN'], log_handler=None)
+            ReferralBot(config, ledger).run(env['DISCORD_BOT_TOKEN'], log_handler=None)
         except Exception:
             raise SystemExit('Referral service failed; details withheld') from None
         finally:

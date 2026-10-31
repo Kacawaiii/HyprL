@@ -5,12 +5,14 @@ from scripts.growth.render_units import render
 
 def test_only_new_user_units_are_rendered_to_staging(tmp_path):
     output = tmp_path / 'units'
-    paths = {'growth_release': '/synthetic/growth', 'site_release': '/synthetic/site', 'site_env': '/synthetic/config/site.env', 'python': '/synthetic/venv/bin/python', 'node': '/synthetic/bin/node'}
+    paths = {'growth_release': '/synthetic/growth', 'site_release': '/synthetic/site', 'site_env': '/synthetic/config/site.env', 'discord_env': '/synthetic/config/identity.env', 'python': '/synthetic/venv/bin/python', 'node': '/synthetic/bin/node'}
     names = render(output, **paths)
     assert sorted(p.name for p in output.iterdir()) == sorted(names)
     referral = (output / 'hyprl-growth-referrals.service').read_text()
     assert 'ExecStart=/synthetic/venv/bin/python -m scripts.growth.discord_bot' in referral
     assert 'EnvironmentFile=%h/.config/hyprl-growth/referral.env' in referral
+    assert 'EnvironmentFile=/synthetic/config/identity.env' in referral
+    assert "os.environ.get('REFERRAL_ENABLED') == 'true'" in referral
     assert 'MemoryMax=160M' in referral
     assert 'After=hyprl-site.service' in (output / 'hyprl-growth-newsletter.service').read_text()
     timer = (output / 'hyprl-growth-newsletter.timer').read_text()

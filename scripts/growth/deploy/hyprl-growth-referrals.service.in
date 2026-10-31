@@ -5,7 +5,9 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=@GROWTH_RELEASE@
+EnvironmentFile=@DISCORD_ENV@
 EnvironmentFile=%h/.config/hyprl-growth/referral.env
+ExecCondition=@PYTHON@ -c "import os,sys; sys.exit(0 if os.environ.get('REFERRAL_ENABLED') == 'true' else 1)"
 ExecStart=@PYTHON@ -m scripts.growth.discord_bot
 Restart=on-failure
 RestartSec=30

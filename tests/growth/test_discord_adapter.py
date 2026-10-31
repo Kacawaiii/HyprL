@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from scripts.growth.discord_bot import ReferralBot
+from scripts.growth.discord_bot import ReferralBot, configuration
 from scripts.growth.referrals import Ledger
 
 
 @pytest.fixture
 def config():
-    return {'guild': 800000000000000001, 'invitation_channel': 800000000000000002, 'leaderboard_channel': 800000000000000003, 'reward_roles': {3: 700000000000000001, 10: 700000000000000002}, 'public_url': 'https://example.test'}
+    return {'guild': 800000000000000001, 'invitation_channel': 800000000000000002, 'leaderboard_channel': 800000000000000003, 'reward_roles': {3: 700000000000000001, 10: 700000000000000002}, 'public_url': 'https://example.test', 'apply_rewards': True, 'publish_leaderboard': True}
 
 
 def test_command_creates_one_permanent_invite_and_responds_privately(tmp_path, config):
@@ -97,5 +97,56 @@ def test_api_outage_never_matures_or_rejects_members_and_does_not_grant_roles(tm
         with pytest.raises(RuntimeError, match='synthetic outage'):
             await bot.reconcile()
         assert ledger.counts('100') == {'pending': 1} and ledger.rewards() == []
+        await bot.close(); ledger.close()
+    asyncio.run(run())
+
+
+def test_existing_application_command_registration_never_bulk_replaces_commands(tmp_path, config):
+    async def run():
+        ledger = Ledger(tmp_path / 'ledger.sqlite', 'synthetic-alias-key')
+        bot = ReferralBot(config, ledger)
+        bot.http.upsert_guild_command = AsyncMock()
+        bot.tree.sync = AsyncMock(side_effect=AssertionError('Bulk replacement forbidden'))
+        await bot.setup_hook()
+        call = bot.http.upsert_guild_command.await_args
+        assert call.args[1] == config['guild']
+        assert call.kwargs['payload']['name'] == 'parrainage'
+        bot.tree.sync.assert_not_awaited()
+        await bot.close(); ledger.close()
+    asyncio.run(run())
+
+
+def test_safe_configuration_reuses_hyprl_identity_with_public_writes_disabled():
+    env = {'DISCORD_BOT_TOKEN': 'synthetic-token', 'DISCORD_GUILD_ID': '100',
+           'REFERRAL_INVITE_CHANNEL_ID': '200', 'REFERRAL_LEDGER': '/synthetic/ledger.sqlite',
+           'REFERRAL_ALIAS_KEY': 'x' * 32}
+    config = configuration(env)
+    assert config['guild'] == 100
+    assert not config['publish_leaderboard'] and not config['apply_rewards']
+    assert config['reward_roles'] == {} and config['leaderboard_channel'] is None
+    with pytest.raises(SystemExit, match='incomplete'):
+        configuration({**env, 'REFERRAL_APPLY_REWARDS': 'true'})
+    with pytest.raises(SystemExit, match='incomplete'):
+        configuration({**env, 'REFERRAL_PUBLISH_LEADERBOARD': 'true'})
+    with pytest.raises(SystemExit, match='identifiers'):
+        configuration({**env, 'DISCORD_GUILD_ID': '-1'})
+
+
+def test_safe_reconciliation_records_credit_without_roles_or_public_messages(tmp_path, config):
+    async def run():
+        ledger = Ledger(tmp_path / 'ledger.sqlite', 'synthetic-alias-key')
+        now = datetime.now(timezone.utc).timestamp()
+        ledger.register('100', 'personal', now - 86400 * 9)
+        for i in range(3):
+            ledger.join(str(200 + i), 'personal', now - 86400 * 30, now - 86400 * 8)
+        bot = ReferralBot({**config, 'apply_rewards': False, 'publish_leaderboard': False}, ledger)
+        guild = SimpleNamespace(fetch_member=AsyncMock(return_value=SimpleNamespace(joined_at=datetime.fromtimestamp(now - 86400 * 8, timezone.utc))),
+                                get_role=lambda _id: pytest.fail('Role writes disabled'),
+                                get_channel=lambda _id: pytest.fail('Public messages disabled'))
+        bot.get_guild = lambda _id: guild
+        await bot.reconcile()
+        assert ledger.counts('100') == {'valid': 3}
+        assert ledger.db.execute('SELECT state FROM credits').fetchone()[0] == 'pending_stripe'
+        assert ledger.db.execute('SELECT COUNT(*) FROM posts').fetchone()[0] == 0
         await bot.close(); ledger.close()
     asyncio.run(run())
