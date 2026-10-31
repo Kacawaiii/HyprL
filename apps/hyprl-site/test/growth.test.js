@@ -232,3 +232,17 @@ test('weekly boundaries follow New York date including Sunday UTC and daylight t
   assert.deepEqual(weekAt(Date.parse('2026-11-02T00:30:00Z')), { start: '2026-10-26', end: '2026-11-01' });
   assert.deepEqual(weekAt(Date.parse('2026-11-02T13:00:00Z')), { start: '2026-11-02', end: '2026-11-08' });
 });
+
+test('completed BTC study remains sourced and available without a fresh member export', async t => {
+  const c = await setup(t), btc = require('../server/growth/btc-study');
+  c.advance(27 * 3600000);
+  const res = await c.get(btc.pathname);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  for (const text of ['55,8', '58,0', '51,2', '60,3', '251/450', 'p = 0,075', 'Aucun avantage vendredi établi', '−7,1 à +2,9', btc.evidenceUrl, btc.study.evidence_sha256]) assert.ok(html.includes(text), text);
+  assert.ok(html.includes('ce qui ne confirme pas'));
+  const index = await c.get('/chance-ou-pas');
+  assert.equal(index.status, 200);
+  assert.ok((await index.text()).includes(btc.pathname));
+  assert.ok((await (await c.get('/sitemap.xml')).text()).includes(btc.pathname));
+});

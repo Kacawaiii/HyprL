@@ -20,7 +20,13 @@ const example = () => ({
 });
 
 test('OpenAPI 3.1 resolves entirely offline and explicitly describes a future API', async () => {
-  const spec = await parser.validate(path.join(root, 'openapi.json'), { resolve: { http: false } });
+  // JSON Schema $id rebases relative refs to the public canonical URL. Resolve
+  // those exact IDs from the same local files, with HTTP still forbidden.
+  const localSchemas = new Map(['alert', 'webhook', 'problem'].map(name => [read(name + '.schema.json').$id, name + '.schema.json']));
+  const spec = await parser.validate(path.join(root, 'openapi.json'), { resolve: {
+    http: false,
+    canonicalLocal: { order: 1, canRead: file => localSchemas.has(file.url), read: file => fs.readFileSync(path.join(root, localSchemas.get(file.url)), 'utf8') },
+  } });
   assert.equal(spec.openapi, '3.1.0'); assert.equal(spec.info.version, '1.0.0');
   assert.match(spec.info.description, /not enabled/);
   assert.ok(spec.webhooks.marketAlert.post.requestBody);

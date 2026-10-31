@@ -40,7 +40,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda error: errors.append(str(error)))
     for scheme in ['light', 'dark']:
         page.emulate_media(color_scheme=scheme, reduced_motion='reduce')
-        for route, slug in [('/calendrier-resultats-us', 'calendar-synthetic'), ('/chance-ou-pas', 'claims-synthetic'), ('/comprendre-depot-sec', 'sec-guide'), ('/parrainage', 'referrals')]:
+        for route, slug in [('/calendrier-resultats-us', 'calendar-synthetic'), ('/chance-ou-pas', 'claims-synthetic'), ('/comprendre-depot-sec', 'sec-guide'), ('/parrainage', 'referrals'), ('/chance-ou-pas/btc-vendredi-plus-bas-asie', 'btc-study-public')]:
             page.goto(BASE + route)
             page.wait_for_load_state('networkidle')
             assert page.locator('h1').count() == 1
@@ -49,10 +49,13 @@ with sync_playwright() as p:
             assert schema['inLanguage'] == 'fr-FR'
             assert page.locator('link[rel="canonical"]').get_attribute('href') == BASE + route
             audit(page)
-            if scheme == 'light' or slug == 'calendar-synthetic':
+            if scheme == 'light' or slug in ['calendar-synthetic', 'btc-study-public']:
                 page.screenshot(path=str(OUT / f'{slug}-{scheme}.png'), full_page=True)
+            if slug == 'btc-study-public':
+                assert 'Aucun avantage vendredi établi' in page.locator('main').inner_text()
+                assert '251/450' in page.locator('main').inner_text()
     page.goto(BASE + '/chance-ou-pas')
-    page.locator('main a[href^="/chance-ou-pas/"]').click()
+    page.locator('main a[href^="/chance-ou-pas/"]').filter(has_text='Affirmation synthétique').click()
     page.wait_for_load_state('networkidle')
     audit(page)
     page.screenshot(path=str(OUT / 'claim-article-synthetic-dark.png'), full_page=True)
@@ -100,6 +103,11 @@ with sync_playwright() as p:
     page.keyboard.press('Escape')
     audit(page)
     page.screenshot(path=str(OUT / 'calendar-synthetic-mobile.png'), full_page=True)
+    page.goto(BASE + '/chance-ou-pas/btc-vendredi-plus-bas-asie')
+    page.wait_for_load_state('networkidle')
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    audit(page)
+    page.screenshot(path=str(OUT / 'btc-study-public-mobile.png'), full_page=True)
     assert context.cookies() == []
     assert page.evaluate('localStorage.length + sessionStorage.length') == 0
     assert not external, external
