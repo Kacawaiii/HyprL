@@ -39,7 +39,7 @@ async function setup(t, extra = {}) {
 
 async function success(r) { assert.equal(r.status, 200); assert.deepEqual(await r.json(), { ok: true }); }
 
-test('32 historical-pattern bots and hidden-field scrapers get normal success, zero records and zero email', async t => {
+test('32 historical-pattern bots and hidden-field scrapers get normal success, zero subscribers, private quarantine and zero email', async t => {
   const c = await setup(t), html = await (await fetch(c.base)).text();
   const hidden = Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"/g)].map(m => [m[1], m[2]]));
   assert.ok(!hidden.form_token);
@@ -75,12 +75,13 @@ test('scraped tokens require age, signed payload, local work, matching IP, and o
   assert.equal(c.mails.length, 1);
 });
 
-test('actions accept bounded company lists and refuse multilingual spam sentences without storing them', async t => {
+test('actions accept bounded company lists and quarantine multilingual spam sentences without mailing them', async t => {
   for (const raw of ['AAPL, NVDA, Berkshire Hathaway, Bank of America', 'BRK.B, Mercedes-Benz, Société Générale', '', 'AAPL,\nMSFT']) assert.notEqual(validateActions(raw), null, raw);
   for (const raw of ['I wanted to know your price', 'Je voudrais connaître votre prix', 'Quería saber su precio', 'Ich wollte Ihren Preis wissen', 'Я хотел узнать вашу цену', '我想知道你们的价格', 'AAPL<script>', 'AAPL;MSFT', 'AAPL,,MSFT', 'a'.repeat(61), Array(11).fill('AAPL').join(','), 'AAPL\u0000']) assert.equal(validateActions(raw), null, raw);
   const c = await setup(t);
   const r = await c.enroll({ actions: 'I wanted to know your price' });
-  assert.equal(r.status, 400); assert.match((await r.json()).detail, /tickers|noms d’entreprises/);
+  await success(r);
+  assert.equal(c.app.triage.quarantine.all()[0].reason_code, 'actions');
   assert.equal(c.mails.length, 0); assert.equal(c.app.store.all().length, 0);
 });
 

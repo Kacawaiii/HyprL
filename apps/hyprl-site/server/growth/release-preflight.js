@@ -16,13 +16,13 @@ function check(config, liveRoot, now = Date.now()) {
   assert.notEqual(config.signupGuardFile, config.dataFile);
   const roots = [fs.realpathSync(config.root), fs.realpathSync(liveRoot)];
   const stateFiles = new Set();
-  for (const value of [config.dataFile, config.signupGuardFile, config.member.stateFile, config.member.snapshotDir, config.publicSnapshotDir]) {
+  for (const value of [config.dataFile, config.signupGuardFile, config.quarantineFile, config.member.stateFile, config.member.snapshotDir, config.publicSnapshotDir]) {
     assert.ok(path.isAbsolute(value), 'Absolute external state paths required');
     // Resolve existing ancestors too, preventing a parent symlink into a release.
     let ancestor = value;
     while (!fs.existsSync(ancestor)) ancestor = path.dirname(ancestor);
     const resolved = path.join(fs.realpathSync(ancestor), path.relative(ancestor, value));
-    if ([config.dataFile, config.signupGuardFile, config.member.stateFile].includes(value)) {
+    if ([config.dataFile, config.signupGuardFile, config.quarantineFile, config.member.stateFile].includes(value)) {
       assert.ok(!stateFiles.has(resolved), 'Dedicated distinct state files required');
       stateFiles.add(resolved);
     }

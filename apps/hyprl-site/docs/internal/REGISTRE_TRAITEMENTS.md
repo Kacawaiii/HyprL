@@ -19,7 +19,7 @@ Mise à jour : 2026-10-31. Revue avant lancement et à chaque changement.
 - Données : adresse e-mail, canaux et actions facultatifs, UUID, création UTC,
   version/texte/date UTC du consentement, empreintes des jetons de confirmation et désinscription, statut pending/confirmed et date de confirmation.
   Aucun mot de passe d'inscrit ; ni IP ni jeton en clair dans la liste.
-- Double opt-in : unique e-mail après preuve de travail locale, délai minimal, jeton signé lié à l’IP et Origin exact. Confirmation explicite POST, lien 48 h, aucune relance. Lettre facultative seulement si demandée séparément. Anciennes inscriptions sans preuve : non confirmées, même purge 7 jours.
+- Double opt-in : unique e-mail après preuve de travail locale, délai minimal, jeton signé lié à l’IP et Origin exact. Confirmation explicite POST, lien 48 h, aucune relance. Lettre facultative seulement si demandée séparément. Anciennes inscriptions sans preuve : classement en quarantaine au premier démarrage, sans envoi, puis purge après sept jours maximum.
 - Notification éditeur : bilan des seules inscriptions confirmées de dates UTC précédentes, au plus un par 24 h, réservation durable avant SMTP et aucun renvoi incertain.
 - Destinataires : éditeur seul, accès administrateur restreint. Hébergeur : Hetzner
   Online GmbH, Allemagne/UE. Contrat article 28 : [DPA ET LOCALISATION À ARCHIVER].
@@ -85,3 +85,22 @@ l'acceptation, choix six mois, nouvel accord ensuite (avant treize mois), change
 RGPD articles 5, 6, 12–22, 28, 30, 32–34 ; recommandations CNIL relatives aux
 traceurs. Les références sont à revalider par l'opérateur avant publication ;
 aucune consultation réseau d'une source officielle n'a été effectuée sur ce serveur.
+
+
+## Quarantaine anti-abus — triage administrateur
+
+Finalité : prévenir les abus et examiner les faux positifs. Base : intérêt légitime
+(article 6.1.f). Données : date initiale, adresse (254 caractères maximum), canaux
+reconnus, champ actions (1 000 caractères maximum), preuve de consentement si
+valide, motif français et échéance. Aucun corps HTTP brut, IP ou jeton.
+Fichier privé séparé `SIGNUP_QUARANTINE_FILE`, accès au seul administrateur
+habilité ; aucune prospection, lettre ni export CSV. Durée : sept jours maximum
+après quarantaine (classement initial pour les anciennes demandes), sans
+renouvellement sur doublon ; purge automatique par échéance, au démarrage et aux
+requêtes. Le bouton « C’est un vrai » demande uniquement la confirmation de
+l’accès anticipé sous réserve d’un consentement établi et des plafonds. Il ne
+confirme pas l’adresse et ne crée jamais de consentement marketing. Le déplacement
+et l’unique réservation d’envoi sont journalisés par compteurs et horodatage privé.
+Le bouton « Supprimer » efface immédiatement la demande ; l’ancien fichier
+d’inscrits est vidé des demandes transférées sans copie d’archive. Une restauration
+de code ne restaure jamais les fichiers personnels ni les réservations de sécurité.

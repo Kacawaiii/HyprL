@@ -88,6 +88,7 @@ with sync_playwright() as p:
     assert page.locator("#password").get_attribute("aria-invalid") == "true"
     page.locator("#password").fill("synthetic-browser-test-password")
     page.get_by_role("button", name="Se connecter").click()
+    page.get_by_role("button", name="En attente (1)", exact=True).click()
     page.get_by_role("link", name="Exporter JSON — browser-person@example.test").wait_for()
     audit(page, "authenticated admin")
     with page.expect_download() as download_info:

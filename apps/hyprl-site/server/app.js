@@ -12,6 +12,7 @@ const { recordExpiresAt, startRetentionJob } = require('./lib/retention');
 const { passwordMatches, AttemptLimiter, SessionStore, sha256 } = require('./lib/auth');
 const { createMailer } = require('./lib/mail');
 const { SignupGuard } = require('./lib/signup-guard');
+const { createTriage } = require('./lib/triage');
 const { createSignup, validateActions } = require('./lib/signup');
 const { createPages, maskEmail, esc } = require('./lib/pages');
 const { VERSION: NEWSLETTER_VERSION, assertNewsletterPage, publicNewsletter, createNewsletter } = require('./growth/newsletter');
@@ -44,7 +45,6 @@ function createApp(config, deps = {}) {
   assertNewsletterPage(indexHtml);
 
   const store = deps.store || new SubscriberStore(config.dataFile).load();
-  const retention = startRetentionJob(store, { now, logger, ...(deps.retention || {}) });
   const mailer = deps.mailer || createMailer(config, logger);
   const pages = createPages(config.publicDir);
   const loginLimiter = new AttemptLimiter({ max: config.login.maxAttempts, windowMs: config.login.windowMs, now });
@@ -55,6 +55,8 @@ function createApp(config, deps = {}) {
   const content = deps.content || new PublicContent(config, { now, ...(deps.publicContent || {}) });
   const newsletter = createNewsletter({ config, store, mailer, content, now });
   const signup = createSignup({ config, store, guard, mailer, now, logger });
+  const triage = createTriage({ config, store, guard, signup, now, logger });
+  const retention = startRetentionJob(store, { now, logger, ...(deps.retention || {}) });
 
   const sweeper = setInterval(() => { loginLimiter.sweep(); sessions.sweep(); guard.mutate(() => true).catch(() => logger.info('[signup] {"guard_cleanup_error":1}')); }, 60 * 1000);
   sweeper.unref();
@@ -164,45 +166,52 @@ function createApp(config, deps = {}) {
   async function subscribe(req, res, apiErrors = false) {
     const wantsJsonHeader = String(req.headers.accept || '').includes('application/json') || String(req.headers['content-type'] || '').startsWith('application/json');
     const success = (asJson = wantsJsonHeader) => asJson ? json(res, 200, { ok: true }) : redirect(res, '/merci');
-    // Subscription requires the exact configured origin, even outside production.
-    // Missing/null/foreign origins receive the same success as accepted forms.
-    if (req.headers.origin !== publicOrigin) { logger.info('[signup] {"rejected_origin":1}'); return success(); }
     const form = await readForm(req);
     const wantsJson = form.json || String(req.headers.accept || '').includes('application/json');
+    const suspect = reason => triage.capture({
+      email: form.get('email'), channels: form.getAll('channels'), actions: form.get('actions'),
+      consent: form.get('consent') === 'oui' ? { given: true, version: form.get('consent_version'),
+        text: CONSENT_TEXTS[form.get('consent_version')], checked_at: new Date(now()).toISOString() } : null,
+    }, reason);
+    const rejected = async reason => { await suspect(reason); return success(wantsJson); };
     const fail = (status, title, message) => apiErrors || wantsJson
       ? json(res, status, { error: title, message })
       : send(res, status, pages.error(title, message));
+    if (req.headers.origin !== publicOrigin) return rejected('origin');
+    if ((form.get('site_web') || '').trim()) return rejected('honeypot');
+    const verification = guard.verifyReason(clientIp(req), form.get('form_token'), form.get('form_work'));
+    const reason = verification.reason || await guard.consumeReason(verification.proof);
+    if (reason) return rejected(reason);
 
-    if ((form.get('site_web') || '').trim() || !await guard.consume(guard.verify(clientIp(req), form.get('form_token'), form.get('form_work')))) {
-      logger.info('[signup] {"rejected_proof_or_cap":1}');
-      return success(wantsJson);
-    }
-
-    // Consentement obligatoire : sans case cochée, rien n'est enregistré.
+    // Consentement obligatoire pour créer un inscrit ; les échecs restent en quarantaine.
     if (form.get('consent') !== 'oui') {
-      return fail(400, 'Consentement requis', 'La case de consentement doit être cochée. Aucune donnée n’a été enregistrée.');
+      await suspect('consent');
+      return fail(400, 'Consentement requis', 'La case de consentement doit être cochée. Demande conservée en quarantaine 7 jours maximum, sans e-mail.');
     }
     const version = form.get('consent_version') || '';
     if (version !== CURRENT_VERSION || !CONSENT_TEXTS[version]) {
-      return fail(400, 'Formulaire périmé', 'Le formulaire a changé depuis l’ouverture de la page. Rechargez-la puis réessayez. Aucune donnée n’a été enregistrée.');
+      await suspect('consent');
+      return fail(400, 'Formulaire périmé', 'Le formulaire a changé depuis l’ouverture de la page. Rechargez-la puis réessayez. Demande conservée en quarantaine 7 jours maximum, sans e-mail.');
     }
     const wantsNewsletter = form.get('newsletter') === 'oui';
-    if (wantsNewsletter && form.get('newsletter_version') !== NEWSLETTER_VERSION) return fail(400, 'Formulaire périmé', 'Rechargez la page pour lire le texte actuel de la lettre.');
+    if (wantsNewsletter && form.get('newsletter_version') !== NEWSLETTER_VERSION) { await suspect('consent'); return fail(400, 'Formulaire périmé', 'Rechargez la page pour lire le texte actuel de la lettre.'); }
     if (wantsNewsletter && !config.newsletter.enabled) return fail(503, 'Lettre temporairement indisponible', 'La lettre ne peut pas accepter de nouvelles demandes. Réessayez ultérieurement ou décochez cette option pour l’accès anticipé seul.');
 
     const email = (form.get('email') || '').trim().toLowerCase();
     if (email.length > 254 || !EMAIL_RE.test(email)) {
-      return fail(400, 'Adresse invalide', 'L’adresse e-mail saisie n’est pas valide. Aucune donnée n’a été enregistrée.');
+      await suspect('email');
+      return fail(400, 'Adresse invalide', 'L’adresse e-mail saisie n’est pas valide. Demande conservée en quarantaine 7 jours maximum, sans e-mail.');
     }
 
     const channels = [...new Set(form.getAll('channels'))].filter((c) => ALLOWED_CHANNELS.includes(c));
     const actions = validateActions(form.get('actions') || '');
-    if (actions === null) return fail(400, 'Liste d’actions invalide', 'Indiquez uniquement des tickers ou noms d’entreprises séparés par des virgules (10 maximum, 60 caractères par nom, 300 au total). Les phrases et demandes de prix ne sont pas acceptées. Aucune donnée n’a été enregistrée.');
+    if (actions === null) return rejected('actions');
 
     // No resend, changed preferences, or new purpose on an unauthenticated duplicate.
     if (store.findByEmail(email)) return success(wantsJson);
     if (!config.smtp.euApproved || !config.smtp.host || !config.mailFrom) return fail(503, 'Inscription temporairement indisponible', 'L’envoi des confirmations est suspendu. Réessayez plus tard ou rejoignez-nous via le lien Discord. Aucune donnée n’a été enregistrée.');
-    if (!await guard.reserveAddress(email)) { logger.info('[signup] {"rejected_mail_cap_or_duplicate":1}'); return success(wantsJson); }
+    const mailReason = await guard.reserveAddressReason(email);
+    if (mailReason) return rejected(mailReason);
 
     const at = new Date(now()).toISOString();
     const { token, hash } = newToken();
@@ -239,6 +248,7 @@ function createApp(config, deps = {}) {
     const token = form.get('token') || url.searchParams.get('token') || '';
     const sub = token && store.findByTokenHash(sha256(token).toString('hex'));
     if (!sub) return send(res, 404, pages.unsubscribeInvalid());
+    await triage.eraseEmail(sub.email);
     await store.remove(sub.id);
     return send(res, 200, pages.unsubscribeDone());
   }
@@ -275,12 +285,28 @@ function createApp(config, deps = {}) {
     return noContent(res, { 'Set-Cookie': sessionCookie('', 0) });
   }
 
-  function listSubscribers(req, res) {
+  function listSubscribers(req, res, url) {
     if (!requireAdmin(req, res)) return;
-    const subscribers = store.all()
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const tab = url.searchParams.get('tab') || 'all';
+    if (!['all', 'confirmed', 'pending', 'suspect'].includes(tab)) return json(res, 400, { error: 'invalid_tab' });
+    const confirmed = store.all().filter(s => s.status === 'confirmed' && s.confirmed_at);
+    const pending = store.all().filter(s => s.status === 'pending');
+    const suspects = triage.quarantine.all();
+    const list = tab === 'confirmed' ? confirmed : tab === 'pending' ? pending : tab === 'suspect' ? suspects : [...confirmed, ...pending];
+    const subscribers = list.sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map(({ unsubscribe_token_hash, confirmation_hash, newsletter: n, ...rest }) => ({ ...rest, newsletter: publicNewsletter(n) }));
-    return json(res, 200, { subscribers });
+    return json(res, 200, { subscribers, counts: { confirmed: confirmed.length, pending: pending.length, suspect: suspects.length } });
+  }
+
+  function exportCsv(req, res) {
+    if (!requireAdmin(req, res)) return;
+    // Quote every cell and neutralize spreadsheet formulas, including leading whitespace.
+    const cell = v => '"' + String(v ?? '').replace(/^(\s*)([=+@-])/, "$1'$2").replace(/"/g, '""') + '"';
+    const rows = [['Date UTC', 'E-mail', 'Canaux', 'Actions suivies'], ...store.all()
+      .filter(s => s.status === 'confirmed' && s.confirmed_at)
+      .map(s => [s.created_at, s.email, (s.channels || []).join(', '), s.actions || ''])];
+    return send(res, 200, '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n') + '\r\n', 'text/csv; charset=utf-8',
+      { 'Content-Disposition': 'attachment; filename="hyprl-inscriptions-confirmees.csv"' });
   }
 
   function exportSubscriber(req, res, id) {
@@ -298,6 +324,8 @@ function createApp(config, deps = {}) {
   async function deleteSubscriber(req, res, id) {
     if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
     if (!requireAdmin(req, res)) return;
+    const person = store.findById(id);
+    if (person) await triage.eraseEmail(person.email);
     const removed = await store.remove(id);
     if (!removed) return json(res, 404, { error: 'not_found' });
     logger.info('[admin] inscrit supprimé (droit à l’effacement)');
@@ -357,7 +385,7 @@ function createApp(config, deps = {}) {
       const p = url.pathname;
       const m = req.method;
       if (await member.handle(req, res, url)) return;
-      if (p.startsWith('/api/') || p.startsWith('/lettre/') || p === '/desinscription' || p === '/confirmation' || p === '/inscription') await retention.run();
+      if (p.startsWith('/api/') || p.startsWith('/lettre/') || p === '/desinscription' || p === '/confirmation' || p === '/inscription') { await retention.run(); await triage.run(); }
       if (p === '/api/internal/newsletter/send') {
         if (m !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
         const provided = String(req.headers.authorization || ''), expected = 'Bearer ' + config.newsletter.workerKey;
@@ -368,7 +396,7 @@ function createApp(config, deps = {}) {
       if (p === '/api/admin/newsletter/export') {
         if (m !== 'GET') return json(res, 405, { error: 'method_not_allowed' });
         if (!requireAdmin(req, res)) return;
-        return json(res, 200, { schema_version: 1, exported_at: new Date(now()).toISOString(), subscribers: store.all().map(s => ({ id: s.id, email: s.email, newsletter: publicNewsletter(s.newsletter) })) }, { 'Content-Disposition': 'attachment; filename="hyprl-newsletter-consents.json"' });
+        return json(res, 200, { schema_version: 1, exported_at: new Date(now()).toISOString(), subscribers: store.all().filter(s => s.status === 'confirmed' && s.confirmed_at).map(s => ({ id: s.id, email: s.email, newsletter: publicNewsletter(s.newsletter) })) }, { 'Content-Disposition': 'attachment; filename="hyprl-newsletter-consents.json"' });
       }
       if (p === '/api/form-token') {
         if (m !== 'GET') return json(res, 405, { error: 'method_not_allowed' });
@@ -402,7 +430,21 @@ function createApp(config, deps = {}) {
       }
       if (p === '/api/admin/login') return m === 'POST' ? await login(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
       if (p === '/api/admin/logout') return m === 'POST' ? logout(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'POST' });
-      if (p === '/api/admin/subscribers') return m === 'GET' ? listSubscribers(req, res) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
+      if (p === '/api/admin/subscribers') return m === 'GET' ? listSubscribers(req, res, url) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
+      if (p === '/api/admin/subscribers/export.csv') return m === 'GET' ? exportCsv(req, res) : json(res, 405, { error: 'method_not_allowed' });
+      const suspectRoute = p.match(/^\/api\/admin\/suspects\/([0-9a-f-]{36})(\/promote)?$/i);
+      if (suspectRoute) {
+        if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden' });
+        if (!requireAdmin(req, res)) return;
+        if (suspectRoute[2] && m === 'POST') {
+          const result = await triage.promote(suspectRoute[1].toLowerCase());
+          return json(res, result.status, result.status === 200 ? { ok: true } : { error: 'promotion_refused', message: result.error });
+        }
+        if (!suspectRoute[2] && m === 'DELETE') {
+          return await triage.remove(suspectRoute[1].toLowerCase()) ? noContent(res) : json(res, 404, { error: 'not_found' });
+        }
+        return json(res, 405, { error: 'method_not_allowed' });
+      }
       const exp = p.match(/^\/api\/admin\/subscribers\/([0-9a-f-]{36})\/export$/i);
       if (exp) return m === 'GET' ? exportSubscriber(req, res, exp[1].toLowerCase()) : json(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
       const del = p.match(/^\/api\/admin\/subscribers\/([0-9a-f-]{36})$/i);
@@ -453,7 +495,8 @@ function createApp(config, deps = {}) {
   handle.newsletter = newsletter;
   handle.signup = signup;
   handle.guard = guard;
-  handle.close = () => { clearInterval(sweeper); retention.close(); signup.close(); member.close(); };
+  handle.triage = triage;
+  handle.close = () => { clearInterval(sweeper); retention.close(); triage.close(); signup.close(); member.close(); };
   return handle;
 }
 

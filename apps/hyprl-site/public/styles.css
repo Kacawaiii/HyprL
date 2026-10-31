@@ -334,3 +334,7 @@ fieldset { border: 0; padding: 0; margin: 0 0 1.5rem; min-width: 0; }
 .content, .field, .site-footer, .admin-table td { overflow-wrap: anywhere; }
 .consent-panel { border: 2px solid var(--accent); padding: 1.25rem; margin: 1rem; background: var(--surface); }
 .consent-panel .actions { margin-top: 1rem; }
+
+.admin-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; }
+.admin-tabs [aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
+.admin-table td { overflow-wrap: anywhere; }

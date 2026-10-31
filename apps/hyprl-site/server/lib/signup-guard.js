@@ -60,33 +60,42 @@ class SignupGuard {
     const payload = Buffer.from(JSON.stringify({ v: 1, at: this.now(), ip: ipHash, nonce: crypto.randomBytes(16).toString('hex') })).toString('base64url');
     return { token: payload + '.' + this.mac('form:' + payload), min_ms: LIMITS.minMs, expires_ms: LIMITS.ttlMs, bits: LIMITS.bits };
   }
-  verify(ip, token, work) {
-    if (typeof token !== 'string' || token.length > 512 || !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(token) || !/^\d{1,10}$/.test(work || '')) return null;
+  verifyReason(ip, token, work) {
+    if (!token) return { reason: 'no_token' };
+    if (typeof token !== 'string' || token.length > 512 || !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(token)) return { reason: 'invalid_token' };
     const [payload, signature] = token.split('.');
-    if (!crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(this.mac('form:' + payload), 'hex'))) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(this.mac('form:' + payload), 'hex'))) return { reason: 'invalid_token' };
     let p;
-    try { p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return null; }
+    try { p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return { reason: 'invalid_token' }; }
     const age = this.now() - p.at;
-    if (p.v !== 1 || !Number.isSafeInteger(p.at) || age < LIMITS.minMs || age >= LIMITS.ttlMs || p.ip !== this.mac('ip:' + ip)) return null;
-    if (!hash(token + ':' + work).startsWith('0000')) return null;
-    return { id: hash(token), expires: p.at + LIMITS.ttlMs, ip: p.ip };
+    if (p.v !== 1 || !Number.isSafeInteger(p.at) || age < 0) return { reason: 'invalid_token' };
+    if (age < LIMITS.minMs) return { reason: 'too_fast' };
+    if (age >= LIMITS.ttlMs) return { reason: 'expired_token' };
+    if (p.ip !== this.mac('ip:' + ip)) return { reason: 'wrong_ip' };
+    if (!/^\d{1,10}$/.test(work || '') || !hash(token + ':' + work).startsWith('0000')) return { reason: 'work' };
+    return { proof: { id: hash(token), expires: p.at + LIMITS.ttlMs, ip: p.ip } };
   }
-  async consume(proof) {
-    if (!proof) return false;
+  verify(ip, token, work) { return this.verifyReason(ip, token, work).proof || null; }
+  async consumeReason(proof) {
+    if (!proof) return 'invalid_token';
     return this.mutate((s, at) => {
-      if (proof.expires <= at || s.spent[proof.id] || s.attempts.length >= LIMITS.globalHour || s.attempts.filter(x => x.ip === proof.ip).length >= LIMITS.ipHour) return false;
-      s.spent[proof.id] = proof.expires; s.attempts.push({ ip: proof.ip, at }); return true;
+      if (proof.expires <= at) return 'expired_token';
+      if (s.spent[proof.id]) return 'replay';
+      if (s.attempts.length >= LIMITS.globalHour || s.attempts.filter(x => x.ip === proof.ip).length >= LIMITS.ipHour) return 'cap';
+      s.spent[proof.id] = proof.expires; s.attempts.push({ ip: proof.ip, at }); return null;
     });
   }
-  reserveAddress(email) {
+  async consume(proof) { return !await this.consumeReason(proof); }
+  reserveAddressReason(email) {
     const id = this.mac('address:' + email);
     return this.mutate((s, at) => {
-      // Rolling 24 hours, not a midnight-reset quota.
-      if (s.addresses[id] || Object.values(s.addresses).filter(x => x.at > at - DAY).length >= LIMITS.mailDay) return false;
+      if (s.addresses[id]) return 'duplicate';
+      if (Object.values(s.addresses).filter(x => x.at > at - DAY).length >= LIMITS.mailDay) return 'mail_cap';
       const { expiresAt } = require('./retention');
-      s.addresses[id] = { at, expires: Date.parse(expiresAt(new Date(at).toISOString())) }; return true;
+      s.addresses[id] = { at, expires: Date.parse(expiresAt(new Date(at).toISOString())) }; return null;
     });
   }
+  async reserveAddress(email) { return !await this.reserveAddressReason(email); }
   reserveDigest() {
     return this.mutate((s, at) => {
       if (s.digests.some(x => x > at - DAY)) return false;

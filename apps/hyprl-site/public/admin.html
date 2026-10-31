@@ -43,17 +43,24 @@
           <button id="logout" class="btn btn-quiet" type="button">Se déconnecter</button>
         </div>
         <div id="panel-msg" class="status-msg" role="status" hidden></div>
-        <p><a class="btn btn-secondary" href="/api/admin/newsletter/export" download>Exporter les consentements de la lettre (JSON)</a></p>
+        <p><a class="btn btn-secondary" href="/api/admin/subscribers/export.csv" download>Exporter les Vrais (CSV)</a></p>
+        <div class="admin-tabs" role="group" aria-label="Trier les inscriptions">
+          <button type="button" class="btn btn-secondary" id="tab-confirmed" aria-pressed="true">Vrais (0)</button>
+          <button type="button" class="btn btn-secondary" id="tab-pending" aria-pressed="false">En attente (0)</button>
+          <button type="button" class="btn btn-secondary" id="tab-suspect" aria-pressed="false">Bots / suspects (0)</button>
+        </div>
+        <p id="triage-help">Vrais : e-mail confirmé. En attente : confirmation demandée. Bots / suspects : aucun e-mail envoyé tant que la demande reste en quarantaine. Effacement automatique après 7 jours maximum ; aucun usage marketing.</p>
+        <p>« C’est un vrai » demande une seule confirmation pour l’accès anticipé et ne souscrit jamais la personne à la lettre.</p>
         <div class="table-wrap" role="region" aria-label="Liste des inscriptions" tabindex="0">
           <table class="admin-table">
-            <caption>Heures affichées en heure de Paris ; export JSON en UTC. Exportez uniquement la personne ayant exercé ses droits, après vérification de sa demande. « Supprimer » efface définitivement l’inscrit.</caption>
+            <caption>Date de la demande en heure de Paris ; export JSON en UTC. Exportez uniquement la personne ayant exercé ses droits, après vérification de sa demande. « Supprimer » efface définitivement la demande. Le motif du contrôle figure pour chaque suspect.</caption>
             <thead>
               <tr>
                 <th scope="col">Date</th>
                 <th scope="col">E-mail</th>
                 <th scope="col">Canaux</th>
                 <th scope="col">Actions suivies</th>
-                <th scope="col">Consentement</th>
+                <th scope="col">Consentement / motif</th>
                 <th scope="col">Exporter ou supprimer</th>
               </tr>
             </thead>

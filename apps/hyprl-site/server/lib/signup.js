@@ -43,12 +43,15 @@ function createSignup({ config, store, guard, mailer, now = Date.now, logger = c
   async function sendConfirmation(sub, token, unsubscribeToken) {
     // The durable address reservation and record always precede SMTP. Never retry
     // disabled, failed or ambiguous sends, including after process restart.
+    let delivery = 'uncertain';
     try {
       const sent = await mailer.send(confirmationMessage(sub, { from: config.mailFrom,
         confirmationUrl: config.publicUrl + '/confirmation?token=' + token,
         unsubscribeUrl: config.publicUrl + '/desinscription?token=' + unsubscribeToken }));
+      delivery = sent === true ? 'sent' : 'uncertain';
       logger.info('[signup] ' + JSON.stringify({ confirmation_sent: sent === true ? 1 : 0, confirmation_uncertain: sent === true ? 0 : 1 }));
     } catch { logger.info('[signup] ' + JSON.stringify({ confirmation_uncertain: 1 })); }
+    await store.update(sub.id, s => { s.confirmation_delivery = delivery; s.confirmation_attempted_at = new Date(now()).toISOString(); return s; });
   }
   async function digest() {
     if (digestRunning || !config.notifyEmail || !config.smtp.euApproved || !config.smtp.host) return { sent: 0 };

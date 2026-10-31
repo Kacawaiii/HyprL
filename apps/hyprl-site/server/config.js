@@ -35,6 +35,7 @@ function loadConfig(env = process.env) {
     login: { maxAttempts: 5, windowMs: 15 * 60 * 1000 },
     session: { idleMs: 30 * 60 * 1000, maxMs: 12 * 60 * 60 * 1000 },
     formTokenKey: env.FORM_TOKEN_KEY || '',
+    quarantineFile: path.resolve(ROOT, env.SIGNUP_QUARANTINE_FILE || (env.DATA_FILE || 'data/subscribers.json') + '.quarantine.json'),
     signupGuardFile: path.resolve(ROOT, env.SIGNUP_GUARD_FILE || (env.DATA_FILE || 'data/subscribers.json') + '.guard.json'),
     newsletter: {
       enabled: env.NEWSLETTER_ENABLED === 'true',
@@ -63,6 +64,10 @@ function loadConfig(env = process.env) {
   }
   config.member = require('./member/config').memberConfig(env, config);
   if (config.signupGuardFile === config.member.stateFile) throw new Error('Separate signup guard state required.');
+  if (new Set([config.dataFile, config.signupGuardFile, config.quarantineFile, config.member.stateFile]).size !== 4) throw new Error('Separate quarantine state required.');
+  const fs = require('node:fs');
+  const existing = [config.dataFile, config.signupGuardFile, config.quarantineFile, config.member.stateFile].filter(f => fs.existsSync(f)).map(f => { const st = fs.statSync(f); return st.dev + ':' + st.ino; });
+  if (new Set(existing).size !== existing.length) throw new Error('Separate state files required (aliases refused).');
   config.secureCookies = /^https:\/\//.test(config.publicUrl);
   return config;
 }

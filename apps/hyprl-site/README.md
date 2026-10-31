@@ -118,14 +118,13 @@ The self-hosted script obtains a signed IP-bound token (10-minute lifetime),
 waits at least three seconds and solves a 16-bit SHA-256 puzzle. No tracker,
 cookie or browser storage is added. POST requires the exact `PUBLIC_URL` origin;
 missing/null/foreign origins, invalid/replayed proofs, honeypots and exhausted
-quotas receive ordinary success with no personal record or email. Static HTML
+quotas receive ordinary success with a separate private quarantine record and no email. Static HTML
 has no token. Without JavaScript the form is disabled and offers Discord.
 
 Rolling limits: 5 verified attempts/IP/hour, 30 globally/hour, 30 confirmation
 emails globally/24 hours. Token minting has separate limits of 20/IP/hour and
 300 globally/hour. These quotas and single-use token/address reservations are
-persisted before SMTP and survive restart. A rejected request can update security
-counters, never personal subscriber fields. IPs are keyed digests, not raw IPs;
+persisted before SMTP and survive restart. Rejected fields are kept only in the separate private quarantine, never in subscriber or security state. IPs are keyed digests, not raw IPs;
 expired entries are swept every minute and on guard operations. The guard file
 contains only keyed digests, timestamps and counters. Confirmation reservations
 remain for at most 24 calendar months, suppressing repeat email even after a
@@ -133,18 +132,14 @@ pending record or subscriber has been erased. No SMTP retry follows ambiguity.
 
 Actions accept up to 10 comma-separated tickers/company labels (60 characters
 each, 300 total), using letters, numbers, dots, hyphens and spaces. Multiword
-company names use capitals and common lowercase connectors. Request phrases are
-refused with a visible explanation. This is a bounded lexical filter, not a
+company names use capitals and common lowercase connectors. Request phrases are quarantined with a French reason; the visitor sees ordinary success. This is a bounded lexical filter, not a
 company registry or a guarantee that an entry names an actual company.
 
-All new records are pending. One email offers an explicit POST confirmation
+All newly accepted subscriber records are pending. One email offers an explicit POST confirmation
 within 48 hours for early access and, only if separately selected, the newsletter.
 GET/HEAD does not confirm. No reminder or automatic resend exists. Unconfirmed
 records expire seven days after creation (startup/hourly/request-time purge).
-Confirmed records retain the existing 24-month limit from creation. Legacy
-records without early-access confirmation proof remain unverified, receive no
-newsletter/digest, and expire on the same seven-day rule; never mark them
-confirmed by inference. Duplicate submissions cannot enroll a new purpose or
+Confirmed records retain the existing 24-month limit from creation. On first start, legacy records without early-access confirmation evidence move to quarantine, before subscriber retention runs. Known bot prose gets its specific reason; other legacy entries get an unverified reason. Their original date is preserved and their quarantine deadline is seven days from import; never mark them confirmed by inference. Duplicate submissions cannot enroll a new purpose or
 undo a newsletter withdrawal. Changes require the operator contact channel.
 SMTP disabled returns a clear error after proof validation, with no personal
 record or address reservation, so enabling mail later does not strand addresses.
@@ -176,8 +171,49 @@ python "$WEBAPP_TESTING_SKILL/scripts/with_server.py" \
   python test/antispam_browser_audit.py
 ```
 
-It verifies the no-JavaScript Discord fallback, visible validation errors,
+It verifies the no-JavaScript Discord fallback, ordinary success for quarantined spam,
 local proof of work under the strict CSP, a single combined confirmation,
 newsletter withdrawal, erasure and suppression of another request after erasure.
 All recipients and mail delivery are synthetic; external browser requests are
 intercepted and refused.
+
+
+### Admin triage (anti-spam release addendum)
+
+`/admin` presents Vrais (confirmed email), En attente (confirmation reserved/sent;
+uncertain delivery is shown explicitly), and Bots / suspects, each with a count.
+Rows show the original date, address, channels and actions text. Suspects include
+a plain French reason and their erasure deadline. `SIGNUP_QUARANTINE_FILE`
+defaults to `DATA_FILE + '.quarantine.json'`; it must be a distinct private regular
+file outside both code releases. It contains only bounded form fields, consent
+evidence and triage metadata, never raw HTTP bodies, IPs or bearer tokens.
+A repeated address does not renew its deadline. Startup, request and a dedicated
+expiry timer purge it at seven days. State has one writer: the site process.
+
+“C’est un vrai” requires recorded consent and a valid address, reserves the same
+one-email/daily quota, creates a pending early-access entry, removes quarantine,
+and attempts that one confirmation. It never creates newsletter membership or
+marks an email confirmed. Review timestamp, reason, reservation and delivery
+outcome are persisted; logs contain counters only. Missing consent, SMTP disabled,
+quota/suppression or a duplicate subscriber leaves the suspect untouched with a
+French error. An uncertain send is never retried. Copy-before-remove migration
+and interrupted promotion recovery finish by identity on startup, with no resend.
+“Supprimer” erases a suspect. CSV and bulk newsletter exports include only
+confirmed entries; quarantine is never used for marketing or a digest. The
+privacy policy and internal processing register disclose legitimate interest and
+the seven-day limit. No real store is read during release preparation or tests.
+
+
+Run the admin regression against its isolated synthetic import/mail fixture:
+
+```sh
+python "$WEBAPP_TESTING_SKILL/scripts/with_server.py" \
+  --server 'node test/triage-browser-server.js' --port 3819 -- \
+  python test/triage_browser_audit.py
+```
+
+This covers the three tab boundaries/counts, delayed tab responses, French reasons,
+light/dark accessibility, keyboard/mobile reflow, text escaping, confirmed-only
+CSV, import, review, explicit confirmation and deletion. It refuses every external
+browser request. Node tests also cover exact seven-day expiry (including the timer),
+restart/interruption recovery and one-email reservations through uncertain SMTP.

@@ -45,6 +45,8 @@
     return c;
   }
 
+  var activeTab = 'confirmed';
+  var tabNames = { confirmed: 'Vrais', pending: 'En attente', suspect: 'Bots / suspects' };
   function render(list) {
     var tbody = $('rows');
     tbody.replaceChildren();
@@ -59,21 +61,31 @@
     }
     list.forEach(function (s) {
       var tr = document.createElement('tr');
-      tr.appendChild(td(fmt.format(new Date(s.created_at)), 'mono nowrap'));
+      tr.appendChild(td(fmt.format(new Date(s.triage_original_created_at || s.created_at)), 'mono nowrap'));
       tr.appendChild(td(s.email));
       tr.appendChild(td((s.channels || []).map(function (k) { return CHANNELS[k] || k; }).join(', ') || '—'));
       tr.appendChild(td(s.actions || '—', 'mono'));
       var consent = td('', 'consent-cell');
       var when = document.createElement('div');
       when.className = 'mono';
-      when.textContent = 'Coché le ' + fmt.format(new Date(s.consent.checked_at)) + ' · ' + s.consent.version;
+      when.textContent = s.consent ? 'Coché le ' + fmt.format(new Date(s.consent.checked_at)) + ' · ' + s.consent.version : 'Consentement non établi';
       var text = document.createElement('div');
-      text.textContent = '« ' + s.consent.text + ' »';
+      text.textContent = s.consent ? '« ' + s.consent.text + ' »' : '';
+      if (s.status === 'suspect') {
+        var reason = document.createElement('p');
+        reason.textContent = s.reason + ' Effacement le ' + fmt.format(new Date(s.expires_at)) + '.';
+        consent.appendChild(reason);
+      }
       consent.append(when, text);
       var letter = document.createElement('div');
       var n = s.newsletter || { status: 'not_requested' };
       letter.textContent = 'Lettre : ' + ({ not_requested: 'non demandée', pending: 'à confirmer', confirmed: 'confirmée', unsubscribed: 'désabonné' }[n.status] || n.status) + (n.confirmed_at ? ' · ' + fmt.format(new Date(n.confirmed_at)) : '');
       consent.appendChild(letter);
+      if (s.status === 'pending') {
+        var delivery = document.createElement('div');
+        delivery.textContent = s.confirmation_delivery === 'sent' ? 'Confirmation envoyée.' : 'Envoi de confirmation réservé ; résultat incertain, sans relance.';
+        consent.appendChild(delivery);
+      }
       tr.appendChild(consent);
       var actions = td('', 'nowrap');
       var exp = document.createElement('a');
@@ -81,7 +93,16 @@
       exp.textContent = 'Exporter JSON';
       exp.href = '/api/admin/subscribers/' + encodeURIComponent(s.id) + '/export';
       exp.setAttribute('aria-label', 'Exporter JSON — ' + s.email);
-      actions.appendChild(exp);
+      if (s.status !== 'suspect') actions.appendChild(exp);
+      if (s.status === 'suspect') {
+        var promote = document.createElement('button');
+        promote.type = 'button';
+        promote.className = 'btn btn-secondary';
+        promote.textContent = 'C’est un vrai';
+        promote.setAttribute('aria-label', 'C’est un vrai — ' + s.email);
+        promote.addEventListener('click', function () { approve(s, promote); });
+        actions.appendChild(promote);
+      }
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn-danger';
@@ -94,12 +115,19 @@
     });
   }
 
+  var latestLoad = 0;
   function load() {
-    return api('GET', '/api/admin/subscribers').then(function (r) {
+    var request = ++latestLoad;
+    return api('GET', '/api/admin/subscribers?tab=' + activeTab).then(function (r) {
+      if (request !== latestLoad) return;
       if (r.status === 401) return showLogin(r.data && r.data.error === 'session_expired' ? 'Session expirée après 30 minutes d’inactivité.' : '');
       if (r.status !== 200) return show($('panel-msg'), 'Erreur de chargement.', 'error');
       $('admin-login').hidden = true;
       $('admin-panel').hidden = false;
+      Object.keys(tabNames).forEach(function (key) {
+        $('tab-' + key).textContent = tabNames[key] + ' (' + r.data.counts[key] + ')';
+        $('tab-' + key).setAttribute('aria-pressed', String(key === activeTab));
+      });
       render(r.data.subscribers);
     });
   }
@@ -107,7 +135,7 @@
   function remove(s, btn) {
     if (!window.confirm('Supprimer définitivement ' + s.email + ' ? Cette action est irréversible.')) return;
     btn.disabled = true;
-    api('DELETE', '/api/admin/subscribers/' + encodeURIComponent(s.id)).then(function (r) {
+    api('DELETE', (s.status === 'suspect' ? '/api/admin/suspects/' : '/api/admin/subscribers/') + encodeURIComponent(s.id)).then(function (r) {
       if (r.status === 401) return showLogin('Session expirée. Reconnectez-vous.');
       if (r.status === 204 || r.status === 404) {
         show($('panel-msg'), 'Inscription supprimée : ' + s.email, 'ok');
@@ -118,7 +146,24 @@
     });
   }
 
+  function approve(s, btn) {
+    btn.disabled = true;
+    api('POST', '/api/admin/suspects/' + encodeURIComponent(s.id) + '/promote', {}).then(function (r) {
+      if (r.status === 401) return showLogin('Session expirée. Reconnectez-vous.');
+      if (r.status === 200) {
+        activeTab = 'pending';
+        show($('panel-msg'), 'Demande déplacée en attente. L’unique envoi de confirmation a été demandé et journalisé.', 'ok');
+        return load();
+      }
+      btn.disabled = false;
+      show($('panel-msg'), r.data && r.data.detail || 'Le déplacement a échoué.', 'error');
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
+    Object.keys(tabNames).forEach(function (key) {
+      $('tab-' + key).addEventListener('click', function () { activeTab = key; load(); });
+    });
     $('login-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var pwd = $('password').value;

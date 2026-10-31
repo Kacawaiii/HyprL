@@ -26,7 +26,7 @@ test('release preflight refuses stale/synthetic exports and state within either 
   const file = path.join(snapshots, 'member-v2.json');
   const write = () => { if (fs.existsSync(file)) fs.chmodSync(file, 0o600); fs.writeFileSync(file, JSON.stringify(value)); fs.chmodSync(file, 0o440); };
   write();
-  const config = { root, formTokenKey: 'a'.repeat(64), signupGuardFile: path.join(directory, 'data/guard.json'), production: true, host: '127.0.0.1', port: 3000, publicUrl: 'https://hyprlcore.com', dataFile: path.join(directory, 'data/subscribers.json'), publicSnapshotDir: snapshots, member: { enabled: true, stateFile: path.join(directory, 'data/member.json'), snapshotDir: snapshots }, newsletter: { enabled: false } };
+  const config = { root, formTokenKey: 'a'.repeat(64), signupGuardFile: path.join(directory, 'data/guard.json'), quarantineFile: path.join(directory, 'data/quarantine.json'), production: true, host: '127.0.0.1', port: 3000, publicUrl: 'https://hyprlcore.com', dataFile: path.join(directory, 'data/subscribers.json'), publicSnapshotDir: snapshots, member: { enabled: true, stateFile: path.join(directory, 'data/member.json'), snapshotDir: snapshots }, newsletter: { enabled: false } };
   assert.equal(check(config, live, now).schema, 2);
   assert.throws(() => check(config, live, now + 27 * 3600000), /Fresh/);
   value.provenance = 'synthetic'; write();
@@ -34,6 +34,7 @@ test('release preflight refuses stale/synthetic exports and state within either 
   value.provenance = 'observed'; write();
   assert.throws(() => check({ ...config, dataFile: path.join(live, 'private.json') }, live, now), /outside/);
   assert.throws(() => check({ ...config, signupGuardFile: path.join(live, 'guard.json') }, live, now), /outside/);
+  assert.throws(() => check({ ...config, quarantineFile: path.join(live, 'quarantine.json') }, live, now), /outside/);
   fs.symlinkSync(root, path.join(directory, 'alias'));
   assert.throws(() => check({ ...config, dataFile: path.join(directory, 'alias/private.json') }, live, now), /outside/);
   const shared = path.join(directory, 'shared-state.json');
