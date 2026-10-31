@@ -13,6 +13,8 @@ def units(checkout, python, config):
         "calendar": "Mon *-*-* 08:00:00 Europe/Paris",
         "chance": "Wed *-*-* 18:45:00 Europe/Paris",
         "documents": "Mon..Fri *-*-* 18:50:00 Europe/Paris",
+        "evergreen": "Fri *-*-* 19:15:00 Europe/Paris",
+        "prepare": "Mon..Fri *-*-* 11:15:00 UTC",
     }.items():
         name = f"hyprl-carousel-{slot}"
         command = " ".join(
@@ -45,7 +47,7 @@ Nice=19
 IOSchedulingClass=idle
 CPUQuota=35%
 MemoryMax=300M
-TasksMax=16
+TasksMax=32
 TimeoutStartSec=300
 NoNewPrivileges=yes
 Restart=no

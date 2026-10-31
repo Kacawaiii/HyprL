@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageFont
+from PIL import Image
 
 from scripts.carousel_factory.content import evergreen
 from scripts.carousel_factory.data import documents, load, market, reveal, verdict, weekly_calendar
@@ -18,43 +18,6 @@ from scripts.carousel_factory.render import render, verify
 from scripts.video_factory.study import plan_hash
 
 NOW = datetime(2026, 10, 28, 17, 30, tzinfo=timezone.utc)
-
-
-@pytest.fixture
-def config(tmp_path):
-    fonts = tmp_path / "fonts"
-    fonts.mkdir()
-    for source, target in (
-        ("DejaVuSans.ttf", "IBMPlexSans-Regular.ttf"),
-        ("DejaVuSans-Bold.ttf", "IBMPlexSans-SemiBold.ttf"),
-        ("DejaVuSansMono.ttf", "IBMPlexMono-Regular.ttf"),
-    ):
-        (fonts / target).symlink_to(Path(ImageFont.truetype(source, 20).path))
-    # Synthetic licensing marker for portable geometry tests, never a release asset.
-    (fonts / "LICENSE-OFL.txt").write_text(
-        "Synthetic test marker: IBM SIL OPEN FONT LICENSE Version 1.1"
-    )
-    snapshot = tmp_path / "snapshot.json"
-    snapshot.write_text(
-        json.dumps(
-            {
-                "provenance": "observed",
-                "generated_at": "2026-10-28T17:00:00Z",
-                "briefs": [],
-                "calendar": [],
-                "reveals": [],
-            }
-        )
-    )
-    env = tmp_path / "webhook.env"
-    env.write_text("DISCORD_WEBHOOK_BROUILLONS=https://discord.com/api/webhooks/123456/synthetic\n")
-    return {
-        "output_dir": str(tmp_path / "posts"),
-        "state_dir": str(tmp_path / "state"),
-        "font_dir": str(fonts),
-        "snapshot": str(snapshot),
-        "webhook_env": str(env),
-    }
 
 
 def source():
@@ -168,7 +131,7 @@ def test_weekly_count_delivers_all_events_without_invented_hours():
         event("DDD", "2026-11-02"),
     ]
     p = weekly_calendar(observed(), rows, "2026-10-28")
-    assert p["title"] == "3 résultats US à suivre cette semaine"
+    assert p["title"] == "3 résultats US du 26/10 au 30/10"
     text = " ".join(s["body"] for s in p["slides"])
     assert all(symbol in text for symbol in ("AAA", "BBB", "CCC"))
     assert "DDD" not in text
@@ -250,9 +213,9 @@ def test_complete_synthetic_verdict_renders_real_yearly_comparisons(config, tmp_
     path.write_text(json.dumps(result))
     p = verdict(path, NOW)
     assert p["slides"][4]["title"] == "Le hasard reste une explication possible"
-    assert p["slides"][3]["chart"][0]["values"] == [0.4, 0.2, 0.3]
+    assert [b["value"] for b in p["slides"][3]["chart"]] == [0.4, 0.2, 0.3]
     m = render(p, Path(config["output_dir"]) / "study", config["font_dir"])
-    assert len(m["platforms"]["instagram"]) == 7
+    assert len(m["platforms"]["instagram"]) == 6
     assert m["platforms"]["x"][1]["chart"]
 
 
@@ -301,7 +264,7 @@ def discord_fake(request, timeout):
     raw = re.search(rb"Content-Type: application/json\r\n\r\n(.*?)\r\n--", body, re.S)[1]
     payload = json.loads(raw)
     assert payload["allowed_mentions"] == {"parse": []}
-    assert payload["content"].startswith("carrousels v1\n")
+    assert payload["content"].startswith("carrousels v2\n")
     attachments = []
     for a in payload["attachments"]:
         match = re.search(
@@ -348,7 +311,10 @@ def test_timeout_keeps_pending_and_never_retries(config, monkeypatch):
 
 
 def test_schedule_is_paris_dst_aware_and_never_catches_up(config):
-    assert run(config, "daily", NOW, False)["status"] == "rendered"
+    assert run(config, "daily", NOW, False) == {
+        "status": "skipped",
+        "reason": "no eligible facts today",
+    }
     assert (
         run(config, "daily", datetime(2026, 10, 28, 18, 30, tzinfo=timezone.utc), False)["status"]
         == "skipped"
@@ -399,10 +365,12 @@ def test_thirty_post_retention_only_removes_owned_acknowledged_albums(config, mo
 
 def test_generated_units_preserve_resource_limits_and_exact_cadence():
     generated = units(Path("/synthetic/checkout"), "/synthetic/python", "/synthetic/config.json")
-    assert len(generated) == 9
+    assert len(generated) == 13
     assert "18:30:00 Europe/Paris" in generated["hyprl-carousel-daily.timer"]
     assert "Mon *-*-* 08:00:00 Europe/Paris" in generated["hyprl-carousel-calendar.timer"]
     assert "Wed *-*-* 18:45:00 Europe/Paris" in generated["hyprl-carousel-chance.timer"]
+    assert "11:15:00 UTC" in generated["hyprl-carousel-prepare.timer"]
+    assert "Fri *-*-* 19:15:00 Europe/Paris" in generated["hyprl-carousel-evergreen.timer"]
     assert all("Persistent=false" in v for k, v in generated.items() if k.endswith(".timer"))
     assert all(
         "CPUQuota=35%" in v and "MemoryMax=300M" in v

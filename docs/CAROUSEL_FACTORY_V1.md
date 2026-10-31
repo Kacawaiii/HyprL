@@ -1,3 +1,5 @@
+> Superseded by [CAROUSEL_FACTORY_V2.md](CAROUSEL_FACTORY_V2.md). The v1 daily evergreen fallback is removed in v2.
+
 # Carousel factory v1
 
 The isolated marketing factory produces Instagram PNG albums (1080 × 1350),

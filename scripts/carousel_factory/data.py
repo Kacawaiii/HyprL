@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from scripts.video_factory.factory import AGENTS, PUBLIC_REVEAL
 from scripts.video_factory.market import DIGEST, instant, marker_sources, public_url, source
-from scripts.video_factory.study import PLAN, plan_hash
+from scripts.video_factory.study import plan_hash
 
 from .content import post, slide
 
@@ -99,7 +99,7 @@ def calendar_rows(x, config):
     return rows
 
 
-def excerpt(x):
+def excerpt(x, translations=None):
     for b in sorted(x.get("briefs", []), key=lambda r: r["date"], reverse=True):
         cutoff = instant(b["published_at"])
         if (
@@ -108,10 +108,25 @@ def excerpt(x):
         ):
             raise ValueError("brief date mismatch")
         for fact in b["facts"]:
+            # Preserve a verbatim excerpt; prefer another fact to rewriting the source.
+            text = fact["summary"]
+            if (
+                "—" in text
+                or len(text) > 280
+                or len(re.findall(r"\b(?:IA|AI|intelligence artificielle)\b", text, re.I)) > 1
+            ):
+                continue
+            translated = (translations or {}).get(hashlib.sha256(text.encode()).hexdigest())
+            if translated:
+                from .editorial import check_text
+
+                check_text(translated, text)
+                text = translated
             s = source(fact["source"], cutoff)
             return {
                 "title": f"Brief du {date.fromisoformat(b['date']):%d/%m/%Y}",
-                "body": fact["summary"],
+                "body": text,
+                "translated": bool(translated),
                 "source": label(s),
                 "urls": [s["url"]],
                 "evidence": [s],
@@ -266,11 +281,11 @@ def weekly_calendar(x, rows, day):
         for r in rows
         if r["kind"] == "earnings" and start.isoformat() <= r["date"] <= end.isoformat()
     ]
-    if len({r["date"] for r in events}) < 2:
+    if not events:
         return None
     slides = [
         slide(
-            f"{len(events)} résultats US à suivre cette semaine",
+            f"{len(events)} résultats US du {start:%d/%m} au {end:%d/%m}",
             f"Du {start:%d/%m} au {end:%d/%m/%Y}. Calendrier observé, susceptible de modification.",
             metric=str(len(events)),
             source=label(events[0]["source"]),
@@ -297,9 +312,10 @@ def weekly_calendar(x, rows, day):
         )
     slides.append(
         slide(
-            "Préparer la semaine",
-            "Les dates restent celles du calendrier collecté. Consultez les mises à jour avant la publication.",
-            cta="Retrouvez le calendrier sur hyprlcore.com",
+            "Gardez les prochaines dates en vue.",
+            "Consultez les mises à jour et les heures confirmées avant chaque publication.",
+            cta="Le calendrier : lien en bio",
+            flip=True,
         )
     )
     return post(
@@ -407,49 +423,51 @@ def verdict(path, now):
         if proven is True
         else "Le hasard reste une explication possible"
     )
-    stamp = (
-        f"Étude HyprL · plan {plan_hash()[:12]}\nRésultat local calculé ; publication non horodatée"
-    )
+    stamp = "Étude HyprL · résultat calculé\nPublication non horodatée"
     ci = r.get("week_block_difference_ci95")
     detail = (
         f"Écart vendredi / autres jours : intervalle 95 % [{ci[0] * 100:.1f} ; {ci[1] * 100:.1f}] points."
         if ci
         else "Semaines complètes insuffisantes pour conclure."
     )
+    totals = []
+    for key in ("friday", "other_days", "random_day"):
+        n = sum(y[key]["n"] for y in r["years"])
+        k = sum(y[key]["k"] for y in r["years"])
+        if not n:
+            return None
+        totals.append((k, n, k / n))
+    bars = [
+        {"label": name, "value": value[2]}
+        for name, value in zip(("Vendredi", "Autres jours", "Jour tiré au hasard"), totals)
+    ]
     cards = [
         slide(
-            "60% des vendredis ? On a vérifié.",
-            "BTC : le plus bas de la session Asie est-il ensuite franchi ?",
+            "Bitcoin : 60 % des vendredis ?",
+            "Le plus bas d'Asie serait cassé plus tard. On a vérifié.",
+            metric="60 %",
         ),
         slide(
-            "Une règle qui semble simple",
-            "Un jour de semaine, une session, un seuil. Une affirmation précise devient testable.",
+            "Un seuil à franchir dans la journée.",
+            "Le plus bas est fixé pendant la séance asiatique. Un simple contact ne compte pas.",
         ),
         slide(
-            "Une règle fixée avant le calcul",
-            f"{PLAN['period'] if 'period' in PLAN else '2018 au 31 août 2026'}. Bougies intrajournalières. Asie : 02h–11h Paris. Franchissement strict après 11h. Les jours incomplets sont exclus.",
+            "Ce qu'on a mesuré",
+            f"{totals[0][0]} vendredis sur {totals[0][1]}. " + "De 2018 à août 2026.",
+            metric=f"{totals[0][2] * 100:.1f} %".replace(".", ","),
             source=stamp,
         ),
-        slide(
-            "Vendredis, autres jours, hasard",
-            "Taux par année. Le hasard correspond à des jours tirés dans les mêmes années, jamais à 50 % par défaut.",
-            source=stamp,
-            chart=chart,
-        ),
+        slide("Comparons aux autres jours.", chart=bars, source=stamp),
         slide(
             decision,
-            detail + " Ce constat historique exploratoire ne prédit pas les gains futurs.",
+            "Cette fréquence historique ne démontre pas des gains futurs.",
             source=stamp,
+            flip=True,
         ),
         slide(
-            "Un taux ne suffit pas",
-            "Le seuil de 60 %, l'écart avec les autres jours et la rentabilité sont trois questions distinctes.",
-            source=stamp,
-        ),
-        slide(
-            "Les vérifications continuent",
-            "Les données, la règle et les limites accompagnent le verdict.",
-            cta="D'autres vérifications sur hyprlcore.com",
+            "Une stat se juge avec sa comparaison.",
+            "La règle, les données et les limites accompagnent le verdict.",
+            cta="La méthode : lien en bio",
         ),
     ]
     value = post(
@@ -457,7 +475,10 @@ def verdict(path, now):
         "Problem-Proof",
         cards[0]["title"],
         cards,
-        "Une affirmation virale sur le BTC confrontée à une règle fixée et à des jours comparables. Étude historique exploratoire.",
+        "Une affirmation sur le BTC confrontée à des jours comparables. Étude historique exploratoire. "
+        + detail
+        + " "
+        + "Règle : 02 h à 11 h Paris, franchissement strict après 11 h. Les jours incomplets sont exclus.",
         evidence=[r],
         provenance={"result_sha256": hashlib.sha256(raw).hexdigest()},
     )
